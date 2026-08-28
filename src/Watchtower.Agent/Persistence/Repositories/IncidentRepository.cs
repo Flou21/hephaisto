@@ -65,5 +65,7 @@ public sealed class IncidentRepository(WatchtowerDbContext db, IClock clock) : I
     public async Task AddAsync(Incident incident, CancellationToken ct) =>
         await db.Incidents.AddAsync(incident, ct);
 
+    public void AddSignal(Signal signal) => db.Signals.Add(signal);
+
     public Task<int> SaveChangesAsync(CancellationToken ct) => db.SaveChangesAsync(ct);
 }

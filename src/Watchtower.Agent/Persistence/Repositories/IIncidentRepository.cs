@@ -41,5 +41,23 @@ public interface IIncidentRepository
 
     Task AddAsync(Incident incident, CancellationToken ct);
 
+    /// <summary>
+    /// Marks a signal as a NEW row before it is attached to an already-persisted incident.
+    /// </summary>
+    /// <remarks>
+    /// Adding to <c>incident.Signals</c> alone is not enough, and the way it fails is silent.
+    /// <see cref="Signal.Id"/> is assigned at construction (<c>Guid.CreateVersion7()</c>), so
+    /// the key is never the CLR default. When change detection discovers the signal through
+    /// the navigation it sees a set key, concludes the row already exists, and issues an
+    /// UPDATE - which matches nothing and throws DbUpdateConcurrencyException:
+    /// "expected to affect 1 row(s), but actually affected 0".
+    ///
+    /// The first signal on an incident is unaffected, because it rides in on
+    /// <see cref="AddAsync"/>, which marks the whole graph Added. So the bug hides until the
+    /// SECOND signal - meaning it breaks exactly deduplication and correlation, the two paths
+    /// that define whether repeated symptoms become one incident or none.
+    /// </remarks>
+    void AddSignal(Signal signal);
+
     Task<int> SaveChangesAsync(CancellationToken ct);
 }

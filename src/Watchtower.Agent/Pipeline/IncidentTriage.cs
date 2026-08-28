@@ -146,11 +146,17 @@ public sealed class IncidentTriage(
         signal.Source == SignalSource.SelfMonitoring
         || opts.SelfNamespaces.Contains(signal.Target.Namespace);
 
-    private static void Attach(Incident incident, Signal signal, DateTimeOffset now)
+    private void Attach(Incident incident, Signal signal, DateTimeOffset now)
     {
         incident.Signals.Add(signal);
         incident.LastSignalAt = now;
         signal.IncidentId = incident.Id;
+
+        // Explicitly Added, not left to change detection. The navigation add above is not
+        // enough on its own - see IIncidentRepository.AddSignal for why it produces an
+        // UPDATE that matches no rows, and why that silently breaks dedup and correlation
+        // while leaving the first signal of every incident working perfectly.
+        incidents.AddSignal(signal);
 
         // The incident carries the worst severity any of its signals reported. A warning that
         // later turns critical must not stay filed as a warning.
