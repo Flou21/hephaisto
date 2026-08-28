@@ -57,18 +57,51 @@ public sealed class GeminiChatClientFactory : IChatClientFactory, IDisposable
             ?? throw new InvalidOperationException(
                 "No Gemini API key. Set Llm:ApiKey or the GEMINI_API_KEY environment variable.");
 
-        HttpOptions? http = null;
+        var http = BuildHttpOptions(_options);
 
-        if (!string.IsNullOrWhiteSpace(_options.Endpoint) || !string.IsNullOrWhiteSpace(_options.ApiVersion))
+        if (http.RetryOptions is null)
         {
-            http = new HttpOptions
-            {
-                BaseUrl = string.IsNullOrWhiteSpace(_options.Endpoint) ? null : _options.Endpoint,
-                ApiVersion = string.IsNullOrWhiteSpace(_options.ApiVersion) ? null : _options.ApiVersion,
-            };
+            // Loud, because a provider blip then discards a whole investigation.
+            loggerFactory.CreateLogger<GeminiChatClientFactory>().LogWarning(
+                "Llm:Retry:Attempts is {Attempts}. Provider retry is disabled; a single "
+                + "transient 429 or 503 will terminate an investigation as Faulted.",
+                _options.Retry.Attempts);
         }
 
         _client = new Client(apiKey: apiKey, httpOptions: http);
+    }
+
+    /// <summary>
+    /// Builds the SDK transport options, including retry.
+    /// </summary>
+    /// <remarks>
+    /// Always returns an instance. This is deliberate and load-bearing: it used to return null
+    /// unless an endpoint or api-version override was configured, and a null
+    /// <c>HttpOptions</c> carries a null <c>RetryOptions</c>, which the SDK documents as "a
+    /// single attempt". So on the default configuration - the one the cluster runs - there was
+    /// no retry at all. See <see cref="LlmOptions.Retry"/> for what that cost.
+    /// </remarks>
+    internal static HttpOptions BuildHttpOptions(LlmOptions options)
+    {
+        var http = new HttpOptions
+        {
+            BaseUrl = string.IsNullOrWhiteSpace(options.Endpoint) ? null : options.Endpoint,
+            ApiVersion = string.IsNullOrWhiteSpace(options.ApiVersion) ? null : options.ApiVersion,
+        };
+
+        if (options.Retry.Attempts > 1)
+        {
+            http.RetryOptions = new HttpRetryOptions
+            {
+                Attempts = options.Retry.Attempts,
+                InitialDelay = options.Retry.InitialDelay.TotalSeconds,
+                MaxDelay = options.Retry.MaxDelay.TotalSeconds,
+                ExpBase = options.Retry.ExpBase,
+                Jitter = options.Retry.Jitter,
+            };
+        }
+
+        return http;
     }
 
     public string ProviderName => "gemini";

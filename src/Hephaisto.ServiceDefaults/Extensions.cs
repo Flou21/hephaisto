@@ -45,9 +45,14 @@ public static class Extensions
 
         builder.Services.ConfigureHttpClientDefaults(http =>
         {
-            // Every outbound call - grafana-mcp, Gemini, the Kubernetes API - gets retries
-            // and a circuit breaker by default. An investigation that dies because Loki
+            // Retries and a circuit breaker for every client built by IHttpClientFactory -
+            // grafana-mcp and the Kubernetes API. An investigation that dies because Loki
             // blipped is worse than one that takes two seconds longer.
+            //
+            // NOTE this does NOT cover Gemini, though it used to claim it did.
+            // Google.GenAI.Client builds its own HttpClient and never asks the factory, so
+            // nothing here has ever seen a provider call. Gemini retry is configured on the
+            // SDK's own transport instead - see LlmOptions.Retry.
             http.AddStandardResilienceHandler();
             http.AddServiceDiscovery();
         });

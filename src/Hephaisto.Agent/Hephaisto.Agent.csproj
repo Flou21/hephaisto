@@ -5,6 +5,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Hephaisto.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../Hephaisto.Core/Hephaisto.Core.csproj" />
     <ProjectReference Include="../Hephaisto.ServiceDefaults/Hephaisto.ServiceDefaults.csproj" />
   </ItemGroup>

@@ -69,6 +69,34 @@ public sealed class LlmOptions
 
     public int? MaxOutputTokens { get; set; } = 8192;
 
+    /// <summary>
+    /// Transient-fault retry for provider calls, applied inside the SDK's own HTTP send.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The SDK ships this and defaults it off.</b> A null <c>HttpOptions.RetryOptions</c>
+    /// means "a single attempt", so until this existed a single 429 or 503 destroyed a whole
+    /// investigation. Measured on the dev cluster on 2026-08-28: <b>9 of 12</b> investigations
+    /// terminated <see cref="Core.Domain.TerminationReason.Faulted"/>, every one of them on
+    /// "This model is currently experiencing high demand" - the provider's own wording for a
+    /// retryable overload. Each discarded a complete run's tokens and produced no finding.
+    /// </para>
+    /// <para>
+    /// <b>Why not the ServiceDefaults resilience handler.</b> <c>ConfigureHttpClientDefaults</c>
+    /// only reaches clients built by <c>IHttpClientFactory</c>. <c>Google.GenAI.Client</c>
+    /// constructs its own <c>HttpClient</c>, so <c>AddStandardResilienceHandler</c> has never
+    /// seen a Gemini call - notwithstanding the comment there that says it does.
+    /// </para>
+    /// <para>
+    /// <b>Why here and not a link in the chat client chain.</b> A retry link would have to sit
+    /// outside <see cref="BudgetGuardChatClient"/>, which is built innermost, so every attempt
+    /// would re-enter <c>EnsureCanStartStep()</c> and spend a step of the investigation budget
+    /// on a call that returned zero tokens. Retrying beneath the SDK's send preserves the
+    /// identity the budget depends on: one step is one <i>successful</i> provider round trip.
+    /// </para>
+    /// </remarks>
+    public LlmRetryOptions Retry { get; set; } = new();
+
     /// <summary>Per-investigation ceilings, enforced by <see cref="BudgetGuardChatClient"/>.</summary>
     public InvestigationBudgetOptions Investigation { get; set; } = new();
 
@@ -177,4 +205,31 @@ public sealed class InvestigationBudgetOptions
     /// up. One is a stumble; two in a row is a model that has stopped making progress.
     /// </summary>
     public int MaxConsecutiveNoToolTurns { get; set; } = 2;
+}
+
+/// <summary>
+/// Transient-fault retry handed to the provider SDK, which applies
+/// <c>min(initialDelay * expBase^(attempt-1) + U(0, jitter), maxDelay)</c> between attempts
+/// and retries 408, 429 and 5xx plus transport failures. Caller cancellation is never
+/// retried, so the wall-clock budget still terminates a stuck investigation on time.
+/// </summary>
+public sealed class LlmRetryOptions
+{
+    /// <summary>Total attempts including the first. 1 disables retry.</summary>
+    public int Attempts { get; set; } = 5;
+
+    public TimeSpan InitialDelay { get; set; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// A backstop on one sleep, not the usual case. At the default <see cref="Attempts"/> the
+    /// schedule is 1s, 2s, 4s, 8s and this never binds; it exists so that raising
+    /// <see cref="Attempts"/> cannot inherit the SDK's 60s default and let a single unlucky
+    /// step sleep away most of
+    /// <see cref="InvestigationBudgetOptions.MaxWallClock"/>.
+    /// </summary>
+    public TimeSpan MaxDelay { get; set; } = TimeSpan.FromSeconds(30);
+
+    public double ExpBase { get; set; } = 2.0;
+
+    public double Jitter { get; set; } = 1.0;
 }
