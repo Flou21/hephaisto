@@ -194,6 +194,22 @@ fork of FluentAssertions, API- and namespace-compatible. FluentAssertions 8.x mo
 Xceed licence for commercial use, so bumping to it is a procurement decision rather than a
 dependency bump.
 
+### Run tests with `./scripts/test.sh`, not `dotnet test`
+
+`dotnet test` **cannot run this suite** on the current toolchain. Without a `global.json`
+`test.runner` entry it hard-errors; with one it starts the test executable in
+`--server dotnettestcli` mode and exits in ~200 ms reporting *"Zero tests ran"*.
+
+This was checked against xunit.v3 3.2.2 and 4.0.0, with and without the VSTest adapter, and
+with and without central transitive pinning — identical every time, so it is xunit.v3's
+server-mode support rather than anything in this repo. A xunit.v3 test project is an
+executable, and running it directly works: all 228 tests discover and run, and the exit code
+is honest (0 on pass, non-zero otherwise), so CI is safe.
+
+There is deliberately **no `global.json` in this repo.** Adding one turns a loud, actionable
+error into a quiet *"Zero tests ran"* — and in a repo whose tests are the safety argument,
+the loud failure is worth more. Revisit after a xunit.v3 bump.
+
 The tests in `Watchtower.Tests` covering `PolicyEngine` are not routine coverage — **they are
 the argument that L3 is safe.** Treat a change that weakens them as a change to the safety
 model.

@@ -47,7 +47,17 @@ public sealed record ClusterFacts
     public IReadOnlyDictionary<string, string> TargetLabels { get; init; } =
         new Dictionary<string, string>();
 
-    /// <summary>Actions already taken on this workload inside the cooldown window.</summary>
+    /// <summary>
+    /// Actions taken on this workload in the last hour, counted against
+    /// <see cref="PolicyOptions.MaxActionsPerWorkloadPerHour"/>.
+    /// </summary>
+    /// <remarks>
+    /// Count over one hour, not over <see cref="PolicyOptions.WorkloadCooldown"/> - the two
+    /// windows are different and independent. The cooldown is a separate, shorter freeze
+    /// evaluated from <see cref="LastActionOnWorkloadAt"/>; this is the budget. Filling this
+    /// field from the 15-minute cooldown window instead would silently under-report and let
+    /// a workload take several times its hourly allowance.
+    /// </remarks>
     public int RecentActionsOnWorkload { get; init; }
 
     public DateTimeOffset? LastActionOnWorkloadAt { get; init; }
