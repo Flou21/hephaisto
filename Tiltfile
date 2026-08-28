@@ -11,6 +11,11 @@
 # Grafana's PVC with it. Every dashboard and datasource here is declarative so that losing
 # the PVC costs nothing - which only holds as long as nobody creates dashboards by hand.
 
+# Tilt refuses to deploy to a context it does not recognise as local, and k3s under Rancher
+# Desktop is not on its allowlist. Both spellings appear: this machine's kubeconfig calls it
+# studio-rancher-desktop, the laptop calls the same cluster rancher-desktop.
+allow_k8s_contexts(['studio-rancher-desktop', 'rancher-desktop'])
+
 load('ext://helm_resource', 'helm_resource', 'helm_repo')
 load('ext://namespace', 'namespace_create')
 
@@ -170,7 +175,7 @@ if agent:
     # ~/dev learned this the hard way; here there is no registry path at all, so there is
     # nothing to accidentally re-enable.
     custom_build(
-        'watchtower',
+        'watchtower/agent',
         'docker build -t $EXPECTED_REF -f Dockerfile.dev .',
         deps = ['src', 'Directory.Build.props', 'Directory.Packages.props', 'Dockerfile.dev'],
         disable_push = True,
@@ -201,7 +206,10 @@ if chaos:
         if not f.endswith('.yaml'):
             continue
 
-        name = 'chaos-' + os.path.basename(f).replace('.yaml', '').split('-', 1)[1]
+        # The resource name is the workload name inside the manifest, which is the file's
+        # basename - c1-oomkill, not a 'chaos-' prefix. Deriving a different name here makes
+        # k8s_resource fail with "unknown resource" at load time.
+        name = os.path.basename(f).replace('.yaml', '')
         k8s_yaml(f)
         k8s_resource(
             name,

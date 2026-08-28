@@ -95,7 +95,7 @@ kubectl -n watchtower-obs logs -l app.kubernetes.io/name=grafana-mcp | grep -i "
 Repeat per scenario against the table in `infra/chaos/README.md`. C1 shown:
 
 ```sh
-tilt trigger chaos-oomkill
+tilt trigger c1-oomkill
 kubectl -n watchtower-chaos get events --sort-by=.lastTimestamp | tail
 curl -s "http://$H:9090/api/v1/query?query=kube_pod_container_status_last_terminated_reason%7Breason%3D%22OOMKilled%22%7D" | jq '.data.result|length'
 sleep 90 && curl -s "http://$H:9093/api/v2/alerts" | jq -r '.[].labels.alertname'
