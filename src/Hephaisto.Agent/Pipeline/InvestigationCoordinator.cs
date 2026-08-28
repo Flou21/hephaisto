@@ -40,6 +40,7 @@ public sealed class InvestigationCoordinator(
     IKillSwitch killSwitch,
     IncidentStateMachine stateMachine,
     InvestigationRunner runner,
+    IGlobalLlmBudget globalBudget,
     IncidentEmbedder embedder,
     IIncidentNotifier notifier,
     IOptionsMonitor<PolicyOptions> policyOptions,
@@ -85,14 +86,19 @@ public sealed class InvestigationCoordinator(
             var failedEventsBefore = incident.Events.Count;
 
             stateMachine.Escalate(incident, EscalationReason.InvestigationFailed, ex.Message);
-            await AuditAsync(incident, null, "investigation.failed", ex.Message, ct).ConfigureAwait(false);
 
             // The transition event Escalate just appended is a new child of an incident that
             // already exists, so change detection states it wrongly and the save throws. On
             // THIS path that is especially bad: the escalation exists precisely to record
             // that an investigation failed, so losing it means a failed investigation leaves
             // the incident stuck in Investigating with nothing explaining why.
+            //
+            // This runs BEFORE the audit event is enlisted, and the audit event is enlisted
+            // rather than appended, so that exactly one SaveChangesAsync sees a correctly
+            // stated graph. See EnlistAudit.
             incidents.TrackNewIncidentChildren(incident, failedEventsBefore);
+
+            EnlistAudit(incident, null, "investigation.failed", ex.Message);
 
             await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
 
@@ -132,15 +138,33 @@ public sealed class InvestigationCoordinator(
 
         stateMachine.Escalate(incident, escalation.Reason, escalation.Detail);
 
-        await AuditAsync(incident, investigation.Id, "investigation.completed",
-            $"{investigation.TerminationReason}; {escalation.Reason}", ct).ConfigureAwait(false);
-
         // The investigation and the transition event are both new children of an incident
         // that already exists, which is the case EF Core states wrongly - it sees their
         // assigned keys and emits UPDATEs. The blobs above carry a foreign key to the
         // investigation, so without this the blob insert fails against a parent row that
         // was never written.
+        //
+        // ORDER IS LOAD-BEARING. This used to run AFTER the audit append, and the audit
+        // append saved - so DetectChanges ran on a graph where the event Escalate had just
+        // appended was still stated as Modified, EF emitted an UPDATE matching zero rows,
+        // and the whole investigation was discarded with the scope. Nothing between
+        // AddInvestigationGraph and the save below may call SaveChangesAsync.
         incidents.TrackNewIncidentChildren(incident, eventsBefore);
+
+        EnlistAudit(incident, investigation.Id, "investigation.completed",
+            $"{investigation.TerminationReason}; {escalation.Reason}");
+
+        // What this investigation actually spent, staged into the same commit as the steps
+        // that spent it. Nothing called this before, so llm_usage was empty, every rolling
+        // window summed an empty table, and the cap allowed everything while reporting 0%
+        // utilisation - a spend limit that reads healthy precisely because it is not
+        // running. The steps and the counter commit together or neither does.
+        globalBudget.Enlist(
+            incident.Id,
+            investigation.Id,
+            investigation.InputTokens,
+            investigation.OutputTokens,
+            investigation.CostUsd);
 
         await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
 
@@ -285,16 +309,28 @@ public sealed class InvestigationCoordinator(
         }
     }
 
-    private Task AuditAsync(Incident incident, Guid? investigationId, string type, string summary, CancellationToken ct) =>
-        audit.AppendAsync(new AuditEvent
+    /// <summary>
+    /// Stages an audit event into the current unit of work. It does NOT save.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="IAuditRepository.AppendAsync(AuditEvent, CancellationToken)"/> calls
+    /// <c>SaveChangesAsync</c>, and every caller here shares one scoped
+    /// <see cref="HephaistoDbContext"/> with the incident repository. Appending mid-method
+    /// therefore flushes whatever else is staged at that moment - including an incident
+    /// event that has not yet been stated Added - which is what made investigations fail to
+    /// persist. The audit row belongs in the same commit as the thing it describes anyway:
+    /// an audit trail that can survive the transaction it audits is not an audit trail.
+    /// </remarks>
+    private void EnlistAudit(Incident incident, Guid? investigationId, string type, string summary) =>
+        audit.Enlist(new AuditEvent
         {
             At = clock.UtcNow,
             Type = type,
             IncidentId = incident.Id,
             InvestigationId = investigationId,
-            Actor = "hephaisto/system",
+            Actor = IncidentStateMachine.SystemActor,
             Summary = summary,
             TraceId = System.Diagnostics.Activity.Current?.TraceId.ToString(),
             SpanId = System.Diagnostics.Activity.Current?.SpanId.ToString(),
-        }, ct);
+        });
 }

@@ -83,7 +83,7 @@ envValueFrom:
   # header -- see kube-prometheus-stack.values.yaml), the agent is our own code and can, so
   # this endpoint IS token-gated rather than relying on network policy alone.
   #
-  # The same Secret is mounted into the agent Deployment as HEPHAISTO_GRAFANA_MCP_TOKEN.
+  # The same Secret is mounted into the agent Deployment as Grafana__ServiceAccountToken.
   # Create it once:
   #   kubectl -n hephaisto-obs create secret generic grafana-mcp-caller-token \
   #     --from-literal=token=$(openssl rand -hex 32)

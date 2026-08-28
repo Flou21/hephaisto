@@ -35,6 +35,18 @@ public interface IGlobalLlmBudget
     /// were really spent and the budget does not know.
     /// </remarks>
     Task RecordAsync(Guid incidentId, long inputTokens, long outputTokens, decimal costUsd, CancellationToken ct);
+
+    /// <summary>
+    /// Stages what an investigation spent into the caller's unit of work, without saving.
+    /// </summary>
+    /// <remarks>
+    /// This is the method the investigation path uses, and <see cref="RecordAsync"/> is for
+    /// callers with nothing else to write. The difference matters: the usage row has to
+    /// commit with the steps that consumed the tokens, or a failure between the two saves
+    /// leaves the budget disagreeing with the step log in the dangerous direction - the
+    /// tokens were really spent and the cap does not know.
+    /// </remarks>
+    void Enlist(Guid incidentId, Guid? investigationId, long inputTokens, long outputTokens, decimal costUsd);
 }
 
 /// <summary>Flattened <see cref="BudgetVerdict"/>: this layer needs the verdict, not the ratios.</summary>
@@ -65,6 +77,14 @@ public sealed class LlmBudgetServiceAdapter(LlmBudgetService budget) : IGlobalLl
         decimal costUsd,
         CancellationToken ct) =>
         budget.RecordAsync(incidentId, inputTokens, outputTokens, costUsd, ct);
+
+    public void Enlist(
+        Guid incidentId,
+        Guid? investigationId,
+        long inputTokens,
+        long outputTokens,
+        decimal costUsd) =>
+        budget.Enlist(incidentId, investigationId, inputTokens, outputTokens, costUsd);
 }
 
 /// <summary>
@@ -88,4 +108,15 @@ public sealed class NullGlobalLlmBudget : IGlobalLlmBudget
         long outputTokens,
         decimal costUsd,
         CancellationToken ct) => Task.CompletedTask;
+
+    public void Enlist(
+        Guid incidentId,
+        Guid? investigationId,
+        long inputTokens,
+        long outputTokens,
+        decimal costUsd)
+    {
+        // Deliberately nothing. See the type's remarks: this is the outer budget, and the
+        // per-investigation ceilings still apply.
+    }
 }

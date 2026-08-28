@@ -76,7 +76,7 @@ public sealed class IncidentTriage(
             flapping.QuarantinedUntil = now + opts.FlapCooldown;
 
             await incidents.AddAsync(flapping, ct).ConfigureAwait(false);
-            await AuditAsync(flapping, "incident.suppressed", "Flapping workload", ct).ConfigureAwait(false);
+            EnlistAudit(flapping, "incident.suppressed", "Flapping workload");
             await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
 
             logger.LogWarning(
@@ -118,14 +118,14 @@ public sealed class IncidentTriage(
             stateMachine.Escalate(incident, EscalationReason.SelfSignal,
                 "signal concerns Hephaisto's own namespace");
 
-            await AuditAsync(incident, "incident.escalated", "Self-signal", ct).ConfigureAwait(false);
+            EnlistAudit(incident, "incident.escalated", "Self-signal");
             await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
 
             return new(TriageOutcome.Suppressed, incident.Id);
         }
 
         stateMachine.BeginInvestigation(incident, "triage complete");
-        await AuditAsync(incident, "incident.opened", signal.Reason, ct).ConfigureAwait(false);
+        EnlistAudit(incident, "incident.opened", signal.Reason);
         await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
 
         return new(TriageOutcome.Investigate, incident.Id);
@@ -140,11 +140,14 @@ public sealed class IncidentTriage(
         var eventsBefore = incident.Events.Count;
 
         stateMachine.Escalate(incident, reason);
-        await AuditAsync(incident, "incident.escalated", reason.ToString(), ct).ConfigureAwait(false);
 
         // The incident already exists, so the transition event Escalate just appended is a
-        // new child of a persisted parent - the case change detection gets wrong.
+        // new child of a persisted parent - the case change detection gets wrong. This must
+        // run before anything saves, which is why the audit row is enlisted rather than
+        // appended below.
         incidents.TrackNewIncidentChildren(incident, eventsBefore);
+
+        EnlistAudit(incident, "incident.escalated", reason.ToString());
 
         await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
     }
@@ -186,15 +189,20 @@ public sealed class IncidentTriage(
         Signals = [signal],
     };
 
-    private Task AuditAsync(Incident incident, string type, string summary, CancellationToken ct) =>
-        audit.AppendAsync(new AuditEvent
+    /// <summary>
+    /// Stages an audit event into the current unit of work. It does NOT save - see the
+    /// identical helper on <see cref="InvestigationCoordinator"/> for why appending here
+    /// instead would flush a half-stated graph.
+    /// </summary>
+    private void EnlistAudit(Incident incident, string type, string summary) =>
+        audit.Enlist(new AuditEvent
         {
             At = clock.UtcNow,
             Type = type,
             IncidentId = incident.Id,
-            Actor = "hephaisto/system",
+            Actor = IncidentStateMachine.SystemActor,
             Summary = summary,
             TraceId = System.Diagnostics.Activity.Current?.TraceId.ToString(),
             SpanId = System.Diagnostics.Activity.Current?.SpanId.ToString(),
-        }, ct);
+        });
 }

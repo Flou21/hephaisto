@@ -490,5 +490,14 @@ public class InvestigationRunnerTests
             long outputTokens,
             decimal costUsd,
             CancellationToken ct) => Task.CompletedTask;
+
+        public void Enlist(
+            Guid incidentId,
+            Guid? investigationId,
+            long inputTokens,
+            long outputTokens,
+            decimal costUsd)
+        {
+        }
     }
 }

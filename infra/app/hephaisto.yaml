@@ -269,9 +269,17 @@ spec:
             # Unlike the inbound webhook, this call IS bearer-authenticated: the agent is
             # our own code and can set a header. The Secret holds the same value as the
             # one mounted into the MCP server as MCP_GRAFANA_SERVER_TOKEN.
-            - name: HEPHAISTO_GRAFANA_MCP_URL
+            #
+            # The names are `Grafana__<Property>`, matching GrafanaOptions.SectionName and
+            # the double-underscore convention every other option here uses. They used to be
+            # HEPHAISTO_GRAFANA_MCP_URL / _TOKEN, which nothing read: the binder was looking
+            # for these names, McpUrl stayed null, and GrafanaMcpToolProvider returned an
+            # empty tool list. The agent ran for weeks investigating with Kubernetes tools
+            # only -- no PromQL, no LogQL, no traces -- and said nothing, because an empty
+            # tool list is also what a legitimately unreachable grafana-mcp looks like.
+            - name: Grafana__McpUrl
               value: http://grafana-mcp.hephaisto-obs:8000/mcp
-            - name: HEPHAISTO_GRAFANA_MCP_TOKEN
+            - name: Grafana__ServiceAccountToken
               valueFrom:
                 secretKeyRef:
                   name: grafana-mcp-caller-token

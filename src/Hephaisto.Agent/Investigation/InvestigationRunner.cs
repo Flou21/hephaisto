@@ -458,6 +458,19 @@ public sealed class InvestigationRunner(
 
             var plan = ActionPlanDraftMapper.TryToDomain(draft, investigation.Id, incident.Id, clock.UtcNow);
 
+            // TryToDomain drops actions the model gave no usable target. Say so: an action
+            // that silently vanishes between the model proposing it and a human reading the
+            // plan is indistinguishable from one that was never proposed.
+            var dropped = draft.Actions.Count - plan.Actions.Count;
+            if (dropped > 0)
+            {
+                logger.LogWarning(
+                    "Dropped {Dropped} of {Total} proposed actions for investigation {Id}: "
+                    + "the model gave no namespace, kind or name.",
+                    dropped, draft.Actions.Count, investigation.Id);
+            }
+
+            activity?.SetTag("plan.actions_dropped", dropped);
             activity?.SetTag("plan.action_count", plan.Actions.Count);
             activity?.SetTag(
                 "plan.max_risk",

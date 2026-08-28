@@ -115,6 +115,27 @@ public static class ActionPlanDraftMapper
 
         foreach (var action in draft.Actions)
         {
+            // An action with no target is not an action. These three fields are NOT NULL in
+            // agent_actions (they are an owned TargetRef, and a target with a null namespace
+            // is not a thing that can be acted on or audited), so a blank one fails the
+            // INSERT - and because the whole investigation commits as one unit of work, it
+            // takes the diagnosis, the findings and the evidence down with it.
+            //
+            // The declared type of ActionDraft.Namespace is non-nullable string with a
+            // string.Empty initialiser, which is why this looks unnecessary. It is not:
+            // System.Text.Json writes an explicit JSON `null` straight over that initialiser
+            // without consulting nullable reference annotations, so a model that emits
+            // {"namespace": null} produces exactly the state the type says cannot exist.
+            //
+            // Dropped rather than defaulted. There is no safe namespace to guess, and
+            // inventing one would hand the policy engine a target the model never named.
+            if (string.IsNullOrWhiteSpace(action.Namespace)
+                || string.IsNullOrWhiteSpace(action.Kind)
+                || string.IsNullOrWhiteSpace(action.Name))
+            {
+                continue;
+            }
+
             plan.Actions.Add(new AgentAction
             {
                 IncidentId = incidentId,
@@ -142,6 +163,11 @@ public static class ActionPlanDraftMapper
             });
         }
 
+        // NoActionRequired is deliberately NOT recomputed here. It was set from the draft
+        // before the loop, so a plan whose every action was dropped as malformed comes out
+        // as "action required, zero actions" - which escalates to a human. Flipping it to
+        // true would report "nothing to do" for an incident the model believed needed
+        // remediation, which is the one wrong answer that looks like a right one.
         return plan;
     }
 

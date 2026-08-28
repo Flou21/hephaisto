@@ -142,7 +142,26 @@ public sealed class InvestigationBudgetOptions
 
     public int MaxToolCalls { get; set; } = 20;
 
-    public TimeSpan MaxWallClock { get; set; } = TimeSpan.FromMinutes(4);
+    /// <summary>
+    /// A deadlock backstop, not the primary limit. <see cref="MaxSteps"/>,
+    /// <see cref="MaxToolCalls"/>, <see cref="MaxInputTokens"/> and <see cref="MaxCostUsd"/>
+    /// are the budgets that are meant to bind; this one exists so an investigation whose
+    /// provider has stopped answering cannot hold a worker slot forever.
+    /// </summary>
+    /// <remarks>
+    /// Was 4 minutes, which made it the binding constraint instead. Measured against
+    /// gemini-3.7-flash on the dev cluster, a round trip takes 20-60s, so 4 minutes bought
+    /// 8 of the 12 permitted steps and every investigation ended
+    /// <see cref="Core.Domain.TerminationReason.WallClockExhausted"/> - terminated before
+    /// the model ever reached its conclusion, which meant no findings, no root cause and no
+    /// plan were ever produced. A wall clock that fires first turns every other budget into
+    /// decoration and makes the agent look like it cannot diagnose anything.
+    ///
+    /// Ten minutes is chosen so that 12 steps at the observed worst case still fit. It does
+    /// not widen the real exposure: the token and cost ceilings are unchanged, and they are
+    /// what actually bound spend.
+    /// </remarks>
+    public TimeSpan MaxWallClock { get; set; } = TimeSpan.FromMinutes(10);
 
     /// <summary>
     /// Cumulative across steps, not per call. Conversation history is resent every turn, so

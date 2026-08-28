@@ -106,6 +106,8 @@ public sealed class GrafanaMcpToolProvider(
 
     private readonly SemaphoreSlim _gate = new(1, 1);
 
+    private int _unconfiguredWarningLogged;
+
     private McpClient? _client;
     private IReadOnlyList<AIFunction> _cached = [];
     private DateTimeOffset _cachedUntil = DateTimeOffset.MinValue;
@@ -119,6 +121,21 @@ public sealed class GrafanaMcpToolProvider(
 
         if (string.IsNullOrWhiteSpace(o.McpUrl))
         {
+            // Say it once, loudly. This branch returns exactly what an unreachable
+            // grafana-mcp returns - an empty tool list - and the investigation then proceeds
+            // Kubernetes-only, which looks like a working agent. The two cases are not the
+            // same: "your metrics backend is down" is an incident, "you never configured a
+            // URL" is a deployment mistake that no alert will ever fire for. Silence here
+            // hid a misnamed env var for weeks.
+            if (Interlocked.Exchange(ref _unconfiguredWarningLogged, 1) == 0)
+            {
+                _logger.LogWarning(
+                    "Grafana:McpUrl is not configured, so the agent has NO metrics, logs or "
+                    + "trace tools and every investigation will be Kubernetes-only. Set "
+                    + "Grafana__McpUrl (and Grafana__ServiceAccountToken) if this is not "
+                    + "deliberate.");
+            }
+
             return [];
         }
 

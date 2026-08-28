@@ -100,6 +100,9 @@ public class ActionPlanDraftTests
                 new ActionDraft
                 {
                     Type = ActionType.ScaleWorkload,
+                    Namespace = "shop",
+                    Kind = "Deployment",
+                    Name = "checkout",
                     ArgumentsJson = arguments,
                     RollbackJson = arguments,
                 },
@@ -123,7 +126,14 @@ public class ActionPlanDraftTests
         {
             Actions =
             [
-                new ActionDraft { Type = ActionType.ScaleWorkload, ArgumentsJson = """{"replicas":3}""" },
+                new ActionDraft
+                {
+                    Type = ActionType.ScaleWorkload,
+                    Namespace = "shop",
+                    Kind = "Deployment",
+                    Name = "checkout",
+                    ArgumentsJson = """{"replicas":3}""",
+                },
             ],
         };
 
@@ -131,6 +141,65 @@ public class ActionPlanDraftTests
             draft, Guid.CreateVersion7(), Guid.CreateVersion7(), DateTimeOffset.UnixEpoch);
 
         plan.Actions[0].Arguments.Should().Contain("replicas");
+    }
+
+    [Theory]
+    [InlineData(null, "Deployment", "checkout")]
+    [InlineData("", "Deployment", "checkout")]
+    [InlineData("   ", "Deployment", "checkout")]
+    [InlineData("shop", null, "checkout")]
+    [InlineData("shop", "", "checkout")]
+    [InlineData("shop", "Deployment", null)]
+    [InlineData("shop", "Deployment", "")]
+    public void An_action_with_no_usable_target_is_dropped(string? ns, string? kind, string? name)
+    {
+        // These three fields are NOT NULL in agent_actions. The declared type says they
+        // cannot be null, but System.Text.Json writes an explicit JSON null over the
+        // string.Empty initialiser without consulting nullable annotations - so this is
+        // reachable, and it used to fail the INSERT and take the whole investigation with
+        // it (23502 on target_namespace).
+        var draft = new ActionPlanDraft
+        {
+            Actions =
+            [
+                new ActionDraft
+                {
+                    Type = ActionType.RestartPod,
+                    Namespace = ns!,
+                    Kind = kind!,
+                    Name = name!,
+                },
+            ],
+        };
+
+        var plan = ActionPlanDraftMapper.TryToDomain(
+            draft, Guid.CreateVersion7(), Guid.CreateVersion7(), DateTimeOffset.UnixEpoch);
+
+        plan.Actions.Should().BeEmpty();
+
+        // And NOT reported as "nothing to do". The model believed remediation was needed;
+        // it just failed to say what to act on. Zero actions with NoActionRequired false is
+        // what escalates that to a human, which is the honest outcome.
+        plan.NoActionRequired.Should().BeFalse();
+    }
+
+    [Fact]
+    public void A_well_targeted_action_alongside_a_malformed_one_survives()
+    {
+        var draft = new ActionPlanDraft
+        {
+            Actions =
+            [
+                new ActionDraft { Type = ActionType.RestartPod, Namespace = null!, Kind = "Pod", Name = "a" },
+                new ActionDraft { Type = ActionType.RestartPod, Namespace = "shop", Kind = "Pod", Name = "b" },
+            ],
+        };
+
+        var plan = ActionPlanDraftMapper.TryToDomain(
+            draft, Guid.CreateVersion7(), Guid.CreateVersion7(), DateTimeOffset.UnixEpoch);
+
+        plan.Actions.Should().ContainSingle();
+        plan.Actions[0].Target.Name.Should().Be("b");
     }
 
     [Fact]
