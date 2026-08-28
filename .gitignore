@@ -14,3 +14,6 @@ TestResults/
 # AND by suffix, so a copy left anywhere in the tree is still caught.
 secrets/
 *.secret.yaml
+
+# Never commit another system's state here. See docs/old-grafana-teardown.md.
+backup/
