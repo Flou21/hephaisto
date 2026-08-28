@@ -18,13 +18,16 @@ ENV HOME=/home/watchtower \
     DOTNET_NOLOGO=1
 WORKDIR /app
 
-COPY Directory.Build.props Directory.Packages.props ./
-COPY src/Watchtower.Core/Watchtower.Core.csproj                       src/Watchtower.Core/
-COPY src/Watchtower.ServiceDefaults/Watchtower.ServiceDefaults.csproj src/Watchtower.ServiceDefaults/
-COPY src/Watchtower.Agent/Watchtower.Agent.csproj                     src/Watchtower.Agent/
+# --chown on every COPY: it defaults to uid 0 no matter what USER is set to, so without it
+# the sources land root-owned and `dotnet restore` fails with a confusing
+#   Access to the path '/app/src/Watchtower.Core/obj' is denied
+COPY --chown=64198:64198 Directory.Build.props Directory.Packages.props ./
+COPY --chown=64198:64198 src/Watchtower.Core/Watchtower.Core.csproj                       src/Watchtower.Core/
+COPY --chown=64198:64198 src/Watchtower.ServiceDefaults/Watchtower.ServiceDefaults.csproj src/Watchtower.ServiceDefaults/
+COPY --chown=64198:64198 src/Watchtower.Agent/Watchtower.Agent.csproj                     src/Watchtower.Agent/
 RUN dotnet restore src/Watchtower.Agent/Watchtower.Agent.csproj
 
-COPY src/ src/
+COPY --chown=64198:64198 src/ src/
 
 ENV ASPNETCORE_URLS=http://+:8080 \
     DOTNET_ENVIRONMENT=Development \

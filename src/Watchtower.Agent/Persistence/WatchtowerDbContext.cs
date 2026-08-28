@@ -152,6 +152,21 @@ public sealed class WatchtowerDbContext(DbContextOptions<WatchtowerDbContext> op
                 Entry(evidence).State = EntityState.Added;
             }
         }
+
+        // The proposed plan and its actions. Easy to miss, because in observe mode nothing
+        // ever executes them - but they are still rows, they still hang off the
+        // investigation, and DecideOutcome writes IncidentId onto each action right after
+        // this runs. Left Unchanged, that write turns into an UPDATE against a row that was
+        // never inserted and fails the whole save, taking the diagnosis with it.
+        if (investigation.Plan is { } plan)
+        {
+            Entry(plan).State = EntityState.Added;
+
+            foreach (var action in plan.Actions)
+            {
+                Entry(action).State = EntityState.Added;
+            }
+        }
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
