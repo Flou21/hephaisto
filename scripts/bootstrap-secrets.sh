@@ -71,7 +71,10 @@ elif [ -n "${HEPHAISTO_GEMINI_API_KEY:-}" ]; then
     --from-literal=GEMINI_API_KEY="$HEPHAISTO_GEMINI_API_KEY" >/dev/null
   echo "hephaisto-llm: created"
 else
-  echo "hephaisto-llm: SKIPPED - set HEPHAISTO_GEMINI_API_KEY to create it"
+  echo "hephaisto-llm: SKIPPED - no HEPHAISTO_GEMINI_API_KEY set."
+  echo "  Either export it and re-run, or edit the placeholder in"
+  echo "    secrets/hephaisto-llm.secret.yaml"
+  echo "  and apply it:  kubectl apply -f secrets/hephaisto-llm.secret.yaml"
 fi
 
 # ---------------------------------------------------------------------------------------

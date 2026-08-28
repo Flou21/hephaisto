@@ -8,3 +8,9 @@ appsettings.Local.json
 .env
 *.received.*
 TestResults/
+
+# Local secret manifests. These carry real credentials in plaintext `stringData` so they can
+# be edited by hand, which is exactly why they must never be committed. Ignored by directory
+# AND by suffix, so a copy left anywhere in the tree is still caught.
+secrets/
+*.secret.yaml

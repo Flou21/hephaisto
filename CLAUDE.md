@@ -107,6 +107,30 @@ even from a shell on this machine:
 | Postgres | 5433 |
 | Tilt UI | 10351 | (needs `--host`, see above) |
 
+### The Gemini key
+
+`scripts/bootstrap-secrets.sh` creates every secret except this one, which it skips unless
+`HEPHAISTO_GEMINI_API_KEY` is exported. The alternative, and the easier one:
+
+```sh
+$EDITOR secrets/hephaisto-llm.secret.yaml     # replace the placeholder
+kubectl apply -f secrets/hephaisto-llm.secret.yaml
+kubectl -n hephaisto rollout restart deploy/hephaisto
+```
+
+It uses `stringData`, so the key goes in verbatim - no base64. The file is gitignored twice
+(`secrets/` and `*.secret.yaml`) and is the only place in the repo allowed to hold a live
+credential.
+
+**A wrong key is quiet.** The agent does not crash without a valid one: the model call fails,
+the incident escalates with the error, and detection, dedup, correlation and the UI carry on.
+So confirm it took, rather than assuming - the chat span in Tempo carries
+`gen_ai.usage.input_tokens` once a call actually succeeds:
+
+```sh
+curl -s -G "http://$H:3200/api/search" --data-urlencode 'q={name=~"chat.*"}' | jq '.traces | length'
+```
+
 ### Never run a bare `tilt down`
 
 It runs `helm uninstall` on the observability stack and takes the Grafana PVC with it. Every
