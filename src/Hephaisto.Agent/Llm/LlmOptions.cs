@@ -88,11 +88,20 @@ public sealed class LlmOptions
     /// seen a Gemini call - notwithstanding the comment there that says it does.
     /// </para>
     /// <para>
-    /// <b>Why here and not a link in the chat client chain.</b> A retry link would have to sit
-    /// outside <see cref="BudgetGuardChatClient"/>, which is built innermost, so every attempt
-    /// would re-enter <c>EnsureCanStartStep()</c> and spend a step of the investigation budget
-    /// on a call that returned zero tokens. Retrying beneath the SDK's send preserves the
-    /// identity the budget depends on: one step is one <i>successful</i> provider round trip.
+    /// <b>These numbers drive two retries, not one.</b> They are handed to the SDK, which
+    /// applies them to the embedding path, and to
+    /// <see cref="TransientRetryChatClient"/>, which applies them to chat. Both are needed:
+    /// the SDK setting is accepted and then silently ignored on the <c>AsIChatClient</c> path
+    /// - configured with five attempts and 1s/2s/4s/8s backoff, failed turns still returned in
+    /// 1.2s to 5.7s, which four retries cannot do - so chat needs a retry we control. Chat
+    /// never reaches the SDK's retry and embeddings never reach ours, so the two do not stack.
+    /// </para>
+    /// <para>
+    /// <b>The chat retry sits innermost, beneath <see cref="BudgetGuardChatClient"/>.</b> The
+    /// budget guard is built innermost so that one pass through it is one provider round trip,
+    /// which is what a step means and what gets billed. A retry above it would re-enter
+    /// <c>EnsureCanStartStep()</c> per attempt and spend the step budget on calls that
+    /// returned zero tokens.
     /// </para>
     /// </remarks>
     public LlmRetryOptions Retry { get; set; } = new();

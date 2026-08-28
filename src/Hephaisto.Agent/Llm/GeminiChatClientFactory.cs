@@ -75,11 +75,14 @@ public sealed class GeminiChatClientFactory : IChatClientFactory, IDisposable
     /// Builds the SDK transport options, including retry.
     /// </summary>
     /// <remarks>
-    /// Always returns an instance. This is deliberate and load-bearing: it used to return null
-    /// unless an endpoint or api-version override was configured, and a null
+    /// Always returns an instance, so <c>RetryOptions</c> is always set. It used to return
+    /// null unless an endpoint or api-version override was configured, and a null
     /// <c>HttpOptions</c> carries a null <c>RetryOptions</c>, which the SDK documents as "a
-    /// single attempt". So on the default configuration - the one the cluster runs - there was
-    /// no retry at all. See <see cref="LlmOptions.Retry"/> for what that cost.
+    /// single attempt".
+    ///
+    /// This covers the embedding path only. Measurement showed the SDK accepts this setting
+    /// and does not apply it to <c>AsIChatClient</c>, so chat retry is
+    /// <see cref="TransientRetryChatClient"/> instead. See <see cref="LlmOptions.Retry"/>.
     /// </remarks>
     internal static HttpOptions BuildHttpOptions(LlmOptions options)
     {
@@ -122,6 +125,9 @@ public sealed class GeminiChatClientFactory : IChatClientFactory, IDisposable
             .UseFunctionInvocation(_loggerFactory)
             .Use(inner => new BudgetGuardChatClient(
                 inner, budget, _pricing, _options.Model, recorder, incidentId))
+            // Innermost, beneath the budget guard, so a retried attempt does not spend a step.
+            .Use(inner => new TransientRetryChatClient(
+                inner, _options.Retry, _loggerFactory.CreateLogger<TransientRetryChatClient>()))
             .Build();
 
     public IChatClient CreatePlanningClient(
@@ -134,6 +140,8 @@ public sealed class GeminiChatClientFactory : IChatClientFactory, IDisposable
             .UseOpenTelemetry(_loggerFactory, HephaistoTelemetry.ExtensionsAiSourceName)
             .Use(inner => new BudgetGuardChatClient(
                 inner, budget, _pricing, _options.PlanningModelId, recorder, incidentId))
+            .Use(inner => new TransientRetryChatClient(
+                inner, _options.Retry, _loggerFactory.CreateLogger<TransientRetryChatClient>()))
             .Build();
 
     public void Dispose() => _client.Dispose();
