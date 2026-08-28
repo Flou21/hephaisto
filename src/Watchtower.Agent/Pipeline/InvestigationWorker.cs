@@ -55,6 +55,22 @@ public sealed class InvestigationWorker(
         {
             // A failed investigation is an escalation, never a crash. The incident is real
             // whether or not the model managed to say anything useful about it.
+            // Name the offending entities. A bare DbUpdateConcurrencyException says only
+            // "expected to affect 1 row(s), but actually affected 0" and gives no clue which
+            // of the dozen entity types in an investigation save it means - which turns a
+            // ten-minute fix into an afternoon of guessing.
+            if (ex is Microsoft.EntityFrameworkCore.DbUpdateException dbEx)
+            {
+                foreach (var entry in dbEx.Entries)
+                {
+                    logger.LogError(
+                        "  offending entity: {Entity} state={State} key={Key}",
+                        entry.Entity.GetType().Name,
+                        entry.State,
+                        string.Join(",", entry.Properties.Where(pr => pr.Metadata.IsPrimaryKey()).Select(pr => pr.CurrentValue)));
+                }
+            }
+
             logger.LogError(ex, "Investigation of incident {IncidentId} failed.", incidentId);
         }
         finally

@@ -82,8 +82,18 @@ public sealed class InvestigationCoordinator(
             // cluster is real whether or not the model managed to say anything about it.
             logger.LogError(ex, "Investigation of incident {IncidentId} threw.", incident.Id);
 
+            var failedEventsBefore = incident.Events.Count;
+
             stateMachine.Escalate(incident, EscalationReason.InvestigationFailed, ex.Message);
             await AuditAsync(incident, null, "investigation.failed", ex.Message, ct).ConfigureAwait(false);
+
+            // The transition event Escalate just appended is a new child of an incident that
+            // already exists, so change detection states it wrongly and the save throws. On
+            // THIS path that is especially bad: the escalation exists precisely to record
+            // that an investigation failed, so losing it means a failed investigation leaves
+            // the incident stuck in Investigating with nothing explaining why.
+            incidents.TrackNewIncidentChildren(incident, failedEventsBefore);
+
             await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
 
             notifier.Publish(new IncidentLiveEvent

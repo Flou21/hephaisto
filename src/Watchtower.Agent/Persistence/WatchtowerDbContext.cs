@@ -109,7 +109,12 @@ public sealed class WatchtowerDbContext(DbContextOptions<WatchtowerDbContext> op
 
         for (var i = fromEventIndex; i < incident.Events.Count; i++)
         {
-            IncidentEvents.Add(incident.Events[i]);
+            // Entry(x).State, not IncidentEvents.Add. Add is documented to move an entity to
+            // Added, but on one the tracker has ALREADY fixed as Unchanged or Modified - which
+            // is exactly this case, because reading the graph runs DetectChanges - it does not
+            // reliably take, and the row silently stayed Modified and threw at save. Setting
+            // the state directly always takes.
+            Entry(incident.Events[i]).State = EntityState.Added;
         }
 
         if (newInvestigation is not null)
