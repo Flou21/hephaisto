@@ -18,7 +18,22 @@ public sealed class LlmOptions
     public string Provider { get; set; } = "gemini";
 
     /// <summary>The investigating model. Tool-calling quality dominates here.</summary>
-    public string Model { get; set; } = "gemini-2.5-pro";
+    /// <remarks>
+    /// <para>
+    /// Flash rather than Pro, and not only to save money. As of 2026-08 the Gemini flash line
+    /// is <b>ahead</b> of the pro line: 3.7 Flash is generally available while the newest pro
+    /// is gemini-3.1-pro-preview. Choosing 2.5 Pro to be "the serious one" would mean running
+    /// a model two generations older AND paying more for it - 3.7 Flash is $0.75/$3.75 per
+    /// million against 2.5 Pro's $1.25/$10.00.
+    /// </para>
+    /// <para>
+    /// For production, override <c>Llm:Model</c> rather than editing this. The two candidates
+    /// are gemini-3.1-pro-preview ($2.00/$12.00, and preview means it can change underneath
+    /// you) and whatever pro model has gone GA by then. Do not promote a model without adding
+    /// its price below first - see the note on <see cref="Pricing"/>.
+    /// </para>
+    /// </remarks>
+    public string Model { get; set; } = "gemini-3.7-flash";
 
     /// <summary>
     /// The planning model. Separate key because phase 2 is a single schema-constrained call
@@ -59,15 +74,45 @@ public sealed class LlmOptions
 
     public SafeToolOptions Tools { get; set; } = new();
 
-    /// <summary>Model id to price. A model with no entry is charged at zero and warned about.</summary>
+    /// <summary>Model id to price.</summary>
+    /// <remarks>
+    /// <para>
+    /// <b>A model with no entry here is charged at zero.</b> It logs one warning and then
+    /// spends freely, because every cost window multiplies tokens by a price of 0 and never
+    /// reaches its cap. So switching <see cref="Model"/> to something unlisted does not make
+    /// the budget approximate - it switches the cost budget off, which is one of the safety
+    /// controls, while the UI still shows a reassuring 0.0% utilisation.
+    /// </para>
+    /// <para>
+    /// Add the price in the same change as the model. Always.
+    /// </para>
+    /// </remarks>
     public Dictionary<string, ModelPrice> Pricing { get; set; } = new(StringComparer.OrdinalIgnoreCase)
     {
-        // Public list prices per million tokens, current as of writing. Wrong prices produce
-        // wrong budgets, so this is config: correcting it must not need a redeploy.
+        // Public list prices per million tokens, verified against ai.google.dev/gemini-api/docs/pricing
+        // on 2026-08-28. Wrong prices produce wrong budgets, so this is config: correcting it
+        // must not need a redeploy.
+        //
+        // NOTE the promotional pricing. 3.7 and 3.6 Flash are half price until 2026-12-31 and
+        // DOUBLE on 2027-01-01 ($1.50/$7.50). Nothing here knows that date, so from January
+        // these figures silently under-count spend by 2x and every cost cap becomes twice as
+        // loose as it reads. Revisit before then.
+        ["gemini-3.7-flash"] = new() { InputPerMillionUsd = 0.75m, OutputPerMillionUsd = 3.75m },
+        ["gemini-3.6-flash"] = new() { InputPerMillionUsd = 0.75m, OutputPerMillionUsd = 3.75m },
+        ["gemini-3.5-flash"] = new() { InputPerMillionUsd = 1.50m, OutputPerMillionUsd = 9.00m },
+        ["gemini-3-flash-preview"] = new() { InputPerMillionUsd = 0.50m, OutputPerMillionUsd = 3.00m },
+
+        // Pro. Both are tiered by prompt length - the figures here are the <=200k tier, so a
+        // genuinely long investigation is under-counted. Acceptable while the digester caps
+        // context well below 200k; revisit if that cap ever rises.
+        ["gemini-3.1-pro-preview"] = new() { InputPerMillionUsd = 2.00m, OutputPerMillionUsd = 12.00m },
         ["gemini-2.5-pro"] = new() { InputPerMillionUsd = 1.25m, OutputPerMillionUsd = 10.00m },
+
         ["gemini-2.5-flash"] = new() { InputPerMillionUsd = 0.30m, OutputPerMillionUsd = 2.50m },
         ["gemini-2.5-flash-lite"] = new() { InputPerMillionUsd = 0.10m, OutputPerMillionUsd = 0.40m },
+
         ["gemini-embedding-001"] = new() { InputPerMillionUsd = 0.15m, OutputPerMillionUsd = 0m },
+        ["gemini-embedding-2"] = new() { InputPerMillionUsd = 0.20m, OutputPerMillionUsd = 0m },
     };
 
     public string PlanningModelId => string.IsNullOrWhiteSpace(PlanningModel) ? Model : PlanningModel;
