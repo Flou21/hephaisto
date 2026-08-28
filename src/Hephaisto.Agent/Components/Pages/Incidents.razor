@@ -8,7 +8,7 @@
 
 <h1>incidents</h1>
 
-<div class="wt-filters">
+<div class="hp-filters">
     <label>
         state
         <select value="@_state" @onchange="OnStateChanged">
@@ -43,25 +43,25 @@
         </select>
     </label>
 
-    <span class="wt-filter-status">
+    <span class="hp-filter-status">
         @if (_loading)
         {
-            <span class="wt-muted">loading…</span>
+            <span class="hp-muted">loading…</span>
         }
         else
         {
-            <span class="wt-muted">@_incidents.Count shown · refreshed @Display.TimeOnly(_refreshedAt)</span>
+            <span class="hp-muted">@_incidents.Count shown · refreshed @Display.TimeOnly(_refreshedAt)</span>
         }
         @if (_error is not null)
         {
-            <span class="wt-error" title="@_error"><span class="glyph">!!</span> query failed</span>
+            <span class="hp-error" title="@_error"><span class="glyph">!!</span> query failed</span>
         }
     </span>
 </div>
 
 @if (_incidents.Count == 0 && !_loading)
 {
-    <p class="wt-empty">
+    <p class="hp-empty">
         No incidents match this filter.
         @if (_state == "open")
         {
@@ -72,7 +72,7 @@
 }
 else
 {
-    <table class="wt-table wt-incidents">
+    <table class="hp-table hp-incidents">
         <thead>
             <tr>
                 <th class="c-state">state</th>
@@ -89,32 +89,32 @@ else
         <tbody>
             @foreach (var incident in _incidents)
             {
-                <tr @key="incident.Id" class="wt-row" @onclick="() => Open(incident.Id)">
+                <tr @key="incident.Id" class="hp-row" @onclick="() => Open(incident.Id)">
                     <td class="c-state">
                         @* Glyph AND word AND colour. Two of the three survive a bad monitor
                            or a colour-blind reader; colour alone survives neither. *@
-                        <span class="wt-state @Display.StateClass(incident.State)">
+                        <span class="hp-state @Display.StateClass(incident.State)">
                             <span class="glyph">@Display.StateGlyph(incident.State)</span>
                             @incident.State.ToString().ToLowerInvariant()
                         </span>
                         @if (incident.State == IncidentState.Escalated && incident.EscalationReason != EscalationReason.None)
                         {
-                            <span class="wt-sub">@incident.EscalationReason</span>
+                            <span class="hp-sub">@incident.EscalationReason</span>
                         }
                         @if (incident.State == IncidentState.Suppressed && incident.SuppressionReason != SuppressionReason.None)
                         {
-                            <span class="wt-sub">@incident.SuppressionReason</span>
+                            <span class="hp-sub">@incident.SuppressionReason</span>
                         }
                     </td>
                     <td class="c-sev">
-                        <span class="wt-sev @Display.SeverityClass(incident.Severity)">
+                        <span class="hp-sev @Display.SeverityClass(incident.Severity)">
                             <span class="glyph">@Display.SeverityGlyph(incident.Severity)</span>
                             @incident.Severity.ToString().ToLowerInvariant()
                         </span>
                     </td>
                     <td class="c-kind mono">@incident.Kind</td>
                     <td class="c-target mono" title="@incident.Namespace/@incident.Workload">
-                        <span class="wt-ns">@incident.Namespace</span>/@incident.Workload
+                        <span class="hp-ns">@incident.Namespace</span>/@incident.Workload
                     </td>
                     @* An anchor as well as the row handler: the row is a convenience for a
                        mouse, the link is what a keyboard and a middle-click need. *@
@@ -123,19 +123,19 @@ else
                     <td class="c-diag">
                         @if (incident.HasDiagnosis)
                         {
-                            <span class="wt-yes"><span class="glyph">+</span> yes</span>
+                            <span class="hp-yes"><span class="glyph">+</span> yes</span>
                         }
                         else if (incident.InvestigationCount > 0)
                         {
                             @* Investigated but concluded nothing. A different fact from never
                                having tried, and the one worth looking at. *@
-                            <span class="wt-partial" title="@incident.InvestigationCount investigation(s), no surviving finding">
+                            <span class="hp-partial" title="@incident.InvestigationCount investigation(s), no surviving finding">
                                 <span class="glyph">~</span> none
                             </span>
                         }
                         else
                         {
-                            <span class="wt-no"><span class="glyph">-</span> not run</span>
+                            <span class="hp-no"><span class="glyph">-</span> not run</span>
                         }
                     </td>
                     <td class="c-time mono" title="@Display.Timestamp(incident.OpenedAt)">@Display.Timestamp(incident.OpenedAt)</td>

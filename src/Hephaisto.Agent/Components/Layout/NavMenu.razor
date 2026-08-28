@@ -1,16 +1,16 @@
 @inject IncidentQueries Queries
 @implements IDisposable
 
-<nav class="wt-nav">
-    <div class="wt-brand">
-        <span class="wt-brand-name">hephaisto</span>
+<nav class="hp-nav">
+    <div class="hp-brand">
+        <span class="hp-brand-name">hephaisto</span>
         @* The mode belongs in the chrome, not on one page. Every screen here is read in the
            context of what the agent is currently permitted to do, and "observe" is the
            reason the plan section shows an empty execution column. *@
-        <span class="wt-mode @ModeClass" title="@ModeTitle">@ModeText</span>
+        <span class="hp-mode @ModeClass" title="@ModeTitle">@ModeText</span>
     </div>
 
-    <ul class="wt-navlinks">
+    <ul class="hp-navlinks">
         <li>
             <NavLink href="" Match="NavLinkMatch.All">incidents</NavLink>
         </li>
@@ -24,7 +24,7 @@
 
     @if (_status is { WatchdogStale: true })
     {
-        <div class="wt-nav-alarm" title="The AgentWatchdog alert has stopped arriving. Something between Prometheus and this pod is broken.">
+        <div class="hp-nav-alarm" title="The AgentWatchdog alert has stopped arriving. Something between Prometheus and this pod is broken.">
             <span class="glyph">!!</span> alert path
         </div>
     }

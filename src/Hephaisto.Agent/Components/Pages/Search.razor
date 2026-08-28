@@ -6,13 +6,13 @@
 
 <h1>search incident history</h1>
 
-<p class="wt-muted">
+<p class="hp-muted">
     Digests, not raw logs. Evidence blobs expire at 30 days while a digest is kept
     indefinitely, so this reaches back further than anything it was written from — and a
     digest has to stand on its own for exactly that reason.
 </p>
 
-<div class="wt-searchbar">
+<div class="hp-searchbar">
     <input type="search" placeholder="CrashLoopBackOff on payments-api after 1.24.3"
            @bind="_query" @bind:event="oninput" @onkeydown="OnKeyDown" autocomplete="off" />
     <label>
@@ -26,7 +26,7 @@
 {
     @* Said out loud rather than hidden. A reader who does not know the vector arm is off
        will read a thin result set as "this never happened before". *@
-    <p class="wt-note">
+    <p class="hp-note">
         <span class="glyph">i</span>
         Lexical arm only — no embedding generator is wired up yet, so paraphrases
         ("pods keep dying after the deploy") will not match. Exact identifiers still will,
@@ -36,63 +36,63 @@
 
 @if (_error is not null)
 {
-    <p class="wt-error"><span class="glyph">!!</span> @_error</p>
+    <p class="hp-error"><span class="glyph">!!</span> @_error</p>
 }
 
 @if (_searching)
 {
-    <p class="wt-muted">searching…</p>
+    <p class="hp-muted">searching…</p>
 }
 else if (_ran && _hits.Count == 0)
 {
-    <p class="wt-empty">Nothing matched. Only incidents that produced a digest are indexed.</p>
+    <p class="hp-empty">Nothing matched. Only incidents that produced a digest are indexed.</p>
 }
 else if (_hits.Count > 0)
 {
-    <p class="wt-muted mono">@_hits.Count hits</p>
+    <p class="hp-muted mono">@_hits.Count hits</p>
 
-    <ol class="wt-hits">
+    <ol class="hp-hits">
         @foreach (var hit in _hits)
         {
             <li @key="hit.DigestId">
                 <header>
-                    <a href="incidents/@hit.IncidentId" class="wt-hit-target mono">
+                    <a href="incidents/@hit.IncidentId" class="hp-hit-target mono">
                         @hit.Namespace/@hit.WorkloadKey
                     </a>
-                    <span class="wt-chip mono">@hit.Kind</span>
+                    <span class="hp-chip mono">@hit.Kind</span>
                     @if (hit.Resolved)
                     {
-                        <span class="wt-yes"><span class="glyph">+</span> resolved</span>
+                        <span class="hp-yes"><span class="glyph">+</span> resolved</span>
                     }
                     else
                     {
-                        <span class="wt-no"><span class="glyph">-</span> unresolved</span>
+                        <span class="hp-no"><span class="glyph">-</span> unresolved</span>
                     }
-                    <span class="wt-muted mono">@Display.Timestamp(hit.CreatedAt)</span>
+                    <span class="hp-muted mono">@Display.Timestamp(hit.CreatedAt)</span>
                 </header>
 
-                <p class="wt-digest">@hit.Digest</p>
+                <p class="hp-digest">@hit.Digest</p>
 
                 @* Why it matched, not just that it did. The fused score is a rank-fusion
                    number that is comparable inside this result set and meaningless outside
                    it, so the ranks are shown next to it - "the lexical arm put this third"
                    is a statement a human can actually check. *@
-                <footer class="wt-why mono">
+                <footer class="hp-why mono">
                     score @hit.Score.ToString("F4", CultureInfo.InvariantCulture)
                     ·
                     @if (hit.LexicalRank is { } lexical)
                     {
-                        <span class="wt-chip chip-lexical" title="Rank in the full-text arm — matched literal terms">
+                        <span class="hp-chip chip-lexical" title="Rank in the full-text arm — matched literal terms">
                             lexical #@lexical
                         </span>
                     }
                     else
                     {
-                        <span class="wt-muted">no lexical match</span>
+                        <span class="hp-muted">no lexical match</span>
                     }
                     @if (hit.SemanticRank is { } semantic)
                     {
-                        <span class="wt-chip chip-semantic" title="Rank in the vector arm — matched meaning">
+                        <span class="hp-chip chip-semantic" title="Rank in the vector arm — matched meaning">
                             semantic #@semantic
                         </span>
                     }

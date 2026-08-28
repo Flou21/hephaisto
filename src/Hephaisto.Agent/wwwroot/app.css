@@ -135,39 +135,39 @@ h4 {
     min-width: 1ch;
 }
 
-.wt-muted {
+.hp-muted {
     color: var(--fg-dim);
 }
 
-.wt-error {
+.hp-error {
     color: var(--red);
 }
 
-.wt-alarm {
+.hp-alarm {
     color: var(--red);
     font-weight: 600;
 }
 
-.wt-warn {
+.hp-warn {
     color: var(--yellow);
 }
 
 /* ---------------------------------------------------------------- shell */
 
-.wt-shell {
+.hp-shell {
     display: flex;
     flex-direction: column;
     min-height: 100vh;
 }
 
-.wt-main {
+.hp-main {
     /* 1200px is the floor the tables are laid out for; wider is better and the trace does
        not benefit from being narrower than its content. */
     min-width: 0;
     padding: 1rem 1.25rem 4rem;
 }
 
-.wt-nav {
+.hp-nav {
     display: flex;
     align-items: center;
     gap: 1.5rem;
@@ -179,19 +179,19 @@ h4 {
     z-index: 20;
 }
 
-.wt-brand {
+.hp-brand {
     display: flex;
     align-items: baseline;
     gap: 0.6rem;
 }
 
-.wt-brand-name {
+.hp-brand-name {
     font-family: var(--mono);
     font-weight: 700;
     letter-spacing: 0.04em;
 }
 
-.wt-mode {
+.hp-mode {
     font-family: var(--mono);
     font-size: 0.8rem;
     padding: 0.05rem 0.45rem;
@@ -209,7 +209,7 @@ h4 {
     font-weight: 700;
 }
 
-.wt-navlinks {
+.hp-navlinks {
     display: flex;
     gap: 1rem;
     list-style: none;
@@ -217,24 +217,24 @@ h4 {
     padding: 0;
 }
 
-.wt-navlinks a {
+.hp-navlinks a {
     color: var(--fg-dim);
     font-family: var(--mono);
     padding: 0.15rem 0;
     border-bottom: 2px solid transparent;
 }
 
-.wt-navlinks a:hover {
+.hp-navlinks a:hover {
     color: var(--fg);
     text-decoration: none;
 }
 
-.wt-navlinks a.active {
+.hp-navlinks a.active {
     color: var(--fg);
     border-bottom-color: var(--accent);
 }
 
-.wt-nav-alarm {
+.hp-nav-alarm {
     margin-left: auto;
     color: var(--red);
     font-family: var(--mono);
@@ -243,13 +243,13 @@ h4 {
 
 /* ---------------------------------------------------------------- tables */
 
-.wt-table {
+.hp-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 0.85rem;
 }
 
-.wt-table th {
+.hp-table th {
     text-align: left;
     font-weight: 600;
     font-size: 0.72rem;
@@ -261,17 +261,17 @@ h4 {
     white-space: nowrap;
 }
 
-.wt-table td {
+.hp-table td {
     padding: 0.28rem 0.5rem;
     border-bottom: 1px solid var(--border);
     vertical-align: top;
 }
 
-.wt-table tbody tr:hover {
+.hp-table tbody tr:hover {
     background: var(--bg-hover);
 }
 
-.wt-row {
+.hp-row {
     cursor: pointer;
 }
 
@@ -284,28 +284,28 @@ h4 {
     width: 30%;
 }
 
-.wt-ns {
+.hp-ns {
     color: var(--fg-dim);
 }
 
-.wt-msg {
+.hp-msg {
     max-width: 42rem;
 }
 
-.wt-sub {
+.hp-sub {
     display: block;
     font-size: 0.72rem;
     color: var(--fg-faint);
     font-family: var(--mono);
 }
 
-.wt-count {
+.hp-count {
     color: var(--fg-faint);
     font-family: var(--mono);
     font-weight: 400;
 }
 
-.wt-empty {
+.hp-empty {
     color: var(--fg-dim);
     background: var(--bg-sunken);
     border: 1px dashed var(--border);
@@ -313,7 +313,7 @@ h4 {
     padding: 0.6rem 0.8rem;
 }
 
-.wt-note {
+.hp-note {
     color: var(--fg-dim);
     background: var(--bg-raised);
     border-left: 3px solid var(--cyan);
@@ -326,10 +326,10 @@ h4 {
    tempted to drop the glyph to save a character of width, don't: the entire point is that
    these read correctly on a monitor that renders these colours as three shades of grey. */
 
-.wt-state,
-.wt-sev,
-.wt-risk,
-.wt-decision {
+.hp-state,
+.hp-sev,
+.hp-risk,
+.hp-decision {
     font-family: var(--mono);
     font-size: 0.8rem;
     white-space: nowrap;
@@ -359,11 +359,11 @@ h4 {
 .dec-approval { color: var(--yellow); }
 .dec-deny { color: var(--red); }
 
-.wt-yes { color: var(--green); font-family: var(--mono); font-size: 0.8rem; }
-.wt-no { color: var(--fg-faint); font-family: var(--mono); font-size: 0.8rem; }
-.wt-partial { color: var(--yellow); font-family: var(--mono); font-size: 0.8rem; }
+.hp-yes { color: var(--green); font-family: var(--mono); font-size: 0.8rem; }
+.hp-no { color: var(--fg-faint); font-family: var(--mono); font-size: 0.8rem; }
+.hp-partial { color: var(--yellow); font-family: var(--mono); font-size: 0.8rem; }
 
-.wt-chip {
+.hp-chip {
     display: inline-block;
     font-size: 0.72rem;
     padding: 0.05rem 0.4rem;
@@ -389,7 +389,7 @@ h4 {
 
 /* ---------------------------------------------------------------- filters */
 
-.wt-filters {
+.hp-filters {
     display: flex;
     align-items: center;
     gap: 1rem;
@@ -401,7 +401,7 @@ h4 {
     border-radius: 4px;
 }
 
-.wt-filters label {
+.hp-filters label {
     display: flex;
     align-items: center;
     gap: 0.4rem;
@@ -411,7 +411,7 @@ h4 {
     color: var(--fg-dim);
 }
 
-.wt-filter-status {
+.hp-filter-status {
     margin-left: auto;
     display: flex;
     gap: 0.8rem;
@@ -462,11 +462,11 @@ button:disabled {
 
 /* ---------------------------------------------------------------- detail header */
 
-.wt-detail-header {
+.hp-detail-header {
     margin-bottom: 1.25rem;
 }
 
-.wt-badges {
+.hp-badges {
     display: flex;
     gap: 0.6rem;
     align-items: center;
@@ -474,27 +474,27 @@ button:disabled {
     margin-bottom: 0.6rem;
 }
 
-.wt-kv {
+.hp-kv {
     display: grid;
     grid-template-columns: max-content 1fr;
     gap: 0.1rem 0.9rem;
     margin: 0 0 0.6rem;
 }
 
-.wt-kv dt {
+.hp-kv dt {
     color: var(--fg-dim);
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
 
-.wt-kv dd {
+.hp-kv dd {
     margin: 0;
     min-width: 0;
     overflow-wrap: anywhere;
 }
 
-.wt-callout {
+.hp-callout {
     border-left: 3px solid var(--border-strong);
     background: var(--bg-raised);
     padding: 0.5rem 0.8rem;
@@ -508,19 +508,19 @@ button:disabled {
 .callout-resolved { border-left-color: var(--green); }
 .callout-error { border-left-color: var(--red); color: var(--red); }
 
-.wt-section {
+.hp-section {
     margin-bottom: 1.75rem;
 }
 
 /* ---------------------------------------------------------------- timeline */
 
-.wt-timeline {
+.hp-timeline {
     list-style: none;
     margin: 0.4rem 0 0;
     padding: 0;
 }
 
-.wt-timeline li {
+.hp-timeline li {
     display: grid;
     grid-template-columns: 12rem 16rem 1fr;
     gap: 0.6rem;
@@ -534,7 +534,7 @@ button:disabled {
    is more than two: a reader deciding whether to trust this agent with write access is
    reading this list, and every collapsed layer is a chance to give up. */
 
-.wt-investigation {
+.hp-investigation {
     border: 1px solid var(--border);
     border-radius: 4px;
     padding: 0.7rem 0.9rem;
@@ -542,7 +542,7 @@ button:disabled {
     background: var(--bg-raised);
 }
 
-.wt-inv-header {
+.hp-inv-header {
     display: flex;
     gap: 0.8rem;
     align-items: center;
@@ -551,14 +551,14 @@ button:disabled {
     border-bottom: 1px solid var(--border);
 }
 
-.wt-steps {
+.hp-steps {
     list-style: none;
     margin: 0;
     padding: 0;
     counter-reset: none;
 }
 
-.wt-step {
+.hp-step {
     border: 1px solid var(--border);
     border-left: 3px solid var(--border-strong);
     border-radius: 3px;
@@ -566,11 +566,11 @@ button:disabled {
     background: var(--bg-sunken);
 }
 
-.wt-step.step-failed {
+.hp-step.step-failed {
     border-left-color: var(--red);
 }
 
-.wt-step > summary {
+.hp-step > summary {
     display: flex;
     align-items: baseline;
     gap: 0.7rem;
@@ -580,17 +580,17 @@ button:disabled {
     flex-wrap: wrap;
 }
 
-.wt-step > summary:hover {
+.hp-step > summary:hover {
     background: var(--bg-hover);
 }
 
-.wt-ordinal {
+.hp-ordinal {
     color: var(--fg-faint);
     min-width: 2.2ch;
     text-align: right;
 }
 
-.wt-step-kind {
+.hp-step-kind {
     font-family: var(--mono);
     font-size: 0.7rem;
     text-transform: uppercase;
@@ -603,15 +603,15 @@ button:disabled {
 .kind-tool { color: var(--cyan); }
 .kind-llm { color: var(--purple); }
 
-.wt-step-name {
+.hp-step-name {
     font-weight: 600;
 }
 
-.wt-server {
+.hp-server {
     color: var(--fg-faint);
 }
 
-.wt-step-metrics {
+.hp-step-metrics {
     margin-left: auto;
     color: var(--fg-dim);
     font-size: 0.78rem;
@@ -620,25 +620,25 @@ button:disabled {
 
 /* Truncation is never quietly styled away: a digest that dropped most of its input and one
    that did not are different evidence. */
-.wt-truncated {
+.hp-truncated {
     color: var(--orange);
     font-family: var(--mono);
     font-size: 0.75rem;
 }
 
-.wt-failed {
+.hp-failed {
     color: var(--red);
     font-family: var(--mono);
     font-size: 0.75rem;
     font-weight: 600;
 }
 
-.wt-step-body {
+.hp-step-body {
     padding: 0.3rem 0.7rem 0.6rem 0.7rem;
     border-top: 1px solid var(--border);
 }
 
-.wt-code {
+.hp-code {
     font-family: var(--mono);
     font-size: 0.78rem;
     line-height: 1.4;
@@ -653,13 +653,13 @@ button:disabled {
     overflow-wrap: anywhere;
 }
 
-.wt-raw-code {
+.hp-raw-code {
     max-height: 32rem;
 }
 
-.wt-raw > summary,
-.wt-labels > summary,
-.wt-transitions > summary,
+.hp-raw > summary,
+.hp-labels > summary,
+.hp-transitions > summary,
 details > summary {
     cursor: pointer;
     color: var(--fg-dim);
@@ -669,11 +669,11 @@ details > summary {
 
 /* The landing animation for a citation click. Two seconds is long enough to find the row
    with your eyes and short enough not to still be pulsing when you start reading it. */
-.wt-flash {
-    animation: wt-flash 2s ease-out;
+.hp-flash {
+    animation: hp-flash 2s ease-out;
 }
 
-@keyframes wt-flash {
+@keyframes hp-flash {
     0%, 40% {
         background: color-mix(in srgb, var(--accent) 22%, transparent);
         border-left-color: var(--accent);
@@ -684,7 +684,7 @@ details > summary {
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .wt-flash {
+    .hp-flash {
         animation: none;
         outline: 2px solid var(--accent);
     }
@@ -692,7 +692,7 @@ details > summary {
 
 /* ---------------------------------------------------------------- findings */
 
-.wt-finding {
+.hp-finding {
     border: 1px solid var(--border);
     border-radius: 3px;
     padding: 0.5rem 0.7rem;
@@ -700,31 +700,31 @@ details > summary {
     background: var(--bg-sunken);
 }
 
-.wt-finding.finding-primary {
+.hp-finding.finding-primary {
     border-color: var(--purple);
 }
 
-.wt-finding header {
+.hp-finding header {
     display: flex;
     gap: 0.6rem;
     align-items: center;
     flex-wrap: wrap;
 }
 
-.wt-hypothesis {
+.hp-hypothesis {
     margin: 0.35rem 0 0.5rem;
 }
 
 /* A bar and a number, never a badge reading "high". A word invents a calibration nobody
    measured; 0.71 next to a bar lets the reader apply their own. */
-.wt-conf {
+.hp-conf {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
     margin-left: auto;
 }
 
-.wt-conf-track {
+.hp-conf-track {
     display: inline-block;
     width: 7rem;
     height: 0.5rem;
@@ -734,19 +734,19 @@ details > summary {
     overflow: hidden;
 }
 
-.wt-conf-fill {
+.hp-conf-fill {
     display: block;
     height: 100%;
     background: var(--purple);
 }
 
-.wt-evidence {
+.hp-evidence {
     list-style: none;
     margin: 0;
     padding: 0;
 }
 
-.wt-evidence > li {
+.hp-evidence > li {
     border-left: 2px solid var(--border-strong);
     padding: 0.2rem 0 0.2rem 0.6rem;
     margin-bottom: 0.35rem;
@@ -754,7 +754,7 @@ details > summary {
 
 /* The citation link. Deliberately loud: following it is how a reader checks the grounding
    invariant themselves instead of taking the finding on trust. */
-.wt-cite {
+.hp-cite {
     font-family: var(--mono);
     font-size: 0.75rem;
     padding: 0 0.35rem;
@@ -763,14 +763,14 @@ details > summary {
     background: transparent;
 }
 
-.wt-cite-broken {
+.hp-cite-broken {
     color: var(--red);
     border: 1px solid var(--red);
     border-radius: 3px;
     display: inline-block;
 }
 
-.wt-excerpt {
+.hp-excerpt {
     margin: 0.2rem 0 0.1rem;
     padding: 0.25rem 0.5rem;
     background: var(--bg);
@@ -781,13 +781,13 @@ details > summary {
     overflow-wrap: anywhere;
 }
 
-.wt-source {
+.hp-source {
     font-size: 0.72rem;
 }
 
 /* ---------------------------------------------------------------- plan */
 
-.wt-plan-banner {
+.hp-plan-banner {
     display: flex;
     gap: 0.5rem;
     flex-wrap: wrap;
@@ -801,34 +801,34 @@ details > summary {
     color: var(--yellow);
 }
 
-.wt-plan-banner .wt-muted {
+.hp-plan-banner .hp-muted {
     flex-basis: 100%;
 }
 
-.wt-plan-summary {
+.hp-plan-summary {
     margin: 0.3rem 0 0.6rem;
 }
 
-.wt-reasons {
+.hp-reasons {
     margin: 0.2rem 0 0.2rem 0.9rem;
     padding: 0;
     font-size: 0.78rem;
     color: var(--fg-dim);
 }
 
-.wt-exec {
+.hp-exec {
     font-size: 0.72rem;
 }
 
 /* ---------------------------------------------------------------- feedback */
 
-.wt-feedback-list {
+.hp-feedback-list {
     list-style: none;
     margin: 0 0 0.8rem;
     padding: 0;
 }
 
-.wt-feedback-list > li {
+.hp-feedback-list > li {
     display: flex;
     gap: 0.6rem;
     align-items: center;
@@ -837,13 +837,13 @@ details > summary {
     border-bottom: 1px solid var(--border);
 }
 
-.wt-comment {
+.hp-comment {
     flex-basis: 100%;
     margin: 0.15rem 0 0;
     color: var(--fg-dim);
 }
 
-.wt-feedback-form {
+.hp-feedback-form {
     border: 1px solid var(--border);
     border-radius: 4px;
     padding: 0.7rem 0.9rem;
@@ -851,7 +851,7 @@ details > summary {
     max-width: 42rem;
 }
 
-.wt-field {
+.hp-field {
     display: flex;
     align-items: center;
     gap: 0.6rem;
@@ -859,7 +859,7 @@ details > summary {
     margin-bottom: 0.55rem;
 }
 
-.wt-label {
+.hp-label {
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -867,31 +867,31 @@ details > summary {
     min-width: 11rem;
 }
 
-.wt-req {
+.hp-req {
     color: var(--orange);
     text-transform: none;
     letter-spacing: 0;
 }
 
-.wt-thumb.on {
+.hp-thumb.on {
     border-color: var(--accent);
     color: var(--accent);
     font-weight: 600;
 }
 
-.wt-feedback-form textarea,
-.wt-feedback-form input[type="text"] {
+.hp-feedback-form textarea,
+.hp-feedback-form input[type="text"] {
     flex: 1 1 18rem;
     font-family: var(--sans);
 }
 
-.wt-submit {
+.hp-submit {
     font-weight: 600;
 }
 
 /* ---------------------------------------------------------------- search */
 
-.wt-searchbar {
+.hp-searchbar {
     display: flex;
     gap: 0.8rem;
     align-items: center;
@@ -899,18 +899,18 @@ details > summary {
     margin-bottom: 0.8rem;
 }
 
-.wt-searchbar input[type="search"] {
+.hp-searchbar input[type="search"] {
     flex: 1 1 30rem;
     padding: 0.3rem 0.5rem;
 }
 
-.wt-hits {
+.hp-hits {
     list-style: none;
     margin: 0;
     padding: 0;
 }
 
-.wt-hits > li {
+.hp-hits > li {
     border: 1px solid var(--border);
     border-radius: 3px;
     padding: 0.5rem 0.7rem;
@@ -918,19 +918,19 @@ details > summary {
     background: var(--bg-raised);
 }
 
-.wt-hits header {
+.hp-hits header {
     display: flex;
     gap: 0.6rem;
     align-items: center;
     flex-wrap: wrap;
 }
 
-.wt-digest {
+.hp-digest {
     margin: 0.35rem 0;
     white-space: pre-wrap;
 }
 
-.wt-why {
+.hp-why {
     display: flex;
     gap: 0.5rem;
     align-items: center;
@@ -941,14 +941,14 @@ details > summary {
 
 /* ---------------------------------------------------------------- status */
 
-.wt-status-grid {
+.hp-status-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
     gap: 0.7rem;
     margin-bottom: 0.7rem;
 }
 
-.wt-stat {
+.hp-stat {
     display: flex;
     flex-direction: column;
     gap: 0.1rem;
@@ -958,37 +958,37 @@ details > summary {
     background: var(--bg-raised);
 }
 
-.wt-stat-label {
+.hp-stat-label {
     font-size: 0.72rem;
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--fg-dim);
 }
 
-.wt-stat-value {
+.hp-stat-value {
     font-size: 1.25rem;
     font-weight: 600;
 }
 
-.wt-meter {
+.hp-meter {
     margin-bottom: 0.7rem;
     max-width: 46rem;
 }
 
-.wt-meter-head {
+.hp-meter-head {
     display: flex;
     gap: 0.6rem;
     align-items: baseline;
     margin-bottom: 0.2rem;
 }
 
-.wt-meter-label {
+.hp-meter-label {
     font-size: 0.78rem;
     color: var(--fg-dim);
     min-width: 11rem;
 }
 
-.wt-meter-track {
+.hp-meter-track {
     position: relative;
     height: 0.7rem;
     background: var(--bg-sunken);
@@ -997,7 +997,7 @@ details > summary {
     overflow: hidden;
 }
 
-.wt-meter-fill {
+.hp-meter-fill {
     height: 100%;
 }
 
@@ -1005,13 +1005,13 @@ details > summary {
 .meter-warn { color: var(--yellow); }
 .meter-exhausted { color: var(--red); }
 
-.wt-meter-fill.meter-ok { background: var(--green); }
-.wt-meter-fill.meter-warn { background: var(--yellow); }
-.wt-meter-fill.meter-exhausted { background: var(--red); }
+.hp-meter-fill.meter-ok { background: var(--green); }
+.hp-meter-fill.meter-warn { background: var(--yellow); }
+.hp-meter-fill.meter-exhausted { background: var(--red); }
 
 /* Thresholds are drawn on the track, not implied by the fill colour: "68%" says nothing
    without knowing that warning starts at 80. */
-.wt-meter-mark {
+.hp-meter-mark {
     position: absolute;
     top: 0;
     bottom: 0;
@@ -1055,16 +1055,16 @@ details > summary {
 
 /* The kill-switch arm list on /status. Collapsed by default because three healthy arms
    saying the same thing is noise; expanded it answers "which one do I change". */
-.wt-arms {
+.hp-arms {
   margin-top: 0.75rem;
 }
 
-.wt-arms summary {
+.hp-arms summary {
   cursor: pointer;
   font-size: 0.85rem;
 }
 
-.wt-arms ul {
+.hp-arms ul {
   margin: 0.5rem 0 0;
   padding-left: 1.25rem;
   font-size: 0.85rem;

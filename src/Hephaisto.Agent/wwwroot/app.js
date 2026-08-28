@@ -41,10 +41,10 @@ window.hephaisto = {
 
         // Re-triggered by removing and re-adding, so clicking the same citation twice
         // flashes twice instead of doing nothing the second time.
-        el.classList.remove('wt-flash');
+        el.classList.remove('hp-flash');
         void el.offsetWidth;
-        el.classList.add('wt-flash');
+        el.classList.add('hp-flash');
 
-        window.setTimeout(() => el.classList.remove('wt-flash'), 2000);
+        window.setTimeout(() => el.classList.remove('hp-flash'), 2000);
     },
 };

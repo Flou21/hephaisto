@@ -9,7 +9,7 @@
 @if (_incident is null)
 {
     <h1>incident</h1>
-    <p class="wt-muted">@(_loading ? "loading…" : "No incident with this id.")</p>
+    <p class="hp-muted">@(_loading ? "loading…" : "No incident with this id.")</p>
 }
 else
 {
@@ -18,25 +18,25 @@ else
     @* ---------------------------------------------------------------
        1. Header
        --------------------------------------------------------------- *@
-    <header class="wt-detail-header">
+    <header class="hp-detail-header">
         <h1>@incident.Title</h1>
 
-        <div class="wt-badges">
-            <span class="wt-state @Display.StateClass(incident.State)">
+        <div class="hp-badges">
+            <span class="hp-state @Display.StateClass(incident.State)">
                 <span class="glyph">@Display.StateGlyph(incident.State)</span>
                 @incident.State.ToString().ToLowerInvariant()
             </span>
-            <span class="wt-sev @Display.SeverityClass(incident.Severity)">
+            <span class="hp-sev @Display.SeverityClass(incident.Severity)">
                 <span class="glyph">@Display.SeverityGlyph(incident.Severity)</span>
                 @incident.Severity.ToString().ToLowerInvariant()
             </span>
-            <span class="wt-chip mono">@incident.Kind</span>
-            <span class="wt-chip mono" title="Agent mode when this incident opened">
+            <span class="hp-chip mono">@incident.Kind</span>
+            <span class="hp-chip mono" title="Agent mode when this incident opened">
                 mode@@open: @incident.ModeAtOpen.ToString().ToLowerInvariant()
             </span>
         </div>
 
-        <dl class="wt-kv">
+        <dl class="hp-kv">
             <dt>target</dt>
             <dd class="mono">@incident.Target.Namespace/@incident.Target.Kind/@incident.Target.Name</dd>
 
@@ -57,7 +57,7 @@ else
                 @Display.Duration(incident.DurationAt(_now))
                 @if (incident.ResolvedAt is null)
                 {
-                    <span class="wt-muted"> (running)</span>
+                    <span class="hp-muted"> (running)</span>
                 }
             </dd>
 
@@ -70,35 +70,35 @@ else
 
         @if (incident.EscalationReason != EscalationReason.None)
         {
-            <div class="wt-callout callout-escalated">
+            <div class="hp-callout callout-escalated">
                 <span class="glyph">^</span>
                 <strong>escalated</strong>: @incident.EscalationReason
-                <span class="wt-muted">— a human was asked to take this, and the agent stopped.</span>
+                <span class="hp-muted">— a human was asked to take this, and the agent stopped.</span>
             </div>
         }
 
         @if (incident.SuppressionReason != SuppressionReason.None)
         {
-            <div class="wt-callout callout-suppressed">
+            <div class="hp-callout callout-suppressed">
                 <span class="glyph">-</span>
                 <strong>suppressed</strong>: @incident.SuppressionReason
-                <span class="wt-muted">— recorded but deliberately not investigated.</span>
+                <span class="hp-muted">— recorded but deliberately not investigated.</span>
             </div>
         }
 
         @if (incident.QuarantinedUntil is { } until && until > _now)
         {
-            <div class="wt-callout callout-quarantine">
+            <div class="hp-callout callout-quarantine">
                 <span class="glyph">!!</span>
                 <strong>quarantined</strong> until @Display.Timestamp(until)
-                <span class="wt-muted">— the oscillation detector saw this workload flip back and
+                <span class="hp-muted">— the oscillation detector saw this workload flip back and
                 forth; no action may be taken on it and incidents escalate straight to a human.</span>
             </div>
         }
 
         @if (incident.Resolution is { Length: > 0 })
         {
-            <div class="wt-callout callout-resolved">
+            <div class="hp-callout callout-resolved">
                 <span class="glyph">+</span> @incident.Resolution
             </div>
         }
@@ -107,16 +107,16 @@ else
     @* ---------------------------------------------------------------
        2. Signal timeline
        --------------------------------------------------------------- *@
-    <section class="wt-section">
-        <h2>signals <span class="wt-count">@incident.Signals.Count</span></h2>
+    <section class="hp-section">
+        <h2>signals <span class="hp-count">@incident.Signals.Count</span></h2>
 
         @if (incident.Signals.Count == 0)
         {
-            <p class="wt-empty">No signals attached. An incident without one should be impossible.</p>
+            <p class="hp-empty">No signals attached. An incident without one should be impossible.</p>
         }
         else
         {
-            <table class="wt-table">
+            <table class="hp-table">
                 <thead>
                     <tr>
                         <th>source</th>
@@ -136,21 +136,21 @@ else
                             <td class="mono">@signal.Source</td>
                             <td class="mono">@signal.Kind</td>
                             <td>
-                                <span class="wt-sev @Display.SeverityClass(signal.Severity)">
+                                <span class="hp-sev @Display.SeverityClass(signal.Severity)">
                                     <span class="glyph">@Display.SeverityGlyph(signal.Severity)</span>
                                     @signal.Severity.ToString().ToLowerInvariant()
                                 </span>
                             </td>
                             <td class="mono">@signal.Reason</td>
-                            <td class="wt-msg">
+                            <td class="hp-msg">
                                 @* Untrusted text straight from the cluster. Razor escapes it;
                                    never render a signal message as markup. *@
                                 @signal.Message
                                 @if (signal.Labels.Count > 0)
                                 {
-                                    <details class="wt-labels">
+                                    <details class="hp-labels">
                                         <summary>@signal.Labels.Count labels</summary>
-                                        <dl class="wt-kv mono">
+                                        <dl class="hp-kv mono">
                                             @foreach (var (key, value) in signal.Labels.OrderBy(l => l.Key, StringComparer.Ordinal))
                                             {
                                                 <dt>@key</dt>
@@ -171,13 +171,13 @@ else
 
         @if (incident.Transitions.Count > 0)
         {
-            <details class="wt-transitions">
+            <details class="hp-transitions">
                 <summary>state transitions (@incident.Transitions.Count)</summary>
-                <ol class="wt-timeline">
+                <ol class="hp-timeline">
                     @foreach (var t in incident.Transitions)
                     {
                         <li @key="t.Id">
-                            <span class="mono wt-muted">@Display.Timestamp(t.At)</span>
+                            <span class="mono hp-muted">@Display.Timestamp(t.At)</span>
                             <span class="mono">@(t.From?.ToString() ?? "—") → @t.To</span>
                             <span>@t.Reason</span>
                         </li>
@@ -195,12 +195,12 @@ else
        back, and what it was told. Deciding whether to ever give this thing write access is
        a judgement made from this list.
        --------------------------------------------------------------- *@
-    <section class="wt-section">
-        <h2>investigations <span class="wt-count">@incident.Investigations.Count</span></h2>
+    <section class="hp-section">
+        <h2>investigations <span class="hp-count">@incident.Investigations.Count</span></h2>
 
         @if (incident.Investigations.Count == 0)
         {
-            <p class="wt-empty">
+            <p class="hp-empty">
                 Never investigated.
                 @if (incident.EscalationReason == EscalationReason.BudgetExhausted)
                 {
@@ -211,18 +211,18 @@ else
 
         @foreach (var inv in incident.Investigations)
         {
-            <article class="wt-investigation" @key="inv.Id">
-                <header class="wt-inv-header">
+            <article class="hp-investigation" @key="inv.Id">
+                <header class="hp-inv-header">
                     <span class="mono">@inv.ModelId</span>
-                    <span class="wt-chip mono" title="Why the loop stopped. Concluded is the only clean exit.">
+                    <span class="hp-chip mono" title="Why the loop stopped. Concluded is the only clean exit.">
                         @inv.TerminationReason
                     </span>
-                    <span class="wt-muted mono">
+                    <span class="hp-muted mono">
                         @inv.StepsUsed steps · @inv.ToolCallsUsed tool calls ·
                         @Display.Tokens(inv.InputTokens + inv.OutputTokens) tokens ·
                         @Display.Usd(inv.CostUsd)
                     </span>
-                    <span class="wt-muted mono">
+                    <span class="hp-muted mono">
                         @Display.Timestamp(inv.StartedAt)
                         @if (inv.CompletedAt is { } done)
                         {
@@ -233,7 +233,7 @@ else
                     {
                         @* Text, not a link: the Grafana base URL is deployment configuration
                            and this layer has no business inventing one. *@
-                        <span class="wt-muted mono" title="Trace id of the hephaisto.investigation span — paste into Tempo">
+                        <span class="hp-muted mono" title="Trace id of the hephaisto.investigation span — paste into Tempo">
                             trace @inv.TraceId
                         </span>
                     }
@@ -241,27 +241,27 @@ else
 
                 @if (inv.Error is { Length: > 0 })
                 {
-                    <div class="wt-callout callout-error"><span class="glyph">!!</span> @inv.Error</div>
+                    <div class="hp-callout callout-error"><span class="glyph">!!</span> @inv.Error</div>
                 }
 
                 @* --- steps --- *@
                 <h3>trace</h3>
-                <ol class="wt-steps">
+                <ol class="hp-steps">
                     @foreach (var step in inv.Steps)
                     {
                         <li @key="step.Id">
-                            <details id="@StepAnchor(step.Id)" class="wt-step @(step.Failed ? "step-failed" : "")">
+                            <details id="@StepAnchor(step.Id)" class="hp-step @(step.Failed ? "step-failed" : "")">
                                 <summary>
-                                    <span class="wt-ordinal mono">@step.Ordinal</span>
-                                    <span class="wt-step-kind @(step.Kind == StepKind.ToolCall ? "kind-tool" : "kind-llm")">
+                                    <span class="hp-ordinal mono">@step.Ordinal</span>
+                                    <span class="hp-step-kind @(step.Kind == StepKind.ToolCall ? "kind-tool" : "kind-llm")">
                                         @(step.Kind == StepKind.ToolCall ? "tool" : "llm")
                                     </span>
-                                    <span class="wt-step-name mono">@step.Label</span>
+                                    <span class="hp-step-name mono">@step.Label</span>
                                     @if (step.ToolServer is { Length: > 0 })
                                     {
-                                        <span class="wt-server mono" title="Which server answered">@step.ToolServer</span>
+                                        <span class="hp-server mono" title="Which server answered">@step.ToolServer</span>
                                     }
-                                    <span class="wt-step-metrics mono">
+                                    <span class="hp-step-metrics mono">
                                         @Display.Millis(step.DurationMs)
                                         @if (step.InputTokens + step.OutputTokens > 0)
                                         {
@@ -281,50 +281,50 @@ else
                                         @* Never hidden. A digest that dropped most of its input
                                            and a digest that did not are different evidence, and a
                                            reader who cannot tell them apart is being misled. *@
-                                        <span class="wt-truncated" title="The model was shown a shortened result; the rest is in the raw blob">
+                                        <span class="hp-truncated" title="The model was shown a shortened result; the rest is in the raw blob">
                                             <span class="glyph">~</span> truncated
                                         </span>
                                     }
                                     @if (step.Failed)
                                     {
-                                        <span class="wt-failed"><span class="glyph">x</span> failed</span>
+                                        <span class="hp-failed"><span class="glyph">x</span> failed</span>
                                     }
                                 </summary>
 
-                                <div class="wt-step-body">
+                                <div class="hp-step-body">
                                     @if (step.Error is { Length: > 0 })
                                     {
-                                        <div class="wt-callout callout-error"><span class="glyph">x</span> @step.Error</div>
+                                        <div class="hp-callout callout-error"><span class="glyph">x</span> @step.Error</div>
                                     }
 
                                     @if (step.Arguments is { Length: > 0 })
                                     {
                                         <h4>arguments</h4>
-                                        <pre class="wt-code">@step.Arguments</pre>
+                                        <pre class="hp-code">@step.Arguments</pre>
                                     }
 
                                     <h4>
                                         result digest
-                                        <span class="wt-muted">— what the model actually saw</span>
+                                        <span class="hp-muted">— what the model actually saw</span>
                                     </h4>
                                     @if (string.IsNullOrEmpty(step.ResultDigest))
                                     {
-                                        <p class="wt-empty">Empty. The model was shown nothing by this step.</p>
+                                        <p class="hp-empty">Empty. The model was shown nothing by this step.</p>
                                     }
                                     else
                                     {
-                                        <pre class="wt-code">@step.ResultDigest</pre>
+                                        <pre class="hp-code">@step.ResultDigest</pre>
                                     }
 
                                     @if (step.RawBlobId is { } blobId)
                                     {
-                                        <details class="wt-raw" @onclick="() => LoadBlobAsync(blobId)">
-                                            <summary>raw result <span class="mono wt-muted">@blobId</span></summary>
+                                        <details class="hp-raw" @onclick="() => LoadBlobAsync(blobId)">
+                                            <summary>raw result <span class="mono hp-muted">@blobId</span></summary>
                                             @if (_blobs.TryGetValue(blobId, out var blob))
                                             {
                                                 @if (blob is null)
                                                 {
-                                                    <p class="wt-empty">
+                                                    <p class="hp-empty">
                                                         <span class="glyph">.</span>
                                                         Expired. Evidence blobs are kept 30 days; the digest above is
                                                         retained and is what grounding was checked against.
@@ -332,7 +332,7 @@ else
                                                 }
                                                 else
                                                 {
-                                                    <p class="wt-muted mono">
+                                                    <p class="hp-muted mono">
                                                         @Display.Bytes(blob.TotalBytes) · @blob.ContentType ·
                                                         expires @Display.Timestamp(blob.ExpiresAt)
                                                         @if (blob.Clipped)
@@ -341,12 +341,12 @@ else
                                                             <a href="/api/evidence-blobs/@blobId">full blob</a></text>
                                                         }
                                                     </p>
-                                                    <pre class="wt-code wt-raw-code">@blob.Content</pre>
+                                                    <pre class="hp-code hp-raw-code">@blob.Content</pre>
                                                 }
                                             }
                                             else
                                             {
-                                                <p class="wt-muted">loading…</p>
+                                                <p class="hp-muted">loading…</p>
                                             }
                                         </details>
                                     }
@@ -357,11 +357,11 @@ else
                 </ol>
 
                 @* --- findings --- *@
-                <h3>findings <span class="wt-count">@inv.Findings.Count</span></h3>
+                <h3>findings <span class="hp-count">@inv.Findings.Count</span></h3>
 
                 @if (inv.Findings.Count == 0)
                 {
-                    <p class="wt-empty">
+                    <p class="hp-empty">
                         No surviving findings. A finding whose evidence failed the grounding check is
                         dropped rather than shown as fact, so this can mean the model concluded nothing
                         <em>or</em> that everything it claimed failed verification.
@@ -371,35 +371,35 @@ else
                 {
                     @foreach (var finding in inv.Findings)
                     {
-                        <article class="wt-finding @(finding.IsPrimary ? "finding-primary" : "")" @key="finding.Id">
+                        <article class="hp-finding @(finding.IsPrimary ? "finding-primary" : "")" @key="finding.Id">
                             <header>
                                 @if (finding.IsPrimary)
                                 {
-                                    <span class="wt-chip chip-primary" title="The hypothesis the plan is built on">primary</span>
+                                    <span class="hp-chip chip-primary" title="The hypothesis the plan is built on">primary</span>
                                 }
-                                <span class="wt-chip mono">@finding.Category</span>
+                                <span class="hp-chip mono">@finding.Category</span>
 
                                 @* A bar and the number, never a word. "high confidence" invents a
                                    calibration nobody measured; 0.71 next to a bar lets a reader
                                    apply their own, and lets a wrong-but-confident finding look
                                    exactly as confident as it claimed to be. *@
-                                <span class="wt-conf" title="Model's own estimate. Advisory, uncalibrated — not a measured probability.">
-                                    <span class="wt-conf-track">
-                                        <span class="wt-conf-fill" style="width:@Width(finding.Confidence)"></span>
+                                <span class="hp-conf" title="Model's own estimate. Advisory, uncalibrated — not a measured probability.">
+                                    <span class="hp-conf-track">
+                                        <span class="hp-conf-fill" style="width:@Width(finding.Confidence)"></span>
                                     </span>
                                     <span class="mono">@finding.Confidence.ToString("F2")</span>
                                 </span>
                             </header>
 
-                            <p class="wt-hypothesis">@finding.Hypothesis</p>
+                            <p class="hp-hypothesis">@finding.Hypothesis</p>
 
                             @if (finding.Evidence.Count == 0)
                             {
-                                <p class="wt-empty">No evidence. This finding cites nothing and should not have survived.</p>
+                                <p class="hp-empty">No evidence. This finding cites nothing and should not have survived.</p>
                             }
                             else
                             {
-                                <ul class="wt-evidence">
+                                <ul class="hp-evidence">
                                     @foreach (var ev in finding.Evidence)
                                     {
                                         <li @key="ev.Id">
@@ -409,22 +409,22 @@ else
                                                taking the claim on trust. It is the whole point. *@
                                             @if (ev.StepOrdinal is { } ordinal)
                                             {
-                                                <button type="button" class="wt-cite" @onclick="() => GoToStepAsync(ev.StepId)"
+                                                <button type="button" class="hp-cite" @onclick="() => GoToStepAsync(ev.StepId)"
                                                         title="Jump to the step this quotes">
                                                     step @ordinal
                                                 </button>
                                             }
                                             else
                                             {
-                                                <span class="wt-cite wt-cite-broken"
+                                                <span class="hp-cite hp-cite-broken"
                                                       title="This evidence names a step that is not in this investigation. The grounding verifier should have dropped it.">
                                                     <span class="glyph">!!</span> broken citation
                                                 </span>
                                             }
-                                            <blockquote class="wt-excerpt mono">@ev.Excerpt</blockquote>
+                                            <blockquote class="hp-excerpt mono">@ev.Excerpt</blockquote>
                                             @if (ev.SourceUri is { Length: > 0 })
                                             {
-                                                <span class="wt-muted mono wt-source">@ev.SourceUri</span>
+                                                <span class="hp-muted mono hp-source">@ev.SourceUri</span>
                                             }
                                         </li>
                                     }
@@ -438,16 +438,16 @@ else
                 <h3>plan</h3>
                 @if (inv.Plan is null)
                 {
-                    <p class="wt-empty">No plan was produced.</p>
+                    <p class="hp-empty">No plan was produced.</p>
                 }
                 else
                 {
                     var plan = inv.Plan;
 
-                    <div class="wt-plan-banner">
+                    <div class="hp-plan-banner">
                         <span class="glyph">!</span>
                         <strong>Would have done this — observe mode, nothing was executed.</strong>
-                        <span class="wt-muted">
+                        <span class="hp-muted">
                             The planning model holds no tools and emits JSON against a schema; execution
                             is separate C# over a closed action vocabulary. Everything below is inert
                             data that the policy engine judged.
@@ -456,12 +456,12 @@ else
 
                     @if (plan.Summary is { Length: > 0 })
                     {
-                        <p class="wt-plan-summary">@plan.Summary</p>
+                        <p class="hp-plan-summary">@plan.Summary</p>
                     }
 
                     @if (plan.NoActionRequired)
                     {
-                        <p class="wt-empty">
+                        <p class="hp-empty">
                             <span class="glyph">+</span>
                             <strong>No action required.</strong> The model concluded this incident wants a
                             diagnosis rather than a change — which is the right answer for most of them.
@@ -469,14 +469,14 @@ else
                     }
                     else if (plan.Actions.Count == 0)
                     {
-                        <p class="wt-empty">
+                        <p class="hp-empty">
                             The plan proposes no actions but did not say none were required. That gap is
                             itself worth reporting.
                         </p>
                     }
                     else
                     {
-                        <table class="wt-table wt-plan">
+                        <table class="hp-table hp-plan">
                             <thead>
                                 <tr>
                                     <th>action</th>
@@ -495,12 +495,12 @@ else
                                             @action.Type
                                             @if (action.Arguments is { Length: > 0 })
                                             {
-                                                <details><summary>args</summary><pre class="wt-code">@action.Arguments</pre></details>
+                                                <details><summary>args</summary><pre class="hp-code">@action.Arguments</pre></details>
                                             }
                                         </td>
                                         <td class="mono">@action.Target.Namespace/@action.Target.Kind/@action.Target.Name</td>
                                         <td>
-                                            <span class="wt-risk @Display.RiskClass(action.Risk)">
+                                            <span class="hp-risk @Display.RiskClass(action.Risk)">
                                                 @action.Risk.ToString().ToLowerInvariant()
                                             </span>
                                         </td>
@@ -508,33 +508,33 @@ else
                                         <td>
                                             @if (action.RollbackSpec is { Length: > 0 })
                                             {
-                                                <details><summary>spec</summary><pre class="wt-code">@action.RollbackSpec</pre></details>
+                                                <details><summary>spec</summary><pre class="hp-code">@action.RollbackSpec</pre></details>
                                             }
                                             else
                                             {
                                                 @* Not cosmetic: an action with no rollback spec can never be
                                                    auto-executed, because a failed verification would have no
                                                    recourse. *@
-                                                <span class="wt-no" title="No rollback spec — this action could never be auto-executed">
+                                                <span class="hp-no" title="No rollback spec — this action could never be auto-executed">
                                                     <span class="glyph">x</span> none
                                                 </span>
                                             }
                                         </td>
                                         <td>
-                                            <span class="wt-decision @Display.DecisionClass(action.Decision)">
+                                            <span class="hp-decision @Display.DecisionClass(action.Decision)">
                                                 <span class="glyph">@Display.DecisionGlyph(action.Decision)</span>
                                                 @action.Decision.ToString().ToLowerInvariant()
                                             </span>
                                             @if (action.DecisionReasons.Count > 0)
                                             {
-                                                <ul class="wt-reasons">
+                                                <ul class="hp-reasons">
                                                     @foreach (var reason in action.DecisionReasons)
                                                     {
                                                         <li>@reason</li>
                                                     }
                                                 </ul>
                                             }
-                                            <div class="wt-muted mono wt-exec">
+                                            <div class="hp-muted mono hp-exec">
                                                 state @action.State
                                                 @if (action.ExecutedAt is { } at)
                                                 {
@@ -559,55 +559,55 @@ else
     @* ---------------------------------------------------------------
        6. Feedback
        --------------------------------------------------------------- *@
-    <section class="wt-section" id="feedback">
+    <section class="hp-section" id="feedback">
         <h2>feedback</h2>
 
-        <p class="wt-muted">
+        <p class="hp-muted">
             The only honest quality number here. Every other figure on this page — confidence,
             termination reason, predicted effect — is the agent assessing itself.
         </p>
 
         @if (incident.Feedback.Count > 0)
         {
-            <ul class="wt-feedback-list">
+            <ul class="hp-feedback-list">
                 @foreach (var f in incident.Feedback)
                 {
                     <li @key="f.Id">
-                        <span class="@(f.Helpful ? "wt-yes" : "wt-no")">
+                        <span class="@(f.Helpful ? "hp-yes" : "hp-no")">
                             <span class="glyph">@(f.Helpful ? "+" : "-")</span>
                             @(f.Helpful ? "helpful" : "not helpful")
                         </span>
                         @if (f.FalsePositive)
                         {
-                            <span class="wt-chip chip-fp"><span class="glyph">!</span> false positive</span>
+                            <span class="hp-chip chip-fp"><span class="glyph">!</span> false positive</span>
                         }
                         @if (f.RootCauseCorrect is { } rc)
                         {
-                            <span class="wt-chip">root cause @(rc ? "correct" : "wrong")</span>
+                            <span class="hp-chip">root cause @(rc ? "correct" : "wrong")</span>
                         }
-                        <span class="mono wt-muted">@f.SubmittedBy · @Display.Timestamp(f.At)</span>
+                        <span class="mono hp-muted">@f.SubmittedBy · @Display.Timestamp(f.At)</span>
                         @if (f.Comment is { Length: > 0 })
                         {
-                            <p class="wt-comment">@f.Comment</p>
+                            <p class="hp-comment">@f.Comment</p>
                         }
                     </li>
                 }
             </ul>
         }
 
-        <div class="wt-feedback-form">
-            <div class="wt-field wt-thumbs">
-                <span class="wt-label">was this useful?</span>
-                <button type="button" class="wt-thumb @(_helpful == true ? "on" : "")" @onclick="() => _helpful = true">
+        <div class="hp-feedback-form">
+            <div class="hp-field hp-thumbs">
+                <span class="hp-label">was this useful?</span>
+                <button type="button" class="hp-thumb @(_helpful == true ? "on" : "")" @onclick="() => _helpful = true">
                     <span class="glyph">+</span> yes
                 </button>
-                <button type="button" class="wt-thumb @(_helpful == false ? "on" : "")" @onclick="() => _helpful = false">
+                <button type="button" class="hp-thumb @(_helpful == false ? "on" : "")" @onclick="() => _helpful = false">
                     <span class="glyph">-</span> no
                 </button>
             </div>
 
-            <div class="wt-field">
-                <span class="wt-label">was the root cause correct?</span>
+            <div class="hp-field">
+                <span class="hp-label">was the root cause correct?</span>
                 <select @bind="_rootCause">
                     <option value="">no opinion</option>
                     <option value="yes">yes</option>
@@ -615,43 +615,43 @@ else
                 </select>
             </div>
 
-            <div class="wt-field">
+            <div class="hp-field">
                 <label>
                     <input type="checkbox" @bind="_falsePositive" />
                     this incident should never have opened
                 </label>
             </div>
 
-            <div class="wt-field">
-                <label class="wt-label" for="fb-comment">comment</label>
+            <div class="hp-field">
+                <label class="hp-label" for="fb-comment">comment</label>
                 <textarea id="fb-comment" rows="3" @bind="_comment"
                           placeholder="What did it get right or wrong?"></textarea>
             </div>
 
-            <div class="wt-field">
+            <div class="hp-field">
                 @* Required, and remembered in localStorage so nobody retypes it forty times.
                    ATTRIBUTION, NOT AUTHENTICATION: nothing verifies this string, and on a
                    single-operator tailnet cluster that is an accepted trade. The schema is
                    already OIDC-shaped, so the upgrade fills the same column from a verified
                    claim. If this ever runs where more than one person is on call, that
                    upgrade stops being a roadmap item. *@
-                <label class="wt-label" for="fb-name">your name <span class="wt-req">required</span></label>
+                <label class="hp-label" for="fb-name">your name <span class="hp-req">required</span></label>
                 <input id="fb-name" type="text" @bind="_submittedBy" @bind:event="oninput"
                        placeholder="who is saying this" autocomplete="off" />
-                <span class="wt-muted">Attribution, not authentication — nothing checks this.</span>
+                <span class="hp-muted">Attribution, not authentication — nothing checks this.</span>
             </div>
 
-            <div class="wt-field">
-                <button type="button" class="wt-submit" disabled="@(!CanSubmit)" @onclick="SubmitAsync">
+            <div class="hp-field">
+                <button type="button" class="hp-submit" disabled="@(!CanSubmit)" @onclick="SubmitAsync">
                     submit
                 </button>
                 @if (_feedbackError is not null)
                 {
-                    <span class="wt-error"><span class="glyph">!!</span> @_feedbackError</span>
+                    <span class="hp-error"><span class="glyph">!!</span> @_feedbackError</span>
                 }
                 @if (_feedbackSaved)
                 {
-                    <span class="wt-yes"><span class="glyph">+</span> recorded</span>
+                    <span class="hp-yes"><span class="glyph">+</span> recorded</span>
                 }
             </div>
         </div>

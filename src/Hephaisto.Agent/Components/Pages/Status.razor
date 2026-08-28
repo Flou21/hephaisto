@@ -8,42 +8,42 @@
 
 @if (_status is null)
 {
-    <p class="wt-muted">@(_error ?? "loading…")</p>
+    <p class="hp-muted">@(_error ?? "loading…")</p>
 }
 else
 {
     var s = _status;
 
-    <p class="wt-muted mono">as of @Display.Timestamp(s.Now)</p>
+    <p class="hp-muted mono">as of @Display.Timestamp(s.Now)</p>
 
     @if (_error is not null)
     {
-        <p class="wt-error"><span class="glyph">!!</span> last refresh failed: @_error — showing the previous reading.</p>
+        <p class="hp-error"><span class="glyph">!!</span> last refresh failed: @_error — showing the previous reading.</p>
     }
 
-    <section class="wt-section">
+    <section class="hp-section">
         <h2>mode</h2>
 
-        <div class="wt-status-grid">
-            <div class="wt-stat">
-                <span class="wt-stat-label">configured</span>
-                <span class="wt-stat-value mono">@s.Mode.ToString().ToLowerInvariant()</span>
-                <span class="wt-muted">
+        <div class="hp-status-grid">
+            <div class="hp-stat">
+                <span class="hp-stat-label">configured</span>
+                <span class="hp-stat-value mono">@s.Mode.ToString().ToLowerInvariant()</span>
+                <span class="hp-muted">
                     by @(s.ModeChangedBy ?? "—") at @Display.Timestamp(s.ModeChangedAt)
                 </span>
             </div>
 
-            <div class="wt-stat">
+            <div class="hp-stat">
                 @* The distinction the kill switch turns on. Configured mode is what a human
                    last asked for in the database; effective mode is the most restrictive of
                    the env var, the switch ConfigMap and that row. A status page showing only
                    one of them would be wrong in exactly the case that matters — someone has
                    hit the ConfigMap and the row has not caught up. *@
-                <span class="wt-stat-label">effective</span>
-                <span class="wt-stat-value mono @(s.EffectiveMode < s.Mode ? "wt-alarm" : "")">
+                <span class="hp-stat-label">effective</span>
+                <span class="hp-stat-value mono @(s.EffectiveMode < s.Mode ? "hp-alarm" : "")">
                     @s.EffectiveMode.ToString().ToLowerInvariant()
                 </span>
-                <span class="wt-muted">
+                <span class="hp-muted">
                     @(s.EffectiveMode == s.Mode
                         ? "matches configuration"
                         : $"held back by {s.ModeDecidedBy}")
@@ -56,8 +56,8 @@ else
             @* Every arm, always — not just when they disagree. "Which of the three do I
                change to stop this thing" is the question asked under pressure, and it must
                be answerable by looking rather than by remembering. *@
-            <details class="wt-arms">
-                <summary class="wt-muted">
+            <details class="hp-arms">
+                <summary class="hp-muted">
                     kill switch: @s.ModeArms.Count arms, bound by <span class="mono">@s.ModeDecidedBy</span>
                 </summary>
                 <ul class="mono">
@@ -71,10 +71,10 @@ else
 
         @if (s.ModeConstrained)
         {
-            <div class="wt-callout callout-escalated">
+            <div class="hp-callout callout-escalated">
                 <span class="glyph">!!</span>
                 <strong>an arm is holding the agent back</strong>
-                <div class="wt-muted">
+                <div class="hp-muted">
                     Something asked for a more permissive mode than <span class="mono">@s.EffectiveMode.ToString().ToLowerInvariant()</span>
                     and <span class="mono">@s.ModeDecidedBy</span> refused it. The most restrictive arm always
                     wins, so raising the others changes nothing until this one is raised.
@@ -84,7 +84,7 @@ else
 
         @if (s.RunawayLatched)
         {
-            <div class="wt-callout callout-escalated">
+            <div class="hp-callout callout-escalated">
                 <span class="glyph">!!</span>
                 <strong>runaway backstop latched</strong>
                 @if (s.LatchedAt is { } latchedAt)
@@ -92,7 +92,7 @@ else
                     <span class="mono"> at @Display.Timestamp(latchedAt)</span>
                 }
                 <div>@s.LatchReason</div>
-                <div class="wt-muted">
+                <div class="hp-muted">
                     Every individual budget did its job — the spend stopped each hour — and it
                     kept happening anyway. A human must re-arm; an agent that could reset this
                     itself would have a delay, not a backstop.
@@ -102,7 +102,7 @@ else
 
         @if (s.EffectiveMode == AgentMode.Observe && !s.RunawayLatched)
         {
-            <p class="wt-note">
+            <p class="hp-note">
                 <span class="glyph">i</span>
                 Observe: the agent detects, investigates, diagnoses and annotates. It never
                 changes anything. Plans on the incident pages were produced and judged but
@@ -111,27 +111,27 @@ else
         }
     </section>
 
-    <section class="wt-section">
+    <section class="hp-section">
         <h2>incidents</h2>
 
-        <div class="wt-status-grid">
-            <div class="wt-stat">
-                <span class="wt-stat-label">open</span>
-                <span class="wt-stat-value mono">@s.OpenIncidents</span>
-                <span class="wt-muted"><a href="">see the list</a></span>
+        <div class="hp-status-grid">
+            <div class="hp-stat">
+                <span class="hp-stat-label">open</span>
+                <span class="hp-stat-value mono">@s.OpenIncidents</span>
+                <span class="hp-muted"><a href="">see the list</a></span>
             </div>
-            <div class="wt-stat">
-                <span class="wt-stat-label">escalated</span>
-                <span class="wt-stat-value mono @(s.EscalatedIncidents > 0 ? "wt-alarm" : "")">@s.EscalatedIncidents</span>
-                <span class="wt-muted">handed to a human</span>
+            <div class="hp-stat">
+                <span class="hp-stat-label">escalated</span>
+                <span class="hp-stat-value mono @(s.EscalatedIncidents > 0 ? "hp-alarm" : "")">@s.EscalatedIncidents</span>
+                <span class="hp-muted">handed to a human</span>
             </div>
         </div>
     </section>
 
-    <section class="wt-section">
+    <section class="hp-section">
         <h2>llm budget</h2>
 
-        <p class="wt-muted">
+        <p class="hp-muted">
             Counted in Postgres, not in memory: the loop that burns a budget is usually the
             thing that killed the pod, so an in-memory counter would hand the restart a clean
             slate. At 100% the agent stops starting new investigations and keeps everything
@@ -143,20 +143,20 @@ else
         @BudgetMeter("cost · today", s.DailyCostUtilization, s.WarnAtUtilization)
     </section>
 
-    <section class="wt-section">
+    <section class="hp-section">
         <h2>alert path</h2>
 
-        <p class="wt-muted">
+        <p class="hp-muted">
             The <span class="mono">AgentWatchdog</span> alert fires permanently by design, so it
             carries no information about the cluster — the information is that it keeps
             arriving. If it stops, something between Prometheus and this pod is broken, and
             every one of those failures is otherwise silent from in here.
         </p>
 
-        <div class="wt-status-grid">
-            <div class="wt-stat">
-                <span class="wt-stat-label">last seen</span>
-                <span class="wt-stat-value mono @(s.WatchdogStale ? "wt-alarm" : "")">
+        <div class="hp-status-grid">
+            <div class="hp-stat">
+                <span class="hp-stat-label">last seen</span>
+                <span class="hp-stat-value mono @(s.WatchdogStale ? "hp-alarm" : "")">
                     @if (s.WatchdogLastSeenAt is { } seen)
                     {
                         <text>@Display.Duration(s.Now - seen) ago</text>
@@ -166,21 +166,21 @@ else
                         <text>never</text>
                     }
                 </span>
-                <span class="wt-muted mono">
+                <span class="hp-muted mono">
                     @(s.WatchdogLastSeenAt is { } lastSeen ? Display.Timestamp(lastSeen) : "no delivery since this pod started")
                 </span>
             </div>
 
-            <div class="wt-stat">
-                <span class="wt-stat-label">deliveries</span>
-                <span class="wt-stat-value mono">@s.WatchdogReceipts</span>
-                <span class="wt-muted">since process start</span>
+            <div class="hp-stat">
+                <span class="hp-stat-label">deliveries</span>
+                <span class="hp-stat-value mono">@s.WatchdogReceipts</span>
+                <span class="hp-muted">since process start</span>
             </div>
         </div>
 
         @if (s.WatchdogStale)
         {
-            <div class="wt-callout callout-escalated">
+            <div class="hp-callout callout-escalated">
                 <span class="glyph">!!</span>
                 <strong>My alert path is broken.</strong>
                 The watchdog has not arrived for longer than @Display.Duration(WatchdogMonitor.StaleAfter).
@@ -251,24 +251,24 @@ else
     /// sitting at 140% is a different fact from one sitting at 100%, and clamping the bar
     /// while printing the true number is how the two stop being distinguishable at a glance.
     /// </remarks>
-    private RenderFragment BudgetMeter(string label, double utilization, double warnAt) => @<div class="wt-meter">
-        <div class="wt-meter-head">
-            <span class="wt-meter-label">@label</span>
+    private RenderFragment BudgetMeter(string label, double utilization, double warnAt) => @<div class="hp-meter">
+        <div class="hp-meter-head">
+            <span class="hp-meter-label">@label</span>
             <span class="mono @MeterClass(utilization, warnAt)">@Display.Percent(utilization)</span>
             @if (utilization >= 1)
             {
-                <span class="wt-alarm"><span class="glyph">!!</span> exhausted — no new investigations</span>
+                <span class="hp-alarm"><span class="glyph">!!</span> exhausted — no new investigations</span>
             }
             else if (utilization >= warnAt)
             {
-                <span class="wt-warn"><span class="glyph">!</span> over the warn threshold</span>
+                <span class="hp-warn"><span class="glyph">!</span> over the warn threshold</span>
             }
         </div>
-        <div class="wt-meter-track">
-            <div class="wt-meter-fill @MeterClass(utilization, warnAt)" style="width:@Bar(utilization)"></div>
-            <div class="wt-meter-mark mark-warn" style="left:@Bar(warnAt)"
+        <div class="hp-meter-track">
+            <div class="hp-meter-fill @MeterClass(utilization, warnAt)" style="width:@Bar(utilization)"></div>
+            <div class="hp-meter-mark mark-warn" style="left:@Bar(warnAt)"
                  title="@Display.Percent(warnAt) — warn threshold"></div>
-            <div class="wt-meter-mark mark-max" style="left:100%"
+            <div class="hp-meter-mark mark-max" style="left:100%"
                  title="100% — new investigations stop here"></div>
         </div>
     </div>;
