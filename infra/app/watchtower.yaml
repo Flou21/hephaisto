@@ -357,14 +357,28 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 256Mi
+              memory: 512Mi
             limits:
               # No CPU limit deliberately. CFS throttling on a latency-sensitive process
               # produces stalls that look exactly like the dependency slowness the agent is
               # supposed to be diagnosing -- and there is no contention for CPU on a
               # 14-vCPU node with 31% utilisation. Memory IS limited, because an unbounded
               # leak here would take the node down.
-              memory: 1Gi
+              #
+              # 3Gi, not the 1Gi this started at, for the same reason readOnlyRootFilesystem
+              # is false below: the DEV image's entrypoint is `dotnet watch`, so this
+              # container is running the .NET SDK and Roslyn, not just the app. At 1Gi it was
+              # OOM-killed (exit 137) within about ninety seconds of every hot reload, and
+              # the restart looked like an application crash rather than a sizing mistake.
+              #
+              # The agent noticed this about ITSELF and filed an OomKilled incident against
+              # watchtower/Deployment/watchtower - correctly escalated as a self-signal
+              # rather than acted on. Nice, but not a substitute for the right limit.
+              #
+              # Drop this back toward 512Mi when this manifest points at the published
+              # image, which carries no compiler. The node has 115Gi, so the headroom costs
+              # nothing here; the limit exists to bound a leak, not to pack the node.
+              memory: 3Gi
 
           securityContext:
             allowPrivilegeEscalation: false
