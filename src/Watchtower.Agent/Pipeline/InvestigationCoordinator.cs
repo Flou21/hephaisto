@@ -100,10 +100,12 @@ public sealed class InvestigationCoordinator(
         investigation.IncidentId = incident.Id;
         incident.Investigations.Add(investigation);
 
-        // Before the blobs: they carry a foreign key to the investigation, and if the
-        // investigation is left to change detection it is never inserted, so the blob insert
-        // fails with a constraint violation naming a parent that should obviously exist.
-        db.TrackNewChildren(incident);
+        // Immediately, not later. The navigation add above is not enough - the key is
+        // already assigned, so change detection reads it as an existing row - and the
+        // evidence blobs added next carry a foreign key to it. Anything that runs
+        // DetectChanges in between would otherwise fix the investigation as Unchanged and
+        // the blob insert fails against a parent that was never written.
+        db.Investigations.Add(investigation);
 
         if (outcome.Blobs.Count > 0)
             db.EvidenceBlobs.AddRange(outcome.Blobs);
@@ -118,15 +120,20 @@ public sealed class InvestigationCoordinator(
 
         var escalation = DecideOutcome(incident, outcome, mode);
 
+        // Snapshot before the transition so the event it appends can be Added explicitly.
+        var eventsBefore = incident.Events.Count;
+
         stateMachine.Escalate(incident, escalation.Reason, escalation.Detail);
 
         await AuditAsync(incident, investigation.Id, "investigation.completed",
             $"{investigation.TerminationReason}; {escalation.Reason}", ct).ConfigureAwait(false);
 
-        // Again, because Escalate above appended a state-transition event after the first
-        // call. Cheap and idempotent - it only touches children the context is not already
-        // tracking.
-        db.TrackNewChildren(incident);
+        // The investigation and the transition event are both new children of an incident
+        // that already exists, which is the case EF Core states wrongly - it sees their
+        // assigned keys and emits UPDATEs. The blobs above carry a foreign key to the
+        // investigation, so without this the blob insert fails against a parent row that
+        // was never written.
+        incidents.TrackNewIncidentChildren(incident, eventsBefore);
 
         await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
 

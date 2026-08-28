@@ -137,12 +137,14 @@ public sealed class IncidentTriage(
         var incident = await incidents.GetAsync(incidentId, ct).ConfigureAwait(false);
         if (incident is null || !incident.IsOpen) return;
 
+        var eventsBefore = incident.Events.Count;
+
         stateMachine.Escalate(incident, reason);
         await AuditAsync(incident, "incident.escalated", reason.ToString(), ct).ConfigureAwait(false);
 
         // The incident already exists, so the transition event Escalate just appended is a
         // new child of a persisted parent - the case change detection gets wrong.
-        incidents.TrackNewChildren(incident);
+        incidents.TrackNewIncidentChildren(incident, eventsBefore);
 
         await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
     }

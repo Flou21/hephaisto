@@ -60,11 +60,11 @@ public interface IIncidentRepository
     void AddSignal(Signal signal);
 
     /// <summary>
-    /// Marks every not-yet-tracked child of an already-persisted incident as Added. Call
-    /// immediately before saving. See <c>WatchtowerDbContext.TrackNewChildren</c> for why
-    /// change detection cannot be relied on here.
+    /// Marks children created since <paramref name="fromEventIndex"/> as Added, so they
+    /// INSERT. See <c>WatchtowerDbContext.TrackNewIncidentChildren</c> for why change
+    /// detection cannot be relied on for entities with client-assigned keys.
     /// </summary>
-    void TrackNewChildren(Incident incident);
+    void TrackNewIncidentChildren(Incident incident, int fromEventIndex = 0, Investigation? newInvestigation = null);
 
     Task<int> SaveChangesAsync(CancellationToken ct);
 }
