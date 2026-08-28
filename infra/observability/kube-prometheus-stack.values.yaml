@@ -466,7 +466,16 @@ kubelet:
     # kubelet_volume_stats_* (the C6 disk-fill signal).
     cAdvisor: true
     probes: true
-    resource: true
+    # FALSE. This scrapes /metrics/resource/v1alpha1, an endpoint removed from the kubelet
+    # years ago - k3s 1.36 answers it with 404, so the target is permanently down and
+    # TargetDown fires forever against kube-system. It contributed three of the four
+    # unhealthy targets on this cluster and nothing consumes what it would have produced:
+    # the resource metrics that matter here (container_memory_working_set_bytes,
+    # kubelet_volume_stats_*) come from cAdvisor above.
+    #
+    # Left on, it also trains you to ignore TargetDown, which is the alert that tells the
+    # agent its own scrape path is broken.
+    resource: false
 
 # The chart's own bundled alert rules. Turned OFF wholesale: the rules in
 # infra/observability/alerts/ are deliberate rewrites of the same alert NAMES with much

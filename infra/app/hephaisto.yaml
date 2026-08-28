@@ -66,10 +66,6 @@ spec:
     # Prometheus scrapes here via the PodMonitor below. Separated from 8080 so the
     # NetworkPolicy and any future ingress can treat "control plane" and "telemetry"
     # differently, and so a bug in the webhook handler cannot take metrics down with it.
-    - name: metrics
-      port: 9464
-      targetPort: metrics
-      protocol: TCP
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -189,9 +185,6 @@ spec:
           ports:
             - name: http
               containerPort: 8080
-              protocol: TCP
-            - name: metrics
-              containerPort: 9464
               protocol: TCP
           env:
             # -------------------------------------------------------------------------
@@ -424,7 +417,21 @@ spec:
     matchLabels:
       app.kubernetes.io/name: hephaisto
   podMetricsEndpoints:
-    - port: metrics
+    # `http`, not a separate metrics port. MapPrometheusScrapingEndpoint() in
+    # ServiceDefaults maps /metrics onto the main ASP.NET pipeline, and ASPNETCORE_URLS
+    # binds only 8080 - so nothing has ever listened on 9464. This scrape therefore failed
+    # with `connection refused` from the day it was written, and the NetworkPolicy in
+    # rbac.yaml would have blocked it even if something had been listening, since it admits
+    # only 8080 from hephaisto-obs.
+    #
+    # It went unnoticed because the agent's metrics reach Prometheus by a SECOND path -
+    # OTLP to the collector, which remote-writes them - so the series were all present and
+    # only a permanent TargetDown for the agent itself gave it away.
+    #
+    # The original intent, a metrics port isolated from the webhook handler, is worth
+    # having; it needs the app to bind a second URL and the NetworkPolicy to admit it.
+    # Until then this points at the port that actually serves.
+    - port: http
       path: /metrics
       interval: 15s
       scrapeTimeout: 10s

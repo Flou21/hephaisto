@@ -2,6 +2,13 @@
 # ---------------------------------------------------------------------------------------
 # THE POINT: these rules contain no application-specific metric names.
 # ---------------------------------------------------------------------------------------
+# NOTE ON THE SERVICE LABEL. These group by `service`, not `service_name`. Tempo's
+# metrics-generator emits the service as `service`; grouping by `service_name` does not
+# error, it silently produces a series with the service identity ERASED - every service in
+# a namespace collapses into one bucket, so a single failing service is diluted by all the
+# healthy traffic and the alert under-fires, and `{{ $labels.service_name }}` renders empty
+# in the message. Verified against the running generator on 2026-08-28.
+#
 # Every expression below is built on `traces_spanmetrics_*`, which Tempo's metrics-generator
 # derives from the spans it receives. Nothing here depends on a service exporting a
 # request-count metric, naming its histogram a particular way, or agreeing on label names.
@@ -75,16 +82,16 @@ spec:
           # requests in the window".
           expr: |
             (
-              sum by (service_name, k8s_namespace_name) (
+              sum by (service, k8s_namespace_name) (
                 rate(traces_spanmetrics_calls_total{status_code="STATUS_CODE_ERROR"}[5m])
               )
               /
-              sum by (service_name, k8s_namespace_name) (
+              sum by (service, k8s_namespace_name) (
                 rate(traces_spanmetrics_calls_total[5m])
               )
             ) * 100 > 5
             and
-            sum by (service_name, k8s_namespace_name) (
+            sum by (service, k8s_namespace_name) (
               rate(traces_spanmetrics_calls_total[5m])
             ) > 0.05
           for: 2m
@@ -92,29 +99,29 @@ spec:
             severity: warning
             hephaisto_kind: HighErrorRate
           annotations:
-            summary: 'Service {{ $labels.service_name }} error rate is {{ $value | printf "%.1f" }}%'
+            summary: 'Service {{ $labels.service }} error rate is {{ $value | printf "%.1f" }}%'
             description: >-
-              {{ $value | printf "%.1f" }}% of spans from {{ $labels.service_name }} in
+              {{ $value | printf "%.1f" }}% of spans from {{ $labels.service }} in
               namespace {{ $labels.k8s_namespace_name }} have status STATUS_CODE_ERROR over
               the last 5 minutes (SLO: <5%). These are derived from traces, so the failing
               requests themselves are retrievable: TraceQL
-              `{ resource.service.name = "{{ $labels.service_name }}" && status = error }`
+              `{ resource.service.name = "{{ $labels.service }}" && status = error }`
               returns the exact spans this number was computed from. Start there, not with
               a log search.
 
         - alert: ServiceCriticalErrorRate
           expr: |
             (
-              sum by (service_name, k8s_namespace_name) (
+              sum by (service, k8s_namespace_name) (
                 rate(traces_spanmetrics_calls_total{status_code="STATUS_CODE_ERROR"}[5m])
               )
               /
-              sum by (service_name, k8s_namespace_name) (
+              sum by (service, k8s_namespace_name) (
                 rate(traces_spanmetrics_calls_total[5m])
               )
             ) * 100 > 25
             and
-            sum by (service_name, k8s_namespace_name) (
+            sum by (service, k8s_namespace_name) (
               rate(traces_spanmetrics_calls_total[5m])
             ) > 0.05
           for: 1m
@@ -122,9 +129,9 @@ spec:
             severity: critical
             hephaisto_kind: HighErrorRate
           annotations:
-            summary: 'Service {{ $labels.service_name }} error rate is {{ $value | printf "%.1f" }}% (critical)'
+            summary: 'Service {{ $labels.service }} error rate is {{ $value | printf "%.1f" }}% (critical)'
             description: >-
-              More than a quarter of all requests to {{ $labels.service_name }} are failing.
+              More than a quarter of all requests to {{ $labels.service }} are failing.
               At this rate the failure is systemic (a dependency, a config, a bad deploy),
               not a tail of unlucky requests.
 
@@ -162,31 +169,31 @@ spec:
             (
               (
                 1 - (
-                  sum by (service_name) (rate(traces_spanmetrics_latency_bucket{le="0.256"}[1h]))
+                  sum by (service) (rate(traces_spanmetrics_latency_bucket{le="0.256"}[1h]))
                   /
-                  sum by (service_name) (rate(traces_spanmetrics_latency_count[1h]))
+                  sum by (service) (rate(traces_spanmetrics_latency_count[1h]))
                 )
               ) > (14.4 * 0.05)
               and
               (
                 1 - (
-                  sum by (service_name) (rate(traces_spanmetrics_latency_bucket{le="0.256"}[5m]))
+                  sum by (service) (rate(traces_spanmetrics_latency_bucket{le="0.256"}[5m]))
                   /
-                  sum by (service_name) (rate(traces_spanmetrics_latency_count[5m]))
+                  sum by (service) (rate(traces_spanmetrics_latency_count[5m]))
                 )
               ) > (14.4 * 0.05)
             )
             and
-            sum by (service_name) (rate(traces_spanmetrics_latency_count[5m])) > 0.05
+            sum by (service) (rate(traces_spanmetrics_latency_count[5m])) > 0.05
           for: 2m
           labels:
             severity: critical
             hephaisto_kind: HighLatency
             burn_window: fast
           annotations:
-            summary: 'Service {{ $labels.service_name }} is burning its latency budget 14.4x too fast'
+            summary: 'Service {{ $labels.service }} is burning its latency budget 14.4x too fast'
             description: >-
-              {{ $value | printf "%.1f%%" }} of requests to {{ $labels.service_name }} are
+              {{ $value | printf "%.1f%%" }} of requests to {{ $labels.service }} are
               slower than the 256ms SLO threshold, sustained over an hour and still
               happening now. Every latency histogram carries exemplars, so the slowest
               actual traces are one click away in Grafana -- use those rather than guessing
@@ -200,31 +207,31 @@ spec:
             (
               (
                 1 - (
-                  sum by (service_name) (rate(traces_spanmetrics_latency_bucket{le="0.256"}[6h]))
+                  sum by (service) (rate(traces_spanmetrics_latency_bucket{le="0.256"}[6h]))
                   /
-                  sum by (service_name) (rate(traces_spanmetrics_latency_count[6h]))
+                  sum by (service) (rate(traces_spanmetrics_latency_count[6h]))
                 )
               ) > (6 * 0.05)
               and
               (
                 1 - (
-                  sum by (service_name) (rate(traces_spanmetrics_latency_bucket{le="0.256"}[30m]))
+                  sum by (service) (rate(traces_spanmetrics_latency_bucket{le="0.256"}[30m]))
                   /
-                  sum by (service_name) (rate(traces_spanmetrics_latency_count[30m]))
+                  sum by (service) (rate(traces_spanmetrics_latency_count[30m]))
                 )
               ) > (6 * 0.05)
             )
             and
-            sum by (service_name) (rate(traces_spanmetrics_latency_count[30m])) > 0.05
+            sum by (service) (rate(traces_spanmetrics_latency_count[30m])) > 0.05
           for: 5m
           labels:
             severity: warning
             hephaisto_kind: HighLatency
             burn_window: slow
           annotations:
-            summary: 'Service {{ $labels.service_name }} is burning its latency budget 6x too fast'
+            summary: 'Service {{ $labels.service }} is burning its latency budget 6x too fast'
             description: >-
-              A sustained, low-grade latency regression on {{ $labels.service_name }}:
+              A sustained, low-grade latency regression on {{ $labels.service }}:
               {{ $value | printf "%.1f%%" }} of requests over the last 6 hours exceeded
               256ms. Not an outage. Compare against a deploy or config change 6h back --
               this alert's whole value is that it surfaces slow drift, so the answer is
@@ -241,19 +248,19 @@ spec:
           expr: |
             (
               1 - (
-                sum by (service_name) (rate(traces_spanmetrics_latency_bucket{le="1.024"}[5m]))
+                sum by (service) (rate(traces_spanmetrics_latency_bucket{le="1.024"}[5m]))
                 /
-                sum by (service_name) (rate(traces_spanmetrics_latency_count[5m]))
+                sum by (service) (rate(traces_spanmetrics_latency_count[5m]))
               )
             ) > 0.5
             and
-            sum by (service_name) (rate(traces_spanmetrics_latency_count[5m])) > 0.05
+            sum by (service) (rate(traces_spanmetrics_latency_count[5m])) > 0.05
           for: 2m
           labels:
             severity: critical
             hephaisto_kind: HighLatency
           annotations:
-            summary: 'Over half of requests to {{ $labels.service_name }} take longer than 1s'
+            summary: 'Over half of requests to {{ $labels.service }} take longer than 1s'
             description: >-
               {{ $value | printf "%.0f%%" }} of requests exceed 1 second. At this magnitude
               look for a blocked dependency or a saturated resource, not a code regression.
@@ -274,7 +281,7 @@ spec:
           # needs a concrete series to assert the absence of. Add a copy per service that
           # is expected to have continuous traffic.
           expr: |
-            absent(traces_spanmetrics_calls_total{service_name="faulty-service"})
+            absent(traces_spanmetrics_calls_total{service="faulty-service"})
           for: 5m
           labels:
             severity: warning
