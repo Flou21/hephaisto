@@ -132,6 +132,15 @@ else
     pass "an empty allowlist renders no write Role at all"
 fi
 
+# The published image writes nothing to its own filesystem, so the DEFAULT must be a read-only
+# root. values-dev.yaml turns it off deliberately, because Tilt runs a dev image whose
+# entrypoint is a compiler - but that is an override, and it must never become the default.
+if grep -q 'readOnlyRootFilesystem: true' <<<"$FULL" && ! grep -q 'readOnlyRootFilesystem: false' <<<"$FULL"; then
+    pass "the root filesystem is read-only by default"
+else
+    fail "readOnlyRootFilesystem is not true by default"
+fi
+
 # CI stamps the version at package time; a real number here is a second source of truth.
 if grep -qE '^version: 0\.0\.0$' "$CHART/Chart.yaml" && grep -qE '^appVersion: "0\.0\.0"$' "$CHART/Chart.yaml"; then
     pass "Chart.yaml still reads 0.0.0 (CI stamps the real version)"

@@ -198,6 +198,20 @@ rbac:
   # friction is the feature.
   nodeRole: true
 
+securityContext:
+  # TRUE, because this chart runs the PUBLISHED image: a self-contained app that writes
+  # nothing to its own filesystem. Only /tmp is writable, via an emptyDir.
+  #
+  # The one thing that legitimately needs this false is a development image whose entrypoint
+  # is a compiler - `dotnet watch` has to write bin/, obj/, a NuGet cache and a CLI home, and
+  # with a read-only root it dies at startup with
+  #   System.IO.IOException: Read-only file system : '/app/src/.../obj'
+  # which reads like a permissions bug and is actually a design mismatch. See values-dev.yaml.
+  #
+  # Turning this off for the published image buys nothing: the boundary that actually contains
+  # this pod is RBAC.
+  readOnlyRootFilesystem: true
+
 resources:
   requests:
     cpu: 100m

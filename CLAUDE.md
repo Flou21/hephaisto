@@ -57,6 +57,28 @@ defect rather than a tradeoff — and it is how you end up shipping an agent tha
 production. Every Aspire convenience degrades instead: no OTLP endpoint means console plus
 `/metrics`, never a crash and never silence.
 
+## Tilt deploys the chart, not the manifests
+
+`tilt up` renders `charts/hephaisto` with `values-dev.yaml` and applies that. Every start is
+therefore a render test of the chart a consumer installs, and dev and prod cannot drift into
+two sources of truth. `infra/app/*.yaml` is kept as the reference for what this cluster ran
+before the chart existed; it is no longer applied.
+
+Two consequences that cost an afternoon to find:
+
+- **Moving an object between Tilt resources needs a RESTART, not a re-evaluation.** Tilt
+  re-evaluated the switch to the chart happily and reported everything ok - then garbage
+  collected the ServiceAccount, ConfigMaps and NetworkPolicies a second after applying them,
+  because the *previous* Tiltfile's `uncategorized` resource still owned them and they were no
+  longer in its set. The symptom was `serviceaccount "hephaisto" not found` on a pod that
+  could not start. Stop Tilt and `tilt up` again; never `tilt down`.
+- **`values-dev.yaml` sets `securityContext.readOnlyRootFilesystem: false` and a 3Gi limit,
+  and both are load-bearing.** Tilt runs the DEV image, whose entrypoint is `dotnet watch` - a
+  compiler. With a read-only root it dies at startup with `Read-only file system:
+  '/app/src/Hephaisto.Core/obj/Debug'`, which reads like a permissions bug and is a design
+  mismatch; at 1Gi it is OOM-killed about ninety seconds after every hot reload. The chart's
+  defaults (read-only, 1Gi) are correct for the published image and wrong for this one.
+
 ## Tilt is the inner loop, on port 10351
 
 **Run Tilt from `~/hephaisto`.** It coexists with the `~/dev` instance already running
@@ -155,7 +177,7 @@ guessing from the alertname — which for a name like `KubeContainerWaiting` yie
 and the default runbook instead of the image-pull one. Nothing about that is visible from
 either side: the YAML looks well-labelled and the classifier looks correct.
 
-`ShippedAlertRulesTests` reads the real files in `infra/observability/alerts/` and fails if
+`ShippedAlertRulesTests` reads the real files in `charts/hephaisto/files/alerts/` and fails if
 any alert declares a kind that does not parse, or classifies as `Unknown`. If you add a rule
 whose failure mode has no matching `SignalKind`, add the member **and its runbook** rather
 than inventing a label value.

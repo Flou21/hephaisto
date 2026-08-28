@@ -236,10 +236,9 @@ spec:
 
           securityContext:
             allowPrivilegeEscalation: false
-            # TRUE here, unlike the dev manifest in infra/: this chart runs the PUBLISHED
-            # image, which is a self-contained app rather than `dotnet watch`, so it needs no
-            # writable build output, NuGet cache or CLI home.
-            readOnlyRootFilesystem: true
+            # Defaults TRUE. A development image whose entrypoint is a compiler is the only
+            # thing that needs it off - see the comment in values.yaml.
+            readOnlyRootFilesystem: {{ .Values.securityContext.readOnlyRootFilesystem }}
             capabilities:
               drop: ["ALL"]
 

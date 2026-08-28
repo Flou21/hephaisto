@@ -51,9 +51,21 @@ networkPolicy:
   extraIngressCIDRs:
     - 0.0.0.0/0
 
+# FALSE only because Tilt runs the DEV image, whose entrypoint is `dotnet watch` - a compiler.
+# It has to write build output, a NuGet cache and a CLI home; with a read-only root it fails at
+# startup with `Read-only file system : '/app/src/Hephaisto.Core/obj/Debug'`, which reads like a
+# permissions bug and is actually a design mismatch. The published image needs none of this, so
+# the chart default stays true.
+securityContext:
+  readOnlyRootFilesystem: false
+
 resources:
   requests:
     cpu: 100m
     memory: 512Mi
   limits:
-    memory: 1Gi
+    # 3Gi, not the chart's 1Gi, for the same reason as above: this container is running the
+    # .NET SDK and Roslyn, not just the app. At 1Gi it is OOM-killed (exit 137) within about
+    # ninety seconds of every hot reload, and the restart looks like an application crash
+    # rather than a sizing mistake.
+    memory: 3Gi

@@ -181,29 +181,13 @@ if observability:
     # not found". Nothing logs an error, because from Grafana's point of view it was simply
     # never told about any.
     k8s_yaml('infra/observability/grafana-datasources.yaml')
-    k8s_yaml('infra/observability/dashboards/hephaisto-dashboard-configmap.yaml')  # generated from charts/hephaisto/files/dashboards/hephaisto.json
-    # The alert rules live in the chart, because they are the agent's INPUT rather than this
-    # stack's own telemetry - a Hephaisto installed without them detects nothing and reports
-    # itself healthy. Applied directly here rather than through the chart so the dev stack and
-    # a chart install cannot drift: same files, one source of truth.
-    k8s_yaml(listdir('charts/hephaisto/files/alerts', recursive = True))
+    # The alert rules and the Hephaisto dashboard are NOT applied here any more: they come
+    # from the chart, below, because they are the agent's input rather than this stack's own
+    # telemetry. Prometheus still selects them - ruleSelector matches on `release: hephaisto`
+    # with ruleNamespaceSelector: {}, so it does not care that the chart renders them into
+    # `hephaisto` rather than `hephaisto-obs`.
     k8s_resource(
-        objects = [
-            'hephaisto-kubernetes-rules:prometheusrule',
-            'hephaisto-slo-rules:prometheusrule',
-            'hephaisto-watchdog:prometheusrule',
-            'hephaisto-observability-selfcheck:prometheusrule',
-        ],
-        new_name = 'alert-rules',
-        resource_deps = ['kube-prometheus-stack'],
-        labels = ['observability'],
-    )
-
-    k8s_resource(
-        objects = [
-            'hephaisto-datasources:configmap',
-            'hephaisto-dashboard:configmap',
-        ],
+        objects = ['hephaisto-datasources:configmap'],
         new_name = 'grafana-provisioning',
         resource_deps = ['kube-prometheus-stack'],
         labels = ['observability'],
@@ -238,8 +222,6 @@ if tracing:
 # --- the agent ----------------------------------------------------------------------------
 
 if agent:
-    k8s_yaml('infra/app/postgres.yaml')
-    k8s_resource('postgres', port_forwards = [tailnet(5433, 5432)], labels = ['agent'])
 
     # disable_push=True builds straight into this node's docker daemon. tilt_config.json in
     # ~/dev learned this the hard way; here there is no registry path at all, so there is
@@ -257,13 +239,87 @@ if agent:
         ],
     )
 
-    k8s_yaml(['infra/app/rbac.yaml', 'infra/app/hephaisto.yaml'])
+    # --- the chart, not hand-applied manifests ---------------------------------------------
+    #
+    # This is the same chart a consumer installs, rendered with values-dev.yaml. Every
+    # `tilt up` is therefore a render test against a real cluster, and dev and prod stop being
+    # two sources of truth that drift. infra/app/*.yaml is kept as the reference for what this
+    # cluster ran before the chart existed; the chart is now what actually runs.
+    #
+    # helm() renders locally with no API server, which is why the chart uses explicit
+    # .Values.*.enabled booleans and never .Capabilities.APIVersions.Has - a capability check
+    # would make Tilt, `helm template` in CI, and a live install disagree with each other.
+    #
+    # Alerts and the dashboard are switched off when the observability stack is not up: they
+    # target CRDs and a Grafana sidecar that do not exist in that configuration, which is
+    # exactly where they used to sit before the chart.
+    chart_values = ['charts/hephaisto/values-dev.yaml']
+    chart_set = [] if observability else [
+        'alerts.kubernetes=false',
+        'alerts.slo=false',
+        'alerts.watchdog=false',
+        'alerts.observabilitySelfcheck=false',
+        'dashboard.enabled=false',
+    ]
+
+    k8s_yaml(helm(
+        'charts/hephaisto',
+        name = 'hephaisto',
+        namespace = 'hephaisto',
+        values = chart_values,
+        set = chart_set,
+    ))
+
+    k8s_resource(
+        'hephaisto-postgres',
+        port_forwards = [tailnet(5433, 5432)],
+        labels = ['agent'],
+    )
+
     k8s_resource(
         'hephaisto',
         port_forwards = [tailnet(8100, 8080)],
-        resource_deps = ['postgres'] + (['kube-prometheus-stack'] if observability else []),
+        resource_deps = ['hephaisto-postgres'] + (['kube-prometheus-stack'] if observability else []),
         labels = ['agent'],
     )
+
+    # The chart's cluster-scoped and loose objects, grouped so the Tilt UI shows them as one
+    # thing rather than a dozen unexplained entries.
+    k8s_resource(
+        objects = [
+            'hephaisto:serviceaccount',
+            'hephaisto-read:clusterrole',
+            'hephaisto-read:clusterrolebinding',
+            'hephaisto-node:clusterrole',
+            'hephaisto-write:role',
+            'hephaisto-write:rolebinding',
+            'hephaisto-switches:configmap',
+            'hephaisto-postgres-init:configmap',
+            'hephaisto-ingress:networkpolicy',
+            'hephaisto-postgres-ingress:networkpolicy',
+        ],
+        new_name = 'hephaisto-rbac',
+        labels = ['agent'],
+    )
+
+    if observability:
+        # These need the Prometheus Operator's CRDs to exist before they can be applied at
+        # all, and the Grafana sidecar to be running before the dashboard means anything -
+        # which is the dependency the pre-chart Tiltfile expressed by putting them inside the
+        # observability block.
+        k8s_resource(
+            objects = [
+                'hephaisto-kubernetes-rules:prometheusrule',
+                'hephaisto-slo-rules:prometheusrule',
+                'hephaisto-watchdog:prometheusrule',
+                'hephaisto-observability-selfcheck:prometheusrule',
+                'hephaisto:podmonitor',
+                'hephaisto-dashboard:configmap',
+            ],
+            new_name = 'alert-rules',
+            resource_deps = ['kube-prometheus-stack'],
+            labels = ['observability'],
+        )
 
 # --- chaos --------------------------------------------------------------------------------
 #
