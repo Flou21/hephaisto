@@ -25,13 +25,25 @@ public interface IInvestigationRecorder
     /// <summary>The investigation these steps belong to. Grounding is scoped to it.</summary>
     Guid InvestigationId { get; }
 
+    /// <summary>
+    /// Records one model turn. <paramref name="outputDigest"/> is what the model actually
+    /// produced - its reasoning, its answer, and the tools it asked for.
+    /// </summary>
+    /// <remarks>
+    /// The digest is the whole reason a turn is worth rendering. Without it a turn is four
+    /// numbers - tokens, cost, duration - and the step trace shows a row that expands to
+    /// nothing, which is what the console did until this parameter existed. A reader
+    /// following an investigation wants to know what the model was thinking between two tool
+    /// calls, and that text is already in the response being accounted.
+    /// </remarks>
     InvestigationStep RecordLlmTurn(
         string? modelId,
         long inputTokens,
         long outputTokens,
         decimal costUsd,
         long durationMs,
-        string? error);
+        string? error,
+        string? outputDigest);
 
     /// <summary>
     /// Reserves the step for a tool call and returns it, <b>before</b> the tool runs.

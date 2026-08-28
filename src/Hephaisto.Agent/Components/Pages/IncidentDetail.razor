@@ -324,7 +324,14 @@ else
                                             <pre class="hp-code">@step.Arguments</pre>
                                         }
 
-                                        <h4>result digest <span class="hp-muted">— what the model actually saw</span></h4>
+                                        @if (step.Kind == StepKind.ToolCall)
+                                        {
+                                            <h4>result digest <span class="hp-muted">— what the model actually saw</span></h4>
+                                        }
+                                        else
+                                        {
+                                            <h4>model output <span class="hp-muted">— its reasoning, and the tools it asked for</span></h4>
+                                        }
                                         @if (string.IsNullOrEmpty(step.ResultDigest))
                                         {
                                             <p class="hp-empty">Still running.</p>
@@ -452,13 +459,32 @@ else
                                         <pre class="hp-code">@step.Arguments</pre>
                                     }
 
-                                    <h4>
-                                        result digest
-                                        <span class="hp-muted">— what the model actually saw</span>
-                                    </h4>
+                                    @if (step.Kind == StepKind.ToolCall)
+                                    {
+                                        <h4>
+                                            result digest
+                                            <span class="hp-muted">— what the model actually saw</span>
+                                        </h4>
+                                    }
+                                    else
+                                    {
+                                        <h4>
+                                            model output
+                                            <span class="hp-muted">— its reasoning, and the tools it asked for</span>
+                                        </h4>
+                                    }
                                     @if (string.IsNullOrEmpty(step.ResultDigest))
                                     {
-                                        <p class="hp-empty">Empty. The model was shown nothing by this step.</p>
+                                        @if (step.Kind == StepKind.ToolCall)
+                                        {
+                                            <p class="hp-empty">Empty. The model was shown nothing by this step.</p>
+                                        }
+                                        else
+                                        {
+                                            @* Turns recorded before model output was captured, and turns that
+                                               genuinely produced neither text nor a tool call. *@
+                                            <p class="hp-empty">No output recorded for this turn.</p>
+                                        }
                                     }
                                     else
                                     {

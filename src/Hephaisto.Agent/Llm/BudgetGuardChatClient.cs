@@ -61,7 +61,7 @@ public sealed class BudgetGuardChatClient(
             // A failed call still cost wall clock and, usually, tokens the provider will
             // bill for. Recording it as a step keeps the audit trail honest about what was
             // attempted, and keeps a provider that fails slowly from being free.
-            recorder?.RecordLlmTurn(defaultModelId, 0, 0, 0m, Elapsed(start), ex.Message);
+            recorder?.RecordLlmTurn(defaultModelId, 0, 0, 0m, Elapsed(start), ex.Message, null);
             budget.RecordStep(0, 0, 0m);
             throw;
         }
@@ -93,7 +93,7 @@ public sealed class BudgetGuardChatClient(
         var cost = pricing.CostOf(modelId, input, output);
 
         budget.RecordStep(input, output, cost);
-        recorder?.RecordLlmTurn(modelId, input, output, cost, durationMs, error);
+        recorder?.RecordLlmTurn(modelId, input, output, cost, durationMs, error, DigestOf(response));
 
         var tags = new TagList
         {
@@ -111,6 +111,69 @@ public sealed class BudgetGuardChatClient(
 
         LlmInstrumentation.CostUsd.Add((double)cost, tags);
         LlmInstrumentation.InvestigationSteps.Add(1, tags);
+    }
+
+    /// <summary>How long a turn's digest may be before it is clipped.</summary>
+    /// <remarks>
+    /// Generous, because this is the only record of the model's reasoning and a truncated
+    /// chain of thought is often worse than none. It is still bounded: the digest is rendered
+    /// into a Blazor circuit and held in memory for every in-flight investigation.
+    /// </remarks>
+    private const int MaxDigestChars = 8_000;
+
+    /// <summary>
+    /// What the turn produced, as text: the model's reasoning, its prose, and which tools it
+    /// went on to ask for.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Tool arguments are deliberately not included</b>, only the tool name. The arguments
+    /// are recorded on the tool-call step itself, where <see cref="SafeToolDecorator"/> has
+    /// already redacted them. Serialising the raw <c>FunctionCallContent.Arguments</c> here
+    /// would put an unredacted copy of the same values one expander away, which quietly
+    /// undoes that redaction.
+    /// </para>
+    /// <para>
+    /// Returns null rather than an empty string when a turn genuinely produced nothing, so the
+    /// UI can distinguish "no output" from "not recorded".
+    /// </para>
+    /// </remarks>
+    internal static string? DigestOf(ChatResponse response)
+    {
+        var parts = new List<string>();
+
+        foreach (var content in response.Messages.SelectMany(m => m.Contents))
+        {
+            switch (content)
+            {
+                case TextReasoningContent { Text: { Length: > 0 } text }:
+                    parts.Add($"[reasoning]\n{text.Trim()}");
+                    break;
+
+                case TextContent { Text: { Length: > 0 } text }:
+                    parts.Add(text.Trim());
+                    break;
+
+                case FunctionCallContent call:
+                    parts.Add($"-> calls {call.Name}");
+                    break;
+
+                case ErrorContent error:
+                    parts.Add($"[error] {error.Message}");
+                    break;
+            }
+        }
+
+        if (parts.Count == 0)
+        {
+            return null;
+        }
+
+        var joined = string.Join("\n\n", parts);
+
+        return joined.Length <= MaxDigestChars
+            ? joined
+            : joined[..MaxDigestChars] + "\n\n… clipped";
     }
 
     private static long Elapsed(long start) => (long)Stopwatch.GetElapsedTime(start).TotalMilliseconds;

@@ -138,13 +138,15 @@ public sealed class InvestigationRecorder(
         long outputTokens,
         decimal costUsd,
         long durationMs,
-        string? error)
+        string? error,
+        string? outputDigest)
     {
         var step = new InvestigationStep
         {
             InvestigationId = investigationId,
             Kind = StepKind.LlmTurn,
             ToolServer = "internal",
+            ResultDigest = outputDigest,
             InputTokens = inputTokens,
             OutputTokens = outputTokens,
             CostUsd = costUsd,
