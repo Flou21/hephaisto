@@ -47,6 +47,23 @@ public sealed class InvestigationOptions
         + "change your answer, or call `conclude` with what you have - including "
         + "\"insufficient evidence\" if that is the honest answer.";
 
+    /// <summary>
+    /// Sent on the reserved final step, when the budget is gone and this is the last thing
+    /// the model will ever be asked.
+    /// </summary>
+    /// <remarks>
+    /// States plainly that no further queries are possible, because a model told merely to
+    /// "wrap up" reliably proposes one more query. It also names the honest fallback: an
+    /// investigation that ends "insufficient evidence, here is what was ruled out" is useful
+    /// to whoever picks the incident up, whereas one that ends in silence is not.
+    /// </remarks>
+    public string FinalConclusionNudge { get; set; } =
+        "Your investigation budget is now exhausted. This is your final turn and no further "
+        + "tools are available - `conclude` is the only one you can call. State your best "
+        + "conclusion from the evidence you have already gathered, citing the steps that "
+        + "support it. If the evidence does not identify a cause, say so and record what you "
+        + "ruled out; that is a useful answer and silence is not.";
+
     public string OpeningMessage { get; set; } =
         "Investigate the incident described in your instructions. Begin with the first move "
         + "your runbook specifies.";

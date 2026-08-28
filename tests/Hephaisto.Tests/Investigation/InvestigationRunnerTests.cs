@@ -202,7 +202,48 @@ public class InvestigationRunnerTests
         outcome.Investigation.TerminationReason.Should().Be(TerminationReason.StepBudgetExhausted);
         outcome.Escalation.Should().Be(EscalationReason.BudgetExhausted);
         outcome.Plan.Should().BeNull();
-        outcome.Investigation.StepsUsed.Should().Be(3);
+
+        // Three, plus the one step reserved for a conclusion. This model never concludes -
+        // it asks for the same tool forever - so the reserve is spent and the run still ends
+        // on its budget, which is the point: the reserve is a chance to answer, not a way to
+        // keep going.
+        outcome.Investigation.StepsUsed.Should().Be(4);
+    }
+
+    [Fact]
+    public async Task A_model_that_concludes_on_the_reserved_step_ends_concluded()
+    {
+        // The case the reserve exists for. Before it, a run that spent every step asking had
+        // none left to answer with: on the dev cluster every surviving investigation ended
+        // StepBudgetExhausted at exactly 12 of 12 steps and not one produced a finding.
+        var turn = 0;
+
+        var investigation = new FakeChatClient((i, _) =>
+            ++turn <= 3
+                ? FakeChatClient.CallsTool(
+                    $"c{i}", "get_pod_logs", new Dictionary<string, object?> { ["pod"] = "api" })
+                : FakeChatClient.CallsTool(
+                    $"c{i}",
+                    "conclude",
+                    new Dictionary<string, object?>
+                    {
+                        ["request"] = new Dictionary<string, object?>
+                        {
+                            ["summary"] = "The container is being OOM killed.",
+                            ["confidence"] = 0.8,
+                        },
+                    }));
+
+        var planning = new FakeChatClient((_, _) => FakeChatClient.Text(PlanJson(noAction: true)));
+
+        var llm = new LlmOptions();
+        llm.Investigation.MaxSteps = 3;
+
+        var outcome = await Runner(
+                new FakeChatClientFactory(FreePricing, investigation, planning), llm: llm)
+            .RunAsync(NewIncident(), CancellationToken.None);
+
+        outcome.Investigation.TerminationReason.Should().Be(TerminationReason.Concluded);
     }
 
     [Fact]

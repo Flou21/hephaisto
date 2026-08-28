@@ -289,45 +289,93 @@ public sealed class InvestigationRunner(
 
         var idleTurns = 0;
 
-        for (var turn = 0; turn < opts.MaxOuterTurns; turn++)
+        try
         {
-            var toolCallsBefore = recorder.ToolCallCount;
-
-            var response = await chat.GetResponseAsync(messages, chatOptions, deadline.Token)
-                .ConfigureAwait(false);
-
-            messages.AddMessages(response);
-
-            if (conclusion.Value is not null)
+            for (var turn = 0; turn < opts.MaxOuterTurns; turn++)
             {
-                return TerminationReason.Concluded;
+                var toolCallsBefore = recorder.ToolCallCount;
+
+                var response = await chat.GetResponseAsync(messages, chatOptions, deadline.Token)
+                    .ConfigureAwait(false);
+
+                messages.AddMessages(response);
+
+                if (conclusion.Value is not null)
+                {
+                    return TerminationReason.Concluded;
+                }
+
+                // Counted from the recorder rather than by scanning the response, because
+                // FunctionInvokingChatClient has already executed and folded away the tool calls
+                // by the time we see it, and what it chooses to leave in Messages is an
+                // implementation detail. The recorder saw every invocation.
+                if (recorder.ToolCallCount > toolCallsBefore)
+                {
+                    idleTurns = 0;
+                    continue;
+                }
+
+                if (++idleTurns >= llm.Investigation.MaxConsecutiveNoToolTurns)
+                {
+                    // Two turns of narration with no query and no conclusion. Nudging again
+                    // costs a full turn's tokens to re-read the whole transcript and has already
+                    // failed once.
+                    logger.LogInformation(
+                        "Investigation stalled after {Turns} turns with no tool call", idleTurns);
+
+                    return TerminationReason.Stalled;
+                }
+
+                messages.Add(new ChatMessage(ChatRole.User, opts.StallNudge));
             }
 
-            // Counted from the recorder rather than by scanning the response, because
-            // FunctionInvokingChatClient has already executed and folded away the tool calls
-            // by the time we see it, and what it chooses to leave in Messages is an
-            // implementation detail. The recorder saw every invocation.
-            if (recorder.ToolCallCount > toolCallsBefore)
-            {
-                idleTurns = 0;
-                continue;
-            }
-
-            if (++idleTurns >= llm.Investigation.MaxConsecutiveNoToolTurns)
-            {
-                // Two turns of narration with no query and no conclusion. Nudging again
-                // costs a full turn's tokens to re-read the whole transcript and has already
-                // failed once.
-                logger.LogInformation(
-                    "Investigation stalled after {Turns} turns with no tool call", idleTurns);
-
-                return TerminationReason.Stalled;
-            }
-
-            messages.Add(new ChatMessage(ChatRole.User, opts.StallNudge));
+            return TerminationReason.Stalled;
         }
+        catch (BudgetExhaustedException ex)
+            when (conclusion.Value is null && budget.TryGrantConcludingStep())
+        {
+            // The last word. Running out of budget is not a reason to throw away what was
+            // already learned - and until this existed, it was exactly that. Every run that
+            // survived the provider spent all twelve steps asking and had none left to
+            // answer with, so it returned nothing.
+            //
+            // Tools are stripped to `conclude` alone rather than merely asking nicely for a
+            // conclusion. On the reserved step the model gets one chance, and a model that
+            // answers a "please conclude" by calling one more diagnostic tool would spend it
+            // and leave the run exactly where it was.
+            logger.LogInformation(
+                "Investigation budget reached ({Reason}); spending the reserved step on a "
+                + "conclusion rather than discarding the run.",
+                ex.Reason);
 
-        return TerminationReason.Stalled;
+            messages.Add(new ChatMessage(ChatRole.User, opts.FinalConclusionNudge));
+
+            var concludeOnly = new ChatOptions
+            {
+                Tools = [.. tools.Where(t => t.Name == "conclude")],
+                ToolMode = ChatToolMode.Auto,
+                Temperature = (float)llm.Temperature,
+                MaxOutputTokens = llm.MaxOutputTokens,
+            };
+
+            try
+            {
+                await chat.GetResponseAsync(messages, concludeOnly, deadline.Token)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception finalEx)
+            {
+                // Never let the rescue attempt replace the real termination reason. The run
+                // ended because its budget ran out; that this last call also failed is a
+                // detail, and reporting it as the cause would hide the actual constraint.
+                logger.LogWarning(
+                    finalEx,
+                    "The reserved concluding step failed. Reporting the original budget "
+                    + "termination.");
+            }
+
+            return conclusion.Value is not null ? TerminationReason.Concluded : ex.Reason;
+        }
     }
 
     private async Task<List<AIFunction>> BuildToolsAsync(

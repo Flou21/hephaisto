@@ -40,6 +40,9 @@ public sealed class InvestigationBudget(InvestigationBudgetOptions options, IClo
     private readonly Lock _gate = new();
     private readonly DateTimeOffset _startedAt = clock.UtcNow;
 
+    private bool _concludingStepGranted;
+    private bool _concludingStepUsed;
+
     private int _steps;
     private int _toolCalls;
     private long _inputTokens;
@@ -88,6 +91,17 @@ public sealed class InvestigationBudget(InvestigationBudgetOptions options, IClo
     /// </remarks>
     public void EnsureCanStartStep()
     {
+        lock (_gate)
+        {
+            // The one call a run is allowed to make after its budget is gone, so that it can
+            // say what it found. See TryGrantConcludingStep.
+            if (_concludingStepGranted && !_concludingStepUsed)
+            {
+                _concludingStepUsed = true;
+                return;
+            }
+        }
+
         // The latched breach first: a tool call refused by TryConsumeToolCall records the
         // breach there and cannot throw from inside the tool, so this is where that run
         // actually stops.
@@ -145,6 +159,48 @@ public sealed class InvestigationBudget(InvestigationBudgetOptions options, IClo
 
         Breach ??= TerminationReason.ToolCallBudgetExhausted;
         return false;
+    }
+
+    /// <summary>
+    /// Reserves one final model round trip whose only purpose is to state a conclusion.
+    /// Returns false if one was already granted, or if there is no wall clock left to use it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Every other budget already reserves what a run needs in order to finish.</b> The
+    /// <c>conclude</c> tool is exempt from <see cref="TryConsumeToolCall"/> precisely so that
+    /// a run out of tool calls can still answer. The step budget had no such reserve, and a
+    /// step is what a conclusion costs - so a run that spent all of
+    /// <see cref="InvestigationBudgetOptions.MaxSteps"/> asking questions had no step left to
+    /// answer with, and returned nothing at all.
+    /// </para>
+    /// <para>
+    /// Measured on the dev cluster on 2026-08-28, once provider overloads stopped destroying
+    /// runs outright: every investigation that survived ended
+    /// <see cref="TerminationReason.StepBudgetExhausted"/> at exactly 12.0 of 12 steps, and
+    /// not one produced a finding. The agent was not failing to reach an answer; it was
+    /// reaching the end of its budget with the answer unspoken.
+    /// </para>
+    /// <para>
+    /// This grants exactly one step and never renews. The token and cost ceilings are
+    /// deliberately not consulted: they are already overshot by at most one call by design
+    /// (see <see cref="EnsureCanStartStep"/>), and one more short, tool-less call to record a
+    /// conclusion is a far better use of that overshoot than discarding the whole run. The
+    /// wall clock IS consulted, because a run past its deadline has nowhere to put the call.
+    /// </para>
+    /// </remarks>
+    public bool TryGrantConcludingStep()
+    {
+        lock (_gate)
+        {
+            if (_concludingStepGranted || clock.UtcNow >= Deadline)
+            {
+                return false;
+            }
+
+            _concludingStepGranted = true;
+            return true;
+        }
     }
 
     public TimeSpan Elapsed => clock.UtcNow - _startedAt;
