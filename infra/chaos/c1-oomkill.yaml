@@ -1,0 +1,121 @@
+# =============================================================================
+# C1 - OOMKill
+# =============================================================================
+# WHAT IT BREAKS
+#   A container with a 64Mi memory limit steadily allocates ~200Mi into a
+#   memory-backed (tmpfs) emptyDir. The cgroup limit is hit at ~64Mi, the kernel
+#   OOM killer terminates PID 1, the Deployment restarts it, and the cycle
+#   repeats roughly every 20-30s forever.
+#
+#   DELIBERATE: this workload emits NO LOGS AT ALL. Every stream is redirected
+#   to /dev/null on the first line of the script, and `dd` is silenced. This is
+#   the point of the fixture: an OOMKill leaves no application-level trace. The
+#   agent must conclude "OOMKilled" from metrics and events alone, and must not
+#   report "no logs found, cannot diagnose". Absence of logs is itself a signal
+#   and this fixture is what teaches that.
+#
+# EXPECTED KUBERNETES EVENTS
+#   - Node object:  Warning  SystemOOM   kubelet   System OOM encountered,
+#                   victim process: dd, pid: <n>
+#     (This is the event historically referred to as "OOMKilling". On k3s +
+#     containerd the kubelet OOM watcher raises it against the *Node*, not the
+#     Pod. Do not assert a Pod-scoped OOMKilling event: on this cluster it does
+#     not reliably appear.)
+#   - Pod object:   Normal   Pulled/Created/Started (repeatedly, once per restart)
+#   - Pod object:   Warning  BackOff  Back-off restarting failed container
+#                   (appears once restart backoff exceeds a few seconds)
+#   The authoritative per-container evidence is the pod status field
+#   .status.containerStatuses[0].lastState.terminated.reason == "OOMKilled",
+#   which kube-state-metrics surfaces as the metric below.
+#
+# EXPECTED METRIC / PROMQL SIGNAL
+#   kube_pod_container_status_last_terminated_reason{
+#     namespace="watchtower-chaos", container="balloon",
+#     reason="OOMKilled"} == 1
+#
+#   increase(kube_pod_container_status_restarts_total{
+#     namespace="watchtower-chaos", container="balloon"}[15m]) > 3
+#
+#   Memory sawtooth (cAdvisor), climbing to ~67108864 then dropping to ~0:
+#   container_memory_working_set_bytes{
+#     namespace="watchtower-chaos", container="balloon"}
+#
+#   Ratio form used by the alert rule:
+#   container_memory_working_set_bytes{namespace="watchtower-chaos", container="balloon"}
+#     / on(namespace,pod,container)
+#   kube_pod_container_resource_limits{namespace="watchtower-chaos", container="balloon", resource="memory"}
+#     > 0.9
+#
+# EXPECTED LOG SIGNAL
+#   NONE. Deliberately zero log lines. The correct LogQL assertion is an
+#   emptiness assertion:
+#     count_over_time({k8s_namespace_name="watchtower-chaos",
+#                      k8s_deployment_name="c1-oomkill"}[15m]) == 0
+#   (or: the query returns no streams at all)
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: c1-oomkill
+  namespace: watchtower-chaos
+  labels:
+    app.kubernetes.io/name: c1-oomkill
+    watchtower.chaos/scenario: c1
+    watchtower.chaos/fault: oomkill
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: c1-oomkill
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: c1-oomkill
+        watchtower.chaos/scenario: c1
+        watchtower.chaos/fault: oomkill
+    spec:
+      # Restart fast so the sawtooth is dense enough to see inside a 15m window.
+      terminationGracePeriodSeconds: 1
+      containers:
+        - name: balloon
+          # busybox:1.37 publishes a linux/arm64 manifest (verified via
+          # `docker manifest inspect`). No compiled helper needed.
+          image: busybox:1.37
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              # Silence *everything* for the whole lifetime of the process.
+              # This is what makes the fixture log-free; do not remove it.
+              exec >/dev/null 2>&1
+              i=0
+              while [ "$i" -lt 50 ]; do
+                dd if=/dev/zero of=/balloon/block.$i bs=1M count=4
+                i=$((i + 1))
+                sleep 1
+              done
+              # ~200Mi requested against a 64Mi limit: we never get here.
+              sleep 3600
+          volumeMounts:
+            - name: balloon
+              mountPath: /balloon
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              # The whole fixture. 64Mi vs ~200Mi of allocation.
+              memory: 64Mi
+              cpu: 200m
+      volumes:
+        - name: balloon
+          emptyDir:
+            # tmpfs pages are charged to the pod's memory cgroup, so writing
+            # here trips the container limit exactly like a heap allocation
+            # would - and it is visible in container_memory_working_set_bytes.
+            medium: Memory
+            # MUST be larger than the container memory limit, otherwise the
+            # kubelet evicts the pod for exceeding the volume's size limit
+            # before the cgroup OOM killer ever fires, and the fixture would
+            # produce "Evicted" instead of "OOMKilled".
+            sizeLimit: 256Mi

@@ -1,0 +1,95 @@
+# =============================================================================
+# C2 - CrashLoopBackOff with a single, decisive log line
+# =============================================================================
+# WHAT IT BREAKS
+#   The container starts, writes exactly one line to stdout, and exits 1.
+#   Kubernetes restarts it with exponential backoff (10s, 20s, 40s ... capped
+#   at 5m), so the pod settles into CrashLoopBackOff.
+#
+#   THE POINT OF THIS FIXTURE is metric-to-log correlation. Every metric and
+#   every event describes the SYMPTOM ("CrashLoopBackOff", "restarts_total is
+#   climbing"). None of them contain the CAUSE. The cause exists only in the
+#   one log line the container prints before dying:
+#
+#       FATAL: could not connect to mongo at mongo.infra-db:27017
+#
+#   An agent that reports "pod is in CrashLoopBackOff" has restated the alert.
+#   A passing diagnosis names the dependency (mongo.infra-db:27017) and must
+#   have reached Loki to do it.
+#
+# EXPECTED KUBERNETES EVENTS
+#   - Normal   Pulled    Container image "busybox:1.37" already present on machine
+#   - Normal   Created   Created container: app
+#   - Normal   Started   Started container app
+#   - Warning  BackOff   Back-off restarting failed container app in pod ...
+#     (BackOff is the load-bearing one; it repeats for the life of the fixture)
+#
+# EXPECTED METRIC / PROMQL SIGNAL
+#   kube_pod_container_status_waiting_reason{
+#     namespace="watchtower-chaos", container="app",
+#     reason="CrashLoopBackOff"} == 1
+#
+#   increase(kube_pod_container_status_restarts_total{
+#     namespace="watchtower-chaos", container="app"}[10m]) > 2
+#
+#   kube_pod_container_status_last_terminated_reason{
+#     namespace="watchtower-chaos", container="app", reason="Error"} == 1
+#   (reason is "Error", NOT "OOMKilled" - that distinction separates C2 from C1)
+#
+#   Note the exit code is not exposed as a metric by kube-state-metrics; it is
+#   only in the pod status and in events. Another reason logs matter here.
+#
+# EXPECTED LOG SIGNAL
+#   {k8s_namespace_name="watchtower-chaos", k8s_deployment_name="c2-crashloop"}
+#     |= "FATAL"
+#
+#   Exact expected line:
+#     FATAL: could not connect to mongo at mongo.infra-db:27017
+#
+#   Rate form for the alert rule:
+#   sum(count_over_time({k8s_namespace_name="watchtower-chaos",
+#       k8s_deployment_name="c2-crashloop"} |= "could not connect to mongo" [10m])) > 0
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: c2-crashloop
+  namespace: watchtower-chaos
+  labels:
+    app.kubernetes.io/name: c2-crashloop
+    watchtower.chaos/scenario: c2
+    watchtower.chaos/fault: crashloop
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: c2-crashloop
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: c2-crashloop
+        watchtower.chaos/scenario: c2
+        watchtower.chaos/fault: crashloop
+    spec:
+      terminationGracePeriodSeconds: 1
+      containers:
+        - name: app
+          # busybox:1.37 - linux/arm64 manifest verified.
+          image: busybox:1.37
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            # A short pause so the container reaches Running before it dies;
+            # without it the kubelet sometimes never records a Started event.
+            # Then exactly ONE line, then a nonzero exit.
+            - |
+              sleep 2
+              echo "FATAL: could not connect to mongo at mongo.infra-db:27017"
+              exit 1
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi

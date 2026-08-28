@@ -1,0 +1,95 @@
+# =============================================================================
+# C3 - Unschedulable pod (Insufficient memory)
+# =============================================================================
+# WHAT IT BREAKS
+#   A Deployment requests 500Gi of memory. This node has 115 GiB, so the
+#   scheduler can never place the pod. It stays Pending forever. No container
+#   is ever created, no image is ever pulled, nothing is ever restarted.
+#
+#   WHY THIS FIXTURE IS MVP-CRITICAL FOR THE k8s_events OTel RECEIVER:
+#   kube-state-metrics WILL tell you the pod is unschedulable -
+#   kube_pod_status_unschedulable == 1 - but that is the whole of what the
+#   metric layer knows. It is a boolean. It does not say *why*, *which
+#   resource*, *how much was short*, or *how many nodes were evaluated*.
+#   That information exists in exactly one place in the entire cluster: the
+#   FailedScheduling Event's message field, produced by the default scheduler:
+#
+#     0/1 nodes are available: 1 Insufficient memory.
+#     preemption: 0/1 nodes are available: 1 No preemption victims found for incoming pod.
+#
+#   There is NO metric that carries the string "Insufficient memory" and no
+#   metric that carries the resource name. Without the k8s_events receiver
+#   ingesting Events into the telemetry pipeline, an agent can report
+#   "unschedulable" but can never say what to do about it. That is the case
+#   this fixture makes.
+#
+# EXPECTED KUBERNETES EVENTS
+#   - Warning  FailedScheduling  default-scheduler
+#       0/1 nodes are available: 1 Insufficient memory. preemption: ...
+#     Note: FailedScheduling is emitted repeatedly but the scheduler
+#     de-duplicates aggressively; expect a count that increments slowly rather
+#     than one event per scheduling cycle. Assert on the message substring
+#     "Insufficient memory", not on the event count.
+#   - There is NO ReplicaSet-level failure event; the ReplicaSet creates the
+#     pod successfully. The failure is downstream of that.
+#
+# EXPECTED METRIC / PROMQL SIGNAL
+#   kube_pod_status_unschedulable{namespace="watchtower-chaos"} == 1
+#
+#   kube_pod_status_phase{namespace="watchtower-chaos", phase="Pending"} == 1
+#
+#   kube_deployment_status_replicas_unavailable{
+#     namespace="watchtower-chaos", deployment="c3-unschedulable"} > 0
+#
+#   Duration form for the alert rule:
+#   min_over_time(kube_pod_status_unschedulable{namespace="watchtower-chaos"}[10m]) == 1
+#
+#   Explicitly ABSENT: any metric naming the deficient resource or the reason
+#   string. kube_pod_container_resource_requests{resource="memory"} tells you
+#   what was asked for, but nothing tells you why it was refused.
+#
+# EXPECTED LOG SIGNAL
+#   NONE from the workload - no container ever starts, so there is no log
+#   stream at all. Same emptiness assertion as C1:
+#     count_over_time({k8s_namespace_name="watchtower-chaos",
+#                      k8s_deployment_name="c3-unschedulable"}[15m]) == 0
+#   If Events are also routed to Loki (some collector configs do this), the
+#   scheduler message is findable there instead; the README documents that as
+#   an optional path, not the assumed one.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: c3-unschedulable
+  namespace: watchtower-chaos
+  labels:
+    app.kubernetes.io/name: c3-unschedulable
+    watchtower.chaos/scenario: c3
+    watchtower.chaos/fault: unschedulable
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: c3-unschedulable
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: c3-unschedulable
+        watchtower.chaos/scenario: c3
+        watchtower.chaos/fault: unschedulable
+    spec:
+      terminationGracePeriodSeconds: 1
+      containers:
+        - name: app
+          image: busybox:1.37
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c", "sleep 86400"]
+          resources:
+            requests:
+              # The entire fixture. The node has 115Gi; this asks for 500Gi.
+              # Limit must be >= request, so it is set to the same value.
+              memory: 500Gi
+              cpu: 10m
+            limits:
+              memory: 500Gi
+              cpu: 100m

@@ -1,0 +1,112 @@
+# =============================================================================
+# C5 - Job that exhausts its backoffLimit
+# =============================================================================
+# WHAT IT BREAKS
+#   A batch/v1 Job whose container always exits 3. backoffLimit is 2, so the
+#   Job runs the pod 3 times total (initial attempt + 2 retries) with the Job
+#   controller's own exponential backoff (10s, 20s), then gives up and marks
+#   itself Failed with reason BackoffLimitExceeded.
+#
+#   This is a TERMINAL fixture, unlike C1/C2/C4 which loop forever. Once the
+#   Job has failed it stays failed and the signal is a level, not a rate. An
+#   agent that only alerts on rising counters will miss it; kube_job_failed
+#   is the flag to watch.
+#
+#   ttlSecondsAfterFinished IS SET, to 3600 (1h). Rationale: without a TTL the
+#   failed Job and its pods linger until someone deletes them, which pollutes
+#   later runs of other fixtures and leaves stale kube_job_* series pinned at
+#   1 forever. One hour is far longer than any observation window the agent
+#   needs (the whole failure sequence completes in well under 90 seconds) but
+#   short enough that the fixture cleans itself up. NOTE: TTL cleanup requires
+#   the TTLAfterFinished controller, which is on by default and GA since 1.23,
+#   so it is active on this k3s node.
+#
+#   A Job is immutable in most of its spec. Re-running this fixture requires
+#   `kubectl delete -f c5-badjob.yaml` first; `kubectl apply` over a completed
+#   Job of the same name is rejected. Documented in the README.
+#
+# EXPECTED KUBERNETES EVENTS
+#   - Normal   SuccessfulCreate  job-controller  Created pod: c5-badjob-<hash>
+#              (three times, once per attempt)
+#   - Warning  BackoffLimitExceeded  job-controller  Job has reached the
+#              specified backoff limit
+#   - On the pods:  Normal Started, then the pod goes to phase Failed.
+#     There is NO CrashLoopBackOff here - the Job's restartPolicy is Never, so
+#     each attempt is a fresh pod, not a restarting container. That is a
+#     discriminator against C2.
+#
+# EXPECTED METRIC / PROMQL SIGNAL
+#   kube_job_status_failed{namespace="watchtower-chaos", job_name=~"c5-badjob.*"} == 3
+#     (one per failed pod: 1 initial + 2 retries)
+#
+#   kube_job_failed{namespace="watchtower-chaos", job_name=~"c5-badjob.*",
+#                   reason="BackoffLimitExceeded"} == 1
+#     (this is the metric that carries the *reason*, and is the strongest
+#      single assertion for this scenario)
+#
+#   kube_job_status_succeeded{namespace="watchtower-chaos", job_name=~"c5-badjob.*"} == 0
+#
+#   Alert form:
+#   kube_job_failed{namespace="watchtower-chaos"} > 0
+#
+#   Note job_name carries no random suffix (this Job has a fixed name), but the
+#   regex is kept so the expression survives a generateName variant.
+#
+# EXPECTED LOG SIGNAL
+#   {k8s_namespace_name="watchtower-chaos", k8s_job_name="c5-badjob"}
+#     |= "migration step 4 failed"
+#
+#   Exact expected line, once per attempt (so three times total):
+#     ERROR: migration step 4 failed: relation "tenants" does not exist
+#
+#   NOTE ON THE LOKI LABEL: k8s_job_name comes from the k8sattributes
+#   processor's job association. If the collector is not extracting it, fall
+#   back to the pod-name matcher:
+#     {k8s_namespace_name="watchtower-chaos", k8s_pod_name=~"c5-badjob-.*"}
+#   There is no k8s_deployment_name for a Job.
+# =============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: c5-badjob
+  namespace: watchtower-chaos
+  labels:
+    app.kubernetes.io/name: c5-badjob
+    watchtower.chaos/scenario: c5
+    watchtower.chaos/fault: badjob
+spec:
+  # 1 initial attempt + 2 retries = 3 failed pods, then BackoffLimitExceeded.
+  backoffLimit: 2
+  # See the header note: long enough to observe comfortably, short enough to
+  # self-clean and not leave kube_job_failed pinned at 1 indefinitely.
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: c5-badjob
+        watchtower.chaos/scenario: c5
+        watchtower.chaos/fault: badjob
+    spec:
+      # Never, not OnFailure: each attempt must be a distinct pod so the
+      # failure surfaces as a Job-level backoff rather than a container
+      # CrashLoopBackOff.
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 1
+      containers:
+        - name: migrate
+          image: busybox:1.37
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "INFO: starting schema migration"
+              sleep 2
+              echo "ERROR: migration step 4 failed: relation \"tenants\" does not exist"
+              exit 3
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi

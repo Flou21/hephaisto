@@ -1,0 +1,49 @@
+# Watchtower namespaces.
+#
+# Three namespaces, deliberately separated so that RBAC can be scoped by namespace
+# rather than by resource name:
+#
+#   watchtower        the agent process and its Postgres. Nothing else runs here.
+#   watchtower-obs    the entire observability stack (Prometheus, Alertmanager, Grafana,
+#                     Loki, Tempo, the OTel collector, the Aspire dashboard, grafana-mcp).
+#   watchtower-chaos  the fault fixtures. This is the ONLY namespace the agent is ever
+#                     granted write verbs in (see infra/app/rbac.yaml). The blast radius
+#                     of a mis-reasoned remediation is therefore a namespace boundary --
+#                     enforced by the API server -- not a policy check in the agent's own
+#                     code that a confused agent could reason its way around.
+#
+# These are entirely new namespaces. The pre-existing hand-installed stack in the
+# `prometheus`, `loki` and `promtail` namespaces is unrelated and must not be touched.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: watchtower
+  labels:
+    app.kubernetes.io/part-of: watchtower
+    watchtower.io/role: agent
+    # kubernetes.io/metadata.name is set automatically by the API server, but it is
+    # written explicitly here because the NetworkPolicy in infra/app/rbac.yaml selects
+    # on it and an explicit label documents that dependency.
+    kubernetes.io/metadata.name: watchtower
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: watchtower-obs
+  labels:
+    app.kubernetes.io/part-of: watchtower
+    watchtower.io/role: observability
+    kubernetes.io/metadata.name: watchtower-obs
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: watchtower-chaos
+  labels:
+    app.kubernetes.io/part-of: watchtower
+    watchtower.io/role: chaos
+    kubernetes.io/metadata.name: watchtower-chaos
+    # Marks this namespace as safe to break. Nothing anyone depends on may be deployed
+    # here, because the agent holds delete/patch on workloads in it.
+    watchtower.io/destructive-actions-allowed: "true"

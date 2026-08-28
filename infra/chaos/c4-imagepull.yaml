@@ -1,0 +1,93 @@
+# =============================================================================
+# C4 - ImagePullBackOff (nonexistent tag)
+# =============================================================================
+# WHAT IT BREAKS
+#   The Deployment references docker.io/library/busybox:this-tag-does-not-exist
+#   (a real repository, a tag that has never existed). The kubelet attempts the
+#   pull, the registry returns a manifest-not-found, and the pod cycles
+#   ErrImagePull -> ImagePullBackOff -> ErrImagePull forever.
+#
+#   A real repo with a bogus tag is used on purpose rather than a bogus
+#   registry host: a bogus host produces a DNS/connect error whose message
+#   varies with the node's resolver, which would make the expected event text
+#   unstable. A bogus tag on Docker Hub gives a deterministic message.
+#
+#   PAIRED WITH C7. Both C4 and C7 present as "pod Pending, container never
+#   starts, zero logs". See the discrimination note in c7-configerror.yaml.
+#
+# EXPECTED KUBERNETES EVENTS
+#   - Normal   Scheduled  default-scheduler  Successfully assigned ...
+#     (it DOES schedule - that is what separates it from C3)
+#   - Normal   Pulling  kubelet  Pulling image "busybox:this-tag-does-not-exist"
+#   - Warning  Failed   kubelet  Failed to pull image "busybox:this-tag-does-not-exist":
+#                                ... failed to resolve reference ...
+#                                docker.io/library/busybox:this-tag-does-not-exist:
+#                                not found
+#   - Warning  Failed   kubelet  Error: ErrImagePull
+#   - Normal   BackOff  kubelet  Back-off pulling image "busybox:this-tag-does-not-exist"
+#   - Warning  Failed   kubelet  Error: ImagePullBackOff
+#   Assert on the substring "Failed to pull image" and/or "ImagePullBackOff".
+#
+# EXPECTED METRIC / PROMQL SIGNAL
+#   kube_pod_container_status_waiting_reason{
+#     namespace="watchtower-chaos", container="app",
+#     reason="ImagePullBackOff"} == 1
+#
+#   (transiently, between backoffs)
+#   kube_pod_container_status_waiting_reason{
+#     namespace="watchtower-chaos", container="app", reason="ErrImagePull"} == 1
+#
+#   Robust alert form - covers both reasons and rides through the flip-flop:
+#   max_over_time(
+#     kube_pod_container_status_waiting_reason{
+#       namespace="watchtower-chaos",
+#       reason=~"ImagePullBackOff|ErrImagePull"}[10m]) == 1
+#
+#   kube_deployment_status_replicas_available{
+#     namespace="watchtower-chaos", deployment="c4-imagepull"} == 0
+#
+#   restarts_total stays at ZERO here - the container never ran, so it cannot
+#   have restarted. That is a hard discriminator against C1 and C2.
+#
+# EXPECTED LOG SIGNAL
+#   NONE. No container image, therefore no container, therefore no stdout.
+#     count_over_time({k8s_namespace_name="watchtower-chaos",
+#                      k8s_deployment_name="c4-imagepull"}[15m]) == 0
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: c4-imagepull
+  namespace: watchtower-chaos
+  labels:
+    app.kubernetes.io/name: c4-imagepull
+    watchtower.chaos/scenario: c4
+    watchtower.chaos/fault: imagepull
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: c4-imagepull
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: c4-imagepull
+        watchtower.chaos/scenario: c4
+        watchtower.chaos/fault: imagepull
+    spec:
+      terminationGracePeriodSeconds: 1
+      containers:
+        - name: app
+          # Real repository, tag that does not and will not exist.
+          # imagePullPolicy MUST be Always/IfNotPresent with a tag that is not
+          # cached; it is not :latest, so IfNotPresent still forces a pull.
+          image: busybox:this-tag-does-not-exist
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c", "sleep 86400"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
