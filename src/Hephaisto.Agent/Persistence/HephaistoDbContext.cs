@@ -114,12 +114,49 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
             // is exactly this case, because reading the graph runs DetectChanges - it does not
             // reliably take, and the row silently stayed Modified and threw at save. Setting
             // the state directly always takes.
-            Entry(incident.Events[i]).State = EntityState.Added;
+            MarkAdded(incident.Events[i]);
         }
 
         if (newInvestigation is not null)
         {
             AddInvestigationGraph(newInvestigation);
+        }
+    }
+
+    /// <summary>
+    /// Forces one entity into the Added state, and its owned types with it.
+    /// </summary>
+    /// <remarks>
+    /// <b>The owned types are the point.</b> Setting <c>Entry(x).State = Added</c> moves the
+    /// entity itself and nothing else: an owned reference such as
+    /// <see cref="AgentAction.Target"/> is a separate entry in the change tracker, and it is
+    /// left in whatever state it was already in. If the parent was previously fixed as
+    /// Unchanged - which is the whole reason this code sets the state by hand - the owned
+    /// entry stays Unchanged too, EF inserts the parent with every owned column NULL, and
+    /// Postgres rejects it:
+    ///
+    ///   23502: null value in column "target_namespace" of relation "agent_actions"
+    ///
+    /// That error reads like the model returned a target-less action, which is a real and
+    /// separate failure mode, and it is what sent the first investigation of this bug in the
+    /// wrong direction. It happens with a perfectly well-formed <see cref="TargetRef"/>.
+    ///
+    /// <c>DbSet.Add</c> gets this right on its own; it is only the manual state assignment
+    /// that needs the fix-up, and the manual assignment is unavoidable here because
+    /// <c>Add</c>'s graph walk skips entities the context already tracks.
+    /// </remarks>
+    private void MarkAdded(object entity)
+    {
+        var entry = Entry(entity);
+
+        entry.State = EntityState.Added;
+
+        foreach (var reference in entry.References)
+        {
+            if (reference.TargetEntry is { } target && target.Metadata.IsOwned())
+            {
+                target.State = EntityState.Added;
+            }
         }
     }
 
@@ -141,20 +178,20 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
     {
         ArgumentNullException.ThrowIfNull(investigation);
 
-        Entry(investigation).State = EntityState.Added;
+        MarkAdded(investigation);
 
         foreach (var step in investigation.Steps)
         {
-            Entry(step).State = EntityState.Added;
+            MarkAdded(step);
         }
 
         foreach (var finding in investigation.Findings)
         {
-            Entry(finding).State = EntityState.Added;
+            MarkAdded(finding);
 
             foreach (var evidence in finding.Evidence)
             {
-                Entry(evidence).State = EntityState.Added;
+                MarkAdded(evidence);
             }
         }
 
@@ -165,11 +202,11 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
         // never inserted and fails the whole save, taking the diagnosis with it.
         if (investigation.Plan is { } plan)
         {
-            Entry(plan).State = EntityState.Added;
+            MarkAdded(plan);
 
             foreach (var action in plan.Actions)
             {
-                Entry(action).State = EntityState.Added;
+                MarkAdded(action);
             }
         }
     }

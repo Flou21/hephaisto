@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Separate from Hephaisto.Tests on purpose. That suite is pure, in-memory and offline,
+       so `./scripts/test.sh` stays fast and needs nothing installed. This one needs a real
+       Postgres with pgvector, because the bugs it exists to catch are bugs in what EF Core
+       and Postgres actually do - an in-memory provider models none of them. Keeping the two
+       apart is what stops "the tests need Docker" leaking into the fast suite. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Hephaisto.Core/Hephaisto.Core.csproj" />
+    <ProjectReference Include="../../src/Hephaisto.Agent/Hephaisto.Agent.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="AwesomeAssertions" />
+  </ItemGroup>
+
+</Project>

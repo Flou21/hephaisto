@@ -7,6 +7,7 @@
     <Project Path="src/Hephaisto.Simulator/Hephaisto.Simulator.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Hephaisto.IntegrationTests/Hephaisto.IntegrationTests.csproj" />
     <Project Path="tests/Hephaisto.Tests/Hephaisto.Tests.csproj" />
   </Folder>
 </Solution>
