@@ -53,6 +53,11 @@ builder.Services.AddRazorComponents()
 
 var app = builder.Build();
 
+// Before anything serves a request. The tables have to exist before the first webhook
+// arrives, and an agent that cannot persist must not pretend to be healthy - see
+// MigrateWatchtowerDatabaseAsync for why this fails fast rather than degrading.
+await app.MigrateWatchtowerDatabaseAsync();
+
 app.UseStaticFiles();
 app.UseAntiforgery();
 

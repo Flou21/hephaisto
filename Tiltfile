@@ -24,8 +24,34 @@ load('ext://namespace', 'namespace_create')
 # machine - see CLAUDE.md.
 HOST = 'macstudio-von-florian.tail3043f4.ts.net'
 
+# kubectl only accepts an IP or `localhost` for --address, never a hostname, so the extra
+# forwards below need the address HOST resolves to.
+HOST_IP = '100.91.41.104'
+
 def tailnet(host_port, container_port):
     return port_forward(host_port, container_port, host = HOST)
+
+# --- why some forwards are local_resources and not port_forwards ---------------------------
+#
+# A Tilt resource forwards to ONE pod. helm_resource makes the whole Helm release a single
+# resource, so a chart that deploys several distinct servers - kube-prometheus-stack is
+# Prometheus AND Grafana AND Alertmanager - can only ever have one of them reachable through
+# port_forwards. Declaring three there is silently wrong: Tilt binds all three host ports to
+# whichever pod it selected, so :9090 works and :3030 and :9093 answer nothing at all. The
+# same bites Loki, whose release includes loki-0 and loki-gateway on different ports.
+#
+# So: one port_forward per resource for its primary pod, and an explicit `kubectl
+# port-forward` against the SERVICE for the rest. Forwarding to a Service also survives the
+# pod restarts that a helm upgrade causes, which the pod-bound version does not.
+def svc_forward(name, namespace, service, host_port, service_port, deps = []):
+    return local_resource(
+        name,
+        serve_cmd = 'kubectl -n %s port-forward --address %s svc/%s %d:%d' % (
+            namespace, HOST_IP, service, host_port, service_port),
+        resource_deps = deps,
+        labels = ['forwards'],
+        auto_init = True,
+    )
 
 # --- toggles ------------------------------------------------------------------------------
 
@@ -73,13 +99,17 @@ if observability:
             '--create-namespace',
         ],
         resource_deps = ['prometheus-community'],
-        port_forwards = [
-            tailnet(9090, 9090),   # Prometheus
-            tailnet(3030, 80),     # Grafana - the Service listens on 80, not 3000
-            tailnet(9093, 9093),   # Alertmanager
-        ],
+        # Prometheus only. Grafana and Alertmanager are separate pods in this same release
+        # and get their own Service forwards below - see the comment on svc_forward.
+        port_forwards = [tailnet(9090, 9090)],
         labels = ['observability'],
     )
+
+    svc_forward('grafana-forward', 'watchtower-obs', 'watchtower-grafana',
+                3030, 80, deps = ['kube-prometheus-stack'])
+    svc_forward('alertmanager-forward', 'watchtower-obs',
+                'watchtower-kube-prometheus-alertmanager',
+                9093, 9093, deps = ['kube-prometheus-stack'])
 
     helm_resource(
         'loki',
@@ -90,9 +120,13 @@ if observability:
             '--values', 'infra/observability/loki.values.yaml',
         ],
         resource_deps = ['grafana-charts'],
-        port_forwards = [tailnet(3100, 3100)],
+        # No port_forwards: this release has loki-0 (3100) and loki-gateway (80), and Tilt
+        # would bind 3100 to whichever it selected - it picked the gateway, so :3100 answered
+        # nothing.
         labels = ['observability'],
     )
+
+    svc_forward('loki-forward', 'watchtower-obs', 'loki', 3100, 3100, deps = ['loki'])
 
     helm_resource(
         'otel-collector',
@@ -123,9 +157,19 @@ if observability:
         labels = ['observability'],
     )
 
-    # Alert rules and dashboards are plain CRs and ConfigMaps, picked up by the operator's
-    # ruleSelector and Grafana's dashboard sidecar respectively. Editing one is a
+    # Datasources and dashboards are ConfigMaps picked up by Grafana's sidecars, and the
+    # alert rules are CRs picked up by the operator's ruleSelector. Editing one is a
     # full-resource replace, not a live sync - that is expected, they are declarative state.
+    #
+    # The datasource ConfigMap is NOT optional. The values file sets
+    # grafana.sidecar.datasources.defaultDatasourceEnabled: false so the chart does not
+    # provision its own Prometheus datasource and fight this file over the `prometheus` uid.
+    # Leaving this un-applied therefore does not fall back to a default - it leaves Grafana
+    # with ZERO datasources, an empty Explore, and every dashboard panel showing "Datasource
+    # not found". Nothing logs an error, because from Grafana's point of view it was simply
+    # never told about any.
+    k8s_yaml('infra/observability/grafana-datasources.yaml')
+    k8s_yaml('infra/observability/dashboards/watchtower-dashboard-configmap.yaml')
     k8s_yaml(listdir('infra/observability/alerts', recursive = True))
     k8s_resource(
         objects = [
@@ -135,6 +179,16 @@ if observability:
             'watchtower-observability-selfcheck:prometheusrule',
         ],
         new_name = 'alert-rules',
+        resource_deps = ['kube-prometheus-stack'],
+        labels = ['observability'],
+    )
+
+    k8s_resource(
+        objects = [
+            'watchtower-datasources:configmap',
+            'watchtower-dashboard:configmap',
+        ],
+        new_name = 'grafana-provisioning',
         resource_deps = ['kube-prometheus-stack'],
         labels = ['observability'],
     )
