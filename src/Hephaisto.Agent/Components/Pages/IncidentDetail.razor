@@ -102,6 +102,44 @@ else
                 <span class="glyph">+</span> @incident.Resolution
             </div>
         }
+
+        @* A retry, for the incidents that never got an answer. An investigation that faults,
+           stalls or exhausts its budget leaves the incident escalated with nothing to read,
+           and until this existed the only way to get another attempt was to make the alert
+           fire again. *@
+        @if (CanReinvestigate)
+        {
+            <div class="hp-callout callout-retry">
+                <span class="glyph">~</span>
+                <div class="hp-retry">
+                    <div>
+                        <strong>no diagnosis was produced.</strong>
+                        <span class="hp-muted">
+                            Re-investigating starts a fresh attempt and spends the budget again.
+                        </span>
+                    </div>
+
+                    <div class="hp-retry-controls">
+                        <input class="hp-retry-name" placeholder="your name" aria-label="your name"
+                               @bind="_submittedBy" @bind:event="oninput" />
+                        <button type="button" class="hp-submit"
+                                disabled="@(_retrying || string.IsNullOrWhiteSpace(_submittedBy))"
+                                @onclick="ReinvestigateAsync">
+                            @(_retrying ? "queueing…" : "re-investigate")
+                        </button>
+                    </div>
+
+                    @if (_retryError is { Length: > 0 })
+                    {
+                        <span class="hp-error"><span class="glyph">!!</span> @_retryError</span>
+                    }
+                    else if (_retryMessage is { Length: > 0 })
+                    {
+                        <span class="hp-yes"><span class="glyph">+</span> @_retryMessage</span>
+                    }
+                </div>
+            </div>
+        }
     </header>
 
     @* ---------------------------------------------------------------
@@ -798,6 +836,10 @@ else
 
     private const string NameStorageKey = "hephaisto.feedback.name";
 
+    private bool _retrying;
+    private string? _retryError;
+    private string? _retryMessage;
+
     private CancellationTokenSource? _cts;
 
     private bool CanSubmit => _helpful is not null && !string.IsNullOrWhiteSpace(_submittedBy);
@@ -1031,6 +1073,75 @@ else
         catch (Exception ex)
         {
             _feedbackError = ex.Message;
+        }
+    }
+
+    /// <summary>
+    /// Shown only for the give-up states, and only when nothing is already running.
+    /// </summary>
+    /// <remarks>
+    /// Escalated and Expired are the two ways an incident stops without an answer. Suppressed
+    /// is excluded deliberately - it was a duplicate and re-investigating it would pay twice
+    /// for one problem - and Resolved belongs to the reopen path, which means something else.
+    /// The in-flight check is a courtesy, not the guard: the state machine refuses
+    /// Investigating -&gt; Investigating regardless of what this button believes.
+    /// </remarks>
+    private bool CanReinvestigate =>
+        _incident is { InProgress: null } incident
+        && incident.State is IncidentState.Escalated or IncidentState.Expired;
+
+    private async Task ReinvestigateAsync()
+    {
+        if (_incident is null || string.IsNullOrWhiteSpace(_submittedBy))
+        {
+            return;
+        }
+
+        _retrying = true;
+        _retryError = null;
+        _retryMessage = null;
+
+        try
+        {
+            var result = await Queries.RequestReinvestigationAsync(
+                Id,
+                _submittedBy,
+                _cts?.Token ?? CancellationToken.None);
+
+            if (result.Accepted)
+            {
+                _retryMessage = "queued — the live step trace appears here once a worker picks it up.";
+
+                try
+                {
+                    await Js.InvokeVoidAsync("hephaisto.storageSet", NameStorageKey, _submittedBy.Trim());
+                }
+                catch (JSException)
+                {
+                    // Remembering the name is a convenience; the retry is already queued.
+                }
+
+                await LoadAsync();
+            }
+            else
+            {
+                // Detail carries the specific reason - the kill switch arm that bound the
+                // mode, or the illegal transition. Falling back to the bare outcome name
+                // still beats a silent no-op.
+                _retryError = result.Detail ?? result.Outcome.ToString();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Navigated away mid-request.
+        }
+        catch (Exception ex)
+        {
+            _retryError = ex.Message;
+        }
+        finally
+        {
+            _retrying = false;
         }
     }
 

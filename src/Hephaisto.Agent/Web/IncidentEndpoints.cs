@@ -22,6 +22,7 @@ public static class IncidentEndpoints
         group.MapGet("", ListAsync).WithName("ListIncidents");
         group.MapGet("/{id:guid}", GetAsync).WithName("GetIncident");
         group.MapPost("/{id:guid}/feedback", SubmitFeedbackAsync).WithName("SubmitIncidentFeedback");
+        group.MapPost("/{id:guid}/reinvestigate", ReinvestigateAsync).WithName("ReinvestigateIncident");
 
         // Outside the incident group: a blob is addressed by its own id, and the step that
         // points at it may well have outlived it.
@@ -189,6 +190,53 @@ public static class IncidentEndpoints
         return feedback is null ? TypedResults.NotFound() : TypedResults.Ok(feedback);
     }
 
+    /// <summary>
+    /// <c>POST /api/incidents/{id}/reinvestigate</c> - put an undiagnosed incident back on the
+    /// investigation queue.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 202 rather than 200: the work is queued, not done. The caller polls the incident, or
+    /// watches it live - the investigation takes minutes.
+    /// </para>
+    /// <para>
+    /// The rejections map onto distinct codes on purpose. 409 for "already running" and "not a
+    /// state you can retry from" is a conflict with the incident's current state and will
+    /// resolve on its own; 503 for a saturated queue or an Off kill switch is the system
+    /// declining to start work right now. A single 400 for all four would make the button in
+    /// the console unable to say anything useful.
+    /// </para>
+    /// </remarks>
+    private static async Task<IResult> ReinvestigateAsync(
+        Guid id,
+        [FromBody] ReinvestigateRequest request,
+        IncidentQueries queries,
+        CancellationToken ct)
+    {
+        // Attribution, not authentication - the same contract as feedback. A retry spends real
+        // tokens, so an anonymous one is an anonymous line on the invoice.
+        if (string.IsNullOrWhiteSpace(request.RequestedBy))
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["requestedBy"] = ["Required. Who is asking for another attempt - attribution, not authentication."],
+            });
+        }
+
+        var result = await queries.RequestReinvestigationAsync(id, request.RequestedBy, ct);
+
+        return result.Outcome switch
+        {
+            ReinvestigateOutcome.Queued => TypedResults.Accepted((string?)null, result),
+            ReinvestigateOutcome.NotFound => TypedResults.NotFound(),
+            ReinvestigateOutcome.AlreadyRunning => TypedResults.Conflict(result),
+            ReinvestigateOutcome.IllegalState => TypedResults.Conflict(result),
+            ReinvestigateOutcome.QueueFull => TypedResults.Json(result, statusCode: 503),
+            ReinvestigateOutcome.Disabled => TypedResults.Json(result, statusCode: 503),
+            _ => TypedResults.Json(result, statusCode: 500),
+        };
+    }
+
     private static string Names<T>() where T : struct, Enum => string.Join(", ", Enum.GetNames<T>());
 }
 
@@ -211,4 +259,11 @@ public sealed record FeedbackRequest
     /// <summary>Required and non-empty. Validated in the handler rather than by an attribute
     /// so the message can say what it is for.</summary>
     public required string SubmittedBy { get; init; }
+}
+
+/// <summary>A human asking for another investigation attempt.</summary>
+public sealed record ReinvestigateRequest
+{
+    /// <summary>Required and non-empty. See the handler for why.</summary>
+    public required string RequestedBy { get; init; }
 }

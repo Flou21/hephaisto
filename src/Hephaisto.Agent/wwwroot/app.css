@@ -507,6 +507,28 @@ button:disabled {
 .callout-quarantine { border-left-color: var(--orange); }
 .callout-resolved { border-left-color: var(--green); }
 .callout-error { border-left-color: var(--red); color: var(--red); }
+.callout-retry { border-left-color: var(--blue, var(--fg-faint)); }
+
+/* The retry control. Deliberately quiet - it is an escape hatch on a page whose
+   subject is usually the investigation itself, and it spends money when pressed. */
+.hp-retry {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.hp-retry-controls {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.hp-retry-name {
+    padding: 0.25rem 0.5rem;
+    min-width: 12rem;
+    font-family: var(--sans);
+}
 
 .hp-section {
     margin-bottom: 1.75rem;

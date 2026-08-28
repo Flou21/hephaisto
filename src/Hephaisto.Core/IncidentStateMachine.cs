@@ -162,6 +162,55 @@ public sealed class IncidentStateMachine(IClock clock)
     }
 
     /// <summary>
+    /// Escalated | Expired -&gt; Investigating. A human asking for another attempt.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Distinct from <see cref="Reopen"/>, which is for an incident that was genuinely fixed
+    /// and came back. This one is for an incident that was never diagnosed: the provider
+    /// returned an overload, the step budget ran out mid-thought, the model stalled. The
+    /// cluster problem is unchanged and untouched - only our attempt to explain it failed -
+    /// so there is nothing to un-resolve and no oscillation to record. Collapsing the two
+    /// would make "the fix did not hold" and "we never produced a fix" the same row.
+    /// </para>
+    /// <para>
+    /// <b>A named requester, and never the model.</b> Each attempt spends real tokens on the
+    /// most expensive path in the system, so an unattributed retry is an unattributed
+    /// invoice. Refusing the model identities is what stops a future auto-retry from being
+    /// wired straight to this edge and quietly looping an incident until a budget stops it -
+    /// if retry ever becomes automatic it must arrive with its own explicit cap, under its
+    /// own name, as a deliberate change rather than by reusing the human door.
+    /// </para>
+    /// <para>
+    /// Clears <see cref="Incident.EscalationReason"/>, mirroring the way <see cref="Reopen"/>
+    /// clears the resolution. A retried incident that still reads BudgetExhausted describes an
+    /// attempt that is no longer the current one.
+    /// </para>
+    /// </remarks>
+    public IncidentEvent Reinvestigate(Incident incident, string reason, string requestedBy)
+    {
+        ArgumentNullException.ThrowIfNull(incident);
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestedBy);
+
+        if (ForbiddenGranters.Contains(requestedBy.Trim(), StringComparer.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                $"'{requestedBy}' may not request a re-investigation: a retry spends real "
+                + "tokens and needs a human to answer for it.",
+                nameof(requestedBy));
+        }
+
+        var evt = Transition(
+            incident,
+            [IncidentState.Escalated, IncidentState.Expired],
+            IncidentState.Investigating,
+            $"{reason} (requested by {requestedBy})");
+
+        incident.EscalationReason = EscalationReason.None;
+        return evt;
+    }
+
+    /// <summary>
     /// Mirrors <see cref="Incident.IsOpen"/>. Kept as an explicit array rather than computed
     /// from the property so that the legal-predecessor set of every edge reads the same way.
     /// </summary>

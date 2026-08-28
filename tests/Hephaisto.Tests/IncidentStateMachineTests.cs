@@ -21,6 +21,102 @@ public sealed class IncidentStateMachineTests
     // --- legal edges ------------------------------------------------------------------------
 
     [Fact]
+    public void Reinvestigate_MovesEscalatedBackToInvestigating()
+    {
+        var incident = Given.Incident(IncidentState.Investigating);
+        Machine().Escalate(incident, EscalationReason.InvestigationFailed);
+
+        Machine().Reinvestigate(incident, "provider was overloaded", "flo");
+
+        incident.State.Should().Be(IncidentState.Investigating);
+    }
+
+    [Fact]
+    public void Reinvestigate_ClearsTheEscalationReasonOfTheAttemptItReplaces()
+    {
+        var incident = Given.Incident(IncidentState.Investigating);
+        Machine().Escalate(incident, EscalationReason.BudgetExhausted);
+
+        Machine().Reinvestigate(incident, "retry", "flo");
+
+        // Leaving BudgetExhausted here would describe an attempt that is no longer current.
+        incident.EscalationReason.Should().Be(EscalationReason.None);
+    }
+
+    [Fact]
+    public void Reinvestigate_MovesExpiredBackToInvestigating()
+    {
+        var incident = Given.Incident(IncidentState.Investigating);
+        Machine().Expire(incident, "signal stopped arriving");
+
+        Machine().Reinvestigate(incident, "someone wants an answer anyway", "flo");
+
+        incident.State.Should().Be(IncidentState.Investigating);
+    }
+
+    [Fact]
+    public void Reinvestigate_RecordsWhoAskedInTheEventLog()
+    {
+        var incident = Given.Incident(IncidentState.Investigating);
+        Machine().Escalate(incident, EscalationReason.InvestigationFailed);
+
+        var evt = Machine().Reinvestigate(incident, "retry", "flo");
+
+        evt.From.Should().Be(IncidentState.Escalated);
+        evt.To.Should().Be(IncidentState.Investigating);
+        evt.Reason.Should().Contain("flo");
+    }
+
+    [Theory]
+    [InlineData("hephaisto/model")]
+    [InlineData("gemini")]
+    [InlineData("LLM")]
+    public void Reinvestigate_RefusesTheModelAsRequester(string actor)
+    {
+        // A retry is the most expensive path in the system. If it ever becomes automatic it
+        // must arrive with its own cap under its own name, not by reusing the human door.
+        var incident = Given.Incident(IncidentState.Investigating);
+        Machine().Escalate(incident, EscalationReason.InvestigationFailed);
+
+        var act = () => Machine().Reinvestigate(incident, "retry", actor);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void Reinvestigate_RequiresARequester()
+    {
+        var incident = Given.Incident(IncidentState.Investigating);
+        Machine().Escalate(incident, EscalationReason.InvestigationFailed);
+
+        var act = () => Machine().Reinvestigate(incident, "retry", "  ");
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Theory]
+    [InlineData(IncidentState.Detected)]
+    [InlineData(IncidentState.Triaging)]
+    [InlineData(IncidentState.Investigating)]
+    [InlineData(IncidentState.AwaitingApproval)]
+    [InlineData(IncidentState.Acting)]
+    [InlineData(IncidentState.Verifying)]
+    [InlineData(IncidentState.Suppressed)]
+    [InlineData(IncidentState.Resolved)]
+    public void Reinvestigate_RefusesEveryStateThatIsNotAGiveUp(IncidentState from)
+    {
+        // Investigating in particular: a second concurrent run would double-spend, and this
+        // is the authoritative guard behind the racy in-flight check in IncidentQueries.
+        // Resolved belongs to Reopen, which carries different semantics.
+        var incident = Given.Incident(from);
+
+        var act = () => Machine().Reinvestigate(incident, "retry", "flo");
+
+        act.Should().Throw<InvalidStateTransitionException>();
+    }
+
+
+    [Fact]
     public void Triage_MovesDetectedToTriaging()
     {
         var incident = Given.Incident(IncidentState.Detected);

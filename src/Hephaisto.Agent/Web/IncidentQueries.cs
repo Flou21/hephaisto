@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using Hephaisto.Agent.Persistence;
 using Hephaisto.Agent.Persistence.Repositories;
 using Hephaisto.Agent.Safety;
+using Hephaisto.Core;
 using Hephaisto.Core.Abstractions;
 using Hephaisto.Core.Domain;
 
@@ -438,6 +439,137 @@ public sealed class IncidentQueries(
         return MapFeedback(feedback);
     }
 
+    /// <summary>
+    /// Puts an incident that was never successfully diagnosed back on the investigation queue.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The recovery path for the outcomes that produce no answer: a provider overload, a step
+    /// budget that ran out mid-thought, a stall. Before this existed those incidents were
+    /// terminal - the console showed "escalated, investigation failed" and the only way to get
+    /// another attempt was to make the alert fire again.
+    /// </para>
+    /// <para>
+    /// <b>Every rejection is a distinct outcome, not a bool.</b> "Already running", "the kill
+    /// switch is off" and "the queue is saturated" want three different things from the person
+    /// who clicked, and collapsing them into false produces a button that does nothing and
+    /// says nothing.
+    /// </para>
+    /// </remarks>
+    public async Task<ReinvestigateResult> RequestReinvestigationAsync(
+        Guid incidentId,
+        string requestedBy,
+        CancellationToken ct)
+    {
+        var actor = requestedBy?.Trim() ?? string.Empty;
+        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+
+        // AgentMode.Off is documented as "ingest nothing, investigate nothing. Full stop." A
+        // hand-started retry is the one investigation a human can begin directly, so it is
+        // also the one that would most visibly break that promise by ignoring the switch.
+        var mode = await killSwitch.ResolveAsync(ct);
+
+        if (mode.Effective == AgentMode.Off)
+        {
+            return new ReinvestigateResult
+            {
+                Outcome = ReinvestigateOutcome.Disabled,
+                Detail = mode.Explain(),
+            };
+        }
+
+        // Cheap and racy, and deliberately so. The authoritative guard is the state machine
+        // below: an incident already Investigating is not a legal predecessor, so a retry that
+        // slips past this check still cannot produce a second concurrent run. This exists to
+        // give the common case a message that names the problem.
+        if (tracker.IsRunning(incidentId))
+        {
+            return new ReinvestigateResult
+            {
+                Outcome = ReinvestigateOutcome.AlreadyRunning,
+                Detail = "An investigation is already running for this incident.",
+            };
+        }
+
+        await using var scope = scopes.CreateAsyncScope();
+        var sp = scope.ServiceProvider;
+
+        var db = sp.GetRequiredService<HephaistoDbContext>();
+        var audit = sp.GetRequiredService<IAuditRepository>();
+        var stateMachine = sp.GetRequiredService<IncidentStateMachine>();
+
+        var incident = await db.Incidents
+            .Include(i => i.Events)
+            .FirstOrDefaultAsync(i => i.Id == incidentId, ct);
+
+        if (incident is null)
+        {
+            return new ReinvestigateResult { Outcome = ReinvestigateOutcome.NotFound };
+        }
+
+        var from = incident.State;
+        var eventsBefore = incident.Events.Count;
+
+        try
+        {
+            stateMachine.Reinvestigate(incident, "Re-investigation requested", actor);
+        }
+        catch (InvalidStateTransitionException ex)
+        {
+            return new ReinvestigateResult
+            {
+                Outcome = ReinvestigateOutcome.IllegalState,
+                Detail = ex.Message,
+            };
+        }
+
+        // ORDER IS LOAD-BEARING, for the same reason it is in InvestigationCoordinator. The
+        // event the state machine just appended carries a client-assigned Guid.CreateVersion7
+        // key, so EF concludes the row already exists and emits an UPDATE matching nothing.
+        // This has to run before any save touches the graph.
+        db.TrackNewIncidentChildren(incident, eventsBefore);
+
+        audit.Enlist(new AuditEvent
+        {
+            At = clock.UtcNow,
+            Type = "investigation.requeued",
+            IncidentId = incidentId,
+            Actor = actor,
+            Summary = $"re-investigation requested from {from}",
+            Detail = JsonSerializer.Serialize(new { from = from.ToString(), mode = mode.Effective.ToString() }, AuditJson),
+        });
+
+        await db.SaveChangesAsync(ct);
+
+        // Enqueued only after the commit. The worker resolves the incident by id from its own
+        // scope, so handing it one whose Investigating state has not landed yet is a race it
+        // would lose by reading the old state and doing nothing.
+        if (!queue.TryEnqueue(incidentId))
+        {
+            // The state is already committed, so this incident is now Investigating with
+            // nothing working it. That is precisely the situation StrandedIncidentRequeue
+            // sweeps up on the next restart, so it is recoverable rather than lost - but say
+            // so plainly instead of reporting success.
+            return new ReinvestigateResult
+            {
+                Outcome = ReinvestigateOutcome.QueueFull,
+                Detail = "The investigation queue is saturated. The incident is marked "
+                    + "Investigating and will be picked up by the stranded-incident sweep.",
+            };
+        }
+
+        notifier.Publish(new IncidentLiveEvent
+        {
+            IncidentId = incidentId,
+            Kind = IncidentLiveEventKind.StateChanged,
+            State = IncidentState.Investigating,
+            Detail = $"re-investigation requested by {actor}",
+            At = clock.UtcNow,
+        });
+
+        return new ReinvestigateResult { Outcome = ReinvestigateOutcome.Queued };
+    }
+
     // ------------------------------------------------------------------
     // Mapping
     // ------------------------------------------------------------------
@@ -584,4 +716,33 @@ public sealed class IncidentQueries(
         SubmittedBy = f.SubmittedBy,
         At = f.At,
     };
+}
+
+/// <summary>Why a re-investigation request did or did not take.</summary>
+public enum ReinvestigateOutcome
+{
+    Queued = 0,
+
+    NotFound = 1,
+
+    /// <summary>An investigation is already in flight; a second would double-spend.</summary>
+    AlreadyRunning = 2,
+
+    /// <summary>Not a state a retry can start from - Suppressed, Resolved, or mid-flow.</summary>
+    IllegalState = 3,
+
+    /// <summary>The incident is Investigating but nothing is working it. Recoverable.</summary>
+    QueueFull = 4,
+
+    /// <summary>The kill switch is Off.</summary>
+    Disabled = 5,
+}
+
+public sealed record ReinvestigateResult
+{
+    public required ReinvestigateOutcome Outcome { get; init; }
+
+    public string? Detail { get; init; }
+
+    public bool Accepted => Outcome == ReinvestigateOutcome.Queued;
 }
