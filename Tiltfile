@@ -44,9 +44,15 @@ def tailnet(host_port, container_port):
 # port-forward` against the SERVICE for the rest. Forwarding to a Service also survives the
 # pod restarts that a helm upgrade causes, which the pod-bound version does not.
 def svc_forward(name, namespace, service, host_port, service_port, deps = []):
+    # Retry forever rather than exiting. kubectl port-forward dies immediately if the Service
+    # does not resolve yet, and helm_resource reports ok as soon as helm returns - which is
+    # before the operator has created the Services this forwards to. Without the loop, grafana
+    # and alertmanager come up dead on every fresh `tilt up` and need a manual trigger, while
+    # loki happens to win the race and works. It also reconnects across the pod restarts a
+    # helm upgrade causes.
     return local_resource(
         name,
-        serve_cmd = 'kubectl -n %s port-forward --address %s svc/%s %d:%d' % (
+        serve_cmd = 'until kubectl -n %s port-forward --address %s svc/%s %d:%d; do sleep 5; done' % (
             namespace, HOST_IP, service, host_port, service_port),
         resource_deps = deps,
         labels = ['forwards'],
