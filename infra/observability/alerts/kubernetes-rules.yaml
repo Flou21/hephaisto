@@ -1,6 +1,6 @@
-# Kubernetes workload alerts for Watchtower
+# Kubernetes workload alerts for Hephaisto
 # ---------------------------------------------------------------------------------------
-# Picked up by Prometheus because of `release: watchtower` -- see the ruleSelector in
+# Picked up by Prometheus because of `release: hephaisto` -- see the ruleSelector in
 # infra/observability/kube-prometheus-stack.values.yaml. If that label is missing or
 # misspelled the rules are simply never loaded, with no error anywhere.
 #
@@ -29,16 +29,16 @@
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
-  name: watchtower-kubernetes-rules
-  namespace: watchtower-obs
+  name: hephaisto-kubernetes-rules
+  namespace: hephaisto-obs
   labels:
     # THE selector label. Without it, nothing below is ever evaluated.
-    release: watchtower
-    app.kubernetes.io/part-of: watchtower
+    release: hephaisto
+    app.kubernetes.io/part-of: hephaisto
 spec:
   groups:
     # ===================================================================================
-    - name: watchtower.kubernetes.workloads
+    - name: hephaisto.kubernetes.workloads
       interval: 30s
       rules:
         # ---------------------------------------------------------------------------
@@ -55,11 +55,11 @@ spec:
           # and Running -- so alerting on the state itself produces a flapping alert, while
           # alerting on the restart COUNT is monotonic and stable.
           expr: |
-            increase(kube_pod_container_status_restarts_total{namespace=~"watchtower.*"}[5m]) >= 1
+            increase(kube_pod_container_status_restarts_total{namespace=~"hephaisto.*"}[5m]) >= 1
           for: 1m
           labels:
             severity: warning
-            watchtower_kind: CrashLoopBackOff
+            hephaisto_kind: CrashLoopBackOff
           annotations:
             summary: 'Pod {{ $labels.namespace }}/{{ $labels.pod }} container {{ $labels.container }} is restarting'
             description: >-
@@ -83,11 +83,11 @@ spec:
         # condition resolving itself. Waiting would only delay the signal.
         - alert: KubeContainerOOMKilled
           expr: |
-            kube_pod_container_status_last_terminated_reason{reason="OOMKilled", namespace=~"watchtower.*"} == 1
+            kube_pod_container_status_last_terminated_reason{reason="OOMKilled", namespace=~"hephaisto.*"} == 1
           for: 0m
           labels:
             severity: critical
-            watchtower_kind: OomKilled
+            hephaisto_kind: OomKilled
           annotations:
             summary: 'Container {{ $labels.container }} in {{ $labels.namespace }}/{{ $labels.pod }} was OOMKilled'
             description: >-
@@ -110,14 +110,14 @@ spec:
           expr: |
             sum by (namespace, pod, cluster) (
               max by (namespace, pod, cluster) (
-                kube_pod_status_phase{phase=~"Pending|Unknown", namespace=~"watchtower.*"}
+                kube_pod_status_phase{phase=~"Pending|Unknown", namespace=~"hephaisto.*"}
               ) * on (namespace, pod, cluster) group_left(owner_kind)
               topk by (namespace, pod, cluster) (1, max by (namespace, pod, owner_kind, cluster) (kube_pod_owner{owner_kind!="Job"}))
             ) > 0
           for: 2m
           labels:
             severity: warning
-            watchtower_kind: ReadinessFlapping
+            hephaisto_kind: ReadinessFlapping
           annotations:
             summary: 'Pod {{ $labels.namespace }}/{{ $labels.pod }} has been non-ready for >2m'
             description: >-
@@ -147,15 +147,15 @@ spec:
         # test. Handing the agent one undifferentiated alert would make that test about the
         # alert's vagueness rather than about the agent's reasoning.
         #
-        # Splitting also lets each carry a distinct watchtower_kind, which is what the
+        # Splitting also lets each carry a distinct hephaisto_kind, which is what the
         # dashboard's "incidents by kind" panel and the regression suite key on.
         - alert: KubeContainerWaiting
           expr: |
-            kube_pod_container_status_waiting_reason{reason=~"ImagePullBackOff|ErrImagePull|InvalidImageName", namespace=~"watchtower.*"} == 1
+            kube_pod_container_status_waiting_reason{reason=~"ImagePullBackOff|ErrImagePull|InvalidImageName", namespace=~"hephaisto.*"} == 1
           for: 1m
           labels:
             severity: warning
-            watchtower_kind: ImagePullBackOff
+            hephaisto_kind: ImagePullBackOff
           annotations:
             summary: 'Container {{ $labels.container }} in {{ $labels.namespace }}/{{ $labels.pod }} cannot pull its image ({{ $labels.reason }})'
             description: >-
@@ -168,11 +168,11 @@ spec:
 
         - alert: KubeContainerWaitingConfigError
           expr: |
-            kube_pod_container_status_waiting_reason{reason=~"CreateContainerConfigError|CreateContainerError|InvalidImageName", namespace=~"watchtower.*"} == 1
+            kube_pod_container_status_waiting_reason{reason=~"CreateContainerConfigError|CreateContainerError|InvalidImageName", namespace=~"hephaisto.*"} == 1
           for: 1m
           labels:
             severity: warning
-            watchtower_kind: ConfigError
+            hephaisto_kind: ConfigError
           annotations:
             summary: 'Container {{ $labels.container }} in {{ $labels.namespace }}/{{ $labels.pod }} cannot be created ({{ $labels.reason }})'
             description: >-
@@ -189,11 +189,11 @@ spec:
           # not recover, ever -- so waiting is pure latency. 1m only to let the
           # BackoffLimitExceeded event and the metric settle into agreement.
           expr: |
-            kube_job_status_failed{namespace=~"watchtower.*"} > 0
+            kube_job_status_failed{namespace=~"hephaisto.*"} > 0
           for: 1m
           labels:
             severity: warning
-            watchtower_kind: JobFailed
+            hephaisto_kind: JobFailed
           annotations:
             summary: 'Job {{ $labels.namespace }}/{{ $labels.job_name }} failed'
             description: >-
@@ -216,15 +216,15 @@ spec:
           # otel-collector.values.yaml.
           expr: |
             (
-              kube_deployment_spec_replicas{namespace=~"watchtower.*"}
-                > kube_deployment_status_replicas_available{namespace=~"watchtower.*"}
+              kube_deployment_spec_replicas{namespace=~"hephaisto.*"}
+                > kube_deployment_status_replicas_available{namespace=~"hephaisto.*"}
             ) and (
-              changes(kube_deployment_status_replicas_updated{namespace=~"watchtower.*"}[5m]) == 0
+              changes(kube_deployment_status_replicas_updated{namespace=~"hephaisto.*"}[5m]) == 0
             )
           for: 2m
           labels:
             severity: warning
-            watchtower_kind: ReplicaMismatch
+            hephaisto_kind: ReplicaMismatch
           annotations:
             summary: 'Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has unavailable replicas'
             description: >-
@@ -235,7 +235,7 @@ spec:
             runbook_url: https://runbooks.prometheus-operator.dev/runbooks/kubernetes/kubedeploymentreplicasmismatch
 
     # ===================================================================================
-    - name: watchtower.kubernetes.node
+    - name: hephaisto.kubernetes.node
       interval: 30s
       rules:
         - alert: KubeNodeNotReady
@@ -244,7 +244,7 @@ spec:
           for: 2m
           labels:
             severity: critical
-            watchtower_kind: NodePressure
+            hephaisto_kind: NodePressure
           annotations:
             summary: 'Node {{ $labels.node }} is not Ready'
             description: >-
@@ -264,7 +264,7 @@ spec:
           for: 1m
           labels:
             severity: critical
-            watchtower_kind: NodePressure
+            hephaisto_kind: NodePressure
           annotations:
             summary: 'Node {{ $labels.node }} reports {{ $labels.condition }}'
             description: >-
@@ -280,7 +280,7 @@ spec:
           for: 0m
           labels:
             severity: critical
-            watchtower_kind: NodePressure
+            hephaisto_kind: NodePressure
           annotations:
             summary: 'Node {{ $labels.node }} evicted pods ({{ $labels.eviction_signal }})'
             description: >-
@@ -300,7 +300,7 @@ spec:
           for: 2m
           labels:
             severity: warning
-            watchtower_kind: NodePressure
+            hephaisto_kind: NodePressure
           annotations:
             summary: 'Filesystem {{ $labels.mountpoint }} on {{ $labels.instance }} has <10% space left'
             description: >-
@@ -309,7 +309,7 @@ spec:
               alert covers disk exhaustion for every stateful workload at once.
 
     # ===================================================================================
-    - name: watchtower.kubernetes.storage
+    - name: hephaisto.kubernetes.storage
       interval: 30s
       rules:
         # ---------------------------------------------------------------------------
@@ -342,13 +342,13 @@ spec:
         - alert: KubePersistentVolumeFillingUp
           expr: |
             (
-              kubelet_volume_stats_used_bytes{namespace=~"watchtower.*"}
-              / kubelet_volume_stats_capacity_bytes{namespace=~"watchtower.*"}
+              kubelet_volume_stats_used_bytes{namespace=~"hephaisto.*"}
+              / kubelet_volume_stats_capacity_bytes{namespace=~"hephaisto.*"}
             ) > 0.85
           for: 2m
           labels:
             severity: warning
-            watchtower_kind: PvcNearlyFull
+            hephaisto_kind: PvcNearlyFull
           annotations:
             summary: 'PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is >85% full'
             description: >-
@@ -360,13 +360,13 @@ spec:
         - alert: KubePersistentVolumeFillingUpCritical
           expr: |
             (
-              kubelet_volume_stats_used_bytes{namespace=~"watchtower.*"}
-              / kubelet_volume_stats_capacity_bytes{namespace=~"watchtower.*"}
+              kubelet_volume_stats_used_bytes{namespace=~"hephaisto.*"}
+              / kubelet_volume_stats_capacity_bytes{namespace=~"hephaisto.*"}
             ) > 0.90
           for: 1m
           labels:
             severity: critical
-            watchtower_kind: PvcNearlyFull
+            hephaisto_kind: PvcNearlyFull
           annotations:
             summary: 'PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is >90% full'
             description: >-
@@ -374,7 +374,7 @@ spec:
               KubePersistentVolumeFillingUp -- read that alert's description first.
 
     # ===================================================================================
-    - name: watchtower.kubernetes.targets
+    - name: hephaisto.kubernetes.targets
       interval: 30s
       rules:
         - alert: TargetDown
@@ -396,7 +396,7 @@ spec:
           for: 2m
           labels:
             severity: warning
-            watchtower_kind: TargetDown
+            hephaisto_kind: TargetDown
           annotations:
             summary: 'Scrape target {{ $labels.job }} ({{ $labels.instance }}) is down'
             description: >-
@@ -420,7 +420,7 @@ spec:
           for: 2m
           labels:
             severity: info
-            watchtower_kind: ReadinessFlapping
+            hephaisto_kind: ReadinessFlapping
           annotations:
             summary: 'Scrape target {{ $labels.job }} ({{ $labels.instance }}) is flapping'
             description: >-

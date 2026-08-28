@@ -45,13 +45,13 @@
 #   hops 2, 3 or 4.
 #
 # IMAGE
-#   watchtower/faulty-service:dev, built from infra/chaos/faulty-service/.
+#   hephaisto/faulty-service:dev, built from infra/chaos/faulty-service/.
 #   THIS IMAGE IS NOT IN ANY REGISTRY and this manifest will sit in
 #   ErrImagePull until it is built locally:
 #
-#     cd /Users/flo/watchtower
+#     cd /Users/flo/hephaisto
 #     docker build -f infra/chaos/faulty-service/Dockerfile \
-#       -t watchtower/faulty-service:dev .
+#       -t hephaisto/faulty-service:dev .
 #
 #   Note the build context is the REPO ROOT - the project inherits Central
 #   Package Management from /Directory.Packages.props. Rancher Desktop is
@@ -101,12 +101,12 @@
 #
 #   Kubernetes-level, for contrast - these all stay GREEN, on purpose:
 #     kube_deployment_status_replicas_available{
-#       namespace="watchtower-chaos", deployment="c10-faulty-service"} == 1
+#       namespace="hephaisto-chaos", deployment="c10-faulty-service"} == 1
 #     kube_pod_container_status_restarts_total{
-#       namespace="watchtower-chaos", container="app"} == 0
+#       namespace="hephaisto-chaos", container="app"} == 0
 #
 # EXPECTED LOG SIGNAL
-#   {k8s_namespace_name="watchtower-chaos",
+#   {k8s_namespace_name="hephaisto-chaos",
 #    k8s_deployment_name="c10-faulty-service",
 #    k8s_container_name="app"} |= "FAULT"
 #
@@ -118,12 +118,12 @@
 #   The correlation query - the one that proves hop 4 - pivots on trace_id,
 #   which is present because the OTel logging provider stamps it from the
 #   ambient Activity:
-#     {k8s_namespace_name="watchtower-chaos",
+#     {k8s_namespace_name="hephaisto-chaos",
 #      k8s_container_name="app"} | json | trace_id="<id from the exemplar>"
 #
 #   (If the collector writes OTLP logs to Loki with structured metadata rather
 #   than a JSON body, drop the `| json` and match directly:
-#     {k8s_namespace_name="watchtower-chaos"} | trace_id="<id>" )
+#     {k8s_namespace_name="hephaisto-chaos"} | trace_id="<id>" )
 #
 #   The `traffic` sidecar's own output is a separate, quieter stream:
 #     {k8s_container_name="traffic"} |= "load generator"
@@ -134,11 +134,11 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: c10-faulty-service
-  namespace: watchtower-chaos
+  namespace: hephaisto-chaos
   labels:
     app.kubernetes.io/name: c10-faulty-service
-    watchtower.chaos/scenario: c10
-    watchtower.chaos/fault: service-level-errors
+    hephaisto.chaos/scenario: c10
+    hephaisto.chaos/fault: service-level-errors
 spec:
   replicas: 1
   selector:
@@ -148,13 +148,13 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: c10-faulty-service
-        watchtower.chaos/scenario: c10
-        watchtower.chaos/fault: service-level-errors
+        hephaisto.chaos/scenario: c10
+        hephaisto.chaos/fault: service-level-errors
     spec:
       terminationGracePeriodSeconds: 10
       containers:
         - name: app
-          image: watchtower/faulty-service:dev
+          image: hephaisto/faulty-service:dev
           # MUST stay IfNotPresent: this image exists only in the local daemon.
           imagePullPolicy: IfNotPresent
           ports:
@@ -171,7 +171,7 @@ spec:
             - name: OTEL_SERVICE_NAME
               value: faulty-service
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: http://otel-collector.watchtower-obs:4318
+              value: http://otel-collector.hephaisto-obs:4318
             # 4318 is the HTTP port, so the protocol MUST be http/protobuf.
             # Leaving this unset makes the .NET exporter default to grpc and
             # speak gRPC at an HTTP endpoint, which fails obscurely.
@@ -194,7 +194,7 @@ spec:
                   fieldPath: metadata.namespace
             - name: OTEL_RESOURCE_ATTRIBUTES
               value: >-
-                service.namespace=watchtower-chaos,
+                service.namespace=hephaisto-chaos,
                 deployment.environment=chaos,
                 k8s.pod.name=$(K8S_POD_NAME),
                 k8s.namespace.name=$(K8S_NAMESPACE),
@@ -266,10 +266,10 @@ apiVersion: v1
 kind: Service
 metadata:
   name: c10-faulty-service
-  namespace: watchtower-chaos
+  namespace: hephaisto-chaos
   labels:
     app.kubernetes.io/name: c10-faulty-service
-    watchtower.chaos/scenario: c10
+    hephaisto.chaos/scenario: c10
 spec:
   type: ClusterIP
   selector:

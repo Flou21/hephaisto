@@ -1,6 +1,6 @@
-# Watchtower — an autonomous SRE agent living in the cluster
+# Hephaisto — an autonomous SRE agent living in the cluster
 
-Watchtower watches a Kubernetes cluster, receives Alertmanager webhooks, investigates what
+Hephaisto watches a Kubernetes cluster, receives Alertmanager webhooks, investigates what
 is wrong using PromQL, LogQL and traces, and — eventually — fixes a narrow allowlist of
 problems by itself. It is also a first-class *producer* of telemetry: an investigation is a
 trace you can open in Grafana and then ask the agent about.
@@ -11,29 +11,29 @@ with the Cait project in `~/dev`. That separation is deliberate and worth preser
 ## Unlike `~/dev`, everything here is in git
 
 `~/dev` is a workspace of ten repos with untracked `Dockerfile.dev` files and an
-observability stack that ran for 17 days without appearing in any manifest. Watchtower is
-one project, so `~/watchtower` **is** the git repo and every Dockerfile, manifest, values
+observability stack that ran for 17 days without appearing in any manifest. Hephaisto is
+one project, so `~/hephaisto` **is** the git repo and every Dockerfile, manifest, values
 file and Tiltfile is tracked. A fresh clone builds. Keep it that way.
 
 Consequences worth knowing:
 
 - `git worktree` works fine here, unlike in `~/dev`.
 - There is no `nuget.config`, no private feed and **no PAT build argument anywhere**.
-  Watchtower references no internal package. If you find yourself adding a credential to a
+  Hephaisto references no internal package. If you find yourself adding a credential to a
   Dockerfile, something has gone wrong.
 
 ## Layout
 
 ```
-src/Watchtower.Core/            domain, state machine, policy, digester — ZERO I/O
-src/Watchtower.ServiceDefaults/ OTel wiring, health, resilience — deployed as a dll
-src/Watchtower.Agent/           THE pod: tools, hosted services, Blazor UI, persistence
-src/Watchtower.AppHost/         Aspire — dev-time orchestration only, NEVER deployed
-src/Watchtower.Simulator/       dev-only fault generator
+src/Hephaisto.Core/            domain, state machine, policy, digester — ZERO I/O
+src/Hephaisto.ServiceDefaults/ OTel wiring, health, resilience — deployed as a dll
+src/Hephaisto.Agent/           THE pod: tools, hosted services, Blazor UI, persistence
+src/Hephaisto.AppHost/         Aspire — dev-time orchestration only, NEVER deployed
+src/Hephaisto.Simulator/       dev-only fault generator
 infra/                          namespaces, observability stack, chaos fixtures, RBAC
 ```
 
-### `Watchtower.Core` has zero I/O dependencies, on purpose
+### `Hephaisto.Core` has zero I/O dependencies, on purpose
 
 Every safety-critical decision — the policy engine, the state machine, budgets, oscillation
 detection, log digestion — is a pure function over facts passed in by the caller. Nothing in
@@ -46,9 +46,9 @@ package to `Core` that talks to something, the design has drifted** — the fact
 
 ### Aspire is dev-time only
 
-`Watchtower.AppHost` gives you `dotnet run` with Postgres, the agent and the simulator on a
+`Hephaisto.AppHost` gives you `dotnet run` with Postgres, the agent and the simulator on a
 laptop. It is excluded from the container image and no manifest references it.
-`Watchtower.ServiceDefaults` is a plain class library with an ASP.NET framework reference and
+`Hephaisto.ServiceDefaults` is a plain class library with an ASP.NET framework reference and
 **no `Aspire.Hosting.*` package** — referencing one there would drag the orchestrator into
 the pod.
 
@@ -69,12 +69,12 @@ console plus `/metrics`, never a crash and never silence.
 
 ## Tilt is the inner loop, on port 10351
 
-**Run Tilt from `~/watchtower`.** It coexists with the `~/dev` instance already running
+**Run Tilt from `~/hephaisto`.** It coexists with the `~/dev` instance already running
 detached on 10350; the two share a cluster but no ports.
 
 ```sh
-cd ~/watchtower && tilt up --port 10351
-tilt logs -f watchtower
+cd ~/hephaisto && tilt up --port 10351
+tilt logs -f hephaisto
 ```
 
 Everything binds to the Tailscale interface, so **use the hostname, not `localhost`** — not
@@ -84,7 +84,7 @@ even from a shell on this machine:
 
 | What | Port |
 |---|---|
-| Watchtower UI | 8100 |
+| Hephaisto UI | 8100 |
 | Prometheus | 9090 |
 | Grafana | 3030 |
 | Alertmanager | 9093 |
@@ -118,10 +118,10 @@ it should produce. That table is the agent's regression suite; keep it accurate.
 A `helm_resource` without an explicit `--version` resolves "latest", which will silently
 major-upgrade Prometheus on some future `tilt up`.
 
-## Alert rules must declare a `watchtower_kind` that is a real `SignalKind`
+## Alert rules must declare a `hephaisto_kind` that is a real `SignalKind`
 
-Every `PrometheusRule` carries a `watchtower_kind` label, and its value has to be a member
-name of `Watchtower.Core.Domain.SignalKind`. That label is how an alert selects the runbook
+Every `PrometheusRule` carries a `hephaisto_kind` label, and its value has to be a member
+name of `Hephaisto.Core.Domain.SignalKind`. That label is how an alert selects the runbook
 the model is given.
 
 `Enum.TryParse` fails **silently** on anything else, and the classifier then falls back to
@@ -148,7 +148,7 @@ allowlisted namespaces, budget-capped, with automatic rollback. Everything else 
 What makes that defensible:
 
 1. **RBAC is the hard floor.** Read access is cluster-wide; write access is a `Role` bound
-   into `watchtower-chaos` and nowhere else. No access to Secrets at all, ever. The
+   into `hephaisto-chaos` and nowhere else. No access to Secrets at all, ever. The
    cordon/drain ClusterRole exists in the file but is deliberately **not bound** — binding it
    is the explicit human act that enables that capability.
 2. **The LLM never holds a mutating tool handle.** Investigation has read-only tools;
@@ -186,16 +186,16 @@ forgets.
 Prefer the running cluster over reasoning about it.
 
 ```sh
-cd ~/watchtower && dotnet build && dotnet test
-tilt trigger watchtower
-kubectl -n watchtower logs deploy/watchtower --tail=50
+cd ~/hephaisto && dotnet build && dotnet test
+tilt trigger hephaisto
+kubectl -n hephaisto logs deploy/hephaisto --tail=50
 curl -s http://macstudio-von-florian.tail3043f4.ts.net:8100/healthz
 
 # RBAC is actually bounded: first three must be "no", the last "yes"
-kubectl auth can-i delete secrets             --as=system:serviceaccount:watchtower:watchtower -A
-kubectl auth can-i delete pods -n kube-system --as=system:serviceaccount:watchtower:watchtower
-kubectl auth can-i create clusterrolebindings --as=system:serviceaccount:watchtower:watchtower
-kubectl auth can-i delete pods -n watchtower-chaos --as=system:serviceaccount:watchtower:watchtower
+kubectl auth can-i delete secrets             --as=system:serviceaccount:hephaisto:hephaisto -A
+kubectl auth can-i delete pods -n kube-system --as=system:serviceaccount:hephaisto:hephaisto
+kubectl auth can-i create clusterrolebindings --as=system:serviceaccount:hephaisto:hephaisto
+kubectl auth can-i delete pods -n hephaisto-chaos --as=system:serviceaccount:hephaisto:hephaisto
 ```
 
 The **five-hop correlation test** is the acceptance test for the whole observability stack —
@@ -242,6 +242,6 @@ There is deliberately **no `global.json` in this repo.** Adding one turns a loud
 error into a quiet *"Zero tests ran"* — and in a repo whose tests are the safety argument,
 the loud failure is worth more. Revisit after a xunit.v3 bump.
 
-The tests in `Watchtower.Tests` covering `PolicyEngine` are not routine coverage — **they are
+The tests in `Hephaisto.Tests` covering `PolicyEngine` are not routine coverage — **they are
 the argument that L3 is safe.** Treat a change that weakens them as a change to the safety
 model.

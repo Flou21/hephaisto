@@ -14,12 +14,12 @@
 # ##   This is the ONLY fixture in this directory that can disturb           ##
 # ##   workloads it does not own. Every other fixture (C1-C8, C10) is        ##
 # ##   contained by its own resource limits and cannot hurt anything         ##
-# ##   outside watchtower-chaos. THIS ONE HAS NO MEMORY LIMIT ON PURPOSE.    ##
+# ##   outside hephaisto-chaos. THIS ONE HAS NO MEMORY LIMIT ON PURPOSE.    ##
 # ##   That is the entire fault: an unbounded container is the only way to   ##
 # ##   drive a NODE-level condition instead of a container-level one.        ##
 # ##                                                                         ##
 # ##   WHAT IT CAN TAKE DOWN, on this shared Rancher Desktop node:           ##
-# ##     - the whole observability stack in watchtower-obs                   ##
+# ##     - the whole observability stack in hephaisto-obs                   ##
 # ##       (if the collector is evicted you lose the very telemetry you      ##
 # ##        were trying to observe - which is itself instructive, but not    ##
 # ##        something to discover by accident)                               ##
@@ -36,11 +36,11 @@
 # ##   makes `kubectl apply -f infra/chaos/` safe, and it makes firing this  ##
 # ##   fixture a conscious, separate, single-command act:                    ##
 # ##                                                                         ##
-# ##       kubectl -n watchtower-chaos scale deploy/c9-memhog --replicas=1   ##
+# ##       kubectl -n hephaisto-chaos scale deploy/c9-memhog --replicas=1   ##
 # ##                                                                         ##
 # ##   ...and to stop it, IMMEDIATELY:                                       ##
 # ##                                                                         ##
-# ##       kubectl -n watchtower-chaos scale deploy/c9-memhog --replicas=0   ##
+# ##       kubectl -n hephaisto-chaos scale deploy/c9-memhog --replicas=0   ##
 # ##                                                                         ##
 # ##   Do not leave it running. Budget ~3-5 minutes, capture the signal,     ##
 # ##   scale back to 0. Verify the node recovered:                           ##
@@ -93,10 +93,10 @@
 # EXPECTED METRIC / PROMQL SIGNAL
 #   Always holds at the default 4Gi - unbounded growth with no limit series:
 #     container_memory_working_set_bytes{
-#       namespace="watchtower-chaos", container="hog"} > 4e9
+#       namespace="hephaisto-chaos", container="hog"} > 4e9
 #
 #     absent(kube_pod_container_resource_limits{
-#       namespace="watchtower-chaos", container="hog", resource="memory"}) == 1
+#       namespace="hephaisto-chaos", container="hog", resource="memory"}) == 1
 #     (the missing limit is itself the finding: the agent should call out that
 #      this workload is unbounded, independently of whether it has hurt
 #      anything yet)
@@ -105,18 +105,18 @@
 #     kube_node_status_condition{condition="MemoryPressure",
 #                                status="true"} == 1
 #
-#     kube_pod_status_reason{namespace="watchtower-chaos",
+#     kube_pod_status_reason{namespace="hephaisto-chaos",
 #                            reason="Evicted"} == 1
 #
 #     sum(kube_pod_status_reason{reason="Evicted"}) > 0
-#     (deliberately NOT scoped to watchtower-chaos - the blast radius outside
+#     (deliberately NOT scoped to hephaisto-chaos - the blast radius outside
 #      the chaos namespace is the thing worth measuring)
 #
 #   Node headroom, from node-exporter:
 #     node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.10
 #
 # EXPECTED LOG SIGNAL
-#   {k8s_namespace_name="watchtower-chaos", k8s_deployment_name="c9-memhog"}
+#   {k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c9-memhog"}
 #     |= "allocated"
 #
 #   Exact expected lines, one per 128Mi step:
@@ -132,16 +132,16 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: c9-memhog
-  namespace: watchtower-chaos
+  namespace: hephaisto-chaos
   labels:
     app.kubernetes.io/name: c9-memhog
-    watchtower.chaos/scenario: c9
-    watchtower.chaos/fault: node-memory-pressure
+    hephaisto.chaos/scenario: c9
+    hephaisto.chaos/fault: node-memory-pressure
   annotations:
-    watchtower.chaos/danger: "node-wide"
-    watchtower.chaos/run-alone: "true"
-    watchtower.chaos/arm: "kubectl -n watchtower-chaos scale deploy/c9-memhog --replicas=1"
-    watchtower.chaos/disarm: "kubectl -n watchtower-chaos scale deploy/c9-memhog --replicas=0"
+    hephaisto.chaos/danger: "node-wide"
+    hephaisto.chaos/run-alone: "true"
+    hephaisto.chaos/arm: "kubectl -n hephaisto-chaos scale deploy/c9-memhog --replicas=1"
+    hephaisto.chaos/disarm: "kubectl -n hephaisto-chaos scale deploy/c9-memhog --replicas=0"
 spec:
   # ***** DISARMED ON PURPOSE. See the banner. Scale to 1 to fire it. *****
   replicas: 0
@@ -152,8 +152,8 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: c9-memhog
-        watchtower.chaos/scenario: c9
-        watchtower.chaos/fault: node-memory-pressure
+        hephaisto.chaos/scenario: c9
+        hephaisto.chaos/fault: node-memory-pressure
     spec:
       # Die fast when someone scales this back to 0.
       terminationGracePeriodSeconds: 1

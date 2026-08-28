@@ -1,12 +1,12 @@
-# OpenTelemetry Collector values for Watchtower
+# OpenTelemetry Collector values for Hephaisto
 # ---------------------------------------------------------------------------------------
 #   chart:     open-telemetry/opentelemetry-collector
 #   version:   0.171.0   (collector 0.158.0)
 #   release:   otel-collector
-#   namespace: watchtower-obs
+#   namespace: hephaisto-obs
 #
 #   helm upgrade --install otel-collector open-telemetry/opentelemetry-collector \
-#     --version 0.171.0 -n watchtower-obs -f infra/observability/otel-collector.values.yaml
+#     --version 0.171.0 -n hephaisto-obs -f infra/observability/otel-collector.values.yaml
 #
 # This collector is the single ingress point for all three signals. Everything the agent
 # ever reasons about passes through this pod.
@@ -67,8 +67,8 @@
 # `kubectl get cm otel-collector-agent -o yaml` shows the other set.
 # ---------------------------------------------------------------------------------------
 
-# So the Service is `otel-collector.watchtower-obs`, not
-# `otel-collector-opentelemetry-collector.watchtower-obs`. Every OTEL_EXPORTER_OTLP_ENDPOINT
+# So the Service is `otel-collector.hephaisto-obs`, not
+# `otel-collector-opentelemetry-collector.hephaisto-obs`. Every OTEL_EXPORTER_OTLP_ENDPOINT
 # in this repo -- the agent's, the C10 fixture's -- points at the short name.
 fullnameOverride: otel-collector
 
@@ -216,7 +216,7 @@ config:
     zipkin: null
 
     # --- otlp ---------------------------------------------------------------------------
-    # Everything instrumented sends here: the Watchtower agent itself, and the C10 faulty
+    # Everything instrumented sends here: the Hephaisto agent itself, and the C10 faulty
     # service. 0.0.0.0 rather than the chart's ${MY_POD_IP} default so the DaemonSet pod is
     # reachable on the Service ClusterIP as well as its pod IP.
     otlp:
@@ -256,8 +256,8 @@ config:
     # single-replica Deployment (or use the k8sleaderelector extension).
     k8s_events:
       auth_type: serviceAccount
-      # Empty = all namespaces. The agent needs events from watchtower-chaos (the fixtures),
-      # watchtower-obs (its own stack breaking) and kube-system (node-level trouble).
+      # Empty = all namespaces. The agent needs events from hephaisto-chaos (the fixtures),
+      # hephaisto-obs (its own stack breaking) and kube-system (node-level trouble).
       namespaces: []
 
     # --- filelog ------------------------------------------------------------------------
@@ -275,7 +275,7 @@ config:
       # Do not read our own logs. A collector that ingests its own output about failing to
       # export logs builds a feedback loop that grows without bound under any Loki outage.
       exclude:
-        - /var/log/pods/watchtower-obs_otel-collector*_*/opentelemetry-collector/*.log
+        - /var/log/pods/hephaisto-obs_otel-collector*_*/opentelemetry-collector/*.log
       start_at: end
       include_file_path: true
       include_file_name: false
@@ -318,7 +318,7 @@ config:
       spike_limit_percentage: 25
 
     # --- k8sattributes --------------------------------------------------------------------
-    # Turns "a span arrived from 10.42.0.37" into k8s.namespace.name=watchtower-chaos,
+    # Turns "a span arrived from 10.42.0.37" into k8s.namespace.name=hephaisto-chaos,
     # k8s.deployment.name=c2-crashloop. This is the join key for the entire correlation
     # story: it is what lets a Tempo trace, a Loki log line and a Prometheus series all be
     # attributed to the same workload, and it is what the chaos README's LogQL selectors
@@ -346,11 +346,11 @@ config:
           - container.image.name
           - container.image.tag
         labels:
-          # Chaos fixtures carry watchtower.io/scenario so an alert can be traced back to
+          # Chaos fixtures carry hephaisto.io/scenario so an alert can be traced back to
           # the fixture that caused it -- which is how the regression suite asserts
           # "scenario c7 produced exactly the c7 alert and not the c4 alert".
-          - tag_name: watchtower.scenario
-            key: watchtower.io/scenario
+          - tag_name: hephaisto.scenario
+            key: hephaisto.io/scenario
             from: pod
       pod_association:
         - sources:
@@ -389,7 +389,7 @@ config:
 
     # --- traces -> Tempo -------------------------------------------------------------------
     otlp/tempo:
-      endpoint: tempo.watchtower-obs:4317
+      endpoint: tempo.hephaisto-obs:4317
       tls:
         insecure: true
       retry_on_failure:
@@ -401,7 +401,7 @@ config:
     # see infra/observability/aspire-dashboard.yaml. Exporting to it in parallel with Tempo
     # (rather than chaining) means an Aspire restart cannot affect the durable path.
     otlp/aspire:
-      endpoint: aspire-dashboard.watchtower-obs:18889
+      endpoint: aspire-dashboard.hephaisto-obs:18889
       tls:
         insecure: true
       retry_on_failure:
@@ -427,7 +427,7 @@ config:
     # `loki:` with `labels.attributes` is describing a component that no longer exists.
     #
     # The modern path is Loki's own OTLP endpoint. otlphttp appends the signal path, so this
-    # endpoint becomes POST http://loki.watchtower-obs:3100/otlp/v1/logs. That endpoint is
+    # endpoint becomes POST http://loki.hephaisto-obs:3100/otlp/v1/logs. That endpoint is
     # what maps span context onto Loki structured metadata, giving us `trace_id` on log
     # lines for free -- see the header of loki.values.yaml.
     #
@@ -435,7 +435,7 @@ config:
     # Deliberate: the gateway is one more pod between the agent's log ingest and durability,
     # and losing writes is worse than losing queries. Grafana reads through the gateway.
     otlphttp/loki:
-      endpoint: http://loki.watchtower-obs:3100/otlp
+      endpoint: http://loki.hephaisto-obs:3100/otlp
       # === Shed logs rather than wedge the collector =====================================
       # Default retry backoff is 5 minutes. During a Loki outage the collector would hold
       # five minutes' worth of every container's stdout in memory, hit memory_limiter,
@@ -471,7 +471,7 @@ config:
     #
     # Verified service name: the chart renders <release>-kube-prometheus-prometheus.
     prometheusremotewrite:
-      endpoint: http://watchtower-kube-prometheus-prometheus.watchtower-obs:9090/api/v1/write
+      endpoint: http://hephaisto-kube-prometheus-prometheus.hephaisto-obs:9090/api/v1/write
       tls:
         insecure: true
       # Resource attributes do NOT become series labels on their own -- they become a

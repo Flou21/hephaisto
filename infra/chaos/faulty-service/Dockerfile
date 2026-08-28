@@ -6,8 +6,8 @@
 # fails with NU1008 ("Projects that use central package version management
 # should not define the version on the PackageReference items").
 #
-#   cd /Users/flo/watchtower
-#   docker build -f infra/chaos/faulty-service/Dockerfile -t watchtower/faulty-service:dev .
+#   cd /Users/flo/hephaisto
+#   docker build -f infra/chaos/faulty-service/Dockerfile -t hephaisto/faulty-service:dev .
 #
 # ARM64: both mcr.microsoft.com/dotnet/sdk:10.0-alpine and
 # mcr.microsoft.com/dotnet/aspnet:10.0-alpine publish linux/arm64 manifests

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ZERO I/O. Every safety-critical decision in Hephaisto is a pure function over
+       injected facts and lives here, so the whole safety surface is covered by fast
+       in-memory unit tests with no cluster, no database and no LLM. Adding a package
+       that talks to anything (KubernetesClient, Npgsql, HttpClient) belongs in
+       Hephaisto.Agent instead - if you find yourself wanting one here, the design
+       has drifted. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Options" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+</Project>

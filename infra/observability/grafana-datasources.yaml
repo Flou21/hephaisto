@@ -1,4 +1,4 @@
-# Grafana datasources for Watchtower
+# Grafana datasources for Hephaisto
 # ---------------------------------------------------------------------------------------
 # WHY A CONFIGMAP AND NOT `grafana.additionalDataSources`
 # ---------------------------------------------------------------------------------------
@@ -47,13 +47,13 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: watchtower-datasources
-  namespace: watchtower-obs
+  name: hephaisto-datasources
+  namespace: hephaisto-obs
   labels:
     grafana_datasource: "1"
-    app.kubernetes.io/part-of: watchtower
+    app.kubernetes.io/part-of: hephaisto
 data:
-  watchtower-datasources.yaml: |-
+  hephaisto-datasources.yaml: |-
     apiVersion: 1
 
     # `prune` would let Grafana delete datasources that disappear from provisioning.
@@ -70,7 +70,7 @@ data:
         access: proxy
         isDefault: true
         editable: false
-        url: http://watchtower-kube-prometheus-prometheus.watchtower-obs:9090
+        url: http://hephaisto-kube-prometheus-prometheus.hephaisto-obs:9090
         jsonData:
           httpMethod: POST
           # Must match prometheus.prometheusSpec.scrapeInterval. If this is smaller than the
@@ -102,7 +102,7 @@ data:
         # Reads go through the nginx gateway (the chart's supported query surface). Writes
         # from the OTel collector go direct to loki:3100 -- see otel-collector.values.yaml.
         # Splitting them means a gateway outage costs queries but never costs log ingest.
-        url: http://loki-gateway.watchtower-obs:80
+        url: http://loki-gateway.hephaisto-obs:80
         jsonData:
           maxLines: 2000
           timeout: 60
@@ -131,7 +131,7 @@ data:
         uid: tempo
         access: proxy
         editable: false
-        url: http://tempo.watchtower-obs:3200
+        url: http://tempo.hephaisto-obs:3200
         jsonData:
           # -----------------------------------------------------------------------------
           # traces -> logs
@@ -149,7 +149,7 @@ data:
             # exact, and it is the hop that makes five-hop correlation demonstrable.
             #
             # It only works when the log line actually has a trace_id. In this stack that is
-            # true for logs shipped over OTLP -- the Watchtower agent itself, and the C10
+            # true for logs shipped over OTLP -- the Hephaisto agent itself, and the C10
             # faulty-service fixture -- because Loki's OTLP endpoint maps span context onto
             # structured metadata.
             #
@@ -243,7 +243,7 @@ data:
         uid: alertmanager
         access: proxy
         editable: false
-        url: http://watchtower-kube-prometheus-alertmanager.watchtower-obs:9093
+        url: http://hephaisto-kube-prometheus-alertmanager.hephaisto-obs:9093
         jsonData:
           implementation: prometheus
           # Grafana's own unified alerting is not used -- all rules are PrometheusRule CRs

@@ -1,4 +1,4 @@
-# Postgres for Watchtower
+# Postgres for Hephaisto
 # ---------------------------------------------------------------------------------------
 # Plain manifests, not an operator and not the Bitnami chart. This is one single-replica
 # database on a single-node dev cluster; CloudNativePG would add a CRD set and an operator
@@ -18,10 +18,10 @@
 #
 # THE CREDENTIALS SECRET IS NOT IN THIS FILE AND MUST NOT BE
 # ---------------------------------------------------------------------------------------
-#   kubectl -n watchtower create secret generic watchtower-postgres \
-#     --from-literal=POSTGRES_USER=watchtower \
+#   kubectl -n hephaisto create secret generic hephaisto-postgres \
+#     --from-literal=POSTGRES_USER=hephaisto \
 #     --from-literal=POSTGRES_PASSWORD="$(openssl rand -hex 24)" \
-#     --from-literal=POSTGRES_DB=watchtower
+#     --from-literal=POSTGRES_DB=hephaisto
 #
 # A password committed to a manifest is a password in every clone, every `helm get values`
 # and every `kubectl get secret -o yaml` forever. Note also that the agent's ServiceAccount
@@ -32,10 +32,10 @@ apiVersion: v1
 kind: Service
 metadata:
   name: postgres
-  namespace: watchtower
+  namespace: hephaisto
   labels:
     app.kubernetes.io/name: postgres
-    app.kubernetes.io/part-of: watchtower
+    app.kubernetes.io/part-of: hephaisto
 spec:
   type: ClusterIP
   selector:
@@ -47,15 +47,15 @@ spec:
       protocol: TCP
 ---
 # Headless companion. A StatefulSet needs a governing headless Service for stable network
-# identity; the ClusterIP one above is what callers actually use (postgres.watchtower:5432).
+# identity; the ClusterIP one above is what callers actually use (postgres.hephaisto:5432).
 apiVersion: v1
 kind: Service
 metadata:
   name: postgres-headless
-  namespace: watchtower
+  namespace: hephaisto
   labels:
     app.kubernetes.io/name: postgres
-    app.kubernetes.io/part-of: watchtower
+    app.kubernetes.io/part-of: hephaisto
 spec:
   clusterIP: None
   selector:
@@ -74,14 +74,14 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: watchtower-postgres-init
-  namespace: watchtower
+  name: hephaisto-postgres-init
+  namespace: hephaisto
   labels:
     app.kubernetes.io/name: postgres
-    app.kubernetes.io/part-of: watchtower
+    app.kubernetes.io/part-of: hephaisto
 data:
   00-extensions.sql: |
-    -- Runs against POSTGRES_DB (watchtower), which the entrypoint has already created
+    -- Runs against POSTGRES_DB (hephaisto), which the entrypoint has already created
     -- from the env var, so there is no CREATE DATABASE here -- issuing one would fail
     -- because the database already exists and the connection is inside it.
 
@@ -100,26 +100,26 @@ data:
 
     -- A schema for the agent's own objects, so EF Core migrations and any hand-written
     -- diagnostics do not fight over `public`.
-    CREATE SCHEMA IF NOT EXISTS watchtower;
+    CREATE SCHEMA IF NOT EXISTS hephaisto;
 
     -- Sanity marker. If this row is missing, init did not run and the PVC predates this
     -- ConfigMap -- which is the single most likely cause of "the vector type does not
     -- exist" after someone reused an old volume.
-    CREATE TABLE IF NOT EXISTS watchtower.schema_bootstrap (
+    CREATE TABLE IF NOT EXISTS hephaisto.schema_bootstrap (
       applied_at timestamptz NOT NULL DEFAULT now(),
       note       text        NOT NULL
     );
-    INSERT INTO watchtower.schema_bootstrap (note)
+    INSERT INTO hephaisto.schema_bootstrap (note)
       VALUES ('extensions: vector, pgcrypto, pg_trgm');
 ---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: postgres
-  namespace: watchtower
+  namespace: hephaisto
   labels:
     app.kubernetes.io/name: postgres
-    app.kubernetes.io/part-of: watchtower
+    app.kubernetes.io/part-of: hephaisto
 spec:
   serviceName: postgres-headless
   replicas: 1
@@ -130,7 +130,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: postgres
-        app.kubernetes.io/part-of: watchtower
+        app.kubernetes.io/part-of: hephaisto
     spec:
       # Long enough for a clean shutdown and checkpoint. The default 30s can leave the
       # database needing crash recovery on every single pod restart, which turns a routine
@@ -152,7 +152,7 @@ spec:
               protocol: TCP
           envFrom:
             - secretRef:
-                name: watchtower-postgres
+                name: hephaisto-postgres
           env:
             # PGDATA must be a SUBDIRECTORY of the mount, never the mount itself. A
             # PersistentVolume mount point is not empty -- depending on the provisioner it
@@ -209,13 +209,13 @@ spec:
       volumes:
         - name: init
           configMap:
-            name: watchtower-postgres-init
+            name: hephaisto-postgres-init
   volumeClaimTemplates:
     - metadata:
         name: data
         labels:
           app.kubernetes.io/name: postgres
-          app.kubernetes.io/part-of: watchtower
+          app.kubernetes.io/part-of: hephaisto
       spec:
         # local-path is the only StorageClass on this cluster. Its reclaim policy is Delete,
         # but a StatefulSet's volumeClaimTemplate PVC is NOT removed when the StatefulSet is

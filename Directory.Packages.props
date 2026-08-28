@@ -65,7 +65,7 @@
     <PackageVersion Include="NSubstitute" Version="6.2.0" />
   </ItemGroup>
 
-  <ItemGroup Label="Core (abstractions only - Watchtower.Core must stay I/O-free)">
+  <ItemGroup Label="Core (abstractions only - Hephaisto.Core must stay I/O-free)">
     <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.11" />

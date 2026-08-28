@@ -1,4 +1,4 @@
-# Service-level alerts for Watchtower, built on Tempo span metrics
+# Service-level alerts for Hephaisto, built on Tempo span metrics
 # ---------------------------------------------------------------------------------------
 # THE POINT: these rules contain no application-specific metric names.
 # ---------------------------------------------------------------------------------------
@@ -28,7 +28,7 @@
 #      -- the generator writes samples minutes late; with the 0s default Prometheus
 #         rejects every one of them as out-of-order.
 #
-# The alert WatchtowerSpanMetricsMissing in observability-selfcheck.yaml is the guard
+# The alert HephaistoSpanMetricsMissing in observability-selfcheck.yaml is the guard
 # against exactly this: it fires when Tempo is receiving spans but no span metrics are
 # arriving, which is the only way to notice a silently-empty SLO.
 #
@@ -51,15 +51,15 @@
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
-  name: watchtower-slo-rules
-  namespace: watchtower-obs
+  name: hephaisto-slo-rules
+  namespace: hephaisto-obs
   labels:
-    release: watchtower
-    app.kubernetes.io/part-of: watchtower
+    release: hephaisto
+    app.kubernetes.io/part-of: hephaisto
 spec:
   groups:
     # ===================================================================================
-    - name: watchtower.slo.errors
+    - name: hephaisto.slo.errors
       interval: 30s
       rules:
         - alert: ServiceHighErrorRate
@@ -90,7 +90,7 @@ spec:
           for: 2m
           labels:
             severity: warning
-            watchtower_kind: HighErrorRate
+            hephaisto_kind: HighErrorRate
           annotations:
             summary: 'Service {{ $labels.service_name }} error rate is {{ $value | printf "%.1f" }}%'
             description: >-
@@ -120,7 +120,7 @@ spec:
           for: 1m
           labels:
             severity: critical
-            watchtower_kind: HighErrorRate
+            hephaisto_kind: HighErrorRate
           annotations:
             summary: 'Service {{ $labels.service_name }} error rate is {{ $value | printf "%.1f" }}% (critical)'
             description: >-
@@ -129,7 +129,7 @@ spec:
               not a tail of unlucky requests.
 
     # ===================================================================================
-    - name: watchtower.slo.latency
+    - name: hephaisto.slo.latency
       interval: 30s
       rules:
         # -------------------------------------------------------------------------------
@@ -181,7 +181,7 @@ spec:
           for: 2m
           labels:
             severity: critical
-            watchtower_kind: HighLatency
+            hephaisto_kind: HighLatency
             burn_window: fast
           annotations:
             summary: 'Service {{ $labels.service_name }} is burning its latency budget 14.4x too fast'
@@ -219,7 +219,7 @@ spec:
           for: 5m
           labels:
             severity: warning
-            watchtower_kind: HighLatency
+            hephaisto_kind: HighLatency
             burn_window: slow
           annotations:
             summary: 'Service {{ $labels.service_name }} is burning its latency budget 6x too fast'
@@ -251,7 +251,7 @@ spec:
           for: 2m
           labels:
             severity: critical
-            watchtower_kind: HighLatency
+            hephaisto_kind: HighLatency
           annotations:
             summary: 'Over half of requests to {{ $labels.service_name }} take longer than 1s'
             description: >-
@@ -261,7 +261,7 @@ spec:
               edge grew.
 
     # ===================================================================================
-    - name: watchtower.slo.traffic
+    - name: hephaisto.slo.traffic
       interval: 30s
       rules:
         - alert: ServiceNoTraffic
@@ -278,12 +278,12 @@ spec:
           for: 5m
           labels:
             severity: warning
-            watchtower_kind: TargetDown
+            hephaisto_kind: TargetDown
           annotations:
             summary: 'No span metrics from faulty-service for 5 minutes'
             description: >-
               The C10 fixture generates continuous traffic through a sidecar, so its span
               metrics should never stop. Silence means one of: the fixture is down, the
               collector is not forwarding traces, or Tempo's metrics-generator has stopped
-              remote-writing. Check WatchtowerSpanMetricsMissing and the otelcol_* alerts in
+              remote-writing. Check HephaistoSpanMetricsMissing and the otelcol_* alerts in
               observability-selfcheck.yaml before concluding the service itself is at fault.

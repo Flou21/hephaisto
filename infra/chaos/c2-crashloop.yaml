@@ -26,39 +26,39 @@
 #
 # EXPECTED METRIC / PROMQL SIGNAL
 #   kube_pod_container_status_waiting_reason{
-#     namespace="watchtower-chaos", container="app",
+#     namespace="hephaisto-chaos", container="app",
 #     reason="CrashLoopBackOff"} == 1
 #
 #   increase(kube_pod_container_status_restarts_total{
-#     namespace="watchtower-chaos", container="app"}[10m]) > 2
+#     namespace="hephaisto-chaos", container="app"}[10m]) > 2
 #
 #   kube_pod_container_status_last_terminated_reason{
-#     namespace="watchtower-chaos", container="app", reason="Error"} == 1
+#     namespace="hephaisto-chaos", container="app", reason="Error"} == 1
 #   (reason is "Error", NOT "OOMKilled" - that distinction separates C2 from C1)
 #
 #   Note the exit code is not exposed as a metric by kube-state-metrics; it is
 #   only in the pod status and in events. Another reason logs matter here.
 #
 # EXPECTED LOG SIGNAL
-#   {k8s_namespace_name="watchtower-chaos", k8s_deployment_name="c2-crashloop"}
+#   {k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c2-crashloop"}
 #     |= "FATAL"
 #
 #   Exact expected line:
 #     FATAL: could not connect to mongo at mongo.infra-db:27017
 #
 #   Rate form for the alert rule:
-#   sum(count_over_time({k8s_namespace_name="watchtower-chaos",
+#   sum(count_over_time({k8s_namespace_name="hephaisto-chaos",
 #       k8s_deployment_name="c2-crashloop"} |= "could not connect to mongo" [10m])) > 0
 # =============================================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: c2-crashloop
-  namespace: watchtower-chaos
+  namespace: hephaisto-chaos
   labels:
     app.kubernetes.io/name: c2-crashloop
-    watchtower.chaos/scenario: c2
-    watchtower.chaos/fault: crashloop
+    hephaisto.chaos/scenario: c2
+    hephaisto.chaos/fault: crashloop
 spec:
   replicas: 1
   selector:
@@ -68,8 +68,8 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: c2-crashloop
-        watchtower.chaos/scenario: c2
-        watchtower.chaos/fault: crashloop
+        hephaisto.chaos/scenario: c2
+        hephaisto.chaos/fault: crashloop
     spec:
       terminationGracePeriodSeconds: 1
       containers:

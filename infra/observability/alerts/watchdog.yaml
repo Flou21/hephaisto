@@ -14,8 +14,8 @@
 #       -> Prometheus rule evaluation running
 #         -> Prometheus can reach Alertmanager
 #           -> Alertmanager routing matches `alertname = "AgentWatchdog"`
-#             -> Alertmanager's webhook receiver can resolve watchtower.watchtower
-#               -> the NetworkPolicy permits watchtower-obs -> watchtower on 8080
+#             -> Alertmanager's webhook receiver can resolve hephaisto.hephaisto
+#               -> the NetworkPolicy permits hephaisto-obs -> hephaisto on 8080
 #                 -> the agent process is up and its HTTP handler is registered
 #                   -> the agent's webhook parser accepts the payload shape
 #
@@ -44,13 +44,13 @@
 # ---------------------------------------------------------------------------------------
 # Routed separately in kube-prometheus-stack.values.yaml:
 #
-#     - receiver: watchtower-watchdog
+#     - receiver: hephaisto-watchdog
 #       matchers: [ alertname = "AgentWatchdog" ]
 #       group_wait: 0s
 #       repeat_interval: 5m          # tighter than the 15m default for everything else
 #
 # It goes to /webhooks/watchdog rather than /webhooks/alertmanager so the agent never has
-# to open an incident for it, never counts it in `watchtower_incidents_opened_total`, and
+# to open an incident for it, never counts it in `hephaisto_incidents_opened_total`, and
 # never lets a permanently-firing alert pollute the incident dashboard.
 #
 # NAME: `AgentWatchdog`, NOT `Watchdog`. kube-prometheus-stack ships its own alert called
@@ -67,14 +67,14 @@
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
-  name: watchtower-watchdog
-  namespace: watchtower-obs
+  name: hephaisto-watchdog
+  namespace: hephaisto-obs
   labels:
-    release: watchtower
-    app.kubernetes.io/part-of: watchtower
+    release: hephaisto
+    app.kubernetes.io/part-of: hephaisto
 spec:
   groups:
-    - name: watchtower.watchdog
+    - name: hephaisto.watchdog
       # Faster than the 30s used elsewhere. The heartbeat should be the most responsive
       # thing in the stack, because everything else's credibility depends on it.
       interval: 15s
@@ -83,12 +83,12 @@ spec:
           expr: vector(1)
           labels:
             severity: none
-            watchtower_kind: Watchdog
+            hephaisto_kind: Watchdog
           annotations:
             summary: 'Alerting pipeline heartbeat'
             description: >-
               This alert always fires and always will. It carries no information about the
               cluster. Its only purpose is to prove that Prometheus rule evaluation,
               Alertmanager routing and the agent's webhook endpoint are all working
-              together. If Watchtower stops receiving this, the alert path is broken and
+              together. If Hephaisto stops receiving this, the alert path is broken and
               the agent must report that it is blind -- NOT that the cluster is healthy.

@@ -30,39 +30,39 @@
 #
 # EXPECTED METRIC / PROMQL SIGNAL
 #   kube_pod_container_status_waiting_reason{
-#     namespace="watchtower-chaos", container="app",
+#     namespace="hephaisto-chaos", container="app",
 #     reason="ImagePullBackOff"} == 1
 #
 #   (transiently, between backoffs)
 #   kube_pod_container_status_waiting_reason{
-#     namespace="watchtower-chaos", container="app", reason="ErrImagePull"} == 1
+#     namespace="hephaisto-chaos", container="app", reason="ErrImagePull"} == 1
 #
 #   Robust alert form - covers both reasons and rides through the flip-flop:
 #   max_over_time(
 #     kube_pod_container_status_waiting_reason{
-#       namespace="watchtower-chaos",
+#       namespace="hephaisto-chaos",
 #       reason=~"ImagePullBackOff|ErrImagePull"}[10m]) == 1
 #
 #   kube_deployment_status_replicas_available{
-#     namespace="watchtower-chaos", deployment="c4-imagepull"} == 0
+#     namespace="hephaisto-chaos", deployment="c4-imagepull"} == 0
 #
 #   restarts_total stays at ZERO here - the container never ran, so it cannot
 #   have restarted. That is a hard discriminator against C1 and C2.
 #
 # EXPECTED LOG SIGNAL
 #   NONE. No container image, therefore no container, therefore no stdout.
-#     count_over_time({k8s_namespace_name="watchtower-chaos",
+#     count_over_time({k8s_namespace_name="hephaisto-chaos",
 #                      k8s_deployment_name="c4-imagepull"}[15m]) == 0
 # =============================================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: c4-imagepull
-  namespace: watchtower-chaos
+  namespace: hephaisto-chaos
   labels:
     app.kubernetes.io/name: c4-imagepull
-    watchtower.chaos/scenario: c4
-    watchtower.chaos/fault: imagepull
+    hephaisto.chaos/scenario: c4
+    hephaisto.chaos/fault: imagepull
 spec:
   replicas: 1
   selector:
@@ -72,8 +72,8 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: c4-imagepull
-        watchtower.chaos/scenario: c4
-        watchtower.chaos/fault: imagepull
+        hephaisto.chaos/scenario: c4
+        hephaisto.chaos/fault: imagepull
     spec:
       terminationGracePeriodSeconds: 1
       containers:

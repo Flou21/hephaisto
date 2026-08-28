@@ -1,12 +1,12 @@
-# Loki values for Watchtower
+# Loki values for Hephaisto
 # ---------------------------------------------------------------------------------------
 #   chart:     grafana/loki
 #   version:   6.55.0   (Loki 3.6.7)
 #   release:   loki
-#   namespace: watchtower-obs
+#   namespace: hephaisto-obs
 #
 #   helm upgrade --install loki grafana/loki --version 6.55.0 \
-#     -n watchtower-obs -f infra/observability/loki.values.yaml
+#     -n hephaisto-obs -f infra/observability/loki.values.yaml
 #
 # ---------------------------------------------------------------------------------------
 # Why single binary, and why the OTLP endpoint is the whole point
@@ -15,7 +15,7 @@
 # replication_factor 1. On a one-node cluster that is not a compromise, it is the only
 # correct choice: SimpleScalable (the chart default) wants a 3-replica ring, and a ring
 # that never reaches quorum produces a stream of "too many unhealthy instances" errors on
-# every restart. Watchtower would read those as a real incident. Every alert this agent
+# every restart. Hephaisto would read those as a real incident. Every alert this agent
 # sees must mean something.
 #
 # Loki 3.x exposes a NATIVE OTLP ingest endpoint at POST /otlp/v1/logs. That endpoint is
@@ -229,11 +229,11 @@ monitoring:
     labels:
       # Must match prometheus.prometheusSpec.serviceMonitorSelector in
       # kube-prometheus-stack.values.yaml or this ServiceMonitor is silently ignored.
-      release: watchtower
+      release: hephaisto
   selfMonitoring:
     enabled: false
   # The chart's bundled Loki mixin dashboards and rules: off. Rules especially -- they
-  # would be picked up by our ruleSelector only if labelled release=watchtower, and their
+  # would be picked up by our ruleSelector only if labelled release=hephaisto, and their
   # production `for:` durations contradict the dev-loop tuning in infra/observability/alerts/.
   dashboards:
     enabled: false

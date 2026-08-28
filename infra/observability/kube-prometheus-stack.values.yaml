@@ -1,12 +1,12 @@
-# kube-prometheus-stack values for Watchtower
+# kube-prometheus-stack values for Hephaisto
 # ---------------------------------------------------------------------------------------
 #   chart:    prometheus-community/kube-prometheus-stack
 #   version:  81.1.0   (prometheus-operator v0.88.0, grafana subchart 10.5.8 -> Grafana 12.3.1)
-#   release:  watchtower
-#   namespace: watchtower-obs
+#   release:  hephaisto
+#   namespace: hephaisto-obs
 #
-#   helm upgrade --install watchtower prometheus-community/kube-prometheus-stack \
-#     --version 81.1.0 -n watchtower-obs -f infra/observability/kube-prometheus-stack.values.yaml
+#   helm upgrade --install hephaisto prometheus-community/kube-prometheus-stack \
+#     --version 81.1.0 -n hephaisto-obs -f infra/observability/kube-prometheus-stack.values.yaml
 #
 # ---------------------------------------------------------------------------------------
 # EVERYTHING HERE MUST BE DECLARATIVE. READ THIS BEFORE TOUCHING GRAFANA'S UI.
@@ -128,7 +128,7 @@ prometheus:
     # selector is empty, restrict to objects carrying release=<this release>". That default
     # is fine, but it silently drops any rule whose label is missing. Being explicit here
     # documents the contract that every PrometheusRule in infra/observability/alerts/ must
-    # carry `release: watchtower`, and every PodMonitor/ServiceMonitor likewise.
+    # carry `release: hephaisto`, and every PodMonitor/ServiceMonitor likewise.
     #
     # ruleSelectorNilUsesHelmValues: false + an explicit ruleSelector means "match exactly
     # this label, in any namespace" -- which is what lets our PrometheusRule CRs live
@@ -136,19 +136,19 @@ prometheus:
     ruleSelectorNilUsesHelmValues: false
     ruleSelector:
       matchLabels:
-        release: watchtower
+        release: hephaisto
     ruleNamespaceSelector: {}
 
     serviceMonitorSelectorNilUsesHelmValues: false
     serviceMonitorSelector:
       matchLabels:
-        release: watchtower
+        release: hephaisto
     serviceMonitorNamespaceSelector: {}
 
     podMonitorSelectorNilUsesHelmValues: false
     podMonitorSelector:
       matchLabels:
-        release: watchtower
+        release: hephaisto
     podMonitorNamespaceSelector: {}
 
     probeSelectorNilUsesHelmValues: false
@@ -218,7 +218,7 @@ alertmanager:
     # === Inhibition is deliberately DISABLED ============================================
     # The chart ships inhibit_rules that suppress severity=warning/info whenever a
     # severity=critical alert is firing in the same namespace. For a human on-call that is
-    # noise reduction. For Watchtower it is evidence destruction: the warning-level alerts
+    # noise reduction. For Hephaisto it is evidence destruction: the warning-level alerts
     # are exactly the context the agent needs to explain the critical one ("disk 85% first,
     # then pod evicted"), and an inhibited alert never reaches the webhook at all.
     #
@@ -235,7 +235,7 @@ alertmanager:
       # Production would use group_wait 30s / group_interval 5m / repeat_interval 1h,
       # tuned so a human is not paged twice for the same thing before they can act.
       #
-      # Watchtower is not a human and the loop we are optimising is "break something, see
+      # Hephaisto is not a human and the loop we are optimising is "break something, see
       # the agent react, fix it, repeat". A 30s group_wait alone would eat a third of the
       # 90-second budget these alert rules are tuned for (see the short `for:` durations in
       # infra/observability/alerts/). Do not copy these values into a real deployment.
@@ -243,7 +243,7 @@ alertmanager:
       group_interval: 1m
       repeat_interval: 15m
 
-      receiver: watchtower
+      receiver: hephaisto
 
       routes:
         # The heartbeat. See alerts/watchdog.yaml -- this alert fires permanently and its
@@ -254,7 +254,7 @@ alertmanager:
         # Note the name is AgentWatchdog, not Watchdog: kube-prometheus-stack ships its own
         # `Watchdog` alert AND a default route that black-holes it to the `null` receiver.
         # Reusing that name would mean our heartbeat silently never arrives.
-        - receiver: watchtower-watchdog
+        - receiver: hephaisto-watchdog
           matchers:
             - alertname = "AgentWatchdog"
           group_wait: 0s
@@ -263,7 +263,7 @@ alertmanager:
           continue: false
 
     receivers:
-      - name: watchtower
+      - name: hephaisto
         webhook_configs:
           # === Why this endpoint is unauthenticated ====================================
           # Alertmanager's webhook_configs has no field for custom headers. There is
@@ -273,22 +273,22 @@ alertmanager:
           #
           # The chosen answer is network-level instead of token-level: the agent's Service
           # is ClusterIP-only, and the NetworkPolicy in infra/app/rbac.yaml permits inbound
-          # TCP 8080 into namespace `watchtower` ONLY from namespace `watchtower-obs`.
+          # TCP 8080 into namespace `hephaisto` ONLY from namespace `hephaisto-obs`.
           # Nothing outside the observability namespace can reach this endpoint at all, so
           # a bearer check would be guarding a door that is already walled off.
           #
           # This trade is only acceptable because the cluster is single-tenant and local.
           # If this stack is ever multi-tenant, put an authenticating proxy in front.
-          - url: http://watchtower.watchtower:8080/webhooks/alertmanager
+          - url: http://hephaisto.hephaisto:8080/webhooks/alertmanager
             # Resolution notifications are what let the agent close an incident and compute
             # MTTR. Without send_resolved every incident stays open until a timeout, and the
             # MTTR panel on the dashboard measures nothing.
             send_resolved: true
             max_alerts: 0
 
-      - name: watchtower-watchdog
+      - name: hephaisto-watchdog
         webhook_configs:
-          - url: http://watchtower.watchtower:8080/webhooks/watchdog
+          - url: http://hephaisto.hephaisto:8080/webhooks/watchdog
             send_resolved: true
 
     templates:
@@ -351,7 +351,7 @@ grafana:
       label: grafana_dashboard
       labelValue: "1"
       # ALL, not the release namespace: dashboards are expected to live next to the thing
-      # they describe. The Watchtower dashboard ConfigMap ships from
+      # they describe. The Hephaisto dashboard ConfigMap ships from
       # infra/observability/dashboards/, and chaos fixtures may ship their own.
       searchNamespace: ALL
       folder: /tmp/dashboards
@@ -388,7 +388,7 @@ grafana:
   serviceMonitor:
     enabled: true
     labels:
-      release: watchtower
+      release: hephaisto
 
   service:
     type: ClusterIP
@@ -405,7 +405,7 @@ kube-state-metrics:
     monitor:
       enabled: true
       additionalLabels:
-        release: watchtower
+        release: hephaisto
   resources:
     requests:
       cpu: 25m
@@ -413,7 +413,7 @@ kube-state-metrics:
     limits:
       memory: 256Mi
   metricLabelsAllowlist:
-    - pods=[app.kubernetes.io/name,app.kubernetes.io/instance,watchtower.io/scenario]
+    - pods=[app.kubernetes.io/name,app.kubernetes.io/instance,hephaisto.io/scenario]
 
 prometheus-node-exporter:
   # === PORT 9100 IS ALREADY TAKEN ======================================================
@@ -434,7 +434,7 @@ prometheus-node-exporter:
     monitor:
       enabled: true
       additionalLabels:
-        release: watchtower
+        release: hephaisto
   resources:
     requests:
       cpu: 25m

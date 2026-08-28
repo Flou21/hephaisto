@@ -12,8 +12,8 @@
 set -euo pipefail
 
 CONTEXT_REQUIRED="studio-rancher-desktop"
-OBS_NS="watchtower-obs"
-APP_NS="watchtower"
+OBS_NS="hephaisto-obs"
+APP_NS="hephaisto"
 
 # The guard is not ceremony. This script creates secrets and reads a Grafana admin password;
 # the same kubeconfig can reach production, and the release names here are the same ones used
@@ -48,30 +48,30 @@ fi
 # ---------------------------------------------------------------------------------------
 # Read by BOTH the postgres container (as POSTGRES_*) and the agent (which composes its
 # connection string from them), so there is exactly one place the password is defined.
-if have "$APP_NS" watchtower-postgres; then
-  echo "watchtower-postgres: already present, leaving alone"
+if have "$APP_NS" hephaisto-postgres; then
+  echo "hephaisto-postgres: already present, leaving alone"
 else
-  kubectl -n "$APP_NS" create secret generic watchtower-postgres \
-    --from-literal=POSTGRES_USER=watchtower \
+  kubectl -n "$APP_NS" create secret generic hephaisto-postgres \
+    --from-literal=POSTGRES_USER=hephaisto \
     --from-literal=POSTGRES_PASSWORD="$(openssl rand -hex 24)" \
-    --from-literal=POSTGRES_DB=watchtower >/dev/null
-  echo "watchtower-postgres: created"
+    --from-literal=POSTGRES_DB=hephaisto >/dev/null
+  echo "hephaisto-postgres: created"
 fi
 
 # ---------------------------------------------------------------------------------------
 # 3. Gemini API key
 # ---------------------------------------------------------------------------------------
-# Set WATCHTOWER_GEMINI_API_KEY in the environment, or this step is skipped and the agent
+# Set HEPHAISTO_GEMINI_API_KEY in the environment, or this step is skipped and the agent
 # runs with no model - it still detects, dedups, correlates and serves the UI, it just
 # cannot investigate. That is a legible degraded state rather than a crash.
-if have "$APP_NS" watchtower-llm; then
-  echo "watchtower-llm: already present, leaving alone"
-elif [ -n "${WATCHTOWER_GEMINI_API_KEY:-}" ]; then
-  kubectl -n "$APP_NS" create secret generic watchtower-llm \
-    --from-literal=GEMINI_API_KEY="$WATCHTOWER_GEMINI_API_KEY" >/dev/null
-  echo "watchtower-llm: created"
+if have "$APP_NS" hephaisto-llm; then
+  echo "hephaisto-llm: already present, leaving alone"
+elif [ -n "${HEPHAISTO_GEMINI_API_KEY:-}" ]; then
+  kubectl -n "$APP_NS" create secret generic hephaisto-llm \
+    --from-literal=GEMINI_API_KEY="$HEPHAISTO_GEMINI_API_KEY" >/dev/null
+  echo "hephaisto-llm: created"
 else
-  echo "watchtower-llm: SKIPPED - set WATCHTOWER_GEMINI_API_KEY to create it"
+  echo "hephaisto-llm: SKIPPED - set HEPHAISTO_GEMINI_API_KEY to create it"
 fi
 
 # ---------------------------------------------------------------------------------------
@@ -88,11 +88,11 @@ if have "$OBS_NS" grafana-mcp-grafana-token; then
   echo "grafana-mcp-grafana-token: already present, leaving alone"
 else
   echo "grafana-mcp-grafana-token: minting from Grafana..."
-  kubectl -n "$OBS_NS" rollout status deploy/watchtower-grafana --timeout=180s >/dev/null
+  kubectl -n "$OBS_NS" rollout status deploy/hephaisto-grafana --timeout=180s >/dev/null
 
   # Both calls run inside the pod. `$GF_SECURITY_ADMIN_PASSWORD` is expanded by the pod's
   # shell, not this one, so the password stays in the container.
-  sa_id=$(kubectl -n "$OBS_NS" exec deploy/watchtower-grafana -c grafana -- sh -c '
+  sa_id=$(kubectl -n "$OBS_NS" exec deploy/hephaisto-grafana -c grafana -- sh -c '
       curl -s -u "admin:$GF_SECURITY_ADMIN_PASSWORD" \
         -X POST http://localhost:3000/api/serviceaccounts \
         -H "Content-Type: application/json" \
@@ -101,7 +101,7 @@ else
 
   if [ -z "$sa_id" ]; then
     # Already exists from a previous run: look the id up instead of failing.
-    sa_id=$(kubectl -n "$OBS_NS" exec deploy/watchtower-grafana -c grafana -- sh -c '
+    sa_id=$(kubectl -n "$OBS_NS" exec deploy/hephaisto-grafana -c grafana -- sh -c '
         curl -s -u "admin:$GF_SECURITY_ADMIN_PASSWORD" \
           "http://localhost:3000/api/serviceaccounts/search?query=grafana-mcp"
       ' | python3 -c 'import json,sys; r=json.load(sys.stdin).get("serviceAccounts",[]); print(r[0]["id"] if r else "")')
@@ -112,7 +112,7 @@ else
     exit 1
   fi
 
-  glsa=$(kubectl -n "$OBS_NS" exec deploy/watchtower-grafana -c grafana -- sh -c "
+  glsa=$(kubectl -n "$OBS_NS" exec deploy/hephaisto-grafana -c grafana -- sh -c "
       curl -s -u \"admin:\$GF_SECURITY_ADMIN_PASSWORD\" \
         -X POST http://localhost:3000/api/serviceaccounts/$sa_id/tokens \
         -H 'Content-Type: application/json' \

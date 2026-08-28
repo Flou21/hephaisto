@@ -1,4 +1,4 @@
-# Watchtower roadmap
+# Hephaisto roadmap
 
 Written against what is **actually in the repo**, not against what was planned. Where the two
 disagree, this file follows the code.
@@ -9,7 +9,7 @@ disagree, this file follows the code.
 
 | Area | State |
 |---|---|
-| `Watchtower.Core` — domain, state machine, policy engine, digester, oscillation, fingerprinting | Complete, zero I/O, ~500 unit tests |
+| `Hephaisto.Core` — domain, state machine, policy engine, digester, oscillation, fingerprinting | Complete, zero I/O, ~500 unit tests |
 | Persistence — Postgres 17 + pgvector, migrations, hybrid RRF search, LLM budget, audit trail | Complete; admission is one `Serializable` transaction |
 | Kubernetes — watchers, 17 read-only tools, RBAC self-check, signal mapping | Complete, read-only by construction |
 | LLM — Gemini client, grafana-mcp, three-phase loop, grounding verifier, budget guard | Complete |
@@ -21,7 +21,7 @@ disagree, this file follows the code.
 
 | Missing | Belongs to |
 |---|---|
-| `WATCHTOWER_MODE` env var and ConfigMap kill switches | **Should have been MVP — see below** |
+| `HEPHAISTO_MODE` env var and ConfigMap kill switches | **Should have been MVP — see below** |
 | Grafana annotations on state transitions | MVP item 10, deferred |
 | `ActionExecutor`, `dryRun=All` shadow, `PreState` snapshots | Phase 2 |
 | `VerificationScheduler`, auto-rollback | Phase 2 |
@@ -36,21 +36,21 @@ disagree, this file follows the code.
 
 **The design specified three independent kill switches. Only one was wired.**
 
-`AgentMode` was read solely from the `agent_mode` database row. `WATCHTOWER_MODE` was set by
-`infra/app/watchtower.yaml` and by the AppHost, the manifest carried a ConfigMap `mode` key
-with a comment saying the two "must agree", and `WATCHTOWER_SWITCHES_PATH` pointed at a
+`AgentMode` was read solely from the `agent_mode` database row. `HEPHAISTO_MODE` was set by
+`infra/app/hephaisto.yaml` and by the AppHost, the manifest carried a ConfigMap `mode` key
+with a comment saying the two "must agree", and `HEPHAISTO_SWITCHES_PATH` pointed at a
 `switches.yaml` — and **no code read any of them.**
 
 That was harmless only because the missing controls failed safe. The dangerous direction was
 the one that looked safe:
 
-> An operator who sets `WATCHTOWER_MODE=observe` to **stop** an agent running in `auto` would
+> An operator who sets `HEPHAISTO_MODE=observe` to **stop** an agent running in `auto` would
 > find it keeps acting. The big red button is painted on.
 
 ### What was built
 
-`ModeResolver` in `Watchtower.Core/Safety` resolves the arms, and `KillSwitch` in
-`Watchtower.Agent/Safety` supplies them. **The most restrictive arm wins** — implemented as
+`ModeResolver` in `Hephaisto.Core/Safety` resolves the arms, and `KillSwitch` in
+`Hephaisto.Agent/Safety` supplies them. **The most restrictive arm wins** — implemented as
 `Min` over `AgentMode`, whose declaration order (`Off < Observe < DryRun < Auto`) is therefore
 load-bearing and pinned by its own test. No arm can ever raise the mode, only lower it.
 
@@ -60,7 +60,7 @@ The distinction that carries the safety property is **silent versus failed**:
 |---|---|---|
 | Silent | not configured here (no env var, no mounted ConfigMap) | does not constrain |
 | Declared | configured and understood | constrains to its value |
-| Malformed | configured, not parseable (`WATCHTOWER_MODE=atuo`) | constrains to `Observe` |
+| Malformed | configured, not parseable (`HEPHAISTO_MODE=atuo`) | constrains to `Observe` |
 | Unreadable | configured, not reachable (file gone, Postgres down) | constrains to `Observe` |
 
 Collapsing malformed into silent is what would invert the whole thing: a typo would *remove*
@@ -68,7 +68,7 @@ the restriction the operator was applying. Every arm silent resolves to `Observe
 `Auto`, which would make "nobody configured it" the most dangerous state in the system, and
 not `Off`, because an agent that reports nothing looks exactly like a healthy cluster.
 
-Parsing is strict on purpose. `Enum.TryParse` alone would accept `WATCHTOWER_MODE=3` and
+Parsing is strict on purpose. `Enum.TryParse` alone would accept `HEPHAISTO_MODE=3` and
 quietly mean `Auto`; a number in a kill switch is a misunderstanding, and a misunderstanding
 reads as `Observe`. The `killSwitch` key parses the other way round: anything that is not an
 unambiguous false engages it, because a garbled emergency stop is an engaged one.
@@ -77,15 +77,15 @@ unambiguous false engages it, because a garbled emergency stop is an engaged one
 
 - The switch ConfigMap holds **discrete keys**, so each projects as its own file and needs no
   parser. It used to be a YAML document nested inside a YAML string — one bad indent away
-  from breaking, in the file you least want to get wrong under pressure. `WATCHTOWER_SWITCHES_PATH`
-  became `WATCHTOWER_SWITCHES_DIR`.
+  from breaking, in the file you least want to get wrong under pressure. `HEPHAISTO_SWITCHES_PATH`
+  became `HEPHAISTO_SWITCHES_DIR`.
 - The ConfigMap's `cooldown`, `budget`, `actionableNamespaces`, `investigation` and
   `grounding` blocks were **removed, not wired**. None was ever read; each duplicated a
   setting with a real home (`PolicyOptions`, `LlmBudgetOptions`, `GroundingVerifier`).
   Config that reads like configuration and behaves like a comment is worse than no docs.
   Anything added there in future needs a reader in `src/` in the same commit.
 - `SwitchWatcher` polls every 10s, logs a mode change at Warning in both directions, and
-  publishes `watchtower_mode` — a gauge that was declared in Core's telemetry constants and
+  publishes `hephaisto_mode` — a gauge that was declared in Core's telemetry constants and
   had never been registered as an instrument. You can now alert on "the agent is in Auto".
 - The admission transaction in `ActionRepository` folds the env and ConfigMap arms in beside
   the row it already reads, so the two arms an operator can actually reach at 3am bind the
@@ -99,11 +99,11 @@ unambiguous false engages it, because a garbled emergency stop is an engaged one
 64 tests, including the exhaustive 4×4×4 precedence table. Two negative controls confirm the
 tests detect the failure rather than passing vacuously: making a malformed arm read as silence
 fails 8 tests, and flipping `Min` to `Max` fails 15. Live against a running process with
-`WATCHTOWER_MODE=auto`, a ConfigMap file saying `Observe` and no Postgres:
+`HEPHAISTO_MODE=auto`, a ConfigMap file saying `Observe` and no Postgres:
 
 ```
 Kill switch armed: effective mode Observe, bound by configmap:mode
-  [env:WATCHTOWER_MODE: Auto; configmap:killSwitch: not set; configmap:mode: Observe;
+  [env:HEPHAISTO_MODE: Auto; configmap:killSwitch: not set; configmap:mode: Observe;
    db:agent_mode: unreadable (...) - reads as Observe]
 ```
 
@@ -115,7 +115,7 @@ Editing the file to `Off` moved the gauge to 0 with no restart.
 
 The stack now runs in k3s. The old hand-installed observability stack was removed first
 (plan §6): `grafana.db` was copied off the PVC and audited before teardown (`backup/`), and
-Backstage and litellm were repointed at `watchtower-obs`.
+Backstage and litellm were repointed at `hephaisto-obs`.
 
 ### What works, verified against the running cluster
 
@@ -125,10 +125,10 @@ Backstage and litellm were repointed at `watchtower-obs`.
 | Datasources | 4 provisioned: prometheus (default), loki, tempo, alertmanager |
 | Alert path | 17 alerts firing; `AgentWatchdog` delivered to the webhook (`watchdogReceipts: 1`, not stale) |
 | Kill switch | All three arms live. `kubectl edit cm` pulled the agent Observe → **Off**, bound by `configmap:mode`, **no restart** |
-| RBAC | `secrets` denied everywhere incl. `get`; `kube-system`, `watchtower`, `watchtower-obs` writes denied; write **only** in `watchtower-chaos` |
+| RBAC | `secrets` denied everywhere incl. `get`; `kube-system`, `hephaisto`, `hephaisto-obs` writes denied; write **only** in `hephaisto-chaos` |
 | Detection | Kubernetes watcher opens incidents for real cluster faults, resolved to the owning controller (`Deployment/c2-crashloop`, not the pod) |
 | Dedup / correlation | 42+ signals collapsing into ~20 incidents, up to 6 signals on one |
-| Self-protection | Signals about Watchtower's own namespaces hard-escalate as `SelfSignal` — including the agent's own OOMKill |
+| Self-protection | Signals about Hephaisto's own namespaces hard-escalate as `SelfSignal` — including the agent's own OOMKill |
 | Chaos fixtures | C1–C5, C7 produce their documented states, incl. the C4/C7 discrimination pair |
 | grafana-mcp | 44 tools; rejects unauthenticated calls with 401 |
 | LLM | Gemini connected; the model calls Kubernetes read tools during investigations |
@@ -163,7 +163,7 @@ Modified without a row behind it. Worth ruling out that a state transition mutat
 
 **Two lessons worth keeping.** `dotnet watch` silently declined several edits with *"No
 managed code changes to apply"*, so a run of iterations tested stale code — when a fix seems
-not to take, `tilt trigger watchtower` for a real image build before believing the result.
+not to take, `tilt trigger hephaisto` for a real image build before believing the result.
 And the diagnostic that names the offending entity found in one iteration what inference had
 not found in five; it is committed, and it should be reached for early.
 
@@ -204,12 +204,12 @@ Only after Step 2 says the diagnoses are good enough. Order matters:
 2. `VerificationScheduler` at T+60s / T+5m / T+15m, plus auto-rollback.
 3. Oscillation detector wired to quarantine (the pure logic is already built and tested).
 4. Approval workflow and UI, capturing the free-text `ApprovedBy`.
-5. Bind the write `RoleBinding` — **into `watchtower-chaos` only.**
+5. Bind the write `RoleBinding` — **into `hephaisto-chaos` only.**
 6. Enable `auto` for exactly **one** action type: `restart_pod`.
 7. Mirror actions to Kubernetes Events on the target object, so `kubectl describe pod` shows
    why something was restarted. That is where an on-call engineer actually looks.
 
-Done when a transiently-failing pod in `watchtower-chaos` is auto-restarted, verification
+Done when a transiently-failing pod in `hephaisto-chaos` is auto-restarted, verification
 passes, the incident closes, and the audit trail reconstructs the whole decision **without
 reading a log file** — and a seeded oscillating workload is quarantined after 3 attempts
 instead of looping forever.

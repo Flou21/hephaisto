@@ -1,4 +1,4 @@
-# Watchtower architecture
+# Hephaisto architecture
 
 ## The pipeline
 
@@ -120,11 +120,11 @@ model that hallucinates a plausible log line will also sincerely believe it cite
 
 The outermost layer is the one that survives a compromised process.
 
-1. **RBAC** — read cluster-wide, write only into `watchtower-chaos`, no Secrets access at
+1. **RBAC** — read cluster-wide, write only into `hephaisto-chaos`, no Secrets access at
    all. A `SelfSubjectAccessReview` at startup asserts the agent does *not* hold verbs it
    should never have, and refuses to boot if it does.
 2. **Policy engine** — pure, deterministic, default-deny.
-3. **Self-protection** — `watchtower`, `watchtower-obs` and `kube-system` are permanently
+3. **Self-protection** — `hephaisto`, `hephaisto-obs` and `kube-system` are permanently
    denied. The agent may never act on itself or on the stack it depends on to see.
 4. **Budget and rate limits**, Postgres-backed so they survive a restart. Exceeding a budget
    *downgrades to RequireApproval* rather than hard-denying: a human must still be able to act.
@@ -143,7 +143,7 @@ The outermost layer is the one that survives a compromised process.
    crashes again forever".
 10. **Verification and auto-rollback** at T+60 s, T+5 m, T+15 m.
 11. **Immutable audit trail**, append-only in Postgres and mirrored to Kubernetes Events on
-    the target object — so `kubectl describe pod` shows *"watchtower restarted this pod
+    the target object — so `kubectl describe pod` shows *"hephaisto restarted this pod
     because …"*, which is where an on-call engineer actually looks.
 
 ### Why L3 is safe enough to enable, in four sentences
@@ -157,16 +157,16 @@ reverted on failed verification. Budget, cooldown and oscillation caps mean the 
 ## Self-observability
 
 ```
-watchtower.incident      {incident.id, correlation_key, signal.kind, k8s.namespace, workload}
-└ watchtower.investigation {investigation.id, model, budget.steps, budget.usd}
+hephaisto.incident      {incident.id, correlation_key, signal.kind, k8s.namespace, workload}
+└ hephaisto.investigation {investigation.id, model, budget.steps, budget.usd}
    ├ chat                gen_ai.operation.name=chat, gen_ai.system=gemini,
    │                     gen_ai.request.model, gen_ai.usage.input_tokens/output_tokens
    │                     ← emitted free by .UseOpenTelemetry() (semconv v1.37)
-   ├ watchtower.tool.*   {tool.name, tool.result_bytes, tool.truncated, k8s.*}
-   └ watchtower.plan     {plan.action_count, plan.max_risk}
-watchtower.policy.evaluate {decision, reasons}
-watchtower.action.*        {action.id, action.risk, action.mode, action.dry_run}
-watchtower.verification    {result, attempt}
+   ├ hephaisto.tool.*   {tool.name, tool.result_bytes, tool.truncated, k8s.*}
+   └ hephaisto.plan     {plan.action_count, plan.max_risk}
+hephaisto.policy.evaluate {decision, reasons}
+hephaisto.action.*        {action.id, action.risk, action.mode, action.dry_run}
+hephaisto.verification    {result, attempt}
 ```
 
 Order matters: **`.UseOpenTelemetry()` before `.UseFunctionInvocation()`** in the

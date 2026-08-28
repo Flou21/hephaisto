@@ -7,25 +7,25 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0
 # The manifest pins runAsUser 64198, so everything below has to be owned by and writable by
 # that uid. Restoring as root and then running as 64198 leaves a NuGet cache under /root the
 # runtime user cannot read, which surfaces much later as an unrelated-looking restore error.
-RUN useradd --uid 64198 --create-home --home-dir /home/watchtower watchtower \
+RUN useradd --uid 64198 --create-home --home-dir /home/hephaisto hephaisto \
  && mkdir -p /app \
- && chown -R 64198:64198 /app /home/watchtower
+ && chown -R 64198:64198 /app /home/hephaisto
 
 USER 64198:64198
-ENV HOME=/home/watchtower \
-    DOTNET_CLI_HOME=/home/watchtower \
+ENV HOME=/home/hephaisto \
+    DOTNET_CLI_HOME=/home/hephaisto \
     DOTNET_CLI_TELEMETRY_OPTOUT=1 \
     DOTNET_NOLOGO=1
 WORKDIR /app
 
 # --chown on every COPY: it defaults to uid 0 no matter what USER is set to, so without it
 # the sources land root-owned and `dotnet restore` fails with a confusing
-#   Access to the path '/app/src/Watchtower.Core/obj' is denied
+#   Access to the path '/app/src/Hephaisto.Core/obj' is denied
 COPY --chown=64198:64198 Directory.Build.props Directory.Packages.props ./
-COPY --chown=64198:64198 src/Watchtower.Core/Watchtower.Core.csproj                       src/Watchtower.Core/
-COPY --chown=64198:64198 src/Watchtower.ServiceDefaults/Watchtower.ServiceDefaults.csproj src/Watchtower.ServiceDefaults/
-COPY --chown=64198:64198 src/Watchtower.Agent/Watchtower.Agent.csproj                     src/Watchtower.Agent/
-RUN dotnet restore src/Watchtower.Agent/Watchtower.Agent.csproj
+COPY --chown=64198:64198 src/Hephaisto.Core/Hephaisto.Core.csproj                       src/Hephaisto.Core/
+COPY --chown=64198:64198 src/Hephaisto.ServiceDefaults/Hephaisto.ServiceDefaults.csproj src/Hephaisto.ServiceDefaults/
+COPY --chown=64198:64198 src/Hephaisto.Agent/Hephaisto.Agent.csproj                     src/Hephaisto.Agent/
+RUN dotnet restore src/Hephaisto.Agent/Hephaisto.Agent.csproj
 
 COPY --chown=64198:64198 src/ src/
 
@@ -39,5 +39,5 @@ ENV ASPNETCORE_URLS=http://+:8080 \
 
 EXPOSE 8080
 
-ENTRYPOINT ["dotnet", "watch", "--project", "src/Watchtower.Agent/Watchtower.Agent.csproj", \
+ENTRYPOINT ["dotnet", "watch", "--project", "src/Hephaisto.Agent/Hephaisto.Agent.csproj", \
             "--non-interactive", "run", "--no-launch-profile"]

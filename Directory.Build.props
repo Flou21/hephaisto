@@ -1,6 +1,6 @@
 <Project>
 
-  <!-- Every project in this repo, including tests. Watchtower targets a single
+  <!-- Every project in this repo, including tests. Hephaisto targets a single
        framework deliberately: it is one pod, not a shipped library. -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>

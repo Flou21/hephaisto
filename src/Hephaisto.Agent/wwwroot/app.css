@@ -1,0 +1,1072 @@
+/*
+ * Hephaisto console.
+ *
+ * Plain CSS, no framework, no CDN. This pod can run in a cluster with no egress, and an
+ * incident console whose stylesheet fails to load is unreadable at exactly the moment
+ * somebody needs it. Everything here is in this one file for the same reason.
+ *
+ * Dark first, dense, monospace for anything a human might compare character by character -
+ * ids, workload keys, log excerpts, timestamps. Target reader: on call at 3am, on whatever
+ * monitor is in the room.
+ *
+ * STATE IS NEVER COLOUR ALONE. Every state, severity, risk and decision carries a glyph and
+ * a word next to it. Colour is the third channel, never the only one.
+ */
+
+:root {
+    --bg: #0e1116;
+    --bg-raised: #151a21;
+    --bg-sunken: #0a0d11;
+    --bg-hover: #1c232c;
+    --border: #262d38;
+    --border-strong: #384252;
+
+    --fg: #dbe1e8;
+    --fg-dim: #8d99a8;
+    --fg-faint: #5f6b7a;
+
+    --accent: #58a6ff;
+
+    --red: #f7768e;
+    --orange: #ff9e64;
+    --yellow: #e0af68;
+    --green: #73daca;
+    --blue: #7aa2f7;
+    --purple: #bb9af7;
+    --cyan: #2ac3de;
+
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+
+    --row: 1.55rem;
+}
+
+/* Light mode is a courtesy, not the design target: this thing is read in a dark room. */
+@media (prefers-color-scheme: light) {
+    :root {
+        --bg: #fbfcfd;
+        --bg-raised: #ffffff;
+        --bg-sunken: #f1f3f6;
+        --bg-hover: #eef1f5;
+        --border: #d7dde5;
+        --border-strong: #b6c0cd;
+
+        --fg: #1a1f26;
+        --fg-dim: #56616f;
+        --fg-faint: #7d8896;
+
+        --accent: #0b60d0;
+        --red: #b32d3f;
+        --orange: #a85a10;
+        --yellow: #8a6100;
+        --green: #10756a;
+        --blue: #2a5db0;
+        --purple: #6b3fb5;
+        --cyan: #0d6f85;
+    }
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+h1 {
+    font-size: 1.35rem;
+    font-weight: 600;
+    margin: 0 0 0.75rem;
+    letter-spacing: -0.01em;
+}
+
+h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.5rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid var(--border);
+}
+
+h3 {
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-dim);
+    margin: 1.1rem 0 0.4rem;
+}
+
+h4 {
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-dim);
+    margin: 0.7rem 0 0.25rem;
+}
+
+.mono {
+    font-family: var(--mono);
+    font-size: 0.92em;
+}
+
+.glyph {
+    font-family: var(--mono);
+    font-weight: 700;
+    display: inline-block;
+    min-width: 1ch;
+}
+
+.wt-muted {
+    color: var(--fg-dim);
+}
+
+.wt-error {
+    color: var(--red);
+}
+
+.wt-alarm {
+    color: var(--red);
+    font-weight: 600;
+}
+
+.wt-warn {
+    color: var(--yellow);
+}
+
+/* ---------------------------------------------------------------- shell */
+
+.wt-shell {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+.wt-main {
+    /* 1200px is the floor the tables are laid out for; wider is better and the trace does
+       not benefit from being narrower than its content. */
+    min-width: 0;
+    padding: 1rem 1.25rem 4rem;
+}
+
+.wt-nav {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    padding: 0.4rem 1.25rem;
+    background: var(--bg-raised);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 20;
+}
+
+.wt-brand {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+}
+
+.wt-brand-name {
+    font-family: var(--mono);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+.wt-mode {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    padding: 0.05rem 0.45rem;
+    border-radius: 3px;
+    border: 1px solid currentColor;
+}
+
+.mode-unknown { color: var(--fg-faint); }
+.mode-off { color: var(--fg-dim); }
+.mode-observe { color: var(--cyan); }
+.mode-dryrun { color: var(--yellow); }
+.mode-auto { color: var(--orange); }
+.mode-latched {
+    color: var(--red);
+    font-weight: 700;
+}
+
+.wt-navlinks {
+    display: flex;
+    gap: 1rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.wt-navlinks a {
+    color: var(--fg-dim);
+    font-family: var(--mono);
+    padding: 0.15rem 0;
+    border-bottom: 2px solid transparent;
+}
+
+.wt-navlinks a:hover {
+    color: var(--fg);
+    text-decoration: none;
+}
+
+.wt-navlinks a.active {
+    color: var(--fg);
+    border-bottom-color: var(--accent);
+}
+
+.wt-nav-alarm {
+    margin-left: auto;
+    color: var(--red);
+    font-family: var(--mono);
+    font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- tables */
+
+.wt-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.wt-table th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-dim);
+    padding: 0.3rem 0.5rem;
+    border-bottom: 1px solid var(--border-strong);
+    white-space: nowrap;
+}
+
+.wt-table td {
+    padding: 0.28rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+}
+
+.wt-table tbody tr:hover {
+    background: var(--bg-hover);
+}
+
+.wt-row {
+    cursor: pointer;
+}
+
+.c-num,
+.c-time {
+    white-space: nowrap;
+}
+
+.c-title {
+    width: 30%;
+}
+
+.wt-ns {
+    color: var(--fg-dim);
+}
+
+.wt-msg {
+    max-width: 42rem;
+}
+
+.wt-sub {
+    display: block;
+    font-size: 0.72rem;
+    color: var(--fg-faint);
+    font-family: var(--mono);
+}
+
+.wt-count {
+    color: var(--fg-faint);
+    font-family: var(--mono);
+    font-weight: 400;
+}
+
+.wt-empty {
+    color: var(--fg-dim);
+    background: var(--bg-sunken);
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    padding: 0.6rem 0.8rem;
+}
+
+.wt-note {
+    color: var(--fg-dim);
+    background: var(--bg-raised);
+    border-left: 3px solid var(--cyan);
+    padding: 0.5rem 0.8rem;
+}
+
+/* ------------------------------------------------- state / severity / risk
+
+   Each rule sets colour AND is paired with a glyph and a word in the markup. If you are
+   tempted to drop the glyph to save a character of width, don't: the entire point is that
+   these read correctly on a monitor that renders these colours as three shades of grey. */
+
+.wt-state,
+.wt-sev,
+.wt-risk,
+.wt-decision {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+
+.st-detected { color: var(--blue); }
+.st-triaging { color: var(--cyan); }
+.st-suppressed { color: var(--fg-faint); }
+.st-investigating { color: var(--purple); }
+.st-awaiting { color: var(--yellow); }
+.st-acting { color: var(--orange); }
+.st-verifying { color: var(--cyan); }
+.st-resolved { color: var(--green); }
+.st-escalated { color: var(--red); font-weight: 600; }
+.st-expired { color: var(--fg-faint); }
+
+.sev-critical { color: var(--red); font-weight: 600; }
+.sev-warning { color: var(--yellow); }
+.sev-info { color: var(--fg-dim); }
+
+.risk-low { color: var(--green); }
+.risk-medium { color: var(--yellow); }
+.risk-high { color: var(--orange); }
+.risk-critical { color: var(--red); font-weight: 600; }
+
+.dec-allow { color: var(--green); }
+.dec-approval { color: var(--yellow); }
+.dec-deny { color: var(--red); }
+
+.wt-yes { color: var(--green); font-family: var(--mono); font-size: 0.8rem; }
+.wt-no { color: var(--fg-faint); font-family: var(--mono); font-size: 0.8rem; }
+.wt-partial { color: var(--yellow); font-family: var(--mono); font-size: 0.8rem; }
+
+.wt-chip {
+    display: inline-block;
+    font-size: 0.72rem;
+    padding: 0.05rem 0.4rem;
+    border: 1px solid var(--border-strong);
+    border-radius: 3px;
+    color: var(--fg-dim);
+    white-space: nowrap;
+}
+
+.chip-primary {
+    color: var(--purple);
+    border-color: var(--purple);
+    font-weight: 600;
+}
+
+.chip-fp {
+    color: var(--orange);
+    border-color: var(--orange);
+}
+
+.chip-lexical { color: var(--cyan); border-color: var(--cyan); }
+.chip-semantic { color: var(--purple); border-color: var(--purple); }
+
+/* ---------------------------------------------------------------- filters */
+
+.wt-filters {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+    padding: 0.5rem 0.7rem;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+}
+
+.wt-filters label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-dim);
+}
+
+.wt-filter-status {
+    margin-left: auto;
+    display: flex;
+    gap: 0.8rem;
+    align-items: center;
+}
+
+select,
+input[type="text"],
+input[type="search"],
+textarea {
+    background: var(--bg-sunken);
+    color: var(--fg);
+    border: 1px solid var(--border-strong);
+    border-radius: 3px;
+    padding: 0.2rem 0.35rem;
+    font-family: var(--mono);
+    font-size: 0.82rem;
+}
+
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+button:focus-visible,
+summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+button {
+    background: var(--bg-hover);
+    color: var(--fg);
+    border: 1px solid var(--border-strong);
+    border-radius: 3px;
+    padding: 0.2rem 0.6rem;
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+    border-color: var(--accent);
+}
+
+button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------------- detail header */
+
+.wt-detail-header {
+    margin-bottom: 1.25rem;
+}
+
+.wt-badges {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 0.6rem;
+}
+
+.wt-kv {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.1rem 0.9rem;
+    margin: 0 0 0.6rem;
+}
+
+.wt-kv dt {
+    color: var(--fg-dim);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.wt-kv dd {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.wt-callout {
+    border-left: 3px solid var(--border-strong);
+    background: var(--bg-raised);
+    padding: 0.5rem 0.8rem;
+    margin: 0.5rem 0;
+    border-radius: 0 3px 3px 0;
+}
+
+.callout-escalated { border-left-color: var(--red); }
+.callout-suppressed { border-left-color: var(--fg-faint); }
+.callout-quarantine { border-left-color: var(--orange); }
+.callout-resolved { border-left-color: var(--green); }
+.callout-error { border-left-color: var(--red); color: var(--red); }
+
+.wt-section {
+    margin-bottom: 1.75rem;
+}
+
+/* ---------------------------------------------------------------- timeline */
+
+.wt-timeline {
+    list-style: none;
+    margin: 0.4rem 0 0;
+    padding: 0;
+}
+
+.wt-timeline li {
+    display: grid;
+    grid-template-columns: 12rem 16rem 1fr;
+    gap: 0.6rem;
+    padding: 0.15rem 0;
+    border-bottom: 1px solid var(--border);
+}
+
+/* --------------------------------------------------- investigation trace
+
+   The most important thing on the page. Everything is one click from visible and nothing
+   is more than two: a reader deciding whether to trust this agent with write access is
+   reading this list, and every collapsed layer is a chance to give up. */
+
+.wt-investigation {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.7rem 0.9rem;
+    margin-bottom: 1rem;
+    background: var(--bg-raised);
+}
+
+.wt-inv-header {
+    display: flex;
+    gap: 0.8rem;
+    align-items: center;
+    flex-wrap: wrap;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.wt-steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    counter-reset: none;
+}
+
+.wt-step {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border-strong);
+    border-radius: 3px;
+    margin-bottom: 0.2rem;
+    background: var(--bg-sunken);
+}
+
+.wt-step.step-failed {
+    border-left-color: var(--red);
+}
+
+.wt-step > summary {
+    display: flex;
+    align-items: baseline;
+    gap: 0.7rem;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    min-height: var(--row);
+    flex-wrap: wrap;
+}
+
+.wt-step > summary:hover {
+    background: var(--bg-hover);
+}
+
+.wt-ordinal {
+    color: var(--fg-faint);
+    min-width: 2.2ch;
+    text-align: right;
+}
+
+.wt-step-kind {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0 0.3rem;
+    border-radius: 2px;
+    border: 1px solid currentColor;
+}
+
+.kind-tool { color: var(--cyan); }
+.kind-llm { color: var(--purple); }
+
+.wt-step-name {
+    font-weight: 600;
+}
+
+.wt-server {
+    color: var(--fg-faint);
+}
+
+.wt-step-metrics {
+    margin-left: auto;
+    color: var(--fg-dim);
+    font-size: 0.78rem;
+    white-space: nowrap;
+}
+
+/* Truncation is never quietly styled away: a digest that dropped most of its input and one
+   that did not are different evidence. */
+.wt-truncated {
+    color: var(--orange);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+}
+
+.wt-failed {
+    color: var(--red);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.wt-step-body {
+    padding: 0.3rem 0.7rem 0.6rem 0.7rem;
+    border-top: 1px solid var(--border);
+}
+
+.wt-code {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    line-height: 1.4;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0.4rem 0.55rem;
+    margin: 0 0 0.4rem;
+    max-height: 22rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.wt-raw-code {
+    max-height: 32rem;
+}
+
+.wt-raw > summary,
+.wt-labels > summary,
+.wt-transitions > summary,
+details > summary {
+    cursor: pointer;
+    color: var(--fg-dim);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+}
+
+/* The landing animation for a citation click. Two seconds is long enough to find the row
+   with your eyes and short enough not to still be pulsing when you start reading it. */
+.wt-flash {
+    animation: wt-flash 2s ease-out;
+}
+
+@keyframes wt-flash {
+    0%, 40% {
+        background: color-mix(in srgb, var(--accent) 22%, transparent);
+        border-left-color: var(--accent);
+    }
+    100% {
+        background: var(--bg-sunken);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .wt-flash {
+        animation: none;
+        outline: 2px solid var(--accent);
+    }
+}
+
+/* ---------------------------------------------------------------- findings */
+
+.wt-finding {
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0.5rem 0.7rem;
+    margin-bottom: 0.5rem;
+    background: var(--bg-sunken);
+}
+
+.wt-finding.finding-primary {
+    border-color: var(--purple);
+}
+
+.wt-finding header {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.wt-hypothesis {
+    margin: 0.35rem 0 0.5rem;
+}
+
+/* A bar and a number, never a badge reading "high". A word invents a calibration nobody
+   measured; 0.71 next to a bar lets the reader apply their own. */
+.wt-conf {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-left: auto;
+}
+
+.wt-conf-track {
+    display: inline-block;
+    width: 7rem;
+    height: 0.5rem;
+    background: var(--bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.wt-conf-fill {
+    display: block;
+    height: 100%;
+    background: var(--purple);
+}
+
+.wt-evidence {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.wt-evidence > li {
+    border-left: 2px solid var(--border-strong);
+    padding: 0.2rem 0 0.2rem 0.6rem;
+    margin-bottom: 0.35rem;
+}
+
+/* The citation link. Deliberately loud: following it is how a reader checks the grounding
+   invariant themselves instead of taking the finding on trust. */
+.wt-cite {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    padding: 0 0.35rem;
+    color: var(--accent);
+    border-color: var(--accent);
+    background: transparent;
+}
+
+.wt-cite-broken {
+    color: var(--red);
+    border: 1px solid var(--red);
+    border-radius: 3px;
+    display: inline-block;
+}
+
+.wt-excerpt {
+    margin: 0.2rem 0 0.1rem;
+    padding: 0.25rem 0.5rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    font-size: 0.78rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.wt-source {
+    font-size: 0.72rem;
+}
+
+/* ---------------------------------------------------------------- plan */
+
+.wt-plan-banner {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: baseline;
+    background: var(--bg-sunken);
+    border: 1px solid var(--yellow);
+    border-left-width: 3px;
+    border-radius: 0 3px 3px 0;
+    padding: 0.5rem 0.8rem;
+    margin-bottom: 0.5rem;
+    color: var(--yellow);
+}
+
+.wt-plan-banner .wt-muted {
+    flex-basis: 100%;
+}
+
+.wt-plan-summary {
+    margin: 0.3rem 0 0.6rem;
+}
+
+.wt-reasons {
+    margin: 0.2rem 0 0.2rem 0.9rem;
+    padding: 0;
+    font-size: 0.78rem;
+    color: var(--fg-dim);
+}
+
+.wt-exec {
+    font-size: 0.72rem;
+}
+
+/* ---------------------------------------------------------------- feedback */
+
+.wt-feedback-list {
+    list-style: none;
+    margin: 0 0 0.8rem;
+    padding: 0;
+}
+
+.wt-feedback-list > li {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    flex-wrap: wrap;
+    padding: 0.3rem 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.wt-comment {
+    flex-basis: 100%;
+    margin: 0.15rem 0 0;
+    color: var(--fg-dim);
+}
+
+.wt-feedback-form {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.7rem 0.9rem;
+    background: var(--bg-raised);
+    max-width: 42rem;
+}
+
+.wt-field {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.55rem;
+}
+
+.wt-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-dim);
+    min-width: 11rem;
+}
+
+.wt-req {
+    color: var(--orange);
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.wt-thumb.on {
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.wt-feedback-form textarea,
+.wt-feedback-form input[type="text"] {
+    flex: 1 1 18rem;
+    font-family: var(--sans);
+}
+
+.wt-submit {
+    font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- search */
+
+.wt-searchbar {
+    display: flex;
+    gap: 0.8rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 0.8rem;
+}
+
+.wt-searchbar input[type="search"] {
+    flex: 1 1 30rem;
+    padding: 0.3rem 0.5rem;
+}
+
+.wt-hits {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.wt-hits > li {
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0.5rem 0.7rem;
+    margin-bottom: 0.5rem;
+    background: var(--bg-raised);
+}
+
+.wt-hits header {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.wt-digest {
+    margin: 0.35rem 0;
+    white-space: pre-wrap;
+}
+
+.wt-why {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+    font-size: 0.75rem;
+    color: var(--fg-dim);
+}
+
+/* ---------------------------------------------------------------- status */
+
+.wt-status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: 0.7rem;
+    margin-bottom: 0.7rem;
+}
+
+.wt-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0.5rem 0.7rem;
+    background: var(--bg-raised);
+}
+
+.wt-stat-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-dim);
+}
+
+.wt-stat-value {
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.wt-meter {
+    margin-bottom: 0.7rem;
+    max-width: 46rem;
+}
+
+.wt-meter-head {
+    display: flex;
+    gap: 0.6rem;
+    align-items: baseline;
+    margin-bottom: 0.2rem;
+}
+
+.wt-meter-label {
+    font-size: 0.78rem;
+    color: var(--fg-dim);
+    min-width: 11rem;
+}
+
+.wt-meter-track {
+    position: relative;
+    height: 0.7rem;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border-strong);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.wt-meter-fill {
+    height: 100%;
+}
+
+.meter-ok { color: var(--green); }
+.meter-warn { color: var(--yellow); }
+.meter-exhausted { color: var(--red); }
+
+.wt-meter-fill.meter-ok { background: var(--green); }
+.wt-meter-fill.meter-warn { background: var(--yellow); }
+.wt-meter-fill.meter-exhausted { background: var(--red); }
+
+/* Thresholds are drawn on the track, not implied by the fill colour: "68%" says nothing
+   without knowing that warning starts at 80. */
+.wt-meter-mark {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 0;
+    border-left: 2px dashed var(--fg-dim);
+}
+
+.mark-warn {
+    border-left-color: var(--yellow);
+}
+
+.mark-max {
+    border-left-color: var(--red);
+    margin-left: -2px;
+}
+
+/* ---------------------------------------------------------------- error UI
+
+   Blazor's own element. A faulted circuit stops updating silently, and an incident console
+   that has quietly stopped refreshing is worse than one that admits it. */
+
+#blazor-error-ui {
+    display: none;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    background: var(--red);
+    color: #10131a;
+    font-family: var(--mono);
+    font-weight: 600;
+    padding: 0.5rem 1rem;
+}
+
+#blazor-error-ui .reload {
+    color: #10131a;
+    text-decoration: underline;
+    margin-left: 0.6rem;
+}
+
+/* The kill-switch arm list on /status. Collapsed by default because three healthy arms
+   saying the same thing is noise; expanded it answers "which one do I change". */
+.wt-arms {
+  margin-top: 0.75rem;
+}
+
+.wt-arms summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.wt-arms ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  font-size: 0.85rem;
+  line-height: 1.7;
+}

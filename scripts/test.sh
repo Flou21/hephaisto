@@ -18,4 +18,4 @@
 # is safe for CI. Revisit `dotnet test` after a xunit.v3 bump.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-exec dotnet run --project tests/Watchtower.Tests/Watchtower.Tests.csproj -c "${1:-Debug}" -- "${@:2}"
+exec dotnet run --project tests/Hephaisto.Tests/Hephaisto.Tests.csproj -c "${1:-Debug}" -- "${@:2}"

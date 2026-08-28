@@ -11,46 +11,46 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-NAME=watchtower-dev-pg
-CONN="Host=localhost;Port=5433;Database=watchtower;Username=watchtower;Password=dev"
+NAME=hephaisto-dev-pg
+CONN="Host=localhost;Port=5433;Database=hephaisto;Username=hephaisto;Password=dev"
 
 case "${1:-up}" in
   up)
     if ! docker inspect "$NAME" >/dev/null 2>&1; then
       docker run -d --name "$NAME" \
-        -e POSTGRES_USER=watchtower -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=watchtower \
+        -e POSTGRES_USER=hephaisto -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=hephaisto \
         -p 5433:5432 pgvector/pgvector:pg17 >/dev/null
     fi
     docker start "$NAME" >/dev/null 2>&1 || true
 
     printf 'waiting for postgres'
     for _ in $(seq 1 60); do
-      if docker exec "$NAME" pg_isready -U watchtower >/dev/null 2>&1; then break; fi
+      if docker exec "$NAME" pg_isready -U hephaisto >/dev/null 2>&1; then break; fi
       printf '.'; sleep 1
     done
     echo
 
     # CREATE EXTENSION lives in the migration, but the role needs to exist first or the
     # audit-trail GRANT/REVOKE block quietly no-ops (it is wrapped in an IF EXISTS check).
-    docker exec "$NAME" psql -U watchtower -d watchtower -v ON_ERROR_STOP=1 -c \
-      "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='watchtower_app')
-         THEN CREATE ROLE watchtower_app LOGIN PASSWORD 'dev'; END IF; END \$\$;" >/dev/null
+    docker exec "$NAME" psql -U hephaisto -d hephaisto -v ON_ERROR_STOP=1 -c \
+      "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='hephaisto_app')
+         THEN CREATE ROLE hephaisto_app LOGIN PASSWORD 'dev'; END IF; END \$\$;" >/dev/null
 
-    ConnectionStrings__watchtower="$CONN" \
-      dotnet ef database update --project src/Watchtower.Agent --context WatchtowerDbContext
+    ConnectionStrings__hephaisto="$CONN" \
+      dotnet ef database update --project src/Hephaisto.Agent --context HephaistoDbContext
 
     echo
     echo "Ready. Run the agent against it with:"
-    echo "  ConnectionStrings__watchtower='$CONN' \\"
+    echo "  ConnectionStrings__hephaisto='$CONN' \\"
     echo "  Kubernetes__RbacMode=WarnOnly ASPNETCORE_ENVIRONMENT=Development \\"
-    echo "  dotnet run --project src/Watchtower.Agent"
+    echo "  dotnet run --project src/Hephaisto.Agent"
     ;;
   down)
     docker rm -f "$NAME" >/dev/null 2>&1 || true
     echo "removed $NAME"
     ;;
   psql)
-    exec docker exec -it "$NAME" psql -U watchtower -d watchtower
+    exec docker exec -it "$NAME" psql -U hephaisto -d hephaisto
     ;;
   *)
     echo "usage: $0 [up|down|psql]" >&2; exit 2 ;;

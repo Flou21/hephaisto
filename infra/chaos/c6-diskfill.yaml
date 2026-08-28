@@ -55,28 +55,28 @@
 #
 # EXPECTED METRIC / PROMQL SIGNAL
 #   Production-correct rule (parses, wired, does NOT fire on local-path):
-#     kubelet_volume_stats_used_bytes{namespace="watchtower-chaos",
+#     kubelet_volume_stats_used_bytes{namespace="hephaisto-chaos",
 #                                     persistentvolumeclaim="c6-diskfill-data"}
-#       / kubelet_volume_stats_capacity_bytes{namespace="watchtower-chaos",
+#       / kubelet_volume_stats_capacity_bytes{namespace="hephaisto-chaos",
 #                                             persistentvolumeclaim="c6-diskfill-data"}
 #       > 0.90
 #
 #   What DOES hold on this node - the claim exists, is Bound, and is 1Gi:
 #     kube_persistentvolumeclaim_status_phase{
-#       namespace="watchtower-chaos",
+#       namespace="hephaisto-chaos",
 #       persistentvolumeclaim="c6-diskfill-data", phase="Bound"} == 1
 #
 #     kube_persistentvolumeclaim_resource_requests_storage_bytes{
-#       namespace="watchtower-chaos",
+#       namespace="hephaisto-chaos",
 #       persistentvolumeclaim="c6-diskfill-data"} == 1073741824
 #
 #   And the series simply existing proves the kubelet is scraping the volume:
 #     count(kubelet_volume_stats_capacity_bytes{
-#       namespace="watchtower-chaos",
+#       namespace="hephaisto-chaos",
 #       persistentvolumeclaim="c6-diskfill-data"}) == 1
 #
 # EXPECTED LOG SIGNAL
-#   {k8s_namespace_name="watchtower-chaos", k8s_deployment_name="c6-diskfill"}
+#   {k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c6-diskfill"}
 #     |= "volume is 95% full"
 #
 #   Exact expected lines:
@@ -91,11 +91,11 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: c6-diskfill-data
-  namespace: watchtower-chaos
+  namespace: hephaisto-chaos
   labels:
     app.kubernetes.io/name: c6-diskfill
-    watchtower.chaos/scenario: c6
-    watchtower.chaos/fault: diskfill
+    hephaisto.chaos/scenario: c6
+    hephaisto.chaos/fault: diskfill
 spec:
   accessModes:
     - ReadWriteOnce
@@ -110,11 +110,11 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: c6-diskfill
-  namespace: watchtower-chaos
+  namespace: hephaisto-chaos
   labels:
     app.kubernetes.io/name: c6-diskfill
-    watchtower.chaos/scenario: c6
-    watchtower.chaos/fault: diskfill
+    hephaisto.chaos/scenario: c6
+    hephaisto.chaos/fault: diskfill
 spec:
   replicas: 1
   # RWO + local-path: never let two pods hold the volume during a rollout.
@@ -127,8 +127,8 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: c6-diskfill
-        watchtower.chaos/scenario: c6
-        watchtower.chaos/fault: diskfill
+        hephaisto.chaos/scenario: c6
+        hephaisto.chaos/fault: diskfill
     spec:
       terminationGracePeriodSeconds: 5
       containers:

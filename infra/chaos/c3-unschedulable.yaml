@@ -34,15 +34,15 @@
 #     pod successfully. The failure is downstream of that.
 #
 # EXPECTED METRIC / PROMQL SIGNAL
-#   kube_pod_status_unschedulable{namespace="watchtower-chaos"} == 1
+#   kube_pod_status_unschedulable{namespace="hephaisto-chaos"} == 1
 #
-#   kube_pod_status_phase{namespace="watchtower-chaos", phase="Pending"} == 1
+#   kube_pod_status_phase{namespace="hephaisto-chaos", phase="Pending"} == 1
 #
 #   kube_deployment_status_replicas_unavailable{
-#     namespace="watchtower-chaos", deployment="c3-unschedulable"} > 0
+#     namespace="hephaisto-chaos", deployment="c3-unschedulable"} > 0
 #
 #   Duration form for the alert rule:
-#   min_over_time(kube_pod_status_unschedulable{namespace="watchtower-chaos"}[10m]) == 1
+#   min_over_time(kube_pod_status_unschedulable{namespace="hephaisto-chaos"}[10m]) == 1
 #
 #   Explicitly ABSENT: any metric naming the deficient resource or the reason
 #   string. kube_pod_container_resource_requests{resource="memory"} tells you
@@ -51,7 +51,7 @@
 # EXPECTED LOG SIGNAL
 #   NONE from the workload - no container ever starts, so there is no log
 #   stream at all. Same emptiness assertion as C1:
-#     count_over_time({k8s_namespace_name="watchtower-chaos",
+#     count_over_time({k8s_namespace_name="hephaisto-chaos",
 #                      k8s_deployment_name="c3-unschedulable"}[15m]) == 0
 #   If Events are also routed to Loki (some collector configs do this), the
 #   scheduler message is findable there instead; the README documents that as
@@ -61,11 +61,11 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: c3-unschedulable
-  namespace: watchtower-chaos
+  namespace: hephaisto-chaos
   labels:
     app.kubernetes.io/name: c3-unschedulable
-    watchtower.chaos/scenario: c3
-    watchtower.chaos/fault: unschedulable
+    hephaisto.chaos/scenario: c3
+    hephaisto.chaos/fault: unschedulable
 spec:
   replicas: 1
   selector:
@@ -75,8 +75,8 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: c3-unschedulable
-        watchtower.chaos/scenario: c3
-        watchtower.chaos/fault: unschedulable
+        hephaisto.chaos/scenario: c3
+        hephaisto.chaos/fault: unschedulable
     spec:
       terminationGracePeriodSeconds: 1
       containers:

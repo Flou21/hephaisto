@@ -36,24 +36,24 @@
 #     discriminator against C2.
 #
 # EXPECTED METRIC / PROMQL SIGNAL
-#   kube_job_status_failed{namespace="watchtower-chaos", job_name=~"c5-badjob.*"} == 3
+#   kube_job_status_failed{namespace="hephaisto-chaos", job_name=~"c5-badjob.*"} == 3
 #     (one per failed pod: 1 initial + 2 retries)
 #
-#   kube_job_failed{namespace="watchtower-chaos", job_name=~"c5-badjob.*",
+#   kube_job_failed{namespace="hephaisto-chaos", job_name=~"c5-badjob.*",
 #                   reason="BackoffLimitExceeded"} == 1
 #     (this is the metric that carries the *reason*, and is the strongest
 #      single assertion for this scenario)
 #
-#   kube_job_status_succeeded{namespace="watchtower-chaos", job_name=~"c5-badjob.*"} == 0
+#   kube_job_status_succeeded{namespace="hephaisto-chaos", job_name=~"c5-badjob.*"} == 0
 #
 #   Alert form:
-#   kube_job_failed{namespace="watchtower-chaos"} > 0
+#   kube_job_failed{namespace="hephaisto-chaos"} > 0
 #
 #   Note job_name carries no random suffix (this Job has a fixed name), but the
 #   regex is kept so the expression survives a generateName variant.
 #
 # EXPECTED LOG SIGNAL
-#   {k8s_namespace_name="watchtower-chaos", k8s_job_name="c5-badjob"}
+#   {k8s_namespace_name="hephaisto-chaos", k8s_job_name="c5-badjob"}
 #     |= "migration step 4 failed"
 #
 #   Exact expected line, once per attempt (so three times total):
@@ -62,18 +62,18 @@
 #   NOTE ON THE LOKI LABEL: k8s_job_name comes from the k8sattributes
 #   processor's job association. If the collector is not extracting it, fall
 #   back to the pod-name matcher:
-#     {k8s_namespace_name="watchtower-chaos", k8s_pod_name=~"c5-badjob-.*"}
+#     {k8s_namespace_name="hephaisto-chaos", k8s_pod_name=~"c5-badjob-.*"}
 #   There is no k8s_deployment_name for a Job.
 # =============================================================================
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: c5-badjob
-  namespace: watchtower-chaos
+  namespace: hephaisto-chaos
   labels:
     app.kubernetes.io/name: c5-badjob
-    watchtower.chaos/scenario: c5
-    watchtower.chaos/fault: badjob
+    hephaisto.chaos/scenario: c5
+    hephaisto.chaos/fault: badjob
 spec:
   # 1 initial attempt + 2 retries = 3 failed pods, then BackoffLimitExceeded.
   backoffLimit: 2
@@ -84,8 +84,8 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: c5-badjob
-        watchtower.chaos/scenario: c5
-        watchtower.chaos/fault: badjob
+        hephaisto.chaos/scenario: c5
+        hephaisto.chaos/fault: badjob
     spec:
       # Never, not OnFailure: each attempt must be a distinct pod so the
       # failure surfaces as a Job-level backoff rather than a container

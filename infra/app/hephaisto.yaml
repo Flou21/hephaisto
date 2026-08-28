@@ -1,0 +1,433 @@
+# Hephaisto agent
+# =======================================================================================
+# WHY THIS IS replicas: 1 AND strategy: Recreate -- and why that is not negotiable
+# =======================================================================================
+# This looks like an availability oversight. It is a correctness requirement.
+#
+# Before the agent executes any action against the cluster it must, atomically:
+#
+#     1. check the LLM budget has not been exhausted
+#     2. check this action is not within the cooldown window for this target
+#     3. check the kill switch is not engaged
+#     4. INSERT the action record, claiming the right to perform it
+#
+# All four must be ONE Postgres transaction. If they are not, the gap between checking and
+# acting is a TOCTOU window, and the code path that window sits on is the one that ends in
+# `kubectl delete pod`.
+#
+# With two replicas, that becomes a genuine distributed race:
+#
+#     replica A: reads cooldown -- clear.  replica B: reads cooldown -- also clear.
+#     replica A: deletes the pod.          replica B: deletes the recreated pod.
+#     Both write an action row. Both were individually correct. The cooldown, which exists
+#     precisely to stop repeated destructive action against one target, did not hold.
+#
+# The same shape breaks the budget check (two replicas each spend the last of the budget)
+# and, worst, the kill switch: a human flips it, one replica observes it, the other has
+# already read the old value and proceeds. A kill switch that a second replica can race is
+# not a kill switch.
+#
+# This IS solvable with SELECT ... FOR UPDATE, an advisory lock, or leader election, and if
+# this ever needs to be HA that is the work. It is not free work, it is easy to get subtly
+# wrong, and it must be TESTED under concurrency -- and it buys nothing on a single-node
+# cluster where two replicas share a fate anyway. So: one replica, and this comment, so the
+# next person to "fix" the availability understands what they are turning on.
+#
+# `strategy: Recreate` is the same argument at rollout time. RollingUpdate deliberately
+# runs the old and new pods SIMULTANEOUSLY -- which is exactly the two-replica scenario
+# above, arriving through the back door on every single deploy. Recreate accepts a few
+# seconds of downtime to guarantee that at most one executor exists at any instant.
+#
+# Downtime is cheap here: alerts that fire while the agent is down are re-sent by
+# Alertmanager on the next repeat_interval (15m, or 5m for the watchdog), so nothing is
+# permanently lost -- only delayed.
+# =======================================================================================
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hephaisto
+  namespace: hephaisto
+  labels:
+    app.kubernetes.io/name: hephaisto
+    app.kubernetes.io/part-of: hephaisto
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: hephaisto
+  ports:
+    # Alertmanager posts here: http://hephaisto.hephaisto:8080/webhooks/alertmanager
+    # and /webhooks/watchdog. Unauthenticated by necessity (Alertmanager cannot send
+    # custom headers) and protected by the NetworkPolicy in rbac.yaml instead.
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+    # Prometheus scrapes here via the PodMonitor below. Separated from 8080 so the
+    # NetworkPolicy and any future ingress can treat "control plane" and "telemetry"
+    # differently, and so a bug in the webhook handler cannot take metrics down with it.
+    - name: metrics
+      port: 9464
+      targetPort: metrics
+      protocol: TCP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hephaisto-switches
+  namespace: hephaisto
+  labels:
+    app.kubernetes.io/name: hephaisto
+    app.kubernetes.io/part-of: hephaisto
+data:
+  # -------------------------------------------------------------------------------------
+  # The switch ConfigMap -- the runtime arm of the kill switch
+  # -------------------------------------------------------------------------------------
+  # Mounted as a volume (not envFrom) SPECIFICALLY so it can be changed without a restart.
+  # A ConfigMap mounted as a volume is updated in place by the kubelet within about a
+  # minute; the same ConfigMap consumed via envFrom is frozen at pod start.
+  #
+  # That difference is the entire point. The situation in which you reach for this is the
+  # situation in which you do NOT want to wait for a pod to restart, and do not want to
+  # risk the restart failing. `kubectl edit cm hephaisto-switches`, wait, done.
+  #
+  # The agent re-reads these on every decision rather than caching them at startup: a
+  # cached emergency stop is not an emergency stop. Read by
+  # src/Hephaisto.Agent/Safety/KillSwitch.cs.
+  #
+  # Each key below becomes its own file under /etc/hephaisto. That is deliberate: this
+  # used to be a single `switches.yaml` document, which meant the emergency stop was YAML
+  # nested inside a YAML string and could be broken by one bad indent, in the one file you
+  # least want to get wrong under pressure. Discrete keys need no parser at all.
+  # -------------------------------------------------------------------------------------
+
+  # killSwitch: engaged by ANY value other than an unambiguous false ("no", "off", "0",
+  # "disengaged" also disengage it). The asymmetry is on purpose -- someone typing "yes"
+  # or "TRUE" or "STOP" into this key under pressure means stop, and a garbled emergency
+  # stop must read as engaged. Engaging it holds the agent at Observe: it keeps detecting,
+  # investigating and reporting, and executes nothing.
+  killSwitch: "false"
+
+  # mode: the runtime override, checked against the HEPHAISTO_MODE env var below and the
+  # database row. THE MOST RESTRICTIVE OF THE THREE WINS -- this key can only ever hold the
+  # agent further back, never push it forward. Setting this to Auto does not grant Auto if
+  # the env var says observe.
+  #
+  #   Off      -- nothing at all
+  #   Observe  -- receive signals, investigate, record. Propose nothing, execute nothing.
+  #   DryRun   -- everything Observe does, plus produce a concrete action plan and evaluate
+  #               it against policy, but stop before execution. This is the mode that
+  #               generates the evidence for whether execution can be trusted.
+  #   Auto     -- execute allowlisted low-risk actions.
+  #
+  # Names match AgentMode in src/Hephaisto.Core/Domain/Enums.cs. An unrecognised value
+  # here reads as Observe rather than as "no opinion", so a typo cannot widen autonomy.
+  # Deleting this key entirely also reads as Observe: a missing value is an unreadable
+  # switch, not an absent one.
+  mode: "Observe"
+
+  # -------------------------------------------------------------------------------------
+  # What is deliberately NOT here
+  # -------------------------------------------------------------------------------------
+  # This file used to also carry cooldown, budget, actionableNamespaces, investigation and
+  # grounding blocks. None of them was ever read by the agent -- they were a parallel copy
+  # of settings that live elsewhere, which is worse than no documentation because it reads
+  # like configuration and behaves like a comment. They were removed rather than wired up,
+  # because each already has exactly one real home:
+  #
+  #   cooldown, actionableNamespaces  -> PolicyOptions  (Policy:* in appsettings.json)
+  #                                      src/Hephaisto.Core/Policy/PolicyOptions.cs
+  #   budget                          -> LlmBudgetOptions (Llm:Budget:*), enforced in
+  #                                      src/Hephaisto.Agent/Persistence/LlmBudgetService.cs
+  #   investigation step/time limits  -> the budget guard chat client
+  #   grounding                       -> a runtime invariant in GroundingVerifier, not a
+  #                                      toggle; it cannot be switched off from config.
+  #
+  # Anything added here in future must have a reader in src/ in the same commit.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hephaisto
+  namespace: hephaisto
+  labels:
+    app.kubernetes.io/name: hephaisto
+    app.kubernetes.io/part-of: hephaisto
+spec:
+  # See the header. One executor, always.
+  replicas: 1
+  strategy:
+    # See the header. RollingUpdate would run two executors during every deploy.
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hephaisto
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hephaisto
+        app.kubernetes.io/part-of: hephaisto
+    spec:
+      serviceAccountName: hephaisto
+      # Long enough to finish an in-flight action and commit its transaction. Being killed
+      # mid-action is how the action log and reality diverge -- the row says "restarted",
+      # the pod says otherwise -- and a divergent action log poisons every later decision
+      # that reads it as history.
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 64198
+        runAsGroup: 64198
+        fsGroup: 64198
+      containers:
+        - name: hephaisto
+          # Built locally by Tilt into the node's docker daemon; there is no registry push
+          # on this machine (see tilt_config.json local-cluster-build). IfNotPresent so the
+          # kubelet never tries to pull a tag that exists only here.
+          image: hephaisto/agent:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 9464
+              protocol: TCP
+          env:
+            # -------------------------------------------------------------------------
+            # Mode
+            # -------------------------------------------------------------------------
+            # Starts in `observe`. The agent receives alerts, investigates them, writes
+            # incidents and conclusions, and takes no action whatsoever.
+            #
+            # This is the right starting point for a reason worth stating: the value of
+            # observe mode is not caution for its own sake, it is that it produces the
+            # dataset -- what would you have done, and would it have been right -- that
+            # makes moving to DryRun and then Auto a decision based on evidence rather
+            # than on hope. Promote it when hephaisto_human_feedback_total says the
+            # verdicts are good, not on a schedule.
+            - name: HEPHAISTO_MODE
+              value: observe
+
+            # -------------------------------------------------------------------------
+            # Database
+            # -------------------------------------------------------------------------
+            # Aspire/.NET configuration binding maps `ConnectionStrings__hephaisto` to
+            # ConnectionStrings:hephaisto. The password comes from the same Secret that
+            # Postgres itself reads, so there is exactly one place it is defined.
+            #
+            # Note what is NOT happening: the agent does not read this Secret through the
+            # Kubernetes API. It has no `get` on secrets anywhere (see rbac.yaml). The
+            # kubelet injects it; the agent cannot enumerate it or any other.
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: hephaisto-postgres
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: hephaisto-postgres
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: hephaisto-postgres
+                  key: POSTGRES_DB
+            - name: ConnectionStrings__hephaisto
+              value: "Host=postgres.hephaisto;Port=5432;Database=$(POSTGRES_DB);Username=$(POSTGRES_USER);Password=$(POSTGRES_PASSWORD);Include Error Detail=true"
+
+            # -------------------------------------------------------------------------
+            # Telemetry
+            # -------------------------------------------------------------------------
+            # HTTP/protobuf on 4318 rather than gRPC on 4317. Both work; HTTP is chosen
+            # because when this stops working, `curl -v` against the endpoint from inside
+            # the pod is a complete diagnosis, whereas debugging a gRPC exporter means
+            # reading .NET exporter logs. For the one service whose telemetry must be
+            # trustworthy, debuggability beats efficiency.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.hephaisto-obs:4318
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: http/protobuf
+            - name: OTEL_SERVICE_NAME
+              value: hephaisto
+            # k8s.* attributes are added by the collector's k8sattributes processor; these
+            # are the ones only the pod itself knows.
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "service.namespace=hephaisto,deployment.environment=studio-rancher-desktop"
+            # The agent's logs go out over OTLP, which is what puts trace_id on them as
+            # Loki structured metadata -- and therefore what makes Grafana's
+            # tracesToLogsV2 filterByTraceID work for the agent's own logs. (Scraped
+            # stdout has no trace context; see the note in grafana-datasources.yaml.)
+            # The agent investigating its OWN behaviour is a first-class use case.
+            - name: OTEL_LOGS_EXPORTER
+              value: otlp
+            - name: OTEL_METRICS_EXPORTER
+              value: otlp
+            - name: OTEL_TRACES_EXPORTER
+              value: otlp
+            # Exemplars are what link the agent's own latency histograms to its traces.
+            - name: OTEL_METRICS_EXEMPLAR_FILTER
+              value: trace_based
+
+            # -------------------------------------------------------------------------
+            # grafana-mcp -- the agent's query tools
+            # -------------------------------------------------------------------------
+            # Unlike the inbound webhook, this call IS bearer-authenticated: the agent is
+            # our own code and can set a header. The Secret holds the same value as the
+            # one mounted into the MCP server as MCP_GRAFANA_SERVER_TOKEN.
+            - name: HEPHAISTO_GRAFANA_MCP_URL
+              value: http://grafana-mcp.hephaisto-obs:8000/mcp
+            - name: HEPHAISTO_GRAFANA_MCP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-mcp-caller-token
+                  key: token
+
+            # -------------------------------------------------------------------------
+            # LLM
+            # -------------------------------------------------------------------------
+            #   kubectl -n hephaisto create secret generic hephaisto-llm \
+            #     --from-literal=GEMINI_API_KEY=...
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hephaisto-llm
+                  key: GEMINI_API_KEY
+
+            # Directory, not a file: each ConfigMap key projects as its own file under it
+            # (/etc/hephaisto/mode, /etc/hephaisto/killSwitch). Unset outside Kubernetes,
+            # which makes the ConfigMap arm silent rather than unreadable -- a developer
+            # running `dotnet run` has no ConfigMap and must not be pinned to Observe by
+            # its absence. Set-but-missing files ARE unreadable, and do pin to Observe.
+            - name: HEPHAISTO_SWITCHES_DIR
+              value: /etc/hephaisto
+
+            - name: ASPNETCORE_URLS
+              value: "http://0.0.0.0:8080"
+            - name: DOTNET_gcServer
+              value: "1"
+
+          volumeMounts:
+            - name: switches
+              mountPath: /etc/hephaisto
+              readOnly: true
+
+          # -----------------------------------------------------------------------------
+          # Probes -- and why they are on two DIFFERENT endpoints
+          # -----------------------------------------------------------------------------
+          # /healthz answers "is this process alive and not deadlocked". It must NOT check
+          # Postgres, the collector, or the LLM.
+          #
+          # /readyz answers "can this instance do useful work right now" and DOES check
+          # Postgres and the switch file.
+          #
+          # Conflating them is the classic self-inflicted outage: if liveness checked
+          # Postgres, then a slow database would make the kubelet kill the agent, the new
+          # pod would find the same slow database, and the agent would CrashLoopBackOff
+          # because of a dependency it was supposed to be diagnosing. Liveness restarts;
+          # readiness only removes from the Service. Only the second is a safe response to
+          # a dependency problem.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          startupProbe:
+            # Covers EF Core migrations on first boot, which can take longer than the
+            # liveness probe's patience. Without this, a cold start with pending
+            # migrations is killed halfway through and restarted forever.
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              # No CPU limit deliberately. CFS throttling on a latency-sensitive process
+              # produces stalls that look exactly like the dependency slowness the agent is
+              # supposed to be diagnosing -- and there is no contention for CPU on a
+              # 14-vCPU node with 31% utilisation. Memory IS limited, because an unbounded
+              # leak here would take the node down.
+              #
+              # 3Gi, not the 1Gi this started at, for the same reason readOnlyRootFilesystem
+              # is false below: the DEV image's entrypoint is `dotnet watch`, so this
+              # container is running the .NET SDK and Roslyn, not just the app. At 1Gi it was
+              # OOM-killed (exit 137) within about ninety seconds of every hot reload, and
+              # the restart looked like an application crash rather than a sizing mistake.
+              #
+              # The agent noticed this about ITSELF and filed an OomKilled incident against
+              # hephaisto/Deployment/hephaisto - correctly escalated as a self-signal
+              # rather than acted on. Nice, but not a substitute for the right limit.
+              #
+              # Drop this back toward 512Mi when this manifest points at the published
+              # image, which carries no compiler. The node has 115Gi, so the headroom costs
+              # nothing here; the limit exists to bound a leak, not to pack the node.
+              memory: 3Gi
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            # FALSE only because this Deployment currently runs the DEV image, whose
+            # entrypoint is `dotnet watch` -- a compiler. It has to write build output, a
+            # NuGet cache and a CLI home; with a read-only root it dies at startup with
+            #   System.IO.IOException: Read-only file system : '/.dotnet'
+            # which reads like a permissions bug and is actually a design mismatch.
+            #
+            # Set this back to TRUE when this manifest points at the published image from
+            # Dockerfile (a self-contained app that writes nothing). Losing it here costs
+            # little: the boundary that actually contains this pod is RBAC, and none of
+            # runAsNonRoot, drop ALL or allowPrivilegeEscalation:false is relaxed.
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+
+      volumes:
+        - name: switches
+          configMap:
+            name: hephaisto-switches
+---
+# PodMonitor, not ServiceMonitor. The agent is a single pod and the metric that matters
+# most -- whether THIS instance is processing signals -- is per-pod. A ServiceMonitor
+# targets endpoints behind the Service, so it stops scraping the moment readiness fails,
+# which is exactly when its metrics are most interesting.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: hephaisto
+  namespace: hephaisto
+  labels:
+    # MUST match podMonitorSelector in kube-prometheus-stack.values.yaml. Without this
+    # label the PodMonitor is created successfully, is never selected, and the agent's own
+    # metrics never reach Prometheus -- so HephaistoLlmBudgetExhausted and
+    # HephaistoNotProcessingSignals can never fire. Silent, and easy to miss because
+    # `kubectl get podmonitor` shows the object existing quite happily.
+    release: hephaisto
+    app.kubernetes.io/name: hephaisto
+    app.kubernetes.io/part-of: hephaisto
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hephaisto
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - hephaisto

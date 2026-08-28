@@ -30,26 +30,26 @@
 #
 # EXPECTED METRIC / PROMQL SIGNAL
 #   kube_pod_container_status_last_terminated_reason{
-#     namespace="watchtower-chaos", container="balloon",
+#     namespace="hephaisto-chaos", container="balloon",
 #     reason="OOMKilled"} == 1
 #
 #   increase(kube_pod_container_status_restarts_total{
-#     namespace="watchtower-chaos", container="balloon"}[15m]) > 3
+#     namespace="hephaisto-chaos", container="balloon"}[15m]) > 3
 #
 #   Memory sawtooth (cAdvisor), climbing to ~67108864 then dropping to ~0:
 #   container_memory_working_set_bytes{
-#     namespace="watchtower-chaos", container="balloon"}
+#     namespace="hephaisto-chaos", container="balloon"}
 #
 #   Ratio form used by the alert rule:
-#   container_memory_working_set_bytes{namespace="watchtower-chaos", container="balloon"}
+#   container_memory_working_set_bytes{namespace="hephaisto-chaos", container="balloon"}
 #     / on(namespace,pod,container)
-#   kube_pod_container_resource_limits{namespace="watchtower-chaos", container="balloon", resource="memory"}
+#   kube_pod_container_resource_limits{namespace="hephaisto-chaos", container="balloon", resource="memory"}
 #     > 0.9
 #
 # EXPECTED LOG SIGNAL
 #   NONE. Deliberately zero log lines. The correct LogQL assertion is an
 #   emptiness assertion:
-#     count_over_time({k8s_namespace_name="watchtower-chaos",
+#     count_over_time({k8s_namespace_name="hephaisto-chaos",
 #                      k8s_deployment_name="c1-oomkill"}[15m]) == 0
 #   (or: the query returns no streams at all)
 # =============================================================================
@@ -57,11 +57,11 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: c1-oomkill
-  namespace: watchtower-chaos
+  namespace: hephaisto-chaos
   labels:
     app.kubernetes.io/name: c1-oomkill
-    watchtower.chaos/scenario: c1
-    watchtower.chaos/fault: oomkill
+    hephaisto.chaos/scenario: c1
+    hephaisto.chaos/fault: oomkill
 spec:
   replicas: 1
   selector:
@@ -71,8 +71,8 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: c1-oomkill
-        watchtower.chaos/scenario: c1
-        watchtower.chaos/fault: oomkill
+        hephaisto.chaos/scenario: c1
+        hephaisto.chaos/fault: oomkill
     spec:
       # Restart fast so the sawtooth is dense enough to see inside a 15m window.
       terminationGracePeriodSeconds: 1

@@ -1,4 +1,4 @@
-# Watchtower RBAC
+# Hephaisto RBAC
 # =======================================================================================
 # THIS IS THE MOST IMPORTANT FILE IN THE REPOSITORY.
 # =======================================================================================
@@ -16,9 +16,9 @@
 #
 # The design in one line: READ EVERYWHERE, WRITE IN ONE NAMESPACE, NODE OPERATIONS NOWHERE.
 #
-#   ClusterRole watchtower-read   -> bound cluster-wide.        Read-only, no secrets.
-#   Role        watchtower-write  -> bound ONLY in watchtower-chaos.
-#   ClusterRole watchtower-node   -> DEFINED BUT DELIBERATELY NOT BOUND.
+#   ClusterRole hephaisto-read   -> bound cluster-wide.        Read-only, no secrets.
+#   Role        hephaisto-write  -> bound ONLY in hephaisto-chaos.
+#   ClusterRole hephaisto-node   -> DEFINED BUT DELIBERATELY NOT BOUND.
 #
 # Read the comment above each rule before changing it. Every verb here was granted for a
 # specific reason, and the reasons are written down so that a future reader can tell the
@@ -30,7 +30,7 @@
 # The absences below are as deliberate as the grants. None of them is an oversight, and
 # each is a specific attack or accident that the omission makes impossible:
 #
-#   secrets  -- NOWHERE, not even `get`, not even in watchtower-chaos.
+#   secrets  -- NOWHERE, not even `get`, not even in hephaisto-chaos.
 #       This is the single most important omission in the file. The agent reads pod logs
 #       cluster-wide and feeds them to an LLM. Secret material that reaches the agent's
 #       context reaches the model provider, gets written into the investigation record in
@@ -74,14 +74,14 @@
 #       Deleting a namespace is the largest single destructive action the API offers: it
 #       cascades to every object inside it and cannot be undone or interrupted.
 #
-#   nodes: patch, and pods/eviction -- defined in watchtower-node below but NOT BOUND.
+#   nodes: patch, and pods/eviction -- defined in hephaisto-node below but NOT BOUND.
 #       See that ClusterRole's own comment.
 #
 #   validatingwebhookconfigurations / mutatingwebhookconfigurations -- nowhere.
 #       Deleting a webhook config silently disables an admission control plane. The cluster
 #       keeps working and stops enforcing.
 #
-#   Any write verb in kube-system, cait, infra-*, or watchtower-obs -- nowhere.
+#   Any write verb in kube-system, cait, infra-*, or hephaisto-obs -- nowhere.
 #       The write Role is RoleBound in exactly one namespace. In particular the agent
 #       cannot restart its own observability stack, which is correct: an agent that can
 #       delete the Prometheus that is watching it can make its own failures invisible.
@@ -90,11 +90,11 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: watchtower
-  namespace: watchtower
+  name: hephaisto
+  namespace: hephaisto
   labels:
-    app.kubernetes.io/name: watchtower
-    app.kubernetes.io/part-of: watchtower
+    app.kubernetes.io/name: hephaisto
+    app.kubernetes.io/part-of: hephaisto
 automountServiceAccountToken: true
 
 # =======================================================================================
@@ -111,9 +111,9 @@ automountServiceAccountToken: true
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: watchtower-read
+  name: hephaisto-read
   labels:
-    app.kubernetes.io/part-of: watchtower
+    app.kubernetes.io/part-of: hephaisto
 rules:
   # -------------------------------------------------------------------------------------
   # Core workload state
@@ -128,7 +128,7 @@ rules:
       #                node the pod landed on, and its owner chain.
       #   watch     -- so the agent sees a state transition when it happens rather than
       #                discovering it on the next poll. Detection latency is a headline
-      #                metric (watchtower_detection_latency_seconds); polling adds the
+      #                metric (hephaisto_detection_latency_seconds); polling adds the
       #                poll interval to every incident's MTTD.
       - pods
       # pods/log
@@ -167,11 +167,11 @@ rules:
       #   Conditions (MemoryPressure, DiskPressure, Ready), allocatable capacity, taints.
       #   Needed to answer "is this pod's problem actually the node's problem", which is
       #   the difference between a correct remediation and restarting an innocent pod.
-      #   READ ONLY. `patch` on nodes is cordon/drain and lives in watchtower-node, unbound.
+      #   READ ONLY. `patch` on nodes is cordon/drain and lives in hephaisto-node, unbound.
       - nodes
       # namespaces
       #   To enumerate what exists and read namespace labels -- notably
-      #   watchtower.io/destructive-actions-allowed, which the agent's policy engine checks
+      #   hephaisto.io/destructive-actions-allowed, which the agent's policy engine checks
       #   as a second, independent confirmation before proposing any write. Belt and
       #   braces with the RoleBinding scope below.
       - namespaces
@@ -327,39 +327,39 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: watchtower-read
+  name: hephaisto-read
   labels:
-    app.kubernetes.io/part-of: watchtower
+    app.kubernetes.io/part-of: hephaisto
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: watchtower-read
+  name: hephaisto-read
 subjects:
   - kind: ServiceAccount
-    name: watchtower
-    namespace: watchtower
+    name: hephaisto
+    namespace: hephaisto
 
 # =======================================================================================
-# WRITE -- a Role, and RoleBound into watchtower-chaos ONLY
+# WRITE -- a Role, and RoleBound into hephaisto-chaos ONLY
 # =======================================================================================
 # Note the object kind: this is a `Role`, not a `ClusterRole`. That is not a stylistic
 # choice. A ClusterRole with a RoleBinding would work identically today, but it leaves a
 # cluster-scoped object lying around that someone can later attach a ClusterRoleBinding to
-# with a single command and no review. A namespaced Role in `watchtower-chaos` cannot be
-# bound outside `watchtower-chaos` at all -- the API server will not do it. The scope is a
+# with a single command and no review. A namespaced Role in `hephaisto-chaos` cannot be
+# bound outside `hephaisto-chaos` at all -- the API server will not do it. The scope is a
 # property of the object, not of a binding someone might change.
 #
 # Everything below is destructive. The containment is that the only namespace it applies to
-# contains nothing anyone depends on (see the watchtower.io/destructive-actions-allowed
+# contains nothing anyone depends on (see the hephaisto.io/destructive-actions-allowed
 # label in infra/namespaces.yaml).
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: watchtower-write
-  namespace: watchtower-chaos
+  name: hephaisto-write
+  namespace: hephaisto-chaos
   labels:
-    app.kubernetes.io/part-of: watchtower
+    app.kubernetes.io/part-of: hephaisto
 rules:
   # -------------------------------------------------------------------------------------
   # delete on pods -- "restart the pod"
@@ -369,7 +369,7 @@ rules:
   # restart action -- the most common and most often correct remediation there is.
   #
   # It is also the action where a mistake is least recoverable, which is why the executor
-  # is a single replica (see watchtower.yaml): the budget check, cooldown check, kill-switch
+  # is a single replica (see hephaisto.yaml): the budget check, cooldown check, kill-switch
   # check and action INSERT are one Postgres transaction, and this verb is what makes that
   # transaction matter.
   #
@@ -445,9 +445,9 @@ rules:
   # -------------------------------------------------------------------------------------
   # When the agent takes an action, it records a Kubernetes Event against the object it
   # acted on. This matters more than it looks: it means a human running
-  # `kubectl describe deployment/foo` sees "Watchtower restarted this at 03:14 because
+  # `kubectl describe deployment/foo` sees "Hephaisto restarted this at 03:14 because
   # KubePodCrashLooping fired" in the place they were already looking, without knowing
-  # Watchtower exists or where its dashboard lives.
+  # Hephaisto exists or where its dashboard lives.
   #
   # It is `create` only -- no update, no delete, no patch. The agent can add to the record
   # and can never edit or erase what it or anyone else previously wrote. An audit trail an
@@ -462,21 +462,21 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: watchtower-write
+  name: hephaisto-write
   # THE CONTAINMENT. This namespace, and no other. Copying this RoleBinding into another
   # namespace is the single change that widens the agent's blast radius, and it should be
   # reviewed as such -- it is a bigger change than anything in the agent's own source.
-  namespace: watchtower-chaos
+  namespace: hephaisto-chaos
   labels:
-    app.kubernetes.io/part-of: watchtower
+    app.kubernetes.io/part-of: hephaisto
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: watchtower-write
+  name: hephaisto-write
 subjects:
   - kind: ServiceAccount
-    name: watchtower
-    namespace: watchtower
+    name: hephaisto
+    namespace: hephaisto
 
 # =======================================================================================
 # NODE OPERATIONS -- DEFINED, DELIBERATELY NOT BOUND
@@ -505,13 +505,13 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: watchtower-node
+  name: hephaisto-node
   labels:
-    app.kubernetes.io/part-of: watchtower
-    watchtower.io/phase: "3"
-    watchtower.io/bound: "false"
+    app.kubernetes.io/part-of: hephaisto
+    hephaisto.io/phase: "3"
+    hephaisto.io/bound: "false"
   annotations:
-    watchtower.io/deliberately-unbound: >-
+    hephaisto.io/deliberately-unbound: >-
       This ClusterRole has no binding anywhere in infra/. Creating one enables node
       cordon and drain. On a single-node cluster a drain is a full cluster outage,
       including the agent that ordered it. Do not bind this without a recorded human
@@ -542,11 +542,11 @@ rules:
 # make the agent believe a workload is broken and act on it.
 #
 # The mitigation is at the network layer instead. This policy makes port 8080 in namespace
-# `watchtower` reachable ONLY from `watchtower-obs`. Nothing in cait, infra-*, kube-system,
-# default, or watchtower-chaos can open a connection to it at all -- so there is no door for
+# `hephaisto` reachable ONLY from `hephaisto-obs`. Nothing in cait, infra-*, kube-system,
+# default, or hephaisto-chaos can open a connection to it at all -- so there is no door for
 # a token to guard.
 #
-# Note what this implies about watchtower-chaos in particular: the chaos fixtures are the
+# Note what this implies about hephaisto-chaos in particular: the chaos fixtures are the
 # workloads most likely to be running something unexpected, and they are explicitly on the
 # far side of this boundary from the agent's control plane.
 #
@@ -571,26 +571,26 @@ rules:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: watchtower-ingress
-  namespace: watchtower
+  name: hephaisto-ingress
+  namespace: hephaisto
   labels:
-    app.kubernetes.io/part-of: watchtower
+    app.kubernetes.io/part-of: hephaisto
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: watchtower
+      app.kubernetes.io/name: hephaisto
   policyTypes:
     - Ingress
   ingress:
     # Alertmanager's webhooks and Prometheus's scrape of the agent's own metrics. Both
-    # originate in watchtower-obs. Selecting the NAMESPACE rather than specific pods is
+    # originate in hephaisto-obs. Selecting the NAMESPACE rather than specific pods is
     # deliberate: Alertmanager and Prometheus pod labels are chart-managed and change
     # across upgrades, and a policy that breaks on a `helm upgrade` would cut the agent off
     # from its alert feed silently.
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: watchtower-obs
+              kubernetes.io/metadata.name: hephaisto-obs
       ports:
         - protocol: TCP
           port: 8080
@@ -610,7 +610,7 @@ spec:
 
     # Kubelet probes. The kubelet connects from the NODE's address, which no
     # namespaceSelector can match, so without this rule the readiness and liveness probes
-    # in watchtower.yaml fail and the pod is killed in a loop by its own protection.
+    # in hephaisto.yaml fail and the pod is killed in a loop by its own protection.
     # This is the single most common way a first NetworkPolicy breaks a working service.
     - from:
         - ipBlock:
@@ -620,15 +620,15 @@ spec:
           port: 8080
 ---
 # Postgres accepts connections only from inside this namespace. It is not exposed to
-# watchtower-obs at all -- the observability stack has no business reading the agent's
+# hephaisto-obs at all -- the observability stack has no business reading the agent's
 # incident history, and the agent's memory is not a telemetry source.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: watchtower-postgres-ingress
-  namespace: watchtower
+  name: hephaisto-postgres-ingress
+  namespace: hephaisto
   labels:
-    app.kubernetes.io/part-of: watchtower
+    app.kubernetes.io/part-of: hephaisto
 spec:
   podSelector:
     matchLabels:

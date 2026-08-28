@@ -1,7 +1,7 @@
-# Watchtower chaos fixtures
+# Hephaisto chaos fixtures
 
 Ten hand-written Kubernetes fault-injection fixtures, one per file, all in namespace
-`watchtower-chaos`. They exist to give the Watchtower agent a stable, reproducible set
+`hephaisto-chaos`. They exist to give the Hephaisto agent a stable, reproducible set
 of failures with a **known-correct answer**, so its diagnoses can be regression-tested
 rather than eyeballed.
 
@@ -38,7 +38,7 @@ Every LogQL selector below therefore uses OTel resource-attribute names with dot
 lowered to underscores:
 
 ```
-{k8s_namespace_name="watchtower-chaos", k8s_deployment_name="<name>", k8s_container_name="<name>"}
+{k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="<name>", k8s_container_name="<name>"}
 ```
 
 If the collector is configured to promote different labels (e.g. Promtail-style
@@ -57,35 +57,35 @@ MVP-critical: they carry information that exists in **no metric at all**.
 
 | # | Scenario | Expected alert name | Expected PromQL | Expected LogQL | Expected Kubernetes event |
 |---|---|---|---|---|---|
-| C1 | OOMKill — 64Mi limit, ~200Mi allocated | `ChaosPodOOMKilled` | `kube_pod_container_status_last_terminated_reason{namespace="watchtower-chaos",container="balloon",reason="OOMKilled"} == 1` | *(none — deliberate)* `count_over_time({k8s_namespace_name="watchtower-chaos", k8s_deployment_name="c1-oomkill"}[15m]) == 0` | Node: `Warning SystemOOM`; Pod: `Warning BackOff` |
-| C2 | CrashLoopBackOff, one decisive log line | `ChaosPodCrashLooping` | `kube_pod_container_status_waiting_reason{namespace="watchtower-chaos",container="app",reason="CrashLoopBackOff"} == 1` | `{k8s_namespace_name="watchtower-chaos", k8s_deployment_name="c2-crashloop"} \|= "FATAL"` | `Warning BackOff — Back-off restarting failed container app` |
-| C3 | Unschedulable — requests 500Gi | `ChaosPodUnschedulable` | `kube_pod_status_unschedulable{namespace="watchtower-chaos"} == 1` | *(none)* `count_over_time({k8s_namespace_name="watchtower-chaos", k8s_deployment_name="c3-unschedulable"}[15m]) == 0` | `Warning FailedScheduling — 0/1 nodes are available: 1 Insufficient memory.` |
-| C4 | ImagePullBackOff — nonexistent tag | `ChaosImagePullFailure` | `max_over_time(kube_pod_container_status_waiting_reason{namespace="watchtower-chaos",reason=~"ImagePullBackOff\|ErrImagePull"}[10m]) == 1` | *(none)* `count_over_time({k8s_namespace_name="watchtower-chaos", k8s_deployment_name="c4-imagepull"}[15m]) == 0` | `Warning Failed — Failed to pull image "busybox:this-tag-does-not-exist": ... not found` |
-| C5 | Job exceeds `backoffLimit: 2` | `ChaosJobFailed` | `kube_job_failed{namespace="watchtower-chaos",job_name=~"c5-badjob.*",reason="BackoffLimitExceeded"} == 1` | `{k8s_namespace_name="watchtower-chaos", k8s_job_name="c5-badjob"} \|= "migration step 4 failed"` | `Warning BackoffLimitExceeded — Job has reached the specified backoff limit` |
-| C6 | 1Gi PVC filled to ~950Mi | `ChaosVolumeAlmostFull` | `kubelet_volume_stats_used_bytes{namespace="watchtower-chaos",persistentvolumeclaim="c6-diskfill-data"} / kubelet_volume_stats_capacity_bytes{namespace="watchtower-chaos",persistentvolumeclaim="c6-diskfill-data"} > 0.90` **(does NOT fire on local-path — see below)** | `{k8s_namespace_name="watchtower-chaos", k8s_deployment_name="c6-diskfill"} \|= "volume is 95% full"` | `Normal ProvisioningSucceeded`; **no warning event for the fill itself** |
-| C7 | `CreateContainerConfigError` — missing Secret | `ChaosContainerConfigError` | `kube_pod_container_status_waiting_reason{namespace="watchtower-chaos",container="app",reason="CreateContainerConfigError"} == 1` | *(none — identical to C4, which is the point)* | `Warning Failed — Error: secret "c7-database-credentials" not found` |
-| C8 | Readiness flap, 60s on / 60s off | `ChaosEndpointFlapping` *(Sev3 — never page)* | `changes(kube_pod_status_ready{namespace="watchtower-chaos",pod=~"c8-readiness-flap-.*",condition="true"}[30m]) >= 4` | `{k8s_namespace_name="watchtower-chaos", k8s_deployment_name="c8-readiness-flap"} \|= "entering unhealthy window"` | `Warning Unhealthy — Readiness probe failed: HTTP probe failed with statuscode: 404` |
-| C9 | Unbounded 4Gi memhog — **node-wide** | `ChaosNodeMemoryPressure` | `kube_node_status_condition{condition="MemoryPressure",status="true"} == 1` | `{k8s_namespace_name="watchtower-chaos", k8s_deployment_name="c9-memhog"} \|= "allocated"` | `Warning NodeHasInsufficientMemory`; `Warning Evicted — The node was low on resource: memory.` |
-| C10 | faulty-service — 15% 500s, 750ms p95, 503 window | `ChaosServiceErrorBudgetBurn` | `sum(rate(traces_spanmetrics_calls_total{service_name="faulty-service",status_code="STATUS_CODE_ERROR"}[5m])) / sum(rate(traces_spanmetrics_calls_total{service_name="faulty-service"}[5m])) > 0.05` | `{k8s_namespace_name="watchtower-chaos", k8s_deployment_name="c10-faulty-service", k8s_container_name="app"} \|= "FAULT"` | *(none — deliberately event-silent; the pod stays Ready)* |
+| C1 | OOMKill — 64Mi limit, ~200Mi allocated | `ChaosPodOOMKilled` | `kube_pod_container_status_last_terminated_reason{namespace="hephaisto-chaos",container="balloon",reason="OOMKilled"} == 1` | *(none — deliberate)* `count_over_time({k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c1-oomkill"}[15m]) == 0` | Node: `Warning SystemOOM`; Pod: `Warning BackOff` |
+| C2 | CrashLoopBackOff, one decisive log line | `ChaosPodCrashLooping` | `kube_pod_container_status_waiting_reason{namespace="hephaisto-chaos",container="app",reason="CrashLoopBackOff"} == 1` | `{k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c2-crashloop"} \|= "FATAL"` | `Warning BackOff — Back-off restarting failed container app` |
+| C3 | Unschedulable — requests 500Gi | `ChaosPodUnschedulable` | `kube_pod_status_unschedulable{namespace="hephaisto-chaos"} == 1` | *(none)* `count_over_time({k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c3-unschedulable"}[15m]) == 0` | `Warning FailedScheduling — 0/1 nodes are available: 1 Insufficient memory.` |
+| C4 | ImagePullBackOff — nonexistent tag | `ChaosImagePullFailure` | `max_over_time(kube_pod_container_status_waiting_reason{namespace="hephaisto-chaos",reason=~"ImagePullBackOff\|ErrImagePull"}[10m]) == 1` | *(none)* `count_over_time({k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c4-imagepull"}[15m]) == 0` | `Warning Failed — Failed to pull image "busybox:this-tag-does-not-exist": ... not found` |
+| C5 | Job exceeds `backoffLimit: 2` | `ChaosJobFailed` | `kube_job_failed{namespace="hephaisto-chaos",job_name=~"c5-badjob.*",reason="BackoffLimitExceeded"} == 1` | `{k8s_namespace_name="hephaisto-chaos", k8s_job_name="c5-badjob"} \|= "migration step 4 failed"` | `Warning BackoffLimitExceeded — Job has reached the specified backoff limit` |
+| C6 | 1Gi PVC filled to ~950Mi | `ChaosVolumeAlmostFull` | `kubelet_volume_stats_used_bytes{namespace="hephaisto-chaos",persistentvolumeclaim="c6-diskfill-data"} / kubelet_volume_stats_capacity_bytes{namespace="hephaisto-chaos",persistentvolumeclaim="c6-diskfill-data"} > 0.90` **(does NOT fire on local-path — see below)** | `{k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c6-diskfill"} \|= "volume is 95% full"` | `Normal ProvisioningSucceeded`; **no warning event for the fill itself** |
+| C7 | `CreateContainerConfigError` — missing Secret | `ChaosContainerConfigError` | `kube_pod_container_status_waiting_reason{namespace="hephaisto-chaos",container="app",reason="CreateContainerConfigError"} == 1` | *(none — identical to C4, which is the point)* | `Warning Failed — Error: secret "c7-database-credentials" not found` |
+| C8 | Readiness flap, 60s on / 60s off | `ChaosEndpointFlapping` *(Sev3 — never page)* | `changes(kube_pod_status_ready{namespace="hephaisto-chaos",pod=~"c8-readiness-flap-.*",condition="true"}[30m]) >= 4` | `{k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c8-readiness-flap"} \|= "entering unhealthy window"` | `Warning Unhealthy — Readiness probe failed: HTTP probe failed with statuscode: 404` |
+| C9 | Unbounded 4Gi memhog — **node-wide** | `ChaosNodeMemoryPressure` | `kube_node_status_condition{condition="MemoryPressure",status="true"} == 1` | `{k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c9-memhog"} \|= "allocated"` | `Warning NodeHasInsufficientMemory`; `Warning Evicted — The node was low on resource: memory.` |
+| C10 | faulty-service — 15% 500s, 750ms p95, 503 window | `ChaosServiceErrorBudgetBurn` | `sum(rate(traces_spanmetrics_calls_total{service_name="faulty-service",status_code="STATUS_CODE_ERROR"}[5m])) / sum(rate(traces_spanmetrics_calls_total{service_name="faulty-service"}[5m])) > 0.05` | `{k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c10-faulty-service", k8s_container_name="app"} \|= "FAULT"` | *(none — deliberately event-silent; the pod stays Ready)* |
 
 ### Secondary expressions worth asserting
 
 | # | Purpose | PromQL |
 |---|---|---|
-| C1 | Restart rate | `increase(kube_pod_container_status_restarts_total{namespace="watchtower-chaos",container="balloon"}[15m]) > 3` |
-| C1 | Memory sawtooth against the limit | `container_memory_working_set_bytes{namespace="watchtower-chaos",container="balloon"} / on(namespace,pod,container) kube_pod_container_resource_limits{namespace="watchtower-chaos",container="balloon",resource="memory"} > 0.9` |
-| C2 | Termination reason is `Error`, not `OOMKilled` | `kube_pod_container_status_last_terminated_reason{namespace="watchtower-chaos",container="app",reason="Error"} == 1` |
-| C3 | Pod stuck Pending | `kube_pod_status_phase{namespace="watchtower-chaos",phase="Pending"} == 1` |
-| C4 vs C7 | Discrimination — C7 must not match C4's reasons | `absent(kube_pod_container_status_waiting_reason{namespace="watchtower-chaos",pod=~"c7-configerror-.*",reason=~"ImagePullBackOff\|ErrImagePull"}) == 1` |
-| C5 | One failure per attempt | `kube_job_status_failed{namespace="watchtower-chaos",job_name=~"c5-badjob.*"} == 3` |
-| C6 | The claim exists and is 1Gi | `kube_persistentvolumeclaim_resource_requests_storage_bytes{namespace="watchtower-chaos",persistentvolumeclaim="c6-diskfill-data"} == 1073741824` |
-| C8 | Counter-discriminator — it is NOT crashing | `increase(kube_pod_container_status_restarts_total{namespace="watchtower-chaos",container="server"}[30m]) == 0` |
-| C8 | Endpoint churn (KSM >= 2.13) | `count(kube_endpointslice_endpoints{namespace="watchtower-chaos",endpointslice=~"c8-readiness-flap-.*",ready="true"}) or vector(0)` |
-| C9 | The finding is the *absence* of a limit | `absent(kube_pod_container_resource_limits{namespace="watchtower-chaos",container="hog",resource="memory"}) == 1` |
+| C1 | Restart rate | `increase(kube_pod_container_status_restarts_total{namespace="hephaisto-chaos",container="balloon"}[15m]) > 3` |
+| C1 | Memory sawtooth against the limit | `container_memory_working_set_bytes{namespace="hephaisto-chaos",container="balloon"} / on(namespace,pod,container) kube_pod_container_resource_limits{namespace="hephaisto-chaos",container="balloon",resource="memory"} > 0.9` |
+| C2 | Termination reason is `Error`, not `OOMKilled` | `kube_pod_container_status_last_terminated_reason{namespace="hephaisto-chaos",container="app",reason="Error"} == 1` |
+| C3 | Pod stuck Pending | `kube_pod_status_phase{namespace="hephaisto-chaos",phase="Pending"} == 1` |
+| C4 vs C7 | Discrimination — C7 must not match C4's reasons | `absent(kube_pod_container_status_waiting_reason{namespace="hephaisto-chaos",pod=~"c7-configerror-.*",reason=~"ImagePullBackOff\|ErrImagePull"}) == 1` |
+| C5 | One failure per attempt | `kube_job_status_failed{namespace="hephaisto-chaos",job_name=~"c5-badjob.*"} == 3` |
+| C6 | The claim exists and is 1Gi | `kube_persistentvolumeclaim_resource_requests_storage_bytes{namespace="hephaisto-chaos",persistentvolumeclaim="c6-diskfill-data"} == 1073741824` |
+| C8 | Counter-discriminator — it is NOT crashing | `increase(kube_pod_container_status_restarts_total{namespace="hephaisto-chaos",container="server"}[30m]) == 0` |
+| C8 | Endpoint churn (KSM >= 2.13) | `count(kube_endpointslice_endpoints{namespace="hephaisto-chaos",endpointslice=~"c8-readiness-flap-.*",ready="true"}) or vector(0)` |
+| C9 | The finding is the *absence* of a limit | `absent(kube_pod_container_resource_limits{namespace="hephaisto-chaos",container="hog",resource="memory"}) == 1` |
 | C9 | Blast radius outside the chaos namespace | `sum(kube_pod_status_reason{reason="Evicted"}) > 0` |
 | C10 | p95 latency / exemplar carrier | `histogram_quantile(0.95, sum by (le, span_name) (rate(traces_spanmetrics_latency_bucket{service_name="faulty-service"}[5m]))) > 0.5` |
 | C10 | App-side view, independent of Tempo | `sum(rate(http_server_request_duration_seconds_count{job=~".*faulty-service.*",http_response_status_code="500"}[5m])) > 0` |
-| C10 | Kubernetes stays green — this is the trap | `kube_deployment_status_replicas_available{namespace="watchtower-chaos",deployment="c10-faulty-service"} == 1` |
+| C10 | Kubernetes stays green — this is the trap | `kube_deployment_status_replicas_available{namespace="hephaisto-chaos",deployment="c10-faulty-service"} == 1` |
 
 ---
 
@@ -115,7 +115,7 @@ and treat the ratio as a rule that would fire on a real CSI driver.
 **C8 — do not assert `up == 0`.** With Prometheus `role: endpoints` service discovery,
 not-ready endpoints are excluded from discovery entirely, so the target **disappears**
 rather than reporting `up == 0`. The correct form is
-`absent(up{namespace="watchtower-chaos", service="c8-readiness-flap"})`.
+`absent(up{namespace="hephaisto-chaos", service="c8-readiness-flap"})`.
 
 **C1 — there is no Pod-scoped `OOMKilling` event on k3s + containerd.** The kubelet's
 OOM watcher raises `SystemOOM` against the **Node**. The per-container evidence is the
@@ -160,15 +160,15 @@ And one is graded on reach:
 
 ## Applying and removing
 
-The namespace `watchtower-chaos` is defined elsewhere and is **not** created by these
+The namespace `hephaisto-chaos` is defined elsewhere and is **not** created by these
 files. Create it first.
 
 Build the C10 image once, from the **repo root** (the project inherits Central Package
 Management from `/Directory.Packages.props`, so the build context must include it):
 
 ```sh
-cd /Users/flo/watchtower
-docker build -f infra/chaos/faulty-service/Dockerfile -t watchtower/faulty-service:dev .
+cd /Users/flo/hephaisto
+docker build -f infra/chaos/faulty-service/Dockerfile -t hephaisto/faulty-service:dev .
 ```
 
 Rancher Desktop runs the dockerd engine, so the image is visible to k3s directly with
@@ -190,9 +190,9 @@ for f in infra/chaos/c*.yaml; do kubectl apply --dry-run=client -f "$f"; done
 Observe:
 
 ```sh
-kubectl -n watchtower-chaos get pods
-kubectl -n watchtower-chaos get events --sort-by=.lastTimestamp
-kubectl -n watchtower-chaos describe pod -l watchtower.chaos/scenario=c7
+kubectl -n hephaisto-chaos get pods
+kubectl -n hephaisto-chaos get events --sort-by=.lastTimestamp
+kubectl -n hephaisto-chaos describe pod -l hephaisto.chaos/scenario=c7
 ```
 
 Remove:
@@ -208,7 +208,7 @@ also sets `ttlSecondsAfterFinished: 3600`, so it garbage-collects itself after a
 rather than leaving `kube_job_failed` pinned at 1 forever.
 
 Every fixture except C9 is bounded by its own resource limits and cannot affect
-anything outside `watchtower-chaos`.
+anything outside `hephaisto-chaos`.
 
 ---
 
@@ -219,7 +219,7 @@ It has **no memory limit** on purpose — an unbounded container is the only way
 a *node*-level condition rather than a container-level one. That means the pressure
 lands on the shared node, and eviction can take out:
 
-* the observability stack in `watchtower-obs` — losing the telemetry you were trying
+* the observability stack in `hephaisto-obs` — losing the telemetry you were trying
   to collect,
 * the other nine chaos fixtures,
 * unrelated dev workloads on the same node.
@@ -228,9 +228,9 @@ lands on the shared node, and eviction can take out:
 Firing it is a separate, conscious act:
 
 ```sh
-kubectl -n watchtower-chaos scale deploy/c9-memhog --replicas=1    # ARM
+kubectl -n hephaisto-chaos scale deploy/c9-memhog --replicas=1    # ARM
 # ... capture the signal, 3-5 minutes is plenty ...
-kubectl -n watchtower-chaos scale deploy/c9-memhog --replicas=0    # DISARM
+kubectl -n hephaisto-chaos scale deploy/c9-memhog --replicas=0    # DISARM
 kubectl describe node lima-rancher-desktop | grep -A3 MemoryPressure
 ```
 
@@ -255,7 +255,7 @@ intent. Assert the working-set signal unconditionally; treat `MemoryPressure` an
 | `busybox:this-tag-does-not-exist` | C4 | intentionally nonexistent; a real repo with a bogus tag gives a deterministic registry error, unlike a bogus hostname whose DNS error text varies by resolver |
 | `mcr.microsoft.com/dotnet/sdk:10.0-alpine` | C10 build stage | `linux/arm64` present — verified |
 | `mcr.microsoft.com/dotnet/aspnet:10.0-alpine` | C10 runtime stage | `linux/arm64` present — verified |
-| `watchtower/faulty-service:dev` | C10 | built locally from the two images above; not in any registry |
+| `hephaisto/faulty-service:dev` | C10 | built locally from the two images above; not in any registry |
 
 `polinux/stress` was considered for C1/C9 and **rejected**: its Docker Hub manifest is a
 single-architecture amd64 image with no manifest list, so it cannot run on this node.
@@ -279,6 +279,6 @@ infra/chaos/
 ├── c10-faulty-service.yaml      Deployment + Service — OTel API + wget load sidecar
 └── faulty-service/
     ├── Program.cs               ~60-line ASP.NET Core minimal API, OTLP traces+metrics+logs
-    ├── faulty-service.csproj    net10.0, inherits repo-root CPM, NOT in Watchtower.slnx
+    ├── faulty-service.csproj    net10.0, inherits repo-root CPM, NOT in Hephaisto.slnx
     └── Dockerfile               multi-stage, arm64-native, build context = repo root
 ```

@@ -1,9 +1,9 @@
-# Tempo values for Watchtower
+# Tempo values for Hephaisto
 # ---------------------------------------------------------------------------------------
 #   chart:     grafana-community/tempo   (single binary)
 #   version:   2.3.0   (Tempo 2.10.8)
 #   release:   tempo
-#   namespace: watchtower-obs
+#   namespace: hephaisto-obs
 #
 #   NOTE ON THE REPO: this chart moved. `grafana/tempo` tops out at 1.24.4 (Tempo 2.9.0)
 #   and is marked deprecated; maintenance moved to grafana-community after 2026-01-30.
@@ -11,7 +11,7 @@
 #     helm repo add grafana-community https://grafana-community.github.io/helm-charts
 #
 #   helm upgrade --install tempo grafana-community/tempo --version 2.3.0 \
-#     -n watchtower-obs -f infra/observability/tempo.values.yaml
+#     -n hephaisto-obs -f infra/observability/tempo.values.yaml
 #
 # ---------------------------------------------------------------------------------------
 # Why single binary and not tempo-distributed
@@ -22,7 +22,7 @@
 # UNHEALTHY before the tokens are reclaimed, and it emits `tempo_ring_members{state="Unhealthy"}`
 # along with error logs about failing to reach quorum.
 #
-# For a normal deployment that is transient noise a human ignores. For Watchtower it is
+# For a normal deployment that is transient noise a human ignores. For Hephaisto it is
 # poison: the agent is being trained to treat every signal as real, and a recurring
 # "ingester unhealthy" that resolves itself teaches it that ingester alerts are noise. The
 # single binary has no ring to be unhealthy.
@@ -131,8 +131,8 @@ tempo:
 
     # Prometheus's remote-write receiver. Requires enableRemoteWriteReceiver: true in
     # kube-prometheus-stack.values.yaml -- see the TRAP #1 comment there. Verified service
-    # name: the chart renders `<release>-kube-prometheus-prometheus`, release `watchtower`.
-    remoteWriteUrl: "http://watchtower-kube-prometheus-prometheus.watchtower-obs:9090/api/v1/write"
+    # name: the chart renders `<release>-kube-prometheus-prometheus`, release `hephaisto`.
+    remoteWriteUrl: "http://hephaisto-kube-prometheus-prometheus.hephaisto-obs:9090/api/v1/write"
 
     # NOTE the singular key name: `processor`, not `processors`. This block CONFIGURES the
     # processors. It does NOT enable them -- see tempo.overrides.defaults below, which is
@@ -257,7 +257,7 @@ serviceMonitor:
   additionalLabels:
     # Must match serviceMonitorSelector in kube-prometheus-stack.values.yaml. This is how
     # observability-selfcheck.yaml can see tempo_distributor_spans_received_total.
-    release: watchtower
+    release: hephaisto
 
 # No Ingress. Access via Tilt port-forward on the Tailscale interface.
 ingress:

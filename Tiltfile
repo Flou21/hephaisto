@@ -1,6 +1,6 @@
 # -*- mode: Python -*-
 #
-# Watchtower's inner loop. Run from ~/watchtower with:
+# Hephaisto's inner loop. Run from ~/hephaisto with:
 #
 #     tilt up --port 10351
 #
@@ -57,7 +57,7 @@ def svc_forward(name, namespace, service, host_port, service_port, deps = []):
 
 config.define_bool('observability', args = False, usage = 'Prometheus, Grafana, Loki, Alertmanager, collector')
 config.define_bool('tracing',       args = False, usage = 'Tempo + the Aspire dashboard')
-config.define_bool('agent',         args = False, usage = 'Postgres and the Watchtower pod')
+config.define_bool('agent',         args = False, usage = 'Postgres and the Hephaisto pod')
 config.define_bool('chaos',         args = False, usage = 'Register the chaos fixtures (still manual-trigger)')
 cfg = config.parse()
 
@@ -91,8 +91,8 @@ if observability:
     helm_resource(
         'kube-prometheus-stack',
         'prometheus-community/kube-prometheus-stack',
-        namespace = 'watchtower-obs',
-        release_name = 'watchtower',
+        namespace = 'hephaisto-obs',
+        release_name = 'hephaisto',
         flags = [
             '--version', '81.1.0',
             '--values', 'infra/observability/kube-prometheus-stack.values.yaml',
@@ -105,16 +105,16 @@ if observability:
         labels = ['observability'],
     )
 
-    svc_forward('grafana-forward', 'watchtower-obs', 'watchtower-grafana',
+    svc_forward('grafana-forward', 'hephaisto-obs', 'hephaisto-grafana',
                 3030, 80, deps = ['kube-prometheus-stack'])
-    svc_forward('alertmanager-forward', 'watchtower-obs',
-                'watchtower-kube-prometheus-alertmanager',
+    svc_forward('alertmanager-forward', 'hephaisto-obs',
+                'hephaisto-kube-prometheus-alertmanager',
                 9093, 9093, deps = ['kube-prometheus-stack'])
 
     helm_resource(
         'loki',
         'grafana-charts/loki',
-        namespace = 'watchtower-obs',
+        namespace = 'hephaisto-obs',
         flags = [
             '--version', '6.40.0',
             '--values', 'infra/observability/loki.values.yaml',
@@ -126,12 +126,12 @@ if observability:
         labels = ['observability'],
     )
 
-    svc_forward('loki-forward', 'watchtower-obs', 'loki', 3100, 3100, deps = ['loki'])
+    svc_forward('loki-forward', 'hephaisto-obs', 'loki', 3100, 3100, deps = ['loki'])
 
     helm_resource(
         'otel-collector',
         'open-telemetry/opentelemetry-collector',
-        namespace = 'watchtower-obs',
+        namespace = 'hephaisto-obs',
         flags = [
             '--version', '0.171.0',
             '--values', 'infra/observability/otel-collector.values.yaml',
@@ -147,7 +147,7 @@ if observability:
     helm_resource(
         'grafana-mcp',
         'grafana-community/grafana-mcp',
-        namespace = 'watchtower-obs',
+        namespace = 'hephaisto-obs',
         flags = [
             '--version', '0.19.0',
             '--values', 'infra/observability/grafana-mcp.values.yaml',
@@ -169,14 +169,14 @@ if observability:
     # not found". Nothing logs an error, because from Grafana's point of view it was simply
     # never told about any.
     k8s_yaml('infra/observability/grafana-datasources.yaml')
-    k8s_yaml('infra/observability/dashboards/watchtower-dashboard-configmap.yaml')
+    k8s_yaml('infra/observability/dashboards/hephaisto-dashboard-configmap.yaml')
     k8s_yaml(listdir('infra/observability/alerts', recursive = True))
     k8s_resource(
         objects = [
-            'watchtower-kubernetes-rules:prometheusrule',
-            'watchtower-slo-rules:prometheusrule',
-            'watchtower-watchdog:prometheusrule',
-            'watchtower-observability-selfcheck:prometheusrule',
+            'hephaisto-kubernetes-rules:prometheusrule',
+            'hephaisto-slo-rules:prometheusrule',
+            'hephaisto-watchdog:prometheusrule',
+            'hephaisto-observability-selfcheck:prometheusrule',
         ],
         new_name = 'alert-rules',
         resource_deps = ['kube-prometheus-stack'],
@@ -185,8 +185,8 @@ if observability:
 
     k8s_resource(
         objects = [
-            'watchtower-datasources:configmap',
-            'watchtower-dashboard:configmap',
+            'hephaisto-datasources:configmap',
+            'hephaisto-dashboard:configmap',
         ],
         new_name = 'grafana-provisioning',
         resource_deps = ['kube-prometheus-stack'],
@@ -199,7 +199,7 @@ if tracing:
     helm_resource(
         'tempo',
         'grafana-community/tempo',
-        namespace = 'watchtower-obs',
+        namespace = 'hephaisto-obs',
         flags = [
             '--version', '2.3.0',
             '--values', 'infra/observability/tempo.values.yaml',
@@ -229,7 +229,7 @@ if agent:
     # ~/dev learned this the hard way; here there is no registry path at all, so there is
     # nothing to accidentally re-enable.
     custom_build(
-        'watchtower/agent',
+        'hephaisto/agent',
         'docker build -t $EXPECTED_REF -f Dockerfile.dev .',
         deps = ['src', 'Directory.Build.props', 'Directory.Packages.props', 'Dockerfile.dev'],
         disable_push = True,
@@ -241,9 +241,9 @@ if agent:
         ],
     )
 
-    k8s_yaml(['infra/app/rbac.yaml', 'infra/app/watchtower.yaml'])
+    k8s_yaml(['infra/app/rbac.yaml', 'infra/app/hephaisto.yaml'])
     k8s_resource(
-        'watchtower',
+        'hephaisto',
         port_forwards = [tailnet(8100, 8080)],
         resource_deps = ['postgres'] + (['kube-prometheus-stack'] if observability else []),
         labels = ['agent'],
@@ -270,6 +270,6 @@ if chaos:
             auto_init = False,
             trigger_mode = TRIGGER_MODE_MANUAL,
             # c9-memhog drives the whole node into memory pressure and will evict unrelated
-            # pods, including Watchtower's own. Run it alone, deliberately, and clean up.
+            # pods, including Hephaisto's own. Run it alone, deliberately, and clean up.
             labels = ['chaos'],
         )

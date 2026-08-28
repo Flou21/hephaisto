@@ -1,12 +1,12 @@
-# Watchtower namespaces.
+# Hephaisto namespaces.
 #
 # Three namespaces, deliberately separated so that RBAC can be scoped by namespace
 # rather than by resource name:
 #
-#   watchtower        the agent process and its Postgres. Nothing else runs here.
-#   watchtower-obs    the entire observability stack (Prometheus, Alertmanager, Grafana,
+#   hephaisto        the agent process and its Postgres. Nothing else runs here.
+#   hephaisto-obs    the entire observability stack (Prometheus, Alertmanager, Grafana,
 #                     Loki, Tempo, the OTel collector, the Aspire dashboard, grafana-mcp).
-#   watchtower-chaos  the fault fixtures. This is the ONLY namespace the agent is ever
+#   hephaisto-chaos  the fault fixtures. This is the ONLY namespace the agent is ever
 #                     granted write verbs in (see infra/app/rbac.yaml). The blast radius
 #                     of a mis-reasoned remediation is therefore a namespace boundary --
 #                     enforced by the API server -- not a policy check in the agent's own
@@ -18,32 +18,32 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: watchtower
+  name: hephaisto
   labels:
-    app.kubernetes.io/part-of: watchtower
-    watchtower.io/role: agent
+    app.kubernetes.io/part-of: hephaisto
+    hephaisto.io/role: agent
     # kubernetes.io/metadata.name is set automatically by the API server, but it is
     # written explicitly here because the NetworkPolicy in infra/app/rbac.yaml selects
     # on it and an explicit label documents that dependency.
-    kubernetes.io/metadata.name: watchtower
+    kubernetes.io/metadata.name: hephaisto
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: watchtower-obs
+  name: hephaisto-obs
   labels:
-    app.kubernetes.io/part-of: watchtower
-    watchtower.io/role: observability
-    kubernetes.io/metadata.name: watchtower-obs
+    app.kubernetes.io/part-of: hephaisto
+    hephaisto.io/role: observability
+    kubernetes.io/metadata.name: hephaisto-obs
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: watchtower-chaos
+  name: hephaisto-chaos
   labels:
-    app.kubernetes.io/part-of: watchtower
-    watchtower.io/role: chaos
-    kubernetes.io/metadata.name: watchtower-chaos
+    app.kubernetes.io/part-of: hephaisto
+    hephaisto.io/role: chaos
+    kubernetes.io/metadata.name: hephaisto-chaos
     # Marks this namespace as safe to break. Nothing anyone depends on may be deployed
     # here, because the agent holds delete/patch on workloads in it.
-    watchtower.io/destructive-actions-allowed: "true"
+    hephaisto.io/destructive-actions-allowed: "true"

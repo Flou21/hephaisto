@@ -43,7 +43,7 @@
 # WHY IT IS WORTH RUNNING AT ALL, GIVEN GRAFANA IS RIGHT THERE
 # ---------------------------------------------------------------------------------------
 # It renders OpenTelemetry `gen_ai.*` semantic-convention spans natively. Microsoft.
-# Extensions.AI emits those (see WatchtowerTelemetry.ExtensionsAiSourceName), and the
+# Extensions.AI emits those (see HephaistoTelemetry.ExtensionsAiSourceName), and the
 # dashboard understands them as a first-class concept: it shows the model name, the input
 # and output token counts, the full prompt and completion text, and each tool call's
 # arguments and result, laid out as a readable conversation attached to the span.
@@ -60,10 +60,10 @@ apiVersion: v1
 kind: Service
 metadata:
   name: aspire-dashboard
-  namespace: watchtower-obs
+  namespace: hephaisto-obs
   labels:
     app.kubernetes.io/name: aspire-dashboard
-    app.kubernetes.io/part-of: watchtower
+    app.kubernetes.io/part-of: hephaisto
 spec:
   type: ClusterIP
   selector:
@@ -85,10 +85,10 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: aspire-dashboard
-  namespace: watchtower-obs
+  namespace: hephaisto-obs
   labels:
     app.kubernetes.io/name: aspire-dashboard
-    app.kubernetes.io/part-of: watchtower
+    app.kubernetes.io/part-of: hephaisto
 spec:
   replicas: 1
   selector:
@@ -105,7 +105,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: aspire-dashboard
-        app.kubernetes.io/part-of: watchtower
+        app.kubernetes.io/part-of: hephaisto
     spec:
       containers:
         - name: aspire-dashboard

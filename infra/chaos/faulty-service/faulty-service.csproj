@@ -12,7 +12,7 @@
     REPO ROOT, not this directory, so that both Directory.*.props files are
     present at restore time. See the Dockerfile header for the exact command.
 
-    This project is intentionally NOT added to Watchtower.slnx - it is a test
+    This project is intentionally NOT added to Hephaisto.slnx - it is a test
     fixture, not part of the product, and it must not appear in `dotnet build`
     of the solution or in coverage.
   -->
@@ -21,7 +21,7 @@
     <RootNamespace>FaultyService</RootNamespace>
     <!-- Fixture code: keep the build quiet rather than fighting analyzers. -->
     <NoWarn>$(NoWarn);CA1848;CA2254;CA1305</NoWarn>
-    <UserSecretsId>watchtower-chaos-faulty-service</UserSecretsId>
+    <UserSecretsId>hephaisto-chaos-faulty-service</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>

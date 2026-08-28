@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <Sdk Name="Aspire.AppHost.Sdk" Version="13.5.3" />
+
+  <!-- Dev-time orchestration ONLY. This project is excluded from the container image
+       (see Dockerfile) and no manifest ever references it. Aspire.Hosting.Kubernetes
+       is deliberately not used: it emits Helm charts, which would be a second source
+       of truth drifting from what Tilt applies - and this pod's RBAC is the security
+       boundary, so it must be a reviewable hand-written diff. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsAspireHost>true</IsAspireHost>
+    <UserSecretsId>hephaisto-apphost</UserSecretsId>
+    <AspireUseCliBundle>true</AspireUseCliBundle>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.AppHost" />
+    <PackageReference Include="Aspire.Hosting.PostgreSQL" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Hephaisto.Agent/Hephaisto.Agent.csproj" />
+    <ProjectReference Include="../Hephaisto.Simulator/Hephaisto.Simulator.csproj" />
+  </ItemGroup>
+
+</Project>

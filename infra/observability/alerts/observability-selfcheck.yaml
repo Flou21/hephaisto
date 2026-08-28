@@ -36,15 +36,15 @@
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
-  name: watchtower-observability-selfcheck
-  namespace: watchtower-obs
+  name: hephaisto-observability-selfcheck
+  namespace: hephaisto-obs
   labels:
-    release: watchtower
-    app.kubernetes.io/part-of: watchtower
+    release: hephaisto
+    app.kubernetes.io/part-of: hephaisto
 spec:
   groups:
     # ===================================================================================
-    - name: watchtower.selfcheck.collector
+    - name: hephaisto.selfcheck.collector
       interval: 30s
       rules:
         - alert: OtelCollectorSendFailures
@@ -65,7 +65,7 @@ spec:
           for: 2m
           labels:
             severity: warning
-            watchtower_kind: ObservabilityDegraded
+            hephaisto_kind: ObservabilityDegraded
           annotations:
             summary: 'OTel collector is failing to export to {{ $labels.exporter }}'
             description: >-
@@ -92,7 +92,7 @@ spec:
           for: 2m
           labels:
             severity: warning
-            watchtower_kind: ObservabilityDegraded
+            hephaisto_kind: ObservabilityDegraded
           annotations:
             summary: 'OTel collector processor {{ $labels.processor }} is refusing data'
             description: >-
@@ -114,7 +114,7 @@ spec:
           for: 2m
           labels:
             severity: info
-            watchtower_kind: ObservabilityDegraded
+            hephaisto_kind: ObservabilityDegraded
           annotations:
             summary: 'OTel collector export queue for {{ $labels.exporter }} is {{ $value | printf "%.0f%%" }} full'
             description: >-
@@ -135,7 +135,7 @@ spec:
           for: 3m
           labels:
             severity: critical
-            watchtower_kind: ObservabilityDegraded
+            hephaisto_kind: ObservabilityDegraded
           annotations:
             summary: 'OTel collector telemetry has stopped arriving'
             description: >-
@@ -146,7 +146,7 @@ spec:
               a partial blindness that is easy to miss.
 
     # ===================================================================================
-    - name: watchtower.selfcheck.tempo
+    - name: hephaisto.selfcheck.tempo
       interval: 30s
       rules:
         - alert: TempoNotReceivingSpans
@@ -159,7 +159,7 @@ spec:
           for: 10m
           labels:
             severity: warning
-            watchtower_kind: ObservabilityDegraded
+            hephaisto_kind: ObservabilityDegraded
           annotations:
             summary: 'Tempo has received no spans for 10 minutes'
             description: >-
@@ -169,7 +169,7 @@ spec:
               trace-derived alert in slo-rules.yaml is now evaluating an empty vector and
               cannot fire.
 
-        - alert: WatchtowerSpanMetricsMissing
+        - alert: HephaistoSpanMetricsMissing
           # THE GUARD FOR THE SILENT-SLO FAILURE.
           #
           # Fires when Tempo is demonstrably receiving spans but no span metrics are
@@ -185,7 +185,7 @@ spec:
           for: 10m
           labels:
             severity: critical
-            watchtower_kind: ObservabilityDegraded
+            hephaisto_kind: ObservabilityDegraded
           annotations:
             summary: 'Tempo is receiving spans but producing no span metrics'
             description: >-
@@ -210,7 +210,7 @@ spec:
           for: 2m
           labels:
             severity: critical
-            watchtower_kind: ObservabilityDegraded
+            hephaisto_kind: ObservabilityDegraded
           annotations:
             summary: 'Remote write to {{ $labels.url }} is failing'
             description: >-
@@ -222,7 +222,7 @@ spec:
               endpoint 404s.
 
     # ===================================================================================
-    - name: watchtower.selfcheck.loki
+    - name: hephaisto.selfcheck.loki
       interval: 30s
       rules:
         - alert: LokiNotIngesting
@@ -231,7 +231,7 @@ spec:
           for: 10m
           labels:
             severity: warning
-            watchtower_kind: ObservabilityDegraded
+            hephaisto_kind: ObservabilityDegraded
           annotations:
             summary: 'Loki has ingested no log lines for 10 minutes'
             description: >-
@@ -250,7 +250,7 @@ spec:
           for: 2m
           labels:
             severity: warning
-            watchtower_kind: ObservabilityDegraded
+            hephaisto_kind: ObservabilityDegraded
           annotations:
             summary: 'Loki is discarding samples ({{ $labels.reason }})'
             description: >-
@@ -264,41 +264,41 @@ spec:
     # self-check group for the same reason: it is the agent noticing a limit on itself
     # rather than on the cluster.
     #
-    # Metric name from src/Watchtower.Core/Telemetry/WatchtowerTelemetry.cs:
-    #   Metrics.LlmBudgetUtilization = "watchtower.llm.budget_utilization"
+    # Metric name from src/Hephaisto.Core/Telemetry/HephaistoTelemetry.cs:
+    #   Metrics.LlmBudgetUtilization = "hephaisto.llm.budget_utilization"
     # which the collector's prometheusremotewrite exporter renders as
-    #   watchtower_llm_budget_utilization
+    #   hephaisto_llm_budget_utilization
     # It is a gauge in the range 0..1+, carrying a `scope` label (incident/daily/monthly).
     # ===================================================================================
-    - name: watchtower.selfcheck.budget
+    - name: hephaisto.selfcheck.budget
       interval: 30s
       rules:
-        - alert: WatchtowerLlmBudgetWarning
+        - alert: HephaistoLlmBudgetWarning
           expr: |
-            max by (scope) (watchtower_llm_budget_utilization) > 0.8
+            max by (scope) (hephaisto_llm_budget_utilization) > 0.8
           for: 5m
           labels:
             severity: warning
-            watchtower_kind: BudgetExhausted
+            hephaisto_kind: BudgetExhausted
           annotations:
-            summary: 'Watchtower has used {{ $value | printf "%.0f%%" }} of its {{ $labels.scope }} LLM budget'
+            summary: 'Hephaisto has used {{ $value | printf "%.0f%%" }} of its {{ $labels.scope }} LLM budget'
             description: >-
               The {{ $labels.scope }} budget is over 80% consumed. This is a warning, not a
               stop -- the agent keeps investigating. Worth checking WHY: a runaway
-              investigation loop (see watchtower_investigation_steps) burns budget far
+              investigation loop (see hephaisto_investigation_steps) burns budget far
               faster than normal operation, and the fix for that is a step limit, not a
               bigger budget.
 
-        - alert: WatchtowerLlmBudgetExhausted
+        - alert: HephaistoLlmBudgetExhausted
           # >= 1.0, not > 1.0. At exactly 1.0 the budget is gone.
           expr: |
-            max by (scope) (watchtower_llm_budget_utilization) >= 1.0
+            max by (scope) (hephaisto_llm_budget_utilization) >= 1.0
           for: 0m
           labels:
             severity: critical
-            watchtower_kind: BudgetExhausted
+            hephaisto_kind: BudgetExhausted
           annotations:
-            summary: 'Watchtower has exhausted its {{ $labels.scope }} LLM budget'
+            summary: 'Hephaisto has exhausted its {{ $labels.scope }} LLM budget'
             description: >-
               The {{ $labels.scope }} budget is fully consumed. The agent will stop opening
               investigations. IT IS NOW EFFECTIVELY OFF -- and, importantly, a cluster with
@@ -307,20 +307,20 @@ spec:
               two. Fires immediately (for: 0m); there is nothing transient about being out
               of money.
 
-        - alert: WatchtowerNotProcessingSignals
+        - alert: HephaistoNotProcessingSignals
           # The agent's own liveness, measured by output rather than by a health check. A
           # process can pass /healthz while its signal loop is wedged.
           #
           # Deliberately paired with AgentWatchdog (watchdog.yaml), which proves the path
           # INTO the agent. This proves the agent is doing something with what arrives.
           expr: |
-            sum(increase(watchtower_signals_received_total[15m])) == 0
+            sum(increase(hephaisto_signals_received_total[15m])) == 0
           for: 15m
           labels:
             severity: warning
-            watchtower_kind: ObservabilityDegraded
+            hephaisto_kind: ObservabilityDegraded
           annotations:
-            summary: 'Watchtower has received no signals for 15 minutes'
+            summary: 'Hephaisto has received no signals for 15 minutes'
             description: >-
               The AgentWatchdog heartbeat alone should produce signal traffic every 5
               minutes, so zero over 15 minutes means the agent's ingest loop is stalled even

@@ -52,19 +52,19 @@
 #
 # EXPECTED METRIC / PROMQL SIGNAL
 #   kube_pod_container_status_waiting_reason{
-#     namespace="watchtower-chaos", container="app",
+#     namespace="hephaisto-chaos", container="app",
 #     reason="CreateContainerConfigError"} == 1
 #
 #   kube_deployment_status_replicas_available{
-#     namespace="watchtower-chaos", deployment="c7-configerror"} == 0
+#     namespace="hephaisto-chaos", deployment="c7-configerror"} == 0
 #
 #   kube_pod_container_status_restarts_total{
-#     namespace="watchtower-chaos", container="app"} == 0
+#     namespace="hephaisto-chaos", container="app"} == 0
 #
 #   Discrimination assertion the regression test should make explicitly -
 #   C7 must NOT match the C4 reasons and vice versa:
 #     absent(kube_pod_container_status_waiting_reason{
-#       namespace="watchtower-chaos",
+#       namespace="hephaisto-chaos",
 #       pod=~"c7-configerror-.*",
 #       reason=~"ImagePullBackOff|ErrImagePull"}) == 1
 #
@@ -74,7 +74,7 @@
 #
 # EXPECTED LOG SIGNAL
 #   NONE. The container config never completes, so no process ever runs.
-#     count_over_time({k8s_namespace_name="watchtower-chaos",
+#     count_over_time({k8s_namespace_name="hephaisto-chaos",
 #                      k8s_deployment_name="c7-configerror"}[15m]) == 0
 #   Identical log signature to C4 - which is exactly why logs cannot be the
 #   discriminator here and the agent must use the waiting_reason label.
@@ -83,11 +83,11 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: c7-configerror
-  namespace: watchtower-chaos
+  namespace: hephaisto-chaos
   labels:
     app.kubernetes.io/name: c7-configerror
-    watchtower.chaos/scenario: c7
-    watchtower.chaos/fault: configerror
+    hephaisto.chaos/scenario: c7
+    hephaisto.chaos/fault: configerror
 spec:
   replicas: 1
   selector:
@@ -97,8 +97,8 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: c7-configerror
-        watchtower.chaos/scenario: c7
-        watchtower.chaos/fault: configerror
+        hephaisto.chaos/scenario: c7
+        hephaisto.chaos/fault: configerror
     spec:
       terminationGracePeriodSeconds: 1
       containers:

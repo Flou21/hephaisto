@@ -63,20 +63,20 @@
 #
 # EXPECTED METRIC / PROMQL SIGNAL
 #   Oscillates 1 -> 0 -> 1 on a ~120s period:
-#     kube_pod_status_ready{namespace="watchtower-chaos",
+#     kube_pod_status_ready{namespace="hephaisto-chaos",
 #                           pod=~"c8-readiness-flap-.*", condition="true"}
 #
 #   THE DISCRIMINATOR - large over any window longer than the period:
-#     changes(kube_pod_status_ready{namespace="watchtower-chaos",
+#     changes(kube_pod_status_ready{namespace="hephaisto-chaos",
 #             pod=~"c8-readiness-flap-.*", condition="true"}[30m]) >= 4
 #
 #   THE COUNTER-DISCRIMINATOR - must stay flat at zero:
 #     increase(kube_pod_container_status_restarts_total{
-#       namespace="watchtower-chaos", container="server"}[30m]) == 0
+#       namespace="hephaisto-chaos", container="server"}[30m]) == 0
 #
 #   Deployment-level view, oscillating between 1 and 0:
 #     kube_deployment_status_replicas_available{
-#       namespace="watchtower-chaos", deployment="c8-readiness-flap"}
+#       namespace="hephaisto-chaos", deployment="c8-readiness-flap"}
 #
 #   Endpoint churn. VERIFIED against the kube-state-metrics running on this
 #   machine (registry.k8s.io/kube-state-metrics:v2.17.0): the whole
@@ -84,7 +84,7 @@
 #   kube_endpoint_address and no kube_endpoint_address_available. Do not write
 #   either; they silently return nothing. The EndpointSlice family replaces it:
 #     count(kube_endpointslice_endpoints{
-#       namespace="watchtower-chaos",
+#       namespace="hephaisto-chaos",
 #       endpointslice=~"c8-readiness-flap-.*", ready="true"})
 #   which oscillates between 1 and 0 (and goes absent, not to 0, while the
 #   endpoint is withdrawn - so wrap it in `count(...) or vector(0)` if the
@@ -95,12 +95,12 @@
 #   the standard `role: endpoints` service discovery, NOT-READY endpoints are
 #   excluded from discovery entirely - so the target VANISHES rather than
 #   reporting up==0. The correct assertion is therefore on target absence:
-#     absent(up{namespace="watchtower-chaos", service="c8-readiness-flap"})
+#     absent(up{namespace="hephaisto-chaos", service="c8-readiness-flap"})
 #   ...and `up == 0` is the WRONG expression for this scenario. Asserting
 #   up==0 here is itself a bug the regression suite should not encode.
 #
 # EXPECTED LOG SIGNAL
-#   {k8s_namespace_name="watchtower-chaos", k8s_deployment_name="c8-readiness-flap"}
+#   {k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c8-readiness-flap"}
 #     |= "entering unhealthy window"
 #
 #   Exact expected lines, alternating every 60s:
@@ -114,11 +114,11 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: c8-readiness-flap
-  namespace: watchtower-chaos
+  namespace: hephaisto-chaos
   labels:
     app.kubernetes.io/name: c8-readiness-flap
-    watchtower.chaos/scenario: c8
-    watchtower.chaos/fault: readiness-flap
+    hephaisto.chaos/scenario: c8
+    hephaisto.chaos/fault: readiness-flap
 spec:
   replicas: 1
   selector:
@@ -128,8 +128,8 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: c8-readiness-flap
-        watchtower.chaos/scenario: c8
-        watchtower.chaos/fault: readiness-flap
+        hephaisto.chaos/scenario: c8
+        hephaisto.chaos/fault: readiness-flap
     spec:
       terminationGracePeriodSeconds: 5
       containers:
@@ -187,10 +187,10 @@ apiVersion: v1
 kind: Service
 metadata:
   name: c8-readiness-flap
-  namespace: watchtower-chaos
+  namespace: hephaisto-chaos
   labels:
     app.kubernetes.io/name: c8-readiness-flap
-    watchtower.chaos/scenario: c8
+    hephaisto.chaos/scenario: c8
 spec:
   type: ClusterIP
   selector:

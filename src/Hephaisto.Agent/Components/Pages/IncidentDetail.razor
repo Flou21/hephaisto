@@ -1,0 +1,891 @@
+@page "/incidents/{Id:guid}"
+@inject IncidentQueries Queries
+@inject IIncidentNotifier Notifier
+@inject IJSRuntime Js
+@implements IAsyncDisposable
+
+<PageTitle>hephaisto — @(_incident?.Title ?? "incident")</PageTitle>
+
+@if (_incident is null)
+{
+    <h1>incident</h1>
+    <p class="wt-muted">@(_loading ? "loading…" : "No incident with this id.")</p>
+}
+else
+{
+    var incident = _incident;
+
+    @* ---------------------------------------------------------------
+       1. Header
+       --------------------------------------------------------------- *@
+    <header class="wt-detail-header">
+        <h1>@incident.Title</h1>
+
+        <div class="wt-badges">
+            <span class="wt-state @Display.StateClass(incident.State)">
+                <span class="glyph">@Display.StateGlyph(incident.State)</span>
+                @incident.State.ToString().ToLowerInvariant()
+            </span>
+            <span class="wt-sev @Display.SeverityClass(incident.Severity)">
+                <span class="glyph">@Display.SeverityGlyph(incident.Severity)</span>
+                @incident.Severity.ToString().ToLowerInvariant()
+            </span>
+            <span class="wt-chip mono">@incident.Kind</span>
+            <span class="wt-chip mono" title="Agent mode when this incident opened">
+                mode@@open: @incident.ModeAtOpen.ToString().ToLowerInvariant()
+            </span>
+        </div>
+
+        <dl class="wt-kv">
+            <dt>target</dt>
+            <dd class="mono">@incident.Target.Namespace/@incident.Target.Kind/@incident.Target.Name</dd>
+
+            <dt title="Cooldowns, budgets and oscillation detection are all keyed on this, never on the pod name">workload</dt>
+            <dd class="mono">@incident.Target.WorkloadKey</dd>
+
+            @if (incident.Target.NodeName is { Length: > 0 })
+            {
+                <dt>node</dt>
+                <dd class="mono">@incident.Target.NodeName</dd>
+            }
+
+            <dt>opened</dt>
+            <dd class="mono">@Display.Timestamp(incident.OpenedAt)</dd>
+
+            <dt>duration</dt>
+            <dd class="mono">
+                @Display.Duration(incident.DurationAt(_now))
+                @if (incident.ResolvedAt is null)
+                {
+                    <span class="wt-muted"> (running)</span>
+                }
+            </dd>
+
+            <dt>correlation key</dt>
+            <dd class="mono">@incident.CorrelationKey</dd>
+
+            <dt>incident id</dt>
+            <dd class="mono">@incident.Id</dd>
+        </dl>
+
+        @if (incident.EscalationReason != EscalationReason.None)
+        {
+            <div class="wt-callout callout-escalated">
+                <span class="glyph">^</span>
+                <strong>escalated</strong>: @incident.EscalationReason
+                <span class="wt-muted">— a human was asked to take this, and the agent stopped.</span>
+            </div>
+        }
+
+        @if (incident.SuppressionReason != SuppressionReason.None)
+        {
+            <div class="wt-callout callout-suppressed">
+                <span class="glyph">-</span>
+                <strong>suppressed</strong>: @incident.SuppressionReason
+                <span class="wt-muted">— recorded but deliberately not investigated.</span>
+            </div>
+        }
+
+        @if (incident.QuarantinedUntil is { } until && until > _now)
+        {
+            <div class="wt-callout callout-quarantine">
+                <span class="glyph">!!</span>
+                <strong>quarantined</strong> until @Display.Timestamp(until)
+                <span class="wt-muted">— the oscillation detector saw this workload flip back and
+                forth; no action may be taken on it and incidents escalate straight to a human.</span>
+            </div>
+        }
+
+        @if (incident.Resolution is { Length: > 0 })
+        {
+            <div class="wt-callout callout-resolved">
+                <span class="glyph">+</span> @incident.Resolution
+            </div>
+        }
+    </header>
+
+    @* ---------------------------------------------------------------
+       2. Signal timeline
+       --------------------------------------------------------------- *@
+    <section class="wt-section">
+        <h2>signals <span class="wt-count">@incident.Signals.Count</span></h2>
+
+        @if (incident.Signals.Count == 0)
+        {
+            <p class="wt-empty">No signals attached. An incident without one should be impossible.</p>
+        }
+        else
+        {
+            <table class="wt-table">
+                <thead>
+                    <tr>
+                        <th>source</th>
+                        <th>kind</th>
+                        <th>sev</th>
+                        <th>reason</th>
+                        <th>message</th>
+                        <th class="c-time">first seen</th>
+                        <th class="c-time">last seen</th>
+                        <th class="c-num" title="Raw observations this row represents after burst collapse">count</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var signal in incident.Signals)
+                    {
+                        <tr @key="signal.Id">
+                            <td class="mono">@signal.Source</td>
+                            <td class="mono">@signal.Kind</td>
+                            <td>
+                                <span class="wt-sev @Display.SeverityClass(signal.Severity)">
+                                    <span class="glyph">@Display.SeverityGlyph(signal.Severity)</span>
+                                    @signal.Severity.ToString().ToLowerInvariant()
+                                </span>
+                            </td>
+                            <td class="mono">@signal.Reason</td>
+                            <td class="wt-msg">
+                                @* Untrusted text straight from the cluster. Razor escapes it;
+                                   never render a signal message as markup. *@
+                                @signal.Message
+                                @if (signal.Labels.Count > 0)
+                                {
+                                    <details class="wt-labels">
+                                        <summary>@signal.Labels.Count labels</summary>
+                                        <dl class="wt-kv mono">
+                                            @foreach (var (key, value) in signal.Labels.OrderBy(l => l.Key, StringComparer.Ordinal))
+                                            {
+                                                <dt>@key</dt>
+                                                <dd>@value</dd>
+                                            }
+                                        </dl>
+                                    </details>
+                                }
+                            </td>
+                            <td class="c-time mono">@Display.Timestamp(signal.FirstSeen)</td>
+                            <td class="c-time mono">@Display.Timestamp(signal.LastSeen)</td>
+                            <td class="c-num mono">@signal.Count</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+
+        @if (incident.Transitions.Count > 0)
+        {
+            <details class="wt-transitions">
+                <summary>state transitions (@incident.Transitions.Count)</summary>
+                <ol class="wt-timeline">
+                    @foreach (var t in incident.Transitions)
+                    {
+                        <li @key="t.Id">
+                            <span class="mono wt-muted">@Display.Timestamp(t.At)</span>
+                            <span class="mono">@(t.From?.ToString() ?? "—") → @t.To</span>
+                            <span>@t.Reason</span>
+                        </li>
+                    }
+                </ol>
+            </details>
+        }
+    </section>
+
+    @* ---------------------------------------------------------------
+       3. Investigation trace — the reason this page exists.
+
+       Everything else here can be reconstructed from Postgres by hand. This cannot: it is
+       the only place a human can see what the agent looked at, in what order, what came
+       back, and what it was told. Deciding whether to ever give this thing write access is
+       a judgement made from this list.
+       --------------------------------------------------------------- *@
+    <section class="wt-section">
+        <h2>investigations <span class="wt-count">@incident.Investigations.Count</span></h2>
+
+        @if (incident.Investigations.Count == 0)
+        {
+            <p class="wt-empty">
+                Never investigated.
+                @if (incident.EscalationReason == EscalationReason.BudgetExhausted)
+                {
+                    <text>The LLM budget was exhausted — see the <a href="status">status page</a>.</text>
+                }
+            </p>
+        }
+
+        @foreach (var inv in incident.Investigations)
+        {
+            <article class="wt-investigation" @key="inv.Id">
+                <header class="wt-inv-header">
+                    <span class="mono">@inv.ModelId</span>
+                    <span class="wt-chip mono" title="Why the loop stopped. Concluded is the only clean exit.">
+                        @inv.TerminationReason
+                    </span>
+                    <span class="wt-muted mono">
+                        @inv.StepsUsed steps · @inv.ToolCallsUsed tool calls ·
+                        @Display.Tokens(inv.InputTokens + inv.OutputTokens) tokens ·
+                        @Display.Usd(inv.CostUsd)
+                    </span>
+                    <span class="wt-muted mono">
+                        @Display.Timestamp(inv.StartedAt)
+                        @if (inv.CompletedAt is { } done)
+                        {
+                            <text> · @Display.Duration(done - inv.StartedAt)</text>
+                        }
+                    </span>
+                    @if (inv.TraceId is { Length: > 0 })
+                    {
+                        @* Text, not a link: the Grafana base URL is deployment configuration
+                           and this layer has no business inventing one. *@
+                        <span class="wt-muted mono" title="Trace id of the hephaisto.investigation span — paste into Tempo">
+                            trace @inv.TraceId
+                        </span>
+                    }
+                </header>
+
+                @if (inv.Error is { Length: > 0 })
+                {
+                    <div class="wt-callout callout-error"><span class="glyph">!!</span> @inv.Error</div>
+                }
+
+                @* --- steps --- *@
+                <h3>trace</h3>
+                <ol class="wt-steps">
+                    @foreach (var step in inv.Steps)
+                    {
+                        <li @key="step.Id">
+                            <details id="@StepAnchor(step.Id)" class="wt-step @(step.Failed ? "step-failed" : "")">
+                                <summary>
+                                    <span class="wt-ordinal mono">@step.Ordinal</span>
+                                    <span class="wt-step-kind @(step.Kind == StepKind.ToolCall ? "kind-tool" : "kind-llm")">
+                                        @(step.Kind == StepKind.ToolCall ? "tool" : "llm")
+                                    </span>
+                                    <span class="wt-step-name mono">@step.Label</span>
+                                    @if (step.ToolServer is { Length: > 0 })
+                                    {
+                                        <span class="wt-server mono" title="Which server answered">@step.ToolServer</span>
+                                    }
+                                    <span class="wt-step-metrics mono">
+                                        @Display.Millis(step.DurationMs)
+                                        @if (step.InputTokens + step.OutputTokens > 0)
+                                        {
+                                            <text> · @Display.Tokens(step.InputTokens + step.OutputTokens) tok</text>
+                                        }
+                                        @if (step.CostUsd > 0)
+                                        {
+                                            <text> · @Display.Usd(step.CostUsd)</text>
+                                        }
+                                        @if (step.ResultBytes > 0)
+                                        {
+                                            <text> · @Display.Bytes(step.ResultBytes)</text>
+                                        }
+                                    </span>
+                                    @if (step.ResultTruncated)
+                                    {
+                                        @* Never hidden. A digest that dropped most of its input
+                                           and a digest that did not are different evidence, and a
+                                           reader who cannot tell them apart is being misled. *@
+                                        <span class="wt-truncated" title="The model was shown a shortened result; the rest is in the raw blob">
+                                            <span class="glyph">~</span> truncated
+                                        </span>
+                                    }
+                                    @if (step.Failed)
+                                    {
+                                        <span class="wt-failed"><span class="glyph">x</span> failed</span>
+                                    }
+                                </summary>
+
+                                <div class="wt-step-body">
+                                    @if (step.Error is { Length: > 0 })
+                                    {
+                                        <div class="wt-callout callout-error"><span class="glyph">x</span> @step.Error</div>
+                                    }
+
+                                    @if (step.Arguments is { Length: > 0 })
+                                    {
+                                        <h4>arguments</h4>
+                                        <pre class="wt-code">@step.Arguments</pre>
+                                    }
+
+                                    <h4>
+                                        result digest
+                                        <span class="wt-muted">— what the model actually saw</span>
+                                    </h4>
+                                    @if (string.IsNullOrEmpty(step.ResultDigest))
+                                    {
+                                        <p class="wt-empty">Empty. The model was shown nothing by this step.</p>
+                                    }
+                                    else
+                                    {
+                                        <pre class="wt-code">@step.ResultDigest</pre>
+                                    }
+
+                                    @if (step.RawBlobId is { } blobId)
+                                    {
+                                        <details class="wt-raw" @onclick="() => LoadBlobAsync(blobId)">
+                                            <summary>raw result <span class="mono wt-muted">@blobId</span></summary>
+                                            @if (_blobs.TryGetValue(blobId, out var blob))
+                                            {
+                                                @if (blob is null)
+                                                {
+                                                    <p class="wt-empty">
+                                                        <span class="glyph">.</span>
+                                                        Expired. Evidence blobs are kept 30 days; the digest above is
+                                                        retained and is what grounding was checked against.
+                                                    </p>
+                                                }
+                                                else
+                                                {
+                                                    <p class="wt-muted mono">
+                                                        @Display.Bytes(blob.TotalBytes) · @blob.ContentType ·
+                                                        expires @Display.Timestamp(blob.ExpiresAt)
+                                                        @if (blob.Clipped)
+                                                        {
+                                                            <text> · showing the first @Display.Bytes(blob.Content.Length) —
+                                                            <a href="/api/evidence-blobs/@blobId">full blob</a></text>
+                                                        }
+                                                    </p>
+                                                    <pre class="wt-code wt-raw-code">@blob.Content</pre>
+                                                }
+                                            }
+                                            else
+                                            {
+                                                <p class="wt-muted">loading…</p>
+                                            }
+                                        </details>
+                                    }
+                                </div>
+                            </details>
+                        </li>
+                    }
+                </ol>
+
+                @* --- findings --- *@
+                <h3>findings <span class="wt-count">@inv.Findings.Count</span></h3>
+
+                @if (inv.Findings.Count == 0)
+                {
+                    <p class="wt-empty">
+                        No surviving findings. A finding whose evidence failed the grounding check is
+                        dropped rather than shown as fact, so this can mean the model concluded nothing
+                        <em>or</em> that everything it claimed failed verification.
+                    </p>
+                }
+                else
+                {
+                    @foreach (var finding in inv.Findings)
+                    {
+                        <article class="wt-finding @(finding.IsPrimary ? "finding-primary" : "")" @key="finding.Id">
+                            <header>
+                                @if (finding.IsPrimary)
+                                {
+                                    <span class="wt-chip chip-primary" title="The hypothesis the plan is built on">primary</span>
+                                }
+                                <span class="wt-chip mono">@finding.Category</span>
+
+                                @* A bar and the number, never a word. "high confidence" invents a
+                                   calibration nobody measured; 0.71 next to a bar lets a reader
+                                   apply their own, and lets a wrong-but-confident finding look
+                                   exactly as confident as it claimed to be. *@
+                                <span class="wt-conf" title="Model's own estimate. Advisory, uncalibrated — not a measured probability.">
+                                    <span class="wt-conf-track">
+                                        <span class="wt-conf-fill" style="width:@Width(finding.Confidence)"></span>
+                                    </span>
+                                    <span class="mono">@finding.Confidence.ToString("F2")</span>
+                                </span>
+                            </header>
+
+                            <p class="wt-hypothesis">@finding.Hypothesis</p>
+
+                            @if (finding.Evidence.Count == 0)
+                            {
+                                <p class="wt-empty">No evidence. This finding cites nothing and should not have survived.</p>
+                            }
+                            else
+                            {
+                                <ul class="wt-evidence">
+                                    @foreach (var ev in finding.Evidence)
+                                    {
+                                        <li @key="ev.Id">
+                                            @* The grounding invariant, made clickable. Every excerpt must
+                                               appear verbatim in the result digest of the step it names;
+                                               this link is how a reader checks that themselves instead of
+                                               taking the claim on trust. It is the whole point. *@
+                                            @if (ev.StepOrdinal is { } ordinal)
+                                            {
+                                                <button type="button" class="wt-cite" @onclick="() => GoToStepAsync(ev.StepId)"
+                                                        title="Jump to the step this quotes">
+                                                    step @ordinal
+                                                </button>
+                                            }
+                                            else
+                                            {
+                                                <span class="wt-cite wt-cite-broken"
+                                                      title="This evidence names a step that is not in this investigation. The grounding verifier should have dropped it.">
+                                                    <span class="glyph">!!</span> broken citation
+                                                </span>
+                                            }
+                                            <blockquote class="wt-excerpt mono">@ev.Excerpt</blockquote>
+                                            @if (ev.SourceUri is { Length: > 0 })
+                                            {
+                                                <span class="wt-muted mono wt-source">@ev.SourceUri</span>
+                                            }
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                        </article>
+                    }
+                }
+
+                @* --- plan --- *@
+                <h3>plan</h3>
+                @if (inv.Plan is null)
+                {
+                    <p class="wt-empty">No plan was produced.</p>
+                }
+                else
+                {
+                    var plan = inv.Plan;
+
+                    <div class="wt-plan-banner">
+                        <span class="glyph">!</span>
+                        <strong>Would have done this — observe mode, nothing was executed.</strong>
+                        <span class="wt-muted">
+                            The planning model holds no tools and emits JSON against a schema; execution
+                            is separate C# over a closed action vocabulary. Everything below is inert
+                            data that the policy engine judged.
+                        </span>
+                    </div>
+
+                    @if (plan.Summary is { Length: > 0 })
+                    {
+                        <p class="wt-plan-summary">@plan.Summary</p>
+                    }
+
+                    @if (plan.NoActionRequired)
+                    {
+                        <p class="wt-empty">
+                            <span class="glyph">+</span>
+                            <strong>No action required.</strong> The model concluded this incident wants a
+                            diagnosis rather than a change — which is the right answer for most of them.
+                        </p>
+                    }
+                    else if (plan.Actions.Count == 0)
+                    {
+                        <p class="wt-empty">
+                            The plan proposes no actions but did not say none were required. That gap is
+                            itself worth reporting.
+                        </p>
+                    }
+                    else
+                    {
+                        <table class="wt-table wt-plan">
+                            <thead>
+                                <tr>
+                                    <th>action</th>
+                                    <th>target</th>
+                                    <th>risk</th>
+                                    <th>predicted effect</th>
+                                    <th>rollback</th>
+                                    <th>policy</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var action in plan.Actions)
+                                {
+                                    <tr @key="action.Id">
+                                        <td class="mono">
+                                            @action.Type
+                                            @if (action.Arguments is { Length: > 0 })
+                                            {
+                                                <details><summary>args</summary><pre class="wt-code">@action.Arguments</pre></details>
+                                            }
+                                        </td>
+                                        <td class="mono">@action.Target.Namespace/@action.Target.Kind/@action.Target.Name</td>
+                                        <td>
+                                            <span class="wt-risk @Display.RiskClass(action.Risk)">
+                                                @action.Risk.ToString().ToLowerInvariant()
+                                            </span>
+                                        </td>
+                                        <td>@(action.PredictedEffect ?? "—")</td>
+                                        <td>
+                                            @if (action.RollbackSpec is { Length: > 0 })
+                                            {
+                                                <details><summary>spec</summary><pre class="wt-code">@action.RollbackSpec</pre></details>
+                                            }
+                                            else
+                                            {
+                                                @* Not cosmetic: an action with no rollback spec can never be
+                                                   auto-executed, because a failed verification would have no
+                                                   recourse. *@
+                                                <span class="wt-no" title="No rollback spec — this action could never be auto-executed">
+                                                    <span class="glyph">x</span> none
+                                                </span>
+                                            }
+                                        </td>
+                                        <td>
+                                            <span class="wt-decision @Display.DecisionClass(action.Decision)">
+                                                <span class="glyph">@Display.DecisionGlyph(action.Decision)</span>
+                                                @action.Decision.ToString().ToLowerInvariant()
+                                            </span>
+                                            @if (action.DecisionReasons.Count > 0)
+                                            {
+                                                <ul class="wt-reasons">
+                                                    @foreach (var reason in action.DecisionReasons)
+                                                    {
+                                                        <li>@reason</li>
+                                                    }
+                                                </ul>
+                                            }
+                                            <div class="wt-muted mono wt-exec">
+                                                state @action.State
+                                                @if (action.ExecutedAt is { } at)
+                                                {
+                                                    <text> · executed @Display.Timestamp(at)@(action.DryRun ? " (dry run)" : "")</text>
+                                                }
+                                                else
+                                                {
+                                                    <text> · never executed</text>
+                                                }
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                }
+            </article>
+        }
+    </section>
+
+    @* ---------------------------------------------------------------
+       6. Feedback
+       --------------------------------------------------------------- *@
+    <section class="wt-section" id="feedback">
+        <h2>feedback</h2>
+
+        <p class="wt-muted">
+            The only honest quality number here. Every other figure on this page — confidence,
+            termination reason, predicted effect — is the agent assessing itself.
+        </p>
+
+        @if (incident.Feedback.Count > 0)
+        {
+            <ul class="wt-feedback-list">
+                @foreach (var f in incident.Feedback)
+                {
+                    <li @key="f.Id">
+                        <span class="@(f.Helpful ? "wt-yes" : "wt-no")">
+                            <span class="glyph">@(f.Helpful ? "+" : "-")</span>
+                            @(f.Helpful ? "helpful" : "not helpful")
+                        </span>
+                        @if (f.FalsePositive)
+                        {
+                            <span class="wt-chip chip-fp"><span class="glyph">!</span> false positive</span>
+                        }
+                        @if (f.RootCauseCorrect is { } rc)
+                        {
+                            <span class="wt-chip">root cause @(rc ? "correct" : "wrong")</span>
+                        }
+                        <span class="mono wt-muted">@f.SubmittedBy · @Display.Timestamp(f.At)</span>
+                        @if (f.Comment is { Length: > 0 })
+                        {
+                            <p class="wt-comment">@f.Comment</p>
+                        }
+                    </li>
+                }
+            </ul>
+        }
+
+        <div class="wt-feedback-form">
+            <div class="wt-field wt-thumbs">
+                <span class="wt-label">was this useful?</span>
+                <button type="button" class="wt-thumb @(_helpful == true ? "on" : "")" @onclick="() => _helpful = true">
+                    <span class="glyph">+</span> yes
+                </button>
+                <button type="button" class="wt-thumb @(_helpful == false ? "on" : "")" @onclick="() => _helpful = false">
+                    <span class="glyph">-</span> no
+                </button>
+            </div>
+
+            <div class="wt-field">
+                <span class="wt-label">was the root cause correct?</span>
+                <select @bind="_rootCause">
+                    <option value="">no opinion</option>
+                    <option value="yes">yes</option>
+                    <option value="no">no</option>
+                </select>
+            </div>
+
+            <div class="wt-field">
+                <label>
+                    <input type="checkbox" @bind="_falsePositive" />
+                    this incident should never have opened
+                </label>
+            </div>
+
+            <div class="wt-field">
+                <label class="wt-label" for="fb-comment">comment</label>
+                <textarea id="fb-comment" rows="3" @bind="_comment"
+                          placeholder="What did it get right or wrong?"></textarea>
+            </div>
+
+            <div class="wt-field">
+                @* Required, and remembered in localStorage so nobody retypes it forty times.
+                   ATTRIBUTION, NOT AUTHENTICATION: nothing verifies this string, and on a
+                   single-operator tailnet cluster that is an accepted trade. The schema is
+                   already OIDC-shaped, so the upgrade fills the same column from a verified
+                   claim. If this ever runs where more than one person is on call, that
+                   upgrade stops being a roadmap item. *@
+                <label class="wt-label" for="fb-name">your name <span class="wt-req">required</span></label>
+                <input id="fb-name" type="text" @bind="_submittedBy" @bind:event="oninput"
+                       placeholder="who is saying this" autocomplete="off" />
+                <span class="wt-muted">Attribution, not authentication — nothing checks this.</span>
+            </div>
+
+            <div class="wt-field">
+                <button type="button" class="wt-submit" disabled="@(!CanSubmit)" @onclick="SubmitAsync">
+                    submit
+                </button>
+                @if (_feedbackError is not null)
+                {
+                    <span class="wt-error"><span class="glyph">!!</span> @_feedbackError</span>
+                }
+                @if (_feedbackSaved)
+                {
+                    <span class="wt-yes"><span class="glyph">+</span> recorded</span>
+                }
+            </div>
+        </div>
+    </section>
+}
+
+@code {
+    [Parameter]
+    public Guid Id { get; set; }
+
+    private IncidentDetailView? _incident;
+    private DateTimeOffset _now = DateTimeOffset.UtcNow;
+    private bool _loading = true;
+
+    /// <summary>
+    /// Blob id to content. A null value means "looked up and gone" - blobs expire at 30 days
+    /// while the step pointing at them is kept, so absence is a real state to render, not a
+    /// gap to leave blank.
+    /// </summary>
+    private readonly Dictionary<Guid, EvidenceBlobView?> _blobs = [];
+
+    /// <summary>Clip length for the in-page raw view. Enough to read a stack trace; far short
+    /// of pushing a megabyte through the circuit and asking the browser to lay it out.</summary>
+    private const int RawPreviewBytes = 64 * 1024;
+
+    private bool? _helpful;
+    private string _rootCause = string.Empty;
+    private bool _falsePositive;
+    private string _comment = string.Empty;
+    private string _submittedBy = string.Empty;
+    private string? _feedbackError;
+    private bool _feedbackSaved;
+
+    private const string NameStorageKey = "hephaisto.feedback.name";
+
+    private CancellationTokenSource? _cts;
+
+    private bool CanSubmit => _helpful is not null && !string.IsNullOrWhiteSpace(_submittedBy);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Cancel the previous incident's listener before starting this one's: Blazor reuses
+        // the component instance when only the route parameter changes, so without this a
+        // navigation between two incidents leaves the old subscription running forever.
+        if (_cts is not null)
+        {
+            await _cts.CancelAsync();
+            _cts.Dispose();
+        }
+
+        _cts = new CancellationTokenSource();
+        _blobs.Clear();
+        _feedbackSaved = false;
+
+        await LoadAsync();
+
+        _ = ListenAsync(_cts.Token);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        try
+        {
+            var remembered = await Js.InvokeAsync<string?>("hephaisto.storageGet", NameStorageKey);
+
+            if (!string.IsNullOrWhiteSpace(remembered) && string.IsNullOrWhiteSpace(_submittedBy))
+            {
+                _submittedBy = remembered;
+                StateHasChanged();
+            }
+        }
+        catch (JSException)
+        {
+            // Private browsing, a blocked storage API, or a script that failed to load. The
+            // field simply starts empty; a console must not break because a convenience did.
+        }
+        catch (InvalidOperationException)
+        {
+            // Prerender or a circuit that has already gone away.
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        var ct = _cts?.Token ?? CancellationToken.None;
+
+        try
+        {
+            _incident = await Queries.GetDetailAsync(Id, ct);
+            _now = DateTimeOffset.UtcNow;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    /// <summary>Only this incident's events matter here; a busy cluster publishes for
+    /// everything, and reloading a detail page because an unrelated pod restarted is churn.</summary>
+    private async Task ListenAsync(CancellationToken ct)
+    {
+        try
+        {
+            await foreach (var liveEvent in Notifier.SubscribeAsync(ct))
+            {
+                if (liveEvent.IncidentId != Id)
+                {
+                    continue;
+                }
+
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Fetched when the expander is opened, never with the page.
+    /// </summary>
+    /// <remarks>
+    /// An investigation can hold fifty steps, each with a megabyte blob. Loading them all so
+    /// that one might be read would turn opening an incident into fifty megabytes over the
+    /// circuit, on the page someone reaches for during an outage.
+    /// </remarks>
+    private async Task LoadBlobAsync(Guid blobId)
+    {
+        if (_blobs.ContainsKey(blobId))
+        {
+            return;
+        }
+
+        // Claim the slot before awaiting: the click handler can fire twice before the first
+        // query returns, and two in-flight reads of a megabyte is the thing being avoided.
+        _blobs[blobId] = null;
+
+        try
+        {
+            _blobs[blobId] = await Queries.GetBlobAsync(blobId, RawPreviewBytes, _cts?.Token ?? CancellationToken.None);
+        }
+        catch (OperationCanceledException)
+        {
+            _blobs.Remove(blobId);
+        }
+    }
+
+    private async Task GoToStepAsync(Guid stepId)
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("hephaisto.revealStep", StepAnchor(stepId));
+        }
+        catch (JSException)
+        {
+            // The anchor still exists in the DOM; only the scroll and the flash are lost.
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        _feedbackError = null;
+        _feedbackSaved = false;
+
+        if (_helpful is not { } helpful)
+        {
+            _feedbackError = "Pick yes or no.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_submittedBy))
+        {
+            _feedbackError = "A name is required.";
+            return;
+        }
+
+        try
+        {
+            var saved = await Queries.AddFeedbackAsync(
+                Id,
+                helpful,
+                _rootCause switch { "yes" => true, "no" => false, _ => null },
+                _falsePositive,
+                _comment,
+                _submittedBy,
+                _cts?.Token ?? CancellationToken.None);
+
+            if (saved is null)
+            {
+                _feedbackError = "This incident no longer exists.";
+                return;
+            }
+
+            _feedbackSaved = true;
+            _comment = string.Empty;
+
+            await LoadAsync();
+
+            try
+            {
+                await Js.InvokeVoidAsync("hephaisto.storageSet", NameStorageKey, _submittedBy.Trim());
+            }
+            catch (JSException)
+            {
+                // Remembering the name is a convenience; the verdict is already committed.
+            }
+        }
+        catch (Exception ex)
+        {
+            _feedbackError = ex.Message;
+        }
+    }
+
+    private static string StepAnchor(Guid stepId) => $"step-{stepId:N}";
+
+    private static string Width(double confidence) =>
+        (Math.Clamp(confidence, 0, 1) * 100).ToString("F1", CultureInfo.InvariantCulture) + "%";
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_cts is not null)
+        {
+            await _cts.CancelAsync();
+            _cts.Dispose();
+            _cts = null;
+        }
+    }
+}
