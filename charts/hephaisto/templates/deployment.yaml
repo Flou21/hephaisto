@@ -62,6 +62,69 @@ spec:
         runAsUser: 64198
         runAsGroup: 64198
         fsGroup: 64198
+      {{- if .Values.postgres.embedded.enabled }}
+      # Without this, the very first start of a fresh install is GUARANTEED to fail once.
+      # Program.cs awaits MigrateHephaistoDatabaseAsync before RunAsync, so a database that is
+      # not yet accepting connections is a fatal start rather than a slow one - and the
+      # startupProbe below cannot help, because the process exits before it ever listens. The
+      # visible result was a healthy install that always reported RESTARTS: 1, which looks
+      # exactly like something being wrong.
+      #
+      # Rendered only for the embedded database. With an external postgres.host the chart has
+      # no image carrying a Postgres client and no say in that database's lifecycle, so the
+      # existing fail-fast-and-restart behaviour stands there - see NOTES.txt.
+      initContainers:
+        - name: wait-for-postgres
+          # The database's own image: already pulled for the StatefulSet, so no new layer to
+          # fetch, and the only image in this chart carrying pg_isready. The agent image is
+          # aspnet:10.0-based and ships neither pg_isready nor nc.
+          image: {{ .Values.postgres.embedded.image | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              # Bounded deliberately. A database that is genuinely broken has to surface as a
+              # failed pod with a reason, not as an init container that waits forever and
+              # tells nobody anything.
+              for _ in $(seq 1 60); do
+                if pg_isready -h "$PGHOST" -p "$PGPORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -q; then
+                  echo "postgres is accepting connections"
+                  exit 0
+                fi
+                sleep 2
+              done
+              echo "postgres did not accept connections within 120s" >&2
+              exit 1
+          env:
+            - name: PGHOST
+              value: {{ include "hephaisto.fullname" . }}-postgres.{{ .Release.Namespace }}
+            - name: PGPORT
+              value: {{ .Values.postgres.port | quote }}
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secrets.postgres is required." .Values.secrets.postgres }}
+                  key: POSTGRES_USER
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secrets.postgres is required." .Values.secrets.postgres }}
+                  key: POSTGRES_DB
+          # Same stance as the app container. A pg_isready loop needs no privileges and writes
+          # nothing, so there is no reason for it to be the weakest thing in the pod.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+      {{- end }}
       containers:
         - name: hephaisto
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"

@@ -68,4 +68,11 @@ WHAT IT CAN DO TO YOUR CLUSTER
 
 Note: postgres.embedded is on. One replica, one PVC, no backups. Fine for evaluating the
 chart; not a database anyone should depend on.
+{{- else }}
+
+Note: the agent applies its EF migrations before it starts serving, and exits if the database
+is not reachable. With an external database this pod may therefore restart once or twice on a
+cold start while that database is still accepting its first connections; Kubernetes retries and
+it settles on its own. That is expected, not a failure - only a pod still restarting after a
+few minutes means the connection details are actually wrong.
 {{- end }}

@@ -1,0 +1,28 @@
+# Excluded from `helm package`, i.e. from the tarball a consumer installs.
+#
+# ci/ is why this file exists. It holds negative-tests.sh and its values fixtures, and they are
+# CI-only: nothing under templates/ reads them (no .Files.Get touches ci/), and both workflows
+# run the script from the source tree by path - charts/hephaisto/ci/negative-tests.sh - never
+# from a package.
+#
+# Shipping them also shipped an assertion that CANNOT pass inside a package. negative-tests.sh
+# asserts "Chart.yaml still reads 0.0.0", which is true of the git source and false of every
+# published chart by construction, because `helm package --version` stamps the real number in.
+# A consumer who ran the suite that came inside the tarball got 23/24 - a guard working
+# correctly on the wrong subject, which is worse than no guard at all because it looks like a
+# real failure.
+ci/
+
+# Version control and packaging noise.
+.git/
+.gitignore
+*.tgz
+
+# Editor and OS droppings.
+.DS_Store
+*.swp
+*.bak
+*.orig
+*~
+.idea/
+.vscode/
