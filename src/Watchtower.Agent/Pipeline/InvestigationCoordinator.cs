@@ -100,6 +100,11 @@ public sealed class InvestigationCoordinator(
         investigation.IncidentId = incident.Id;
         incident.Investigations.Add(investigation);
 
+        // Before the blobs: they carry a foreign key to the investigation, and if the
+        // investigation is left to change detection it is never inserted, so the blob insert
+        // fails with a constraint violation naming a parent that should obviously exist.
+        db.TrackNewChildren(incident);
+
         if (outcome.Blobs.Count > 0)
             db.EvidenceBlobs.AddRange(outcome.Blobs);
 
@@ -117,6 +122,11 @@ public sealed class InvestigationCoordinator(
 
         await AuditAsync(incident, investigation.Id, "investigation.completed",
             $"{investigation.TerminationReason}; {escalation.Reason}", ct).ConfigureAwait(false);
+
+        // Again, because Escalate above appended a state-transition event after the first
+        // call. Cheap and idempotent - it only touches children the context is not already
+        // tracking.
+        db.TrackNewChildren(incident);
 
         await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
 

@@ -72,6 +72,74 @@ public sealed class WatchtowerDbContext(DbContextOptions<WatchtowerDbContext> op
 
     public DbSet<AgentModeRow> AgentModeRows => Set<AgentModeRow>();
 
+    /// <summary>
+    /// Marks every not-yet-tracked child of an already-persisted incident as Added.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every domain entity assigns its own key in its initialiser
+    /// (<c>Guid.CreateVersion7()</c>), which is deliberate - time-ordered keys keep the
+    /// b-tree from fragmenting. It has one sharp consequence with EF Core. When change
+    /// detection discovers an untracked entity through a navigation, it decides Added versus
+    /// Unchanged by asking whether the primary key is set. Ours always is. So EF concludes
+    /// the row already exists, issues an UPDATE, matches nothing, and throws
+    /// <c>DbUpdateConcurrencyException: expected to affect 1 row(s), but actually affected
+    /// 0</c> - or, when a dependent row was explicitly added, a foreign-key violation
+    /// against the parent that was never inserted.
+    /// </para>
+    /// <para>
+    /// The trap is that it only bites on an <b>existing</b> incident. A brand new one is
+    /// added with <c>Incidents.Add</c>, which walks the graph and marks all of it Added, so
+    /// the first signal, the first transition and a new incident's whole subtree all persist
+    /// correctly. Everything afterwards silently does not - which is to say it breaks
+    /// deduplication, correlation and every investigation, while detection keeps looking
+    /// perfectly healthy.
+    /// </para>
+    /// <para>
+    /// Call this immediately before SaveChanges and after the mutations, while the new
+    /// children are still Detached. Cheap: it walks a handful of in-memory collections.
+    /// </para>
+    /// </remarks>
+    public void TrackNewChildren(Incident incident)
+    {
+        ArgumentNullException.ThrowIfNull(incident);
+
+        foreach (var signal in incident.Signals)
+        {
+            AddIfUntracked(signal);
+        }
+
+        foreach (var evt in incident.Events)
+        {
+            AddIfUntracked(evt);
+        }
+
+        foreach (var investigation in incident.Investigations)
+        {
+            // Adding the investigation walks its own graph - steps, findings, evidence - so
+            // the children of a new child do not need handling separately.
+            AddIfUntracked(investigation);
+        }
+
+        foreach (var action in incident.Actions)
+        {
+            AddIfUntracked(action);
+        }
+    }
+
+    private void AddIfUntracked(object entity)
+    {
+        // ReferenceEquals, not a key comparison: an entity the context already knows about
+        // must keep the state it has. Re-Adding a tracked entity would try to INSERT a row
+        // that exists.
+        var tracked = ChangeTracker.Entries().Any(e => ReferenceEquals(e.Entity, entity));
+
+        if (!tracked)
+        {
+            Add(entity);
+        }
+    }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         // Emitted by the migration as CREATE EXTENSION IF NOT EXISTS vector, before any
