@@ -200,7 +200,10 @@ public sealed class KubernetesReadTools(
     // Pods
     // ------------------------------------------------------------------
 
-    private async Task<string> ListPodsAsync(string @namespace, string? labelSelector, CancellationToken ct)
+    private async Task<string> ListPodsAsync(
+        string @namespace,
+        string? labelSelector = null,
+        CancellationToken ct = default)
     {
         if (Reject(@namespace) is { } error)
         {
@@ -309,9 +312,9 @@ public sealed class KubernetesReadTools(
     private async Task<string> GetPodLogsAsync(
         string @namespace,
         string name,
-        string? container,
-        bool previous,
-        CancellationToken ct)
+        string? container = null,
+        bool previous = false,
+        CancellationToken ct = default)
     {
         if (Reject(@namespace) is { } error)
         {
@@ -355,7 +358,10 @@ public sealed class KubernetesReadTools(
     // Events
     // ------------------------------------------------------------------
 
-    private async Task<string> GetEventsAsync(string @namespace, string? objectName, CancellationToken ct)
+    private async Task<string> GetEventsAsync(
+        string @namespace,
+        string? objectName = null,
+        CancellationToken ct = default)
     {
         if (Reject(@namespace) is { } error)
         {
@@ -753,7 +759,9 @@ public sealed class KubernetesReadTools(
     // Metrics, autoscalers, storage, endpoints, ownership
     // ------------------------------------------------------------------
 
-    private async Task<string> GetResourceUsageAsync(string? @namespace, CancellationToken ct)
+    private async Task<string> GetResourceUsageAsync(
+        string? @namespace = null,
+        CancellationToken ct = default)
     {
         if (@namespace is { Length: > 0 } && Reject(@namespace) is { } error)
         {

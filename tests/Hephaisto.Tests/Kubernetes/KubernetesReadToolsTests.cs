@@ -33,6 +33,68 @@ public class KubernetesReadToolsTests
             NullLogger<KubernetesReadTools>.Instance);
     }
 
+    /// <summary>
+    /// The parameters a tool describes as optional must not be required by its schema.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A nullable C# parameter with no default value is still emitted as <c>required</c>. The
+    /// method handles null perfectly and the description invites the model to omit it, so
+    /// nothing looks wrong - until the model does omit it and the call dies on "The arguments
+    /// dictionary is missing a value for the required parameter", burning a tool call and a
+    /// turn on a question the tool was designed to answer.
+    /// </para>
+    /// <para>
+    /// Observed in production on 2026-08-28: <c>get_events</c> without an objectName (all
+    /// events in a namespace) and <c>list_pods</c> without a labelSelector (all pods in a
+    /// namespace) - the two most natural opening moves in any investigation.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("list_pods", "labelSelector")]
+    [InlineData("get_events", "objectName")]
+    [InlineData("get_pod_logs", "container")]
+    [InlineData("get_pod_logs", "previous")]
+    [InlineData("get_resource_usage", "namespace")]
+    public void Optional_parameters_are_not_required_by_the_schema(string tool, string parameter)
+    {
+        var function = Tools().CreateFunctions().Single(f => f.Name == tool);
+
+        var required = function.JsonSchema.TryGetProperty("required", out var req)
+            ? req.EnumerateArray().Select(e => e.GetString()).ToArray()
+            : [];
+
+        required.Should().NotContain(
+            parameter,
+            $"{tool}.{parameter} is optional; requiring it makes the model's natural call fail");
+    }
+
+    [Fact]
+    public void The_parameters_a_tool_cannot_work_without_stay_required()
+    {
+        // The other half of the same property: defaults must not be sprayed onto everything.
+        // A get_pod with no name is a bug the schema should catch, not a call that reaches the
+        // API server and 404s.
+        var functions = Tools().CreateFunctions();
+
+        foreach (var (tool, parameter) in new[]
+        {
+            ("list_pods", "namespace"),
+            ("get_pod", "name"),
+            ("get_events", "namespace"),
+            ("get_pod_logs", "name"),
+        })
+        {
+            var function = functions.Single(f => f.Name == tool);
+
+            var required = function.JsonSchema.TryGetProperty("required", out var req)
+                ? req.EnumerateArray().Select(e => e.GetString()).ToArray()
+                : [];
+
+            required.Should().Contain(parameter, $"{tool} cannot do anything without {parameter}");
+        }
+    }
+
     [Fact]
     public void Every_tool_builds_a_schema_and_carries_a_description()
     {
