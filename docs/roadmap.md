@@ -111,7 +111,7 @@ Editing the file to `Off` moved the gauge to 0 with no restart.
 
 ---
 
-## Step 1 — first light against the cluster — **done, 2026-08-28, with one bug open**
+## Step 1 — first light against the cluster — **done, 2026-08-28**
 
 The stack now runs in k3s. The old hand-installed observability stack was removed first
 (plan §6): `grafana.db` was copied off the PVC and audited before teardown (`backup/`), and
@@ -135,37 +135,50 @@ Backstage and litellm were repointed at `hephaisto-obs`.
 | Persistence | pgvector, pg_trgm, pgcrypto; HNSW index; append-only audit rows written |
 | UI | Incident list with filters, detail with signal timeline and state transitions, status page with the kill-switch arms, feedback form |
 
-### Open: investigations do not persist
+### Resolved: investigations now persist
 
-**The one thing not working.** Investigations run — the model is called, it uses tools, it
-terminates — and then the save fails, so `investigations`, `steps`, `findings` and `evidence`
-are all still zero and incidents sit in `Investigating`.
+Fixed 2026-08-28. **The recorded hypothesis above was a dead end**, and it is worth saying so
+rather than deleting it: `IncidentStateMachine.Transition` only constructs and appends, so no
+state transition ever mutated a previous event. The bug was not *which* event was Modified, it
+was *when the save happened*.
 
-The cause is a class of EF Core bug this session fixed three instances of. Every domain
-entity assigns its own key (`Guid.CreateVersion7()`), so when change detection discovers one
-through a navigation it sees a set key, concludes the row exists, and emits an UPDATE that
-matches nothing. It only bites on an **already-persisted** incident: a new one goes in via
-`Incidents.Add`, which marks the whole graph Added.
+The coordinator, the incident repo and the audit repo share one scoped `HephaistoDbContext`.
+`AuditRepository.AppendAsync` called `SaveChangesAsync` **one line after** the state machine
+appended an `IncidentEvent` and **before** `TrackNewIncidentChildren` marked it Added. EF ran
+`DetectChanges`, found the new event carrying a client-assigned `Guid.CreateVersion7()` key,
+concluded the row existed, and emitted an `UPDATE ... WHERE id = ...` matching zero rows. The
+staged graph then died with the scope.
 
-Fixed instances: signals (broke dedup and correlation), the investigation graph, the plan and
-its actions, and the escalation event on the failure path.
+The fix is the pattern already used by `IncidentQueries.AddFeedbackAsync`: `audit.Enlist(...)`
+to stage, `TrackNewIncidentChildren` **before** any save, and exactly one `SaveChangesAsync`
+per unit of work. Applied to all three investigation paths.
 
-The remaining one is reported by the new diagnostic as:
+Three further bugs were only visible once this one was out of the way, each hidden by the one
+in front of it:
 
-```
-offending entity: IncidentEvent state=Modified key=01a047c5-...
-```
+| Bug | Why it was invisible |
+|---|---|
+| Gemini overloads were never retried | `HttpRetryOptions` is accepted by the SDK and ignored on the `AsIChatClient` path. Proven by timing: failed turns returned in 1.2–5.7s when four retries need ≥15s. Fixed with `TransientRetryChatClient`. |
+| LLM turn boxes in the UI were empty | `RecordLlmTurn` recorded no text at all |
+| Tools rejected their own documented usage | a nullable parameter with no default is still emitted as `required` in the JSON schema |
+| **Investigations could never conclude** | concluding costs a step, and the step budget was spent before the model could call `conclude`. The codebase had already closed this exact hazard for the *tool* budget and never for steps. A step is now reserved. |
 
-Every `stateMachine` call site is now accounted for, so the next step is to log **all**
-tracked entries at save time rather than only the offending one, and identify which event is
-Modified without a row behind it. Worth ruling out that a state transition mutates a
-*previous* event rather than only appending a new one.
+Measured across three eras, all completions, from Postgres:
 
-**Two lessons worth keeping.** `dotnet watch` silently declined several edits with *"No
-managed code changes to apply"*, so a run of iterations tested stale code — when a fix seems
-not to take, `tilt trigger hephaisto` for a real image build before believing the result.
-And the diagnostic that names the offending entity found in one iteration what inference had
-not found in five; it is committed, and it should be reached for early.
+| | Faulted | StepBudget | Concluded |
+|---|---|---|---|
+| Before any fix | 6 / 7 | 1 | 0 |
+| After the retry fix | 0 / 4 | 3 | 1 |
+| After the reserved step | **0 / 7** | 0 | **7 / 7** |
+
+Provider faults went 6-of-7 to **0-of-11**, and every run now reaches a conclusion. What that
+did *not* fix is accuracy — see Step 2.
+
+**Two lessons worth keeping.** `dotnet watch` silently declined several edits with *"No managed
+code changes to apply"*, so a run of iterations tested stale code — when a fix seems not to
+take, `tilt trigger hephaisto` for a real image build before believing the result. And the
+diagnostic that names the offending entity found in one iteration what inference had not found
+in five; it is committed, and it should be reached for early.
 
 ---
 
@@ -180,6 +193,31 @@ citing grounded evidence, and changed nothing.
 - Also record: cost per investigation, time to diagnosis, and the false-positive rate from the
   thumbs-up/down.
 
+### First real measurement — **3 findings from 11 runs. Well short.**
+
+Taken 2026-08-28, after the four bugs in Step 1 were fixed. Every run now completes and every
+run concludes, but only **3 of 11 produced a finding at all**; the rest conclude "insufficient
+evidence", which is honest — the final-turn nudge asks for exactly that rather than a guess —
+and is not a diagnosis.
+
+The cause is visible in the step traces, and it is not the model being wrong. It is the model
+**running out of budget in the wrong place**. On an `Unschedulable` incident it had the answer
+at step 8 from `get_events`, then spent 6 of its 12 steps on Loki label discovery and only
+reached `list_nodes` at step 24, long past the budget.
+
+So the number to move is not "accuracy" directly. The candidates, cheapest first:
+
+1. **Raise `MaxSteps`** from 12. The simplest experiment, and the one that says whether the
+   ceiling is the binding constraint or an excuse. Costs money per run to evaluate.
+2. **Order the tools by likely value per `SignalKind`** — for a scheduling incident, node and
+   event tools before log search. The runbooks already carry the kind; nothing uses it to
+   shape tool priority.
+3. **Charge label/metadata discovery differently from evidence-gathering**, so exploring
+   Loki's label space does not consume the budget meant for answering.
+
+**Do not conclude anything about Phase 2 from 3/11.** The measurement is of an agent that ran
+out of steps, not of an agent that reasoned badly, and those imply completely different work.
+
 Build the **eval harness** here rather than in Phase 2 — replaying recorded incidents against
 recorded tool output is the only way to tell whether a prompt change helped or just cost more.
 Without it every subsequent change is a guess.
@@ -192,6 +230,101 @@ Cheap wins worth doing in the same pass: Grafana annotations on state transition
 runbook memory (retrieving the top-3 similar resolved incidents into the prompt). The storage
 and the hybrid search already exist; only the retrieval call is missing, and it is the highest
 -leverage quality change available after the runbooks themselves.
+
+---
+
+## Step 2b — packaged for release — **done, 2026-08-28**
+
+Not on the original plan, and done because the repo was about to be made public. It changes
+nothing about what the agent does.
+
+| | |
+|---|---|
+| Licence | **AGPL-3.0**. The console is served over a network, so §13 applies: the footer links to the source of the exact running commit, overridable via `Hephaisto:SourceUrl` for forks |
+| Versioning | MinVer — the git tag is the only source of truth. `/api/version`, the console footer, OTel `service.version` and `hephaisto_build_info{version,commit}` all read one assembly attribute |
+| Chart | `charts/hephaisto`, with `ci/negative-tests.sh` — 24 assertions of things the chart must refuse or never emit, mutation-tested |
+| CI | `ci.yml` and `release.yml`. **No deploy job, and there must not be one** |
+| Tilt | now renders the chart, so dev and prod cannot drift into two sources of truth |
+| Hygiene | `backup/` purged from history; this machine's tailnet address and the neighbouring project's name removed from every tracked file |
+
+Four latent defects surfaced only by doing it, none of which any amount of reading would have
+found:
+
+- **The production Dockerfile had never been built.** Every image on the dev machine came from
+  `Dockerfile.dev`. It failed at `RUN adduser` with exit 127: the `aspnet:10.0` base ships
+  neither `adduser` nor `useradd`.
+- **`--minimum-expected-tests` does not exist** in this runner. It prints `unknown option` and
+  **exits 0** — the same "green build that tested nothing" trap it was meant to close.
+  `scripts/ci-test.sh` parses the real count instead.
+- **`dotnet build -warnaserror` did not pass**, so the planned CI flag would have failed on its
+  first run. Also: an incremental build reported 0 warnings where a clean build reported 13.
+- **`readOnlyRootFilesystem` cannot be a constant** — `true` is right for the published image
+  and fatal for a dev image whose entrypoint is a compiler.
+
+---
+
+## Open — carried forward
+
+Verified against the running cluster on 2026-08-28, not inferred. Roughly in priority order.
+
+### 1. `AgentMode.Off` does not stop the automatic loop
+
+`Enums.cs` documents `Off` as *"Ingest nothing, investigate nothing. Full stop."* Neither
+happens. `InvestigationCoordinator` resolves the effective mode and **records** it on the
+incident (`incident.Mode = mode`) but never branches on it; `SignalIngestPipeline` does not
+consult the kill switch at all. Confirmed by reading both paths — there is no `Off` check in
+the coordinator, the worker or triage.
+
+The blast radius today is bounded: there is no executor, so `Off` cannot fail to stop an
+*action*. What it fails to stop is **detection and token spend** — an operator who hits the big
+red button to stop the agent costing money watches it keep investigating. The human retry path
+(`IncidentQueries.RequestReinvestigationAsync`) *does* enforce it, which makes the gap worse,
+not better: the two paths disagree about what the same switch means.
+
+This must be closed **before** `ActionExecutor` exists, not after.
+
+### 2. Audit immutability is not enforced in the deployed configuration
+
+"No audit, no action" is a standing constraint and, in the deployed database, nothing enforces
+it. Measured:
+
+```
+connected_as     | hephaisto
+app_role_exists  | 0
+is_superuser     | t
+can_update_audit | t
+can_delete_audit | t
+```
+
+The agent connects as a **superuser**, and the `hephaisto_app` role does not exist — so the
+migration's `GRANT`/`REVOKE` block, wrapped in `IF EXISTS (SELECT 1 FROM pg_roles ...)`,
+silently no-opped. The integration test that asserts a 42501 on `UPDATE audit_events` passes
+in CI (which creates the role) and proves nothing about this cluster.
+
+Fix: create `hephaisto_app`, connect as it rather than as the owner, and re-run the migration
+so the REVOKE actually applies. The chart should make the connecting role a value.
+
+### 3. The retry path has never been observed firing in production
+
+`TransientRetryChatClient` is unit-tested nine ways, and the overload it exists for has not
+recurred since. It is the difference between "tested" and "proven", and it is worth forcing
+once — a fault-injecting `IChatClient` behind a dev-only flag would settle it.
+
+### 4. Semantic incident search returns `[]` for some queries
+
+`/api/incidents/search?q=out+of+memory` and `q=crash` return empty while `q=ImagePullBackOff`,
+`q=image` and `q=pod` work. Hybrid RRF over pgvector + pg_trgm, so the likely suspects are the
+embedding of short conceptual queries, or an RRF weighting that lets exact-match dominate.
+Unmeasured — do not guess at the fix before reproducing it against a fixed corpus.
+
+### 5. Loose ends, small
+
+- The old `data-postgres-0` PVC is orphaned on the dev cluster (the chart names its database
+  `hephaisto-postgres`). Deliberately left; the data was dumped and restored first.
+- `values-dev.yaml` sets `networkPolicy.extraIngressCIDRs: ["0.0.0.0/0"]` so kubelet probes
+  work on this node. That is the webhook's entire authentication, disabled. Acceptable only
+  because the cluster is single-tenant and reachable from one private network.
+- The workflows have never run — there is no remote yet. They are statically validated only.
 
 ---
 
