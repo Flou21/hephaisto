@@ -1,0 +1,27 @@
+# Development image, used by Tilt with live_update. Unlike ~/dev, this file IS tracked in
+# git - a build file that exists only on one machine is how that workspace ended up with
+# repos that cannot be rebuilt from a fresh clone.
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0
+WORKDIR /app
+
+COPY Directory.Build.props Directory.Packages.props ./
+COPY src/Watchtower.Core/Watchtower.Core.csproj                       src/Watchtower.Core/
+COPY src/Watchtower.ServiceDefaults/Watchtower.ServiceDefaults.csproj src/Watchtower.ServiceDefaults/
+COPY src/Watchtower.Agent/Watchtower.Agent.csproj                     src/Watchtower.Agent/
+RUN dotnet restore src/Watchtower.Agent/Watchtower.Agent.csproj
+
+COPY src/ src/
+
+ENV ASPNETCORE_URLS=http://+:8080 \
+    DOTNET_ENVIRONMENT=Development \
+    # The Tilt live_update syncs files in from the host, and inotify does not fire for
+    # those writes inside the container. Without polling, dotnet watch silently never
+    # reloads and you spend an afternoon debugging code that was never running.
+    DOTNET_USE_POLLING_FILE_WATCHER=1 \
+    DOTNET_WATCH_RESTART_ON_RUDE_EDIT=1
+
+EXPOSE 8080
+
+ENTRYPOINT ["dotnet", "watch", "--project", "src/Watchtower.Agent/Watchtower.Agent.csproj", \
+            "--non-interactive", "run", "--no-launch-profile"]
