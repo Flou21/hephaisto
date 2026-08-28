@@ -1,11 +1,12 @@
 # Verifying Hephaisto end to end
 
-Use the Tailscale hostname throughout. Tilt binds every port-forward to that interface, so
-`localhost` does not work — not even from a shell on this machine. The upside is that one
-address works identically from the Mac Studio and from the laptop.
+`$H` below is whatever `host` is set to in `tilt_config.json` — Tilt binds every
+port-forward to that interface. If you have set it to something other than `localhost`, then
+`localhost` does **not** work, not even from a shell on the machine running Tilt; the upside
+is that the one address then works identically from every machine on your network.
 
 ```fish
-set -x H macstudio-von-florian.tail3043f4.ts.net
+set -x H (jq -r '.host // "localhost"' ~/hephaisto/tilt_config.json)
 set -x GPW (kubectl -n hephaisto-obs get secret hephaisto-grafana -o jsonpath='{.data.admin-password}' | base64 -d)
 set -x MCP (kubectl -n hephaisto-obs get secret grafana-mcp-caller-token -o jsonpath='{.data.token}' | base64 -d)
 ```

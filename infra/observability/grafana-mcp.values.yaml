@@ -15,7 +15,7 @@
 #
 # VERSION NOTE: chart 0.19.0's appVersion is 1.0.0, but the image is pinned to 1.1.0 below
 # (which is chart 0.20.0's appVersion). Chart 0.19.0 is used because that is the version
-# already proven on this machine by the Cait stack's release; the image is bumped because
+# already proven on this machine by the neighbouring stack's release; the image is bumped because
 # 1.1.0 is the current server. If the chart's templates ever stop matching the 1.1.0 flag
 # set, move the chart to 0.20.0 rather than downgrading the image.
 #
@@ -119,9 +119,9 @@ disabledCategories:
   - pyroscope
 
 # ---------------------------------------------------------------------------------------
-# DELIBERATELY *NOT* DISABLED -- and this differs from the Cait/LiteLLM copy
+# DELIBERATELY *NOT* DISABLED -- and this differs from the LiteLLM-facing copy
 # ---------------------------------------------------------------------------------------
-# The grafana-mcp release in the neighbouring Cait workspace fronts LiteLLM for interactive
+# The grafana-mcp release in the neighbouring workspace fronts LiteLLM for interactive
 # chat, and its allowlist excludes alert-rule tools, annotation tools and Tempo tools. That
 # is correct THERE: a human asking "why is the segment count low" does not need to enumerate
 # alert rules, and letting a chat assistant write annotations onto shared dashboards is
@@ -147,7 +147,7 @@ disabledCategories:
 #     alert -> metric -> exemplar -> trace -> log -- has Tempo as its middle hop. Disabling
 #     Tempo tools does not degrade the agent gracefully; it severs the chain.
 #
-# If someone copies the Cait values file over this one to "keep them consistent", that is
+# If someone copies that values file over this one to "keep them consistent", that is
 # the bug this comment exists to prevent.
 
 debug: false

@@ -49,7 +49,7 @@ loki:
 
   storage:
     # Filesystem, not the rustfs S3 in infra-storage. rustfs is a toggleable dev resource in
-    # the neighbouring Cait workspace; making the agent's log store depend on it means the
+    # the neighbouring workspace; making the agent's log store depend on it means the
     # agent loses its own memory whenever someone flips a Tilt toggle. Local PVC only.
     type: filesystem
 

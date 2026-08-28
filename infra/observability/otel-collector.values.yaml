@@ -137,7 +137,7 @@ serviceAccount:
 # Ports
 # ---------------------------------------------------------------------------------------
 # In daemonset mode the chart sets a hostPort on every enabled port by default. This node is
-# shared with the Cait Tilt stack; claiming six host ports for protocols nothing here speaks
+# shared with the neighbouring Tilt stack; claiming six host ports for protocols nothing here speaks
 # is asking for a "bind: address already in use" CrashLoop six months from now. (That exact
 # failure already exists on this node between the old and new node-exporters -- see the
 # comment in kube-prometheus-stack.values.yaml.)

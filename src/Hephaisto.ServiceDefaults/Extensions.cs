@@ -17,11 +17,11 @@ namespace Hephaisto.ServiceDefaults;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Two rules govern everything here, and both are reactions to how the neighbouring Cait
-/// project does it.
+/// Two rules govern everything here, and both are reactions to how the neighbouring
+/// project on this cluster does it.
 /// </para>
 /// <para>
-/// <b>Telemetry is never gated on a dev flag.</b> Cait's OpenTelemetryConfiguration returns
+/// <b>Telemetry is never gated on a dev flag.</b> That project's telemetry setup returns
 /// early and disables all tracing when DEV_LOGGING=true - the mode every dev manifest sets -
 /// so in the environment Hephaisto actually lives in it would be blind. For a project whose
 /// entire product is telemetry that is not a tradeoff, it is a defect. There is deliberately

@@ -19,14 +19,8 @@ allow_k8s_contexts(['studio-rancher-desktop', 'rancher-desktop'])
 load('ext://helm_resource', 'helm_resource', 'helm_repo')
 load('ext://namespace', 'namespace_create')
 
-# Bound to the Tailscale interface, so one address works from the Mac Studio and the laptop
-# alike. The consequence is that localhost does NOT work, not even from a shell on this
-# machine - see CLAUDE.md.
-HOST = 'macstudio-von-florian.tail3043f4.ts.net'
-
-# kubectl only accepts an IP or `localhost` for --address, never a hostname, so the extra
-# forwards below need the address HOST resolves to.
-HOST_IP = '100.91.41.104'
+# HOST and HOST_IP are per-machine and are read from tilt_config.json, which is NOT tracked
+# - see tilt_config.sample.json. They are assigned just below config.parse().
 
 def tailnet(host_port, container_port):
     return port_forward(host_port, container_port, host = HOST)
@@ -61,11 +55,23 @@ def svc_forward(name, namespace, service, host_port, service_port, deps = []):
 
 # --- toggles ------------------------------------------------------------------------------
 
+# Where the port-forwards bind. The default keeps a fresh clone working with no config at
+# all. Set them in tilt_config.json to bind to something every machine on your network can
+# reach - a VPN or Tailscale interface, say - and then one address works from everywhere.
+# The tradeoff is that localhost then does NOT work, not even from a shell on this machine.
+config.define_string('host',    args = False, usage = 'Hostname the port-forwards bind to')
+# kubectl only accepts an IP or `localhost` for --address, never a hostname, so the
+# svc_forward calls need the address `host` resolves to.
+config.define_string('host-ip', args = False, usage = 'The IP that `host` resolves to')
+
 config.define_bool('observability', args = False, usage = 'Prometheus, Grafana, Loki, Alertmanager, collector')
 config.define_bool('tracing',       args = False, usage = 'Tempo + the Aspire dashboard')
 config.define_bool('agent',         args = False, usage = 'Postgres and the Hephaisto pod')
 config.define_bool('chaos',         args = False, usage = 'Register the chaos fixtures (still manual-trigger)')
 cfg = config.parse()
+
+HOST    = cfg.get('host', 'localhost')
+HOST_IP = cfg.get('host-ip', '127.0.0.1')
 
 observability = cfg.get('observability', True)
 tracing       = cfg.get('tracing', True)

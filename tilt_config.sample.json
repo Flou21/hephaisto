@@ -1,0 +1,8 @@
+{
+  "observability": true,
+  "tracing": true,
+  "agent": true,
+  "chaos": false,
+  "host": "localhost",
+  "host-ip": "127.0.0.1"
+}

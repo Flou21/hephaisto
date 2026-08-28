@@ -69,7 +69,7 @@ spec:
   selector:
     app.kubernetes.io/name: aspire-dashboard
   ports:
-    # Browser UI. Reached at http://macstudio-von-florian.tail3043f4.ts.net:<tilt port>
+    # Browser UI. Reached at http://<tilt host>:<tilt port> - see tilt_config.json.
     - name: http
       port: 18888
       targetPort: http

@@ -30,7 +30,7 @@
 # ---------------------------------------------------------------------------------------
 # Why a local-path PVC and not the rustfs S3 bucket
 # ---------------------------------------------------------------------------------------
-# rustfs (infra-storage, S3-compatible) is a toggleable resource in the neighbouring Cait
+# rustfs (infra-storage, S3-compatible) is a toggleable resource in the neighbouring
 # Tilt stack. Pointing Tempo's trace store at it makes the agent's durable evidence store
 # depend on a checkbox in someone else's tilt_config.json. When rustfs is toggled off,
 # Tempo would fail writes -- and traces are the SYSTEM OF RECORD here (Prometheus keeps

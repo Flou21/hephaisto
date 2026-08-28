@@ -1,6 +1,0 @@
-{
-  "observability": true,
-  "tracing": true,
-  "agent": true,
-  "chaos": false
-}

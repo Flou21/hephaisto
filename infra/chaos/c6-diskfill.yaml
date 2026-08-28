@@ -27,7 +27,7 @@
 #       kubelet_volume_stats_capacity_bytes  = 210778099712  (~196 GiB)
 #       kubelet_volume_stats_used_bytes      = 130322243584  (~121 GiB)
 #       kubelet_volume_stats_available_bytes =  69701718016  (~ 65 GiB)
-#   - identical for cait-postgres-pvc, mongo-pvc, redis-pvc, loki, everything.
+#   - identical for every other claim on the node: postgres, mongo, redis, loki.
 #   The ratio sits at ~0.62 node-wide. Adding 950Mi moves it by 0.0045. It
 #   will never cross 0.90 from this fixture, and local-path does NOT enforce
 #   the 1Gi claim - the dd simply succeeds.

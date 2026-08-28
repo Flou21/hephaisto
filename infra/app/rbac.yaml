@@ -81,7 +81,7 @@
 #       Deleting a webhook config silently disables an admission control plane. The cluster
 #       keeps working and stops enforcing.
 #
-#   Any write verb in kube-system, cait, infra-*, or hephaisto-obs -- nowhere.
+#   Any write verb in kube-system, hephaisto-obs, or any other tenant's namespace -- nowhere.
 #       The write Role is RoleBound in exactly one namespace. In particular the agent
 #       cannot restart its own observability stack, which is correct: an agent that can
 #       delete the Prometheus that is watching it can make its own failures invisible.
@@ -101,8 +101,8 @@ automountServiceAccountToken: true
 # READ -- cluster-wide
 # =======================================================================================
 # Read access is broad on purpose. An SRE cannot diagnose a namespace in isolation: a pod
-# in `cait` failing because a node is under pressure, or because a Service in `infra-db`
-# has no endpoints, is a cross-namespace story. Narrowing reads would not make the agent
+# in one namespace failing because a node is under pressure, or because a Service in
+# another namespace has no endpoints, is a cross-namespace story. Narrowing reads would not make the agent
 # safer -- reads cannot break anything -- it would make it wrong.
 #
 # The safety property here is not "little access", it is "NO WRITE VERBS AND NO SECRETS".
@@ -542,8 +542,8 @@ rules:
 # make the agent believe a workload is broken and act on it.
 #
 # The mitigation is at the network layer instead. This policy makes port 8080 in namespace
-# `hephaisto` reachable ONLY from `hephaisto-obs`. Nothing in cait, infra-*, kube-system,
-# default, or hephaisto-chaos can open a connection to it at all -- so there is no door for
+# `hephaisto` reachable ONLY from `hephaisto-obs`. Nothing in kube-system, default,
+# hephaisto-chaos, or any other tenant's namespace can open a connection to it at all -- so there is no door for
 # a token to guard.
 #
 # Note what this implies about hephaisto-chaos in particular: the chaos fixtures are the

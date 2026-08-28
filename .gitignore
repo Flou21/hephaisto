@@ -17,3 +17,9 @@ secrets/
 
 # Never commit another system's state here. See docs/old-grafana-teardown.md.
 backup/
+
+# Per-machine Tilt settings: which resource groups are enabled, and the address the
+# port-forwards bind to. Not tracked, because that address is specific to one machine's
+# network. Copy tilt_config.sample.json to start; the Tiltfile defaults to localhost
+# without it, so a fresh clone works with no config at all.
+tilt_config.json
