@@ -1,9 +1,17 @@
+@using Hephaisto.ServiceDefaults
 @inherits LayoutComponentBase
 
 <div class="hp-shell">
     <NavMenu />
     <main class="hp-main">
         @Body
+
+        @* Read straight from the assembly rather than from /api/status, so the console still
+           says which build drew it when the database is the thing that is broken. *@
+        <footer class="hp-version mono">
+            hephaisto @BuildInfo.Version
+            <span class="hp-version-commit">@BuildInfo.ShortCommit</span>
+        </footer>
     </main>
 </div>
 

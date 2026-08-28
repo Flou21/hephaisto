@@ -160,6 +160,23 @@ any alert declares a kind that does not parse, or classifies as `Unknown`. If yo
 whose failure mode has no matching `SignalKind`, add the member **and its runbook** rather
 than inventing a label value.
 
+## Versioning: never call `minver` without `-p main.0`
+
+`Directory.Build.props` sets `MinVerDefaultPreReleaseIdentifiers=main.0`, but `minver-cli`
+does not read it - it has its own default of `alpha.0`. So:
+
+```sh
+dotnet minver -t v            # 0.0.0-alpha.0.47   <- WRONG, and looks fine
+dotnet minver -t v -p main.0  # 0.0.0-main.0.47    <- what MSBuild stamps
+```
+
+Get this wrong in a build script and the image tag disagrees with the assembly inside it,
+which surfaces as `/api/version` reporting something the registry has never heard of.
+
+The dev image reports `0.0.0-dev` on purpose: there is no `.git` inside the build context,
+and a dev image reporting a release-shaped number is how a dev build gets mistaken for a
+release in a screenshot.
+
 ## The cluster is a single shared resource
 
 There is one k3s node, shared with the whole stack in the `~/dev` workspace. Parallel agents

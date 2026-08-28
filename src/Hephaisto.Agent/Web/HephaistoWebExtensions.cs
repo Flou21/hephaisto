@@ -48,6 +48,7 @@ public static class HephaistoWebExtensions
         app.MapAlertmanagerEndpoints();
         app.MapIncidentEndpoints();
         app.MapStatusEndpoints();
+        app.MapVersionEndpoints();
 
         return app;
     }

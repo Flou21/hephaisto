@@ -8,6 +8,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- So BuildInfo.Parse can be tested directly. The version string comes from the build,
+         which means the only way to test the parsing is to feed it strings by hand. -->
+    <InternalsVisibleTo Include="Hephaisto.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Core is safe to reference from anywhere: it has no I/O dependencies. Taken here
          only for the telemetry NAME constants, so a dashboard, an alert rule and the code
          emitting the metric cannot drift apart. -->

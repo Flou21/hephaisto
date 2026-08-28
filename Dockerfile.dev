@@ -31,6 +31,11 @@ COPY --chown=64198:64198 src/ src/
 
 ENV ASPNETCORE_URLS=http://+:8080 \
     DOTNET_ENVIRONMENT=Development \
+    # No .git in here either, so MinVer would warn on every rebuild and stamp
+    # 0.0.0-alpha.0. Say `dev` instead: a dev image reporting a version-shaped number is
+    # how a dev image gets mistaken for a release in a screenshot.
+    MinVerSkip=true \
+    Version=0.0.0-dev \
     # The Tilt live_update syncs files in from the host, and inotify does not fire for
     # those writes inside the container. Without polling, dotnet watch silently never
     # reloads and you spend an afternoon debugging code that was never running.

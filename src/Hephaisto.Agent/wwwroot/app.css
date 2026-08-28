@@ -1228,3 +1228,25 @@ details > summary {
     gap: 0.9rem;
     align-items: baseline;
 }
+
+/* ---------------------------------------------------------------------------------------
+ * Build footer
+ * ---------------------------------------------------------------------------------------
+ * Deliberately quiet: it is reference material, not status. It earns its place because
+ * "which build am I looking at" is the first question of any incident and the console is
+ * where someone already is. --fg-faint keeps it out of the way until looked for.
+ */
+.hp-version {
+    margin-top: 2.5rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border);
+    color: var(--fg-faint);
+    font-size: 0.75rem;
+    letter-spacing: 0.02em;
+}
+
+.hp-version-commit {
+    margin-left: 0.5rem;
+    color: var(--fg-faint);
+    opacity: 0.75;
+}

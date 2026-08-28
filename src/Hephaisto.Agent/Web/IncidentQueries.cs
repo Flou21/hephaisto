@@ -9,6 +9,7 @@ using Hephaisto.Agent.Safety;
 using Hephaisto.Core;
 using Hephaisto.Core.Abstractions;
 using Hephaisto.Core.Domain;
+using Hephaisto.ServiceDefaults;
 
 namespace Hephaisto.Agent.Web;
 
@@ -363,6 +364,8 @@ public sealed class IncidentQueries(
             WatchdogStale = watchdog.IsStale,
             WatchdogReceipts = watchdog.ReceiptCount,
             Now = clock.UtcNow,
+            Version = BuildInfo.Version,
+            Commit = BuildInfo.ShortCommit,
         };
     }
 

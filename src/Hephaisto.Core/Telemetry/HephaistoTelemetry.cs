@@ -65,5 +65,17 @@ public static class HephaistoTelemetry
 
         /// <summary>The only honest false-positive rate available. Built in from day one on purpose.</summary>
         public const string HumanFeedback = "hephaisto.human.feedback";
+
+        /// <summary>
+        /// Constant 1, carrying `version` and `commit` labels. Scraped as
+        /// <c>hephaisto_build_info</c>.
+        /// </summary>
+        /// <remarks>
+        /// The value is meaningless; the labels are the point. Joined against any other
+        /// series it turns "this started failing at 14:20" into "this started failing when
+        /// 0.0.2-main.0.44 rolled out", which is the first question asked in an incident and
+        /// the one a dashboard otherwise cannot answer.
+        /// </remarks>
+        public const string BuildInfo = "hephaisto.build.info";
     }
 }

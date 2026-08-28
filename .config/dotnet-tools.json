@@ -8,6 +8,13 @@
         "dotnet-ef"
       ],
       "rollForward": false
+    },
+    "minver-cli": {
+      "version": "7.0.0",
+      "commands": [
+        "minver"
+      ],
+      "rollForward": false
     }
   }
 }

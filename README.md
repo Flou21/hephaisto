@@ -177,6 +177,7 @@ blind the agent to the fact that it caused one.
 | `POST /api/incidents/{id}/reinvestigate` | re-drive an incident's investigation |
 | `POST /api/incidents/{id}/feedback` | mark a diagnosis right or wrong |
 | `GET /api/status` | mode, budgets, kill-switch arms |
+| `GET /api/version` | the running version and commit; touches no database |
 | `GET /healthz`, `/readyz`, `/metrics` | health and Prometheus metrics |
 | `/` | Blazor Server UI |
 
@@ -196,6 +197,35 @@ guessing from the alert name — which for something like `KubeContainerWaiting`
 visible from either side: the YAML looks well-labelled and the classifier looks correct.
 `ShippedAlertRulesTests` reads the real rule files and fails if any alert declares a kind
 that does not parse, or classifies as `Unknown`.
+
+## Versioning
+
+The git tag is the only source of truth. There is no `version.json` and no `<VersionPrefix>`
+to bump: [MinVer](https://github.com/adamralph/MinVer) asks git, so a release is `git tag
+v0.0.1` and nothing else.
+
+```
+tag v0.0.1          ->  0.0.1
+main, 42 commits    ->  0.0.2-main.0.42        (+<commit> as build metadata)
+```
+
+The same number is the image tag, the chart `version` and the chart `appVersion`, because
+the chart ships exactly one application and both are published from the same tag. A
+chart-only fix is `git tag v0.0.2`; patch tags are free.
+
+Two things worth knowing:
+
+- **`dotnet minver -t v -p main.0`** — the `-p` is not optional. `minver-cli` defaults to
+  `alpha.0` while this repo's MSBuild properties say `main.0`, so without it the CLI and the
+  compiler disagree about what the same commit is called, and the image tag stops matching
+  the assembly inside it.
+- **`.dockerignore` excludes `.git/`**, correctly, so MinVer cannot run inside a docker
+  build. The version is computed once outside and passed in as `--build-arg VERSION=`; the
+  Dockerfile then publishes with `-p:MinVerSkip=true`.
+
+What is running is reported in four places, all reading the same assembly attribute:
+`GET /api/version`, the console footer, OTel `service.version` on every span and metric, and
+`hephaisto_build_info{version,commit}` for joining against any other series.
 
 ## Repo layout
 

@@ -520,4 +520,14 @@ public sealed record AgentStatusView
     public long WatchdogReceipts { get; init; }
 
     public DateTimeOffset Now { get; init; }
+
+    /// <summary>The running build, so the console itself says which version drew it.</summary>
+    /// <remarks>
+    /// Duplicated from <c>/api/version</c> on purpose. Someone reading the status page during
+    /// an incident should not have to open a second endpoint to answer "is this the build we
+    /// rolled out?", and the two cannot disagree - both read the same assembly attribute.
+    /// </remarks>
+    public string Version { get; init; } = "unknown";
+
+    public string Commit { get; init; } = "unknown";
 }

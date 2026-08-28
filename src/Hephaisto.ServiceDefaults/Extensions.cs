@@ -6,6 +6,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Hephaisto.Core.Telemetry;
 
@@ -74,6 +75,13 @@ public static class Extensions
 
         builder.Services
             .AddOpenTelemetry()
+            // service.version on every span, metric and log, read from the assembly. Added as
+            // an attribute rather than via AddService(), because the service NAME already
+            // comes from OTEL_SERVICE_NAME in the manifest and AddService would overwrite it.
+            .ConfigureResource(resource => resource.AddAttributes(
+            [
+                new KeyValuePair<string, object>("service.version", BuildInfo.Version),
+            ]))
             .WithMetrics(metrics =>
             {
                 metrics
@@ -105,6 +113,10 @@ public static class Extensions
             });
 
         builder.AddOpenTelemetryExporters();
+
+        // Constant-1 gauge carrying the version and commit. Registered here so it exists
+        // wherever telemetry does, rather than being one more thing a new host must remember.
+        builder.Services.AddHostedService<BuildInfoMetrics>();
 
         return builder;
     }
