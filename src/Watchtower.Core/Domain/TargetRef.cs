@@ -44,5 +44,32 @@ public sealed class TargetRef
             ? $"{Namespace}/{ok}/{on}"
             : $"{Namespace}/{Kind}/{Name}";
 
+    /// <summary>
+    /// A field-for-field copy, for when the same target has to be attached to a second entity.
+    /// </summary>
+    /// <remarks>
+    /// This exists for one specific reason and it is not defensive style. <see cref="TargetRef"/>
+    /// is mapped as an EF Core <b>owned</b> type on both <c>Signal</c> and <c>Incident</c>.
+    /// Owned instances belong to exactly one owner, so assigning one Signal's Target directly to
+    /// the Incident opened from it hands a single CLR instance to two owners, and the change
+    /// tracker throws on save:
+    /// <code>
+    /// The property 'IncidentId' belongs to the type 'Incident.Target#TargetRef',
+    /// but is being used with an instance of type 'Signal.Target#TargetRef'.
+    /// </code>
+    /// The failure is at SaveChanges, far from the assignment, and it takes down ingest for
+    /// every signal rather than just the one - so always copy, never share.
+    /// </remarks>
+    public TargetRef Clone() => new()
+    {
+        Namespace = Namespace,
+        Kind = Kind,
+        Name = Name,
+        Uid = Uid,
+        OwnerKind = OwnerKind,
+        OwnerName = OwnerName,
+        NodeName = NodeName,
+    };
+
     public override string ToString() => $"{Namespace}/{Kind}/{Name}";
 }

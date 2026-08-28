@@ -165,7 +165,9 @@ public sealed class IncidentTriage(
         Kind = signal.Kind,
         Severity = signal.Severity,
         State = IncidentState.Detected,
-        Target = signal.Target,
+        // Clone, never share: Target is an EF owned type on both entities, and one instance
+        // attached to two owners breaks SaveChanges for every signal. See TargetRef.Clone.
+        Target = signal.Target.Clone(),
         OpenedAt = now,
         LastSignalAt = now,
         Signals = [signal],
