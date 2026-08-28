@@ -89,6 +89,20 @@ public sealed record IncidentListItem
     /// </summary>
     public bool HasDiagnosis { get; init; }
 
+    /// <summary>
+    /// Live progress, when a worker is running this incident right now. Null when it is not.
+    /// </summary>
+    /// <remarks>
+    /// Not derived from <see cref="State"/>, because it cannot be.
+    /// <c>IncidentState.Investigating</c> is written during triage, before the incident is
+    /// even queued, and the investigation row is written only when the run finishes - so the
+    /// stored state cannot distinguish "a worker has this" from "this is waiting behind two
+    /// others". With worker concurrency of two, most incidents showing Investigating are
+    /// waiting, and a console that draws them identically looks like an idle agent while it
+    /// is busy and spending money.
+    /// </remarks>
+    public InvestigationProgressView? InProgress { get; init; }
+
     public string Workload =>
         OwnerKind is { Length: > 0 } ok && OwnerName is { Length: > 0 } on
             ? $"{ok}/{on}"
@@ -398,8 +412,36 @@ public sealed record IncidentDetailView
 }
 
 /// <summary>What <c>/api/status</c> and the status page both render.</summary>
+/// <summary>What a running investigation is doing, sampled at request time.</summary>
+public sealed record InvestigationProgressView
+{
+    public string Model { get; init; } = string.Empty;
+
+    public DateTimeOffset StartedAt { get; init; }
+
+    public int Steps { get; init; }
+
+    public int ToolCalls { get; init; }
+
+    public decimal CostUsd { get; init; }
+
+    /// <summary>The last tool it called, which is the most legible "what is it doing".</summary>
+    public string? Activity { get; init; }
+}
+
 public sealed record AgentStatusView
 {
+    /// <summary>Investigations a worker is running right now, with their live progress.</summary>
+    /// <remarks>
+    /// The answer to "is it doing anything". Neither <c>openIncidents</c> nor the incident
+    /// states can give it: both count things that have been queued, not things being worked
+    /// on, and the difference is invisible in the database.
+    /// </remarks>
+    public IReadOnlyList<InvestigationProgressView> RunningInvestigations { get; init; } = [];
+
+    /// <summary>Incidents waiting for a worker slot. Worker concurrency is 2.</summary>
+    public int QueuedInvestigations { get; init; }
+
     /// <summary>The mode CONFIGURED in the database row - what a human last asked for.</summary>
     public AgentMode Mode { get; init; }
 

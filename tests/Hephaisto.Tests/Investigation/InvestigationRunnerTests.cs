@@ -66,6 +66,7 @@ public class InvestigationRunnerTests
             tools ?? [LogsTool()],
             grafana,
             globalBudget ?? new NullGlobalLlmBudget(),
+            new Hephaisto.Agent.Pipeline.InvestigationTracker(clock),
             clock,
             new TestOptionsMonitor<LlmOptions>(llm ?? new LlmOptions()),
             new TestOptionsMonitor<InvestigationOptions>(investigation ?? new InvestigationOptions()),

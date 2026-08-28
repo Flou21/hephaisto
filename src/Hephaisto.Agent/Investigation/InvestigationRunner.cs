@@ -65,12 +65,16 @@ public sealed class InvestigationRunner(
     IEnumerable<AIFunction> clusterTools,
     GrafanaMcpToolProvider grafana,
     IGlobalLlmBudget globalBudget,
+    Pipeline.InvestigationTracker tracker,
     IClock clock,
     IOptionsMonitor<LlmOptions> llmOptions,
     IOptionsMonitor<InvestigationOptions> options,
     ILogger<InvestigationRunner> logger)
 {
     private static readonly JsonSerializerOptions PlanJson = new(JsonSerializerDefaults.Web);
+
+    /// <summary>The model this runner investigates with, for callers that report on a run.</summary>
+    public string ModelId => clients.InvestigationModelId;
 
     public async Task<InvestigationOutcome> RunAsync(Incident incident, CancellationToken ct)
     {
@@ -288,6 +292,17 @@ public sealed class InvestigationRunner(
                 .ConfigureAwait(false);
 
             messages.AddMessages(response);
+
+            // Published every turn, so a reader watching the console sees the step count and
+            // the spend move while this runs. Nothing else can show that: the investigation
+            // row is not written until the loop finishes, and the incident has said
+            // "Investigating" since before it was queued.
+            tracker.Report(
+                incident.Id,
+                budget.Steps,
+                recorder.ToolCallCount,
+                recorder.TotalCostUsd,
+                recorder.Steps.LastOrDefault(st => st.ToolName is not null)?.ToolName);
 
             if (conclusion.Value is not null)
             {

@@ -121,7 +121,41 @@ else
                     <td class="c-title"><a href="incidents/@incident.Id">@incident.Title</a></td>
                     <td class="c-num mono">@incident.SignalCount</td>
                     <td class="c-diag">
-                        @if (incident.HasDiagnosis)
+                        @if (incident.InProgress is { } live)
+                        {
+                            @* Live work outranks the stored result: this incident is being
+                               investigated RIGHT NOW, and that is the most useful thing the
+                               cell can say. The counters move on every model turn. *@
+                            <span class="hp-running"
+                                  title="@live.Model, started @Display.Timestamp(live.StartedAt)">
+                                <span class="glyph">*</span>
+                                running @Display.Duration(_now - live.StartedAt)
+                                &middot; step @live.Steps
+                                &middot; @live.ToolCalls tools
+                                &middot; $@live.CostUsd.ToString("0.000")
+                                @if (live.Activity is { Length: > 0 } act)
+                                {
+                                    <span class="hp-activity">@act</span>
+                                }
+                            </span>
+                        }
+                        else if (incident.State == IncidentState.Investigating)
+                        {
+                            @* Marked Investigating but no worker holds it. Worker concurrency
+                               is 2, so waiting is the ordinary case under load and it is NOT
+                               the same as being worked on - saying so is the whole point.
+
+                               "waiting", not "queued": this row cannot tell the two apart.
+                               The incident may be in the in-memory queue, or it may have been
+                               stranded by a restart that killed its worker - StrandedIncident-
+                               Requeue picks those up at the next start. Claiming "queued"
+                               would be asserting something this page does not know. *@
+                            <span class="hp-queued"
+                                  title="triaged for investigation; no worker is running it right now">
+                                <span class="glyph">.</span> waiting
+                            </span>
+                        }
+                        else if (incident.HasDiagnosis)
                         {
                             <span class="hp-yes"><span class="glyph">+</span> yes</span>
                         }

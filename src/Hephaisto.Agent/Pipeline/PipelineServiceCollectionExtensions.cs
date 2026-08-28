@@ -18,6 +18,15 @@ public static class PipelineServiceCollectionExtensions
         services.AddSingleton<HephaistoMetrics>();
         services.AddSingleton<InvestigationQueue>();
 
+        // Singleton: it describes what this process is doing right now, so every
+        // reader has to see the same set. Scoped would give each request its own
+        // empty one, which reads as "nothing is running" no matter what is.
+        services.AddSingleton<InvestigationTracker>();
+
+        // Runs once at startup. Without it, anything queued or in flight when the
+        // process last stopped stays Investigating in Postgres forever.
+        services.AddHostedService<StrandedIncidentRequeue>();
+
         services.AddScoped<IncidentStateMachine>();
         services.AddScoped<IncidentTriage>();
 

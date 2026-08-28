@@ -53,6 +53,8 @@ public sealed class IncidentQueries(
     IKillSwitch killSwitch,
     IIncidentNotifier notifier,
     WatchdogMonitor watchdog,
+    Pipeline.InvestigationTracker tracker,
+    Pipeline.InvestigationQueue queue,
     IOptionsMonitor<LlmBudgetOptions> budgetOptions,
     IClock clock)
 {
@@ -91,7 +93,7 @@ public sealed class IncidentQueries(
 
         var limit = Math.Clamp(query.Limit, 1, 500);
 
-        return await incidents
+        var rows = await incidents
             .OrderByDescending(i => i.OpenedAt)
             .Take(limit)
             .Select(i => new IncidentListItem
@@ -116,6 +118,30 @@ public sealed class IncidentQueries(
                 HasDiagnosis = i.Investigations.Any(v => v.Findings.Any()),
             })
             .ToListAsync(ct);
+
+        // Joined after the query, not inside it: the projection above is translated to SQL,
+        // and "is a worker running this right now" lives in this process's memory rather
+        // than in any table.
+        return [.. rows.Select(row =>
+        {
+            if (tracker.For(row.Id) is not { } live)
+            {
+                return row;
+            }
+
+            return row with
+            {
+                InProgress = new InvestigationProgressView
+                {
+                    Model = live.Model,
+                    StartedAt = live.StartedAt,
+                    Steps = live.Steps,
+                    ToolCalls = live.ToolCalls,
+                    CostUsd = live.CostUsd,
+                    Activity = live.Activity,
+                },
+            };
+        })];
     }
 
     /// <summary>The distinct namespaces present in incident history, for the filter dropdown.</summary>
@@ -285,6 +311,17 @@ public sealed class IncidentQueries(
 
         return new AgentStatusView
         {
+            RunningInvestigations = [.. tracker.Running.Select(r => new InvestigationProgressView
+            {
+                Model = r.Model,
+                StartedAt = r.StartedAt,
+                Steps = r.Steps,
+                ToolCalls = r.ToolCalls,
+                CostUsd = r.CostUsd,
+                Activity = r.Activity,
+            })],
+            QueuedInvestigations = queue.Depth,
+
             // The row's Mode, not GetModeAsync: that method collapses a latched agent to
             // Observe, which is right for a caller asking "may I act" and wrong for a status
             // page, where "configured auto but latched" and "configured observe" are two

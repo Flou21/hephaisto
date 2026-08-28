@@ -40,6 +40,7 @@ public sealed class InvestigationCoordinator(
     IKillSwitch killSwitch,
     IncidentStateMachine stateMachine,
     InvestigationRunner runner,
+    InvestigationTracker tracker,
     IGlobalLlmBudget globalBudget,
     IncidentEmbedder embedder,
     IIncidentNotifier notifier,
@@ -72,6 +73,12 @@ public sealed class InvestigationCoordinator(
 
         var started = clock.UtcNow;
         InvestigationOutcome outcome;
+
+        // Registered for the duration of the run, so "Investigating" stops meaning both
+        // "a worker has this" and "this is queued behind two others". Disposed on every exit
+        // path including the throw below - a leaked entry would report an investigation as
+        // running forever, which is worse than reporting nothing.
+        using var inFlight = tracker.Begin(incident.Id, runner.ModelId);
 
         try
         {

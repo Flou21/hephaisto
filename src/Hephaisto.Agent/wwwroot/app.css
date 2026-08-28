@@ -1159,3 +1159,37 @@ details > summary {
     border-color: var(--accent);
     color: var(--accent);
 }
+
+/* Live investigation progress in the diagnosis column. Distinct from every result colour,
+   because it is not a result - it is the agent working, and it changes under the reader. */
+.hp-running {
+    color: var(--cyan);
+    white-space: nowrap;
+}
+
+.hp-running .glyph {
+    animation: hp-pulse 1.4s ease-in-out infinite;
+}
+
+.hp-activity {
+    margin-left: 0.4rem;
+    padding: 0 0.3rem;
+    border: 1px solid var(--border-strong);
+    border-radius: 3px;
+    color: var(--fg-dim);
+    font-size: 0.8em;
+}
+
+.hp-queued {
+    color: var(--fg-faint);
+}
+
+@keyframes hp-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.25; }
+}
+
+/* A reader who has turned motion down still gets the text; only the pulse goes. */
+@media (prefers-reduced-motion: reduce) {
+    .hp-running .glyph { animation: none; }
+}
