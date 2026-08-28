@@ -226,7 +226,11 @@ jobs:
           helm template hephaisto '${{ env.CHART_REPO }}/hephaisto' --version "$V" \
             --namespace hephaisto \
             --set prometheusOperator.selectorLabels.release=kube-prometheus-stack > /tmp/rendered.yaml
-          grep -q "image: ${{ env.IMAGE }}:$V" /tmp/rendered.yaml \
+          # Helm renders `image: "repo:tag"` WITH quotes. Strip them rather than encode the
+          # quoting into the pattern: the assertion is about which image the chart names, and
+          # it should not break the next time a template's quoting changes.
+          sed 's/"//g' /tmp/rendered.yaml > /tmp/rendered.unquoted.yaml
+          grep -qF "image: ${{ env.IMAGE }}:$V" /tmp/rendered.unquoted.yaml \
             || { echo "::error::the published chart does not point at the published image tag"; exit 1; }
           echo "Published chart renders and points at ${{ env.IMAGE }}:$V"
 

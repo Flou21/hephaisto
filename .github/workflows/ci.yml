@@ -136,6 +136,11 @@ jobs:
           ConnectionStrings__hephaisto: Host=localhost;Port=5432;Database=hephaisto;Username=hephaisto;Password=hephaisto
         run: |
           dotnet tool restore
+          # `dotnet ef` builds the project, and a build needs a restore first. Without this
+          # the step dies on NETSDK1004 (no project.assets.json) - which reads like a broken
+          # SDK rather than a missing step, because `dotnet tool restore` succeeded just above
+          # and looks like it restored something relevant. It did not: tools, not packages.
+          dotnet restore
           dotnet ef database update --project src/Hephaisto.Agent --context HephaistoDbContext
 
       - name: Run the integration suite
@@ -197,6 +202,15 @@ jobs:
             --destination /tmp/chart
           ls -l /tmp/chart
 
+      # Handed to e2e-kind so that job installs the ARTIFACT A CONSUMER GETS, not the source
+      # directory. Those differ in exactly the way that matters here: Chart.yaml stays 0.0.0
+      # in git on purpose, and only `helm package --app-version` stamps the real number in.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chart-package
+          path: /tmp/chart/*.tgz
+          retention-days: 1
+
   image:
     runs-on: ${{ matrix.runner }}
     needs: [version]
@@ -251,6 +265,11 @@ jobs:
         with:
           version: v3.16.4
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: chart-package
+          path: /tmp/chart
+
       - uses: helm/kind-action@v1
         with:
           cluster_name: hephaisto-e2e
@@ -285,7 +304,8 @@ jobs:
 
       - name: helm install
         run: |
-          helm install hephaisto charts/hephaisto \
+          helm install hephaisto \
+            "/tmp/chart/hephaisto-${{ needs.version.outputs.semver }}.tgz" \
             --namespace hephaisto \
             --set image.repository=hephaisto/agent \
             --set image.tag=e2e \
