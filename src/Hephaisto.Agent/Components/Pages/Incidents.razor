@@ -212,6 +212,7 @@ else
         _namespaces = await SafeAsync(() => Queries.NamespacesAsync(ct), []);
 
         _ = TickAsync(_cts.Token);
+        _ = ClockAsync(_cts.Token);
         _ = ListenAsync(_cts.Token);
     }
 
@@ -227,6 +228,33 @@ else
             await foreach (var _ in Notifier.SubscribeAsync(ct))
             {
                 await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Advances the clock every second, and touches nothing else.
+    /// </summary>
+    /// <remarks>
+    /// Split from <see cref="TickAsync"/> deliberately. Every elapsed time on this page is
+    /// rendered against <c>_now</c>, so if the only thing that moves it is the ten-second
+    /// data reload, ages advance in ten-second jumps and a running investigation looks
+    /// frozen between them. This costs one re-render a second and no query at all, which is
+    /// what makes it safe to run at this rate; reloading the list every second would not be.
+    /// </remarks>
+    private async Task ClockAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                _now = DateTimeOffset.UtcNow;
                 await InvokeAsync(StateHasChanged);
             }
         }

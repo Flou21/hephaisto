@@ -366,6 +366,16 @@ public sealed record FeedbackView
 
 public sealed record IncidentDetailView
 {
+    /// <summary>
+    /// Live progress when a worker is investigating this incident right now, else null.
+    /// </summary>
+    /// <remarks>
+    /// The detail page is where a reader waits while an investigation runs, and until this
+    /// existed it was the least informative place to do that: the investigations list stays
+    /// empty for the whole run, because the row is written only at the end.
+    /// </remarks>
+    public InvestigationProgressView? InProgress { get; init; }
+
     public Guid Id { get; init; }
 
     public string Title { get; init; } = string.Empty;

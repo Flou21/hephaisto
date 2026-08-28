@@ -198,7 +198,37 @@ else
     <section class="hp-section">
         <h2>investigations <span class="hp-count">@incident.Investigations.Count</span></h2>
 
-        @if (incident.Investigations.Count == 0)
+        @if (incident.InProgress is { } live)
+        {
+            @* Shown above the finished ones, and before any of them exist. An investigation
+               writes its row only when it terminates, so without this the section reads
+               "Never investigated" for the entire minutes-long run - on the page a reader is
+               most likely to have open while it happens. *@
+            <article class="hp-investigation hp-investigation-live">
+                <header class="hp-investigation-head">
+                    <span class="hp-running">
+                        <span class="glyph">*</span> running
+                    </span>
+                    <span class="mono">@Display.Duration(_now - live.StartedAt)</span>
+                    <span class="mono">@live.Model</span>
+                </header>
+
+                <dl class="hp-kv">
+                    <dt>steps</dt><dd class="mono">@live.Steps</dd>
+                    <dt>tool calls</dt><dd class="mono">@live.ToolCalls</dd>
+                    <dt>spent</dt><dd class="mono">$@live.CostUsd.ToString("0.0000")</dd>
+                    <dt>doing</dt>
+                    <dd class="mono">@(live.Activity is { Length: > 0 } a ? a : "thinking")</dd>
+                </dl>
+
+                <p class="hp-empty">
+                    Steps, findings and evidence are written when this finishes; they commit
+                    together so a crash cannot leave half an investigation behind.
+                </p>
+            </article>
+        }
+
+        @if (incident.Investigations.Count == 0 && incident.InProgress is null)
         {
             <p class="hp-empty">
                 Never investigated.
@@ -709,6 +739,8 @@ else
         await LoadAsync();
 
         _ = ListenAsync(_cts.Token);
+        _ = TickAsync(_cts.Token);
+        _ = ClockAsync(_cts.Token);
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -754,6 +786,53 @@ else
         finally
         {
             _loading = false;
+        }
+    }
+
+    /// <summary>
+    /// Reloads this incident on a timer.
+    /// </summary>
+    /// <remarks>
+    /// The notifier alone is not enough. It fires on incident transitions, and an
+    /// investigation publishes nothing between starting and finishing - so a page opened on
+    /// an incident being investigated right now sat unchanged for the whole run, which is
+    /// exactly the page a reader is most likely to be watching. Five seconds rather than the
+    /// list's ten because this is the page someone stares at while work is happening.
+    /// </remarks>
+    private async Task TickAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Advances the clock every second so ages count up smoothly, without a query.
+    /// </summary>
+    private async Task ClockAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                _now = DateTimeOffset.UtcNow;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
         }
     }
 

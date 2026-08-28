@@ -129,7 +129,12 @@ public sealed class InvestigationRunner(
         // its trace, and a trace links back to the row that explains it.
         investigation.TraceId = activity?.TraceId.ToString();
 
-        var recorder = new InvestigationRecorder(investigation.Id, clock, opts.EvidenceBlobRetention);
+        var recorder = new InvestigationRecorder(
+            investigation.Id,
+            clock,
+            opts.EvidenceBlobRetention,
+            (rec, activity) => tracker.Report(
+                incident.Id, rec.Steps.Count, rec.ToolCallCount, rec.TotalCostUsd, activity));
         var budget = new InvestigationBudget(llm.Investigation, clock);
         var conclusion = new ConclusionHolder();
 
@@ -292,17 +297,6 @@ public sealed class InvestigationRunner(
                 .ConfigureAwait(false);
 
             messages.AddMessages(response);
-
-            // Published every turn, so a reader watching the console sees the step count and
-            // the spend move while this runs. Nothing else can show that: the investigation
-            // row is not written until the loop finishes, and the incident has said
-            // "Investigating" since before it was queued.
-            tracker.Report(
-                incident.Id,
-                budget.Steps,
-                recorder.ToolCallCount,
-                recorder.TotalCostUsd,
-                recorder.Steps.LastOrDefault(st => st.ToolName is not null)?.ToolName);
 
             if (conclusion.Value is not null)
             {

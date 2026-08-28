@@ -197,6 +197,17 @@ public sealed class IncidentQueries(
 
         return new IncidentDetailView
         {
+            InProgress = tracker.For(incident.Id) is { } live
+                ? new InvestigationProgressView
+                {
+                    Model = live.Model,
+                    StartedAt = live.StartedAt,
+                    Steps = live.Steps,
+                    ToolCalls = live.ToolCalls,
+                    CostUsd = live.CostUsd,
+                    Activity = live.Activity,
+                }
+                : null,
             Id = incident.Id,
             Title = incident.Title,
             CorrelationKey = incident.CorrelationKey,

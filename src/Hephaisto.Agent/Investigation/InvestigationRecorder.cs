@@ -21,9 +21,43 @@ namespace Hephaisto.Agent.Investigations;
 /// the log render in the order things actually happened.
 /// </para>
 /// </remarks>
-public sealed class InvestigationRecorder(Guid investigationId, IClock clock, TimeSpan blobRetention)
+public sealed class InvestigationRecorder(
+    Guid investigationId,
+    IClock clock,
+    TimeSpan blobRetention,
+    Action<InvestigationRecorder, string?>? onProgress = null)
     : IInvestigationRecorder
 {
+    /// <summary>
+    /// Fired as each step is recorded, so a live view moves while the loop runs.
+    /// </summary>
+    /// <remarks>
+    /// It has to be here rather than in the runner's turn loop. Tool calls are executed by
+    /// <c>FunctionInvokingChatClient</c> <i>inside</i> a single <c>GetResponseAsync</c>, so a
+    /// turn that makes six queries reports nothing until all six are done - which for this
+    /// model is minutes of a console showing "step 0". The recorder is the only place that
+    /// sees each one as it happens.
+    ///
+    /// Optional, and swallowing nothing: it is a reporting side-channel, and a fault in it
+    /// must not fail the investigation it is describing.
+    /// </remarks>
+    private void Progress(string? activity)
+    {
+        if (onProgress is null)
+        {
+            return;
+        }
+
+        try
+        {
+            onProgress(this, activity);
+        }
+        catch
+        {
+            // Deliberately ignored. See the remarks above.
+        }
+    }
+
     private readonly Lock _gate = new();
     private readonly List<InvestigationStep> _steps = [];
     private readonly List<EvidenceBlob> _blobs = [];
@@ -126,6 +160,8 @@ public sealed class InvestigationRecorder(Guid investigationId, IClock clock, Ti
             _steps.Add(step);
         }
 
+        Progress(null);
+
         return step;
     }
 
@@ -146,6 +182,8 @@ public sealed class InvestigationRecorder(Guid investigationId, IClock clock, Ti
             step.Ordinal = ++_ordinal;
             _steps.Add(step);
         }
+
+        Progress(toolName);
 
         return step;
     }

@@ -1193,3 +1193,16 @@ details > summary {
 @media (prefers-reduced-motion: reduce) {
     .hp-running .glyph { animation: none; }
 }
+
+/* The in-flight investigation on a detail page. Bordered in the running colour so it reads
+   as "happening now" rather than as one more finished record in the list. */
+.hp-investigation-live {
+    border-left: 3px solid var(--cyan);
+    background: color-mix(in srgb, var(--cyan) 4%, var(--bg-raised));
+}
+
+.hp-investigation-live .hp-investigation-head {
+    display: flex;
+    gap: 0.9rem;
+    align-items: baseline;
+}
