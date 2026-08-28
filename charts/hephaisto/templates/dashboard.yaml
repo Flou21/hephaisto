@@ -1,0 +1,26 @@
+{{- if .Values.dashboard.enabled }}
+{{/*
+The Grafana sidecar watches every namespace for ConfigMaps carrying its label and mounts each
+data value as a dashboard file, so this lives next to the thing it describes rather than in
+Grafana's namespace.
+
+The JSON is read from files/ rather than embedded here, which removes the generate-and-commit
+dance the pre-chart manifest needed. Its uid is `hephaisto`, which is what makes the sidecar
+update the dashboard in place rather than creating a duplicate on every rollout.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hephaisto.fullname" . }}-dashboard
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+    {{ .Values.dashboard.sidecarLabel }}: "1"
+  {{- with .Values.dashboard.folder }}
+  annotations:
+    grafana_folder: {{ . | quote }}
+  {{- end }}
+data:
+  hephaisto.json: |
+    {{- .Files.Get "files/dashboards/hephaisto.json" | nindent 4 }}
+{{- end }}

@@ -1,0 +1,147 @@
+{{- include "hephaisto.validateActionableNamespaces" . -}}
+{{- if .Values.policy.actionableNamespaces }}
+{{/*
+=========================================================================================
+WRITE - a Role, RoleBound ONLY into the namespaces policy.actionableNamespaces names
+=========================================================================================
+Note the object kind: a `Role`, not a `ClusterRole`. That is not stylistic. A ClusterRole
+with a RoleBinding would behave identically today, but it leaves a cluster-scoped object
+lying around that someone can later attach a ClusterRoleBinding to with one command and no
+review. A namespaced Role cannot be bound outside its own namespace at all - the API server
+will not do it. The scope is a property of the object, not of a binding someone might change.
+
+Everything below is destructive. When the list is empty NOTHING here renders: no Role, no
+RoleBinding, no write access anywhere. That is the default, and it mirrors
+PolicyOptions.AllowedNamespaces, which also defaults to empty.
+
+The list is validated before anything renders - see hephaisto.validateActionableNamespaces.
+Naming kube-*, `default`, the release namespace or the observability namespace is a hard
+render failure, not a silently dropped entry. Nothing in the pre-chart manifests stopped
+someone editing `namespace: hephaisto-chaos` to `kube-system`; now that is a CI failure.
+=========================================================================================
+*/}}
+{{- range $ns := .Values.policy.actionableNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "hephaisto.fullname" $ }}-write
+  namespace: {{ $ns }}
+  labels:
+    {{- include "hephaisto.labels" $ | nindent 4 }}
+rules:
+  # -------------------------------------------------------------------------------------
+  # delete on pods -- "restart the pod"
+  # -------------------------------------------------------------------------------------
+  # There is no RESTART verb in the Kubernetes API. The universal idiom for restarting a
+  # managed pod is to delete it and let its controller recreate it, so `delete` here IS the
+  # restart action -- the most common and most often correct remediation there is.
+  #
+  # It is also the action where a mistake is least recoverable, which is why the executor
+  # is a single replica (see hephaisto.yaml): the budget check, cooldown check, kill-switch
+  # check and action INSERT are one Postgres transaction, and this verb is what makes that
+  # transaction matter.
+  #
+  # No `create` on pods. The agent may restart what exists; it may not invent workloads.
+  # No `delete` on the collection either -- deletecollection is absent deliberately, so a
+  # single bad label selector cannot take out the whole namespace in one call.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["delete"]
+
+  # -------------------------------------------------------------------------------------
+  # patch/update on workloads -- rollout restart, and image/env fixes
+  # -------------------------------------------------------------------------------------
+  # `patch` on a Deployment is how `kubectl rollout restart` works (it stamps
+  # kubectl.kubernetes.io/restartedAt on the pod template). It is a controlled, gradual
+  # replacement rather than the blunt pod delete above, and it is the correct action when
+  # the whole workload needs recycling.
+  #
+  # It also covers the genuinely corrective cases: fixing a bad image tag (chaos fixture
+  # C4) or a bad env var (C7). Those are the remediations where the agent is doing real
+  # repair rather than percussive maintenance.
+  #
+  # `update` is granted alongside `patch` because a client that reads-modifies-writes a
+  # whole object issues an update, and having only patch produces a 403 on a code path
+  # that looks identical to the one that works.
+  #
+  # NO `delete` and NO `create` on workloads. The agent can modify a Deployment that
+  # exists; it cannot remove one or bring a new one into being. That single asymmetry is
+  # what keeps every action reversible: a patched Deployment can be rolled back with
+  # `kubectl rollout undo`, and a deleted one cannot be recovered at all.
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+      - daemonsets
+      - replicasets
+    verbs: ["patch", "update"]
+
+  # -------------------------------------------------------------------------------------
+  # The /scale subresource -- "scale it down to stop the bleeding"
+  # -------------------------------------------------------------------------------------
+  # Granted separately because RBAC treats subresources as distinct resources: `patch` on
+  # `deployments` does NOT imply `patch` on `deployments/scale`.
+  #
+  # Scaling to zero is the mildest containment available -- it stops a runaway workload
+  # (chaos fixture C9, memhog) without destroying anything, and it is trivially reversible
+  # by scaling back up. It is frequently the right first action precisely because it is so
+  # easily undone.
+  - apiGroups: ["apps"]
+    resources:
+      - deployments/scale
+      - statefulsets/scale
+      - replicasets/scale
+    verbs: ["patch", "update"]
+
+  # -------------------------------------------------------------------------------------
+  # delete on jobs -- clearing a terminal failure
+  # -------------------------------------------------------------------------------------
+  # A Job that has exhausted its backoffLimit is terminal: Kubernetes will never retry it.
+  # Deleting it is the only way to allow a re-run, and it is exactly what a human does with
+  # chaos fixture C5. Deleting a Job is low-consequence because the Job object itself holds
+  # no state -- whatever it produced is elsewhere.
+  #
+  # No `create` on jobs. Creating a Job is arbitrary code execution in the cluster with the
+  # agent choosing the image and the command. That is a categorically different power from
+  # anything else in this Role, and it is not granted at any phase.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["delete"]
+
+  # -------------------------------------------------------------------------------------
+  # create on events -- writing back to the audit trail
+  # -------------------------------------------------------------------------------------
+  # When the agent takes an action, it records a Kubernetes Event against the object it
+  # acted on. This matters more than it looks: it means a human running
+  # `kubectl describe deployment/foo` sees "Hephaisto restarted this at 03:14 because
+  # KubePodCrashLooping fired" in the place they were already looking, without knowing
+  # Hephaisto exists or where its dashboard lives.
+  #
+  # It is `create` only -- no update, no delete, no patch. The agent can add to the record
+  # and can never edit or erase what it or anyone else previously wrote. An audit trail an
+  # actor can rewrite is not an audit trail.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create"]
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "hephaisto.fullname" $ }}-write
+  namespace: {{ $ns }}
+  labels:
+    {{- include "hephaisto.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "hephaisto.fullname" $ }}-write
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "hephaisto.serviceAccountName" $ }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}

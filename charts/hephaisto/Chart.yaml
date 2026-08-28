@@ -1,0 +1,26 @@
+apiVersion: v2
+name: hephaisto
+description: An autonomous SRE agent that investigates Kubernetes incidents and reports what it found.
+type: application
+home: https://github.com/Flou21/hephaisto
+sources:
+  - https://github.com/Flou21/hephaisto
+keywords:
+  - sre
+  - kubernetes
+  - observability
+  - incident-response
+  - ai-agent
+
+# STAYS 0.0.0 IN GIT, FOREVER.
+#
+# CI stamps the real number at package time:
+#
+#     helm package charts/hephaisto --version "$SEMVER" --app-version "$SEMVER"
+#
+# which overrides both without writing to this file. That is what keeps a release to a single
+# `git tag v0.0.1` with no bump commit and no CI push back to main - and it is why
+# ci/negative-tests.sh asserts these two still read 0.0.0. If someone "helpfully" sets a real
+# version here, the tag and the chart become two sources of truth that drift.
+version: 0.0.0
+appVersion: "0.0.0"

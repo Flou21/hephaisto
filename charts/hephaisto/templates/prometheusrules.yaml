@@ -1,0 +1,40 @@
+{{/*
+=========================================================================================
+Alert rules - the agent's INPUT
+=========================================================================================
+These are in the chart because they are what the agent CONSUMES, not what it emits. A
+Hephaisto installed without them receives nothing, detects nothing, and reports itself
+perfectly healthy - which is the worst possible failure for a monitoring agent.
+
+The files under files/alerts/ are complete PrometheusRule manifests and are the single source
+of truth: ShippedAlertRulesTests reads the same files and fails the build if any alert
+declares a `hephaisto_kind` that is not a real SignalKind. They are re-emitted here rather
+than copied so the namespace and the operator's selector labels are applied consistently -
+without those labels every rule is created successfully and never selected.
+=========================================================================================
+*/}}
+{{- $root := . -}}
+{{- $files := dict
+      "kubernetes-rules.yaml"        $.Values.alerts.kubernetes
+      "slo-rules.yaml"               $.Values.alerts.slo
+      "watchdog.yaml"                $.Values.alerts.watchdog
+      "observability-selfcheck.yaml" $.Values.alerts.observabilitySelfcheck -}}
+{{- range $file, $enabled := $files }}
+{{- if $enabled }}
+{{- $doc := $root.Files.Get (printf "files/alerts/%s" $file) | fromYaml }}
+{{- if not $doc.spec }}
+{{- fail (printf "files/alerts/%s did not parse into a PrometheusRule with a spec. A rule file that silently renders nothing is how a cluster ends up with no alerting and no error." $file) }}
+{{- end }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ printf "%s-%s" (include "hephaisto.fullname" $root) (trimSuffix ".yaml" $file) | trunc 63 | trimSuffix "-" }}
+  namespace: {{ $root.Release.Namespace }}
+  labels:
+    {{- include "hephaisto.labels" $root | nindent 4 }}
+    {{- include "hephaisto.operatorSelectorLabels" $root | nindent 4 }}
+spec:
+  {{- toYaml $doc.spec | nindent 2 }}
+{{- end }}
+{{- end }}

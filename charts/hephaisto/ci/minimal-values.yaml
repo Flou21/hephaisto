@@ -1,0 +1,5 @@
+# The smallest input that must render: nothing enabled beyond the defaults, no namespace the
+# agent may act in, no observability wiring. This is what a first `helm install` looks like.
+prometheusOperator:
+  selectorLabels:
+    release: kube-prometheus-stack

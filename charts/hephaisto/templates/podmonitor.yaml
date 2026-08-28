@@ -1,0 +1,34 @@
+{{- if .Values.prometheusOperator.selectorLabels }}
+{{/*
+PodMonitor, not ServiceMonitor. The agent is a single pod and the metric that matters most -
+whether THIS instance is processing signals - is per-pod. A ServiceMonitor targets endpoints
+behind the Service, so it stops scraping the moment readiness fails, which is exactly when its
+metrics are most interesting.
+*/}}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "hephaisto.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+    # MUST match your Prometheus's podMonitorSelector. Without it this object is created
+    # successfully, is never selected, and the agent's own metrics never reach Prometheus - so
+    # the budget and liveness alerts can never fire. Silent, and easy to miss, because
+    # `kubectl get podmonitor` shows it existing quite happily.
+    {{- include "hephaisto.operatorSelectorLabels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "hephaisto.selectorLabels" . | nindent 6 }}
+  podMetricsEndpoints:
+    # `http`, not a separate metrics port: /metrics is mapped onto the main ASP.NET pipeline
+    # and ASPNETCORE_URLS binds only 8080, so nothing listens anywhere else.
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+{{- end }}

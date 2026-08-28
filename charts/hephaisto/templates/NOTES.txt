@@ -1,0 +1,71 @@
+Hephaisto {{ .Chart.AppVersion }} is installed in namespace {{ .Release.Namespace }}.
+
+Mode: {{ .Values.mode }}{{ if ne .Values.mode "Observe" }}  <-- not Observe. Read on.{{ end }}
+{{ if .Values.policy.actionableNamespaces -}}
+It may act in: {{ join ", " .Values.policy.actionableNamespaces }}
+{{- else -}}
+It may act in NO namespace. policy.actionableNamespaces is empty, so no write Role was
+created at all. This is the default, and it is the right one until you have watched it work.
+{{- end }}
+
+VERIFY THESE TWO THINGS BEFORE YOU TRUST IT
+-------------------------------------------------------------------------------------------
+1. Prometheus must actually SELECT the rules and the PodMonitor. If the selector labels are
+   wrong, every object below exists, nothing is ever scraped or evaluated, no alert reaches
+   the agent, and the agent reports itself perfectly healthy. There is no error anywhere.
+
+   This chart labelled them:
+{{ range $k, $v := .Values.prometheusOperator.selectorLabels }}       {{ $k }}: {{ $v }}
+{{ end }}
+   Check your Prometheus agrees:
+
+     kubectl get prometheus -A -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.ruleSelector}{"\n"}{end}'
+
+   Then confirm the rules actually loaded, which is the only real proof:
+
+     kubectl exec -n {{ .Values.observabilityNamespace }} sts/prometheus-<release> -c prometheus -- \
+       wget -qO- localhost:9090/api/v1/rules | grep -c hephaisto
+
+2. The alert path has to reach the agent. The AgentWatchdog rule fires constantly by design -
+   its ABSENCE is the signal. Within about five minutes of install:
+
+     kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "hephaisto.fullname" . }} | grep -i watchdog
+     kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "hephaisto.fullname" . }} 8080:8080
+     curl -s localhost:8080/api/status | jq '{mode: .effectiveMode, watchdogStale, openIncidents}'
+
+   `watchdogStale: true` means Prometheus, Alertmanager, the NetworkPolicy or the agent's
+   receiver is broken - and that the agent is not seeing your cluster at all.
+
+WHAT IT CAN DO TO YOUR CLUSTER
+-------------------------------------------------------------------------------------------
+  kubectl auth can-i --list --as=system:serviceaccount:{{ .Release.Namespace }}:{{ include "hephaisto.serviceAccountName" . }}
+
+  These must all say "no":
+    kubectl auth can-i get secrets -A --as=system:serviceaccount:{{ .Release.Namespace }}:{{ include "hephaisto.serviceAccountName" . }}
+    kubectl auth can-i delete pods -n kube-system --as=system:serviceaccount:{{ .Release.Namespace }}:{{ include "hephaisto.serviceAccountName" . }}
+    kubectl auth can-i create clusterrolebindings --as=system:serviceaccount:{{ .Release.Namespace }}:{{ include "hephaisto.serviceAccountName" . }}
+{{- if not .Values.networkPolicy.enabled }}
+
+!! networkPolicy.enabled is FALSE.
+   The Alertmanager webhook is unauthenticated - Alertmanager cannot send credentials - so the
+   NetworkPolicy is its ENTIRE authentication. With it off, anything that can reach port 8080
+   can create incidents, and in Auto mode cause the agent to act on them.
+{{- end }}
+{{- if has "0.0.0.0/0" .Values.networkPolicy.extraIngressCIDRs }}
+
+!! networkPolicy.extraIngressCIDRs contains 0.0.0.0/0.
+   Every pod in this cluster can now POST forged alerts to the agent. This is sometimes the
+   only way to keep kubelet probes working; prefer the node CIDR if you can find it.
+{{- end }}
+{{- if eq .Values.mode "Auto" }}
+
+!! mode is Auto: the agent will execute allowlisted actions without asking anyone.
+   Observe first. The value of Observe is not caution for its own sake - it produces the
+   record of what the agent WOULD have done and whether it was right, which is what makes
+   promoting it a decision based on evidence rather than on hope.
+{{- end }}
+{{- if .Values.postgres.embedded.enabled }}
+
+Note: postgres.embedded is on. One replica, one PVC, no backups. Fine for evaluating the
+chart; not a database anyone should depend on.
+{{- end }}

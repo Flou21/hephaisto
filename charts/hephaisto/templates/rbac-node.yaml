@@ -1,0 +1,71 @@
+{{- if .Values.rbac.nodeRole }}
+{{/*
+=========================================================================================
+CORDON / DRAIN - created, deliberately NEVER bound, and no value binds it
+=========================================================================================
+This ClusterRole exists so that enabling node-level remediation is a visible, reviewable act
+rather than a code change under time pressure. It is not attached to anything.
+
+There is no `nodeRole.bindingEnabled` value on purpose. A boolean would turn "a human decided
+the agent may drain nodes" into a line buried in an Argo Application that nobody reads twice.
+Binding it stays a hand-written four-line ClusterRoleBinding in its own commit. The friction
+IS the feature.
+=========================================================================================
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "hephaisto.fullname" . }}-node
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+rules:
+  # `patch` on nodes is cordon: it sets spec.unschedulable. Reversible in principle -- but
+  # if the agent cordons the only node, nothing new can be scheduled, including any pod
+  # that would be needed to recover, and the agent cannot uncordon after its own eviction.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["patch", "update"]
+  # The eviction subresource is drain. It respects PodDisruptionBudgets, which is the only
+  # thing that makes it safer than deleting pods directly -- and on a single-node cluster
+  # that safety amounts to "the outage is orderly".
+  - apiGroups: [""]
+    resources: ["pods/eviction"]
+    verbs: ["create"]
+# NOTE: no ClusterRoleBinding follows. This is intentional. Do not add one here.
+
+# =======================================================================================
+# NETWORK POLICY -- what substitutes for the auth check Alertmanager cannot do
+# =======================================================================================
+# Alertmanager's webhook_configs has no field for custom headers, so /webhooks/alertmanager
+# cannot require a bearer token (see the receivers block in
+# infra/observability/kube-prometheus-stack.values.yaml). The endpoint is therefore
+# unauthenticated, and an unauthenticated endpoint that CREATES INCIDENTS and can trigger
+# REMEDIATION ACTIONS is a forged-alert injection point: anything able to POST to it can
+# make the agent believe a workload is broken and act on it.
+#
+# The mitigation is at the network layer instead. This policy makes port 8080 in namespace
+# `hephaisto` reachable ONLY from `hephaisto-obs`. Nothing in kube-system, default,
+# hephaisto-chaos, or any other tenant's namespace can open a connection to it at all -- so there is no door for
+# a token to guard.
+#
+# Note what this implies about hephaisto-chaos in particular: the chaos fixtures are the
+# workloads most likely to be running something unexpected, and they are explicitly on the
+# far side of this boundary from the agent's control plane.
+#
+# ENFORCEMENT IS VERIFIED ON THIS CLUSTER -- but check the reasoning, because the obvious
+# check gives the wrong answer. There is no calico/cilium/kube-router pod in kube-system,
+# and the CNI is flannel (node annotations flannel.alpha.coreos.com/*), which by itself
+# does NOT enforce NetworkPolicy. Looking for a CNI pod therefore suggests, incorrectly,
+# that this policy is inert.
+#
+# It is not: k3s embeds a kube-router-derived NetworkPolicy controller in the server
+# process itself, enabled unless `--disable-network-policy` is passed. This node's args are
+# visible on the node object and do not contain it:
+#
+#   kubectl get node lima-rancher-desktop -o jsonpath='{.metadata.annotations.k3s\.io/node-args}'
+#   ["server","--https-listen-port","6443","--node-ip",...,"--flannel-iface","vznat",
+#    "--node-external-ip",...,"--docker"]
+#
+# So the policy is enforced. Re-run that command if Rancher Desktop is ever reconfigured --
+# if `--disable-network-policy` appears, this file silently stops being a control and the
+# only remaining protection is that the cluster is single-tenant and tailnet-only.{{- end }}

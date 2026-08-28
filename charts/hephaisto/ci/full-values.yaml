@@ -1,0 +1,81 @@
+# Everything on at once. Exists so that a template only exercised by an unusual combination
+# still gets rendered in CI.
+image:
+  repository: ghcr.io/flou21/hephaisto
+  tag: "0.0.1"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: ghcr-pull
+
+serviceAccount:
+  name: hephaisto
+  annotations:
+    example.com/owner: sre
+
+observabilityNamespace: hephaisto-obs
+
+prometheusOperator:
+  selectorLabels:
+    release: kube-prometheus-stack
+    example.com/extra: "yes"
+
+policy:
+  actionableNamespaces:
+    - hephaisto-chaos
+    - some-app
+
+mode: DryRun
+
+secrets:
+  postgres: hephaisto-postgres
+  llm: hephaisto-llm
+  grafanaMcp: grafana-mcp-caller-token
+
+postgres:
+  host: postgres
+  port: 5432
+  embedded:
+    enabled: true
+    image: pgvector/pgvector:pg17
+    storage: 20Gi
+    storageClassName: standard
+
+otel:
+  endpoint: http://otel-collector.hephaisto-obs:4318
+  protocol: http/protobuf
+  environment: ci
+
+grafanaMcp:
+  url: http://grafana-mcp.hephaisto-obs:8000/mcp
+
+alerts:
+  kubernetes: true
+  slo: true
+  watchdog: true
+  observabilitySelfcheck: true
+
+dashboard:
+  enabled: true
+  sidecarLabel: grafana_dashboard
+  folder: Hephaisto
+
+networkPolicy:
+  enabled: true
+  extraIngressCIDRs:
+    - 10.42.0.0/16
+
+rbac:
+  create: true
+  nodeRole: true
+
+podAnnotations:
+  example.com/note: "rendered by CI"
+
+nodeSelector:
+  kubernetes.io/os: linux
+
+tolerations:
+  - key: example.com/dedicated
+    operator: Exists
+    effect: NoSchedule

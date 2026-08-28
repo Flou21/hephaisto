@@ -1,0 +1,37 @@
+{{/*
+The switch ConfigMap - the runtime arm of the kill switch.
+
+Mounted as a VOLUME, never envFrom. A ConfigMap mounted as a volume is updated in place by
+the kubelet within about a minute; the same ConfigMap consumed via envFrom is frozen at pod
+start. That difference is the whole point: the situation in which you reach for this is the
+situation in which you do not want to wait for a pod to restart, and do not want to risk the
+restart failing.
+
+    kubectl -n <ns> edit configmap <name>    # wait ~60s, done
+
+Each key becomes its own file under /etc/hephaisto. Discrete keys need no parser at all -
+this used to be one nested YAML document, which meant the emergency stop could be broken by
+a bad indent in the one file you least want to get wrong under pressure.
+
+NOT helm-managed after install in practice: an operator edits this in an emergency, and the
+next `helm upgrade` will put it back. That is a real sharp edge, and the honest mitigation is
+that the env arm and the database row are the other two arms - the most restrictive wins, so
+an upgrade resetting this key cannot WIDEN autonomy past what the env var allows.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hephaisto.fullname" . }}-switches
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+data:
+  # Engaged by ANY value other than an unambiguous false ("no", "off", "0", "disengaged" also
+  # disengage it). The asymmetry is deliberate: someone typing "yes" or "STOP" into this key
+  # under pressure means stop, and a garbled emergency stop must read as engaged.
+  killSwitch: "false"
+
+  # The runtime override. Can only ever hold the agent FURTHER BACK than the env var and the
+  # database row, never push it forward. An unrecognised value reads as Observe rather than as
+  # "no opinion", so a typo cannot widen autonomy; a deleted key reads as Observe too.
+  mode: {{ .Values.mode | quote }}

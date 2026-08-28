@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hephaisto.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "hephaisto.selectorLabels" . | nindent 4 }}
+  ports:
+    # Alertmanager posts here: /webhooks/alertmanager and /webhooks/watchdog.
+    # Unauthenticated by necessity - Alertmanager cannot send custom headers - and protected
+    # by the NetworkPolicy instead.
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP

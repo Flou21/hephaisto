@@ -127,8 +127,10 @@ blocker.
 
 ## Running it
 
-There is no published container image or Helm chart yet — that is what 0.0.1 is for. Today
-you build from source.
+Nothing is published yet — no image on a registry, no chart in an OCI repo. That is what
+0.0.1 is for. Today you build from source.
+
+**On a laptop:**
 
 ```sh
 git clone https://github.com/Flou21/hephaisto
@@ -141,10 +143,49 @@ dotnet run --project src/Hephaisto.AppHost
 `Hephaisto.AppHost` is .NET Aspire, and it is **dev-time only** — it is excluded from the
 container image and no manifest references it.
 
-For a cluster, `infra/` holds hand-written manifests: namespaces, the observability stack,
-RBAC and the chaos fixtures. They are hand-written rather than generated because this pod's
-ServiceAccount, ClusterRole and RoleBindings *are* the security boundary and must be
-reviewable human diffs. `infra/app/rbac.yaml` is the most valuable prose in the repo.
+**In a cluster**, via the chart in `charts/hephaisto`:
+
+```sh
+# The chart creates no Secrets, ever. Make them first.
+kubectl create namespace hephaisto
+kubectl -n hephaisto create secret generic hephaisto-postgres \
+  --from-literal=POSTGRES_USER=hephaisto \
+  --from-literal=POSTGRES_PASSWORD="$(openssl rand -base64 24)" \
+  --from-literal=POSTGRES_DB=hephaisto
+kubectl -n hephaisto create secret generic hephaisto-llm --from-literal=GEMINI_API_KEY=...
+
+helm install hephaisto ./charts/hephaisto -n hephaisto \
+  --set prometheusOperator.selectorLabels.release=<your-kube-prometheus-stack-release> \
+  --set postgres.embedded.enabled=true
+```
+
+Then read what `NOTES.txt` prints, and actually run the two checks it gives you. The chart's
+most dangerous setting is `prometheusOperator.selectorLabels`: get it wrong and every object
+is created, `kubectl get prometheusrule` shows them all present, Prometheus selects none of
+them, and the agent reports itself perfectly healthy while seeing nothing at all.
+
+What the chart installs: the agent, its RBAC, both NetworkPolicies, the PodMonitor, the alert
+rules, a Grafana dashboard, and — opt-in — an evaluation Postgres. What it does **not**
+install: Prometheus, Alertmanager, Grafana, Loki, Tempo or a collector. You already run those.
+
+Three defaults worth knowing before you install:
+
+- `policy.actionableNamespaces` is **empty**, so no write Role is created at all and the agent
+  may act nowhere. Naming a `kube-*` namespace, `default`, its own namespace or the
+  observability namespace is a hard render failure, not a dropped entry.
+- `networkPolicy.extraIngressCIDRs` is **empty**. It is sometimes the only way to keep kubelet
+  probes working — but every CIDR you add can forge an alert to an unauthenticated,
+  incident-creating endpoint.
+- The cordon/drain ClusterRole is created **unbound**, and no value binds it. That stays a
+  hand-written `ClusterRoleBinding` in its own commit.
+
+`charts/hephaisto/ci/negative-tests.sh` asserts all of the above as tests, so they cannot rot
+quietly.
+
+`infra/` still holds the hand-written manifests this repo's own dev cluster runs. They are
+hand-written rather than generated because this pod's ServiceAccount, ClusterRole and
+RoleBindings *are* the security boundary and must be reviewable human diffs.
+`infra/app/rbac.yaml` is the most valuable prose in the repo.
 
 ### Configuration
 

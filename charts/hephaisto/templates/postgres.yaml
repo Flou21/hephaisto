@@ -1,0 +1,182 @@
+{{- if .Values.postgres.embedded.enabled }}
+{{/*
+=========================================================================================
+Embedded Postgres - for EVALUATING the chart, not for running it
+=========================================================================================
+One replica, one local PVC, no backups, no replication, no pooling, no monitoring. It exists
+so `helm install` gives you something that works end to end without first standing up a
+database, and it is off by default so that nobody acquires one by accident and then discovers
+its properties during an incident.
+
+For anything real, point postgres.host at a database somebody is responsible for. The agent
+needs PostgreSQL 17 with the `vector` extension available.
+=========================================================================================
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hephaisto.fullname" . }}-postgres
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ include "hephaisto.fullname" . }}-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hephaisto.fullname" . }}-postgres-headless
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: {{ include "hephaisto.fullname" . }}-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+      protocol: TCP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hephaisto.fullname" . }}-postgres-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+data:
+  00-extensions.sql: |
+    -- Runs against POSTGRES_DB (hephaisto), which the entrypoint has already created
+    -- from the env var, so there is no CREATE DATABASE here -- issuing one would fail
+    -- because the database already exists and the connection is inside it.
+
+    -- The reason this image was chosen. Provides the `vector` column type plus the
+    -- ivfflat and hnsw index access methods.
+    CREATE EXTENSION IF NOT EXISTS vector;
+
+    -- gen_random_uuid() for primary keys. Built into PG13+ core, but the extension is
+    -- created anyway so the schema does not depend on which build is underneath.
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    -- Trigram indexes. The agent matches new incidents against historical ones by fuzzy
+    -- text similarity BEFORE falling back to vector search -- an exact-ish match on an
+    -- error message is cheaper and more precise than an embedding lookup.
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+    -- A schema for the agent's own objects, so EF Core migrations and any hand-written
+    -- diagnostics do not fight over `public`.
+    CREATE SCHEMA IF NOT EXISTS hephaisto;
+
+    -- Sanity marker. If this row is missing, init did not run and the PVC predates this
+    -- ConfigMap -- which is the single most likely cause of "the vector type does not
+    -- exist" after someone reused an old volume.
+    CREATE TABLE IF NOT EXISTS hephaisto.schema_bootstrap (
+      applied_at timestamptz NOT NULL DEFAULT now(),
+      note       text        NOT NULL
+    );
+    INSERT INTO hephaisto.schema_bootstrap (note)
+      VALUES ('extensions: vector, pgcrypto, pg_trgm');
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "hephaisto.fullname" . }}-postgres
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "hephaisto.fullname" . }}-postgres-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "hephaisto.fullname" . }}-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "hephaisto.fullname" . }}-postgres
+        app.kubernetes.io/part-of: hephaisto
+    spec:
+      # Long enough for a clean shutdown and checkpoint. The default 30s can leave the
+      # database needing crash recovery on every restart, which turns a routine rollout into
+      # WAL replay and a failing readiness probe that looks like a real problem.
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.embedded.image | quote }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: {{ required "secrets.postgres is required." .Values.secrets.postgres }}
+          env:
+            # PGDATA must be a SUBDIRECTORY of the mount, never the mount itself. A PV mount
+            # point is not empty - depending on the provisioner it can hold lost+found - and
+            # initdb refuses to run in a non-empty directory. The error ("directory exists but
+            # is not empty") is not obviously about the mount, and this is the most common way
+            # a first Postgres deployment fails.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_INITDB_ARGS
+              value: "--auth-host=scram-sha-256"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          # pg_isready against the real database and user, not a TCP check: a TCP check passes
+          # while Postgres is still replaying WAL and refusing connections, which would let the
+          # agent start and immediately fail its first query.
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" -h 127.0.0.1"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" -h 127.0.0.1"]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+      volumes:
+        - name: init
+          configMap:
+            name: {{ include "hephaisto.fullname" . }}-postgres-init
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.postgres.embedded.storageClassName }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgres.embedded.storage | quote }}
+{{- end }}

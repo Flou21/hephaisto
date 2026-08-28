@@ -1,0 +1,253 @@
+{{- if .Values.rbac.create }}
+{{/*
+=========================================================================================
+READ - cluster-wide, and a LITERAL
+=========================================================================================
+There is not one `.Values` reference inside `rules:` below, and there must never be. A chart
+whose permission set is a values-driven `range` is a chart where
+
+    --set rbac.extraRules[0].resources[0]='*'
+
+grants cluster-wide Secret access and the `helm diff` looks unremarkable. Widening this stays
+a code change, a commit and a review.
+
+Read access is broad on purpose. An SRE cannot diagnose a namespace in isolation: a pod
+failing because a node is under pressure, or because a Service in another namespace has no
+endpoints, is a cross-namespace story. Narrowing reads would not make the agent safer - reads
+cannot break anything - it would make it wrong.
+
+The safety property here is not "little access". It is NO WRITE VERBS AND NO SECRETS.
+ci/negative-tests.sh asserts both.
+=========================================================================================
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "hephaisto.fullname" . }}-read
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+rules:
+  # -------------------------------------------------------------------------------------
+  # Core workload state
+  # -------------------------------------------------------------------------------------
+  - apiGroups: [""]
+    resources:
+      # pods
+      #   get/list  -- the primary object of every investigation. Container statuses,
+      #                restart counts, waiting reasons (ImagePullBackOff vs
+      #                CreateContainerConfigError -- the C4/C7 discrimination test),
+      #                resource requests and limits (needed to explain an OOMKill), the
+      #                node the pod landed on, and its owner chain.
+      #   watch     -- so the agent sees a state transition when it happens rather than
+      #                discovering it on the next poll. Detection latency is a headline
+      #                metric (hephaisto_detection_latency_seconds); polling adds the
+      #                poll interval to every incident's MTTD.
+      - pods
+      # pods/log
+      #   The container's own account of what went wrong. Note this subresource also
+      #   carries `previous=true`, which is the ONLY way to read the logs of a container
+      #   that has already restarted -- and for a CrashLoopBackOff, the previous
+      #   container's logs are the entire diagnosis while the current container's are
+      #   empty. Without this the agent can see that something is crashing and never why.
+      - pods/log
+      # pods/status
+      #   Read separately from `pods` because RBAC treats subresources as distinct. Some
+      #   clients read status directly; granting it avoids a class of 403 that only shows
+      #   up on a code path nobody tested.
+      - pods/status
+      # events
+      #   THE NARRATIVE LAYER. FailedScheduling with its scheduler predicate text, image
+      #   pull errors with the registry's actual response, BackOff, OOMKilling, Evicted,
+      #   FailedMount. For chaos fixture C3 (unschedulable) an Event is the ONLY evidence
+      #   anywhere in the cluster that anything is wrong -- no container starts, so there
+      #   is no log and no container metric.
+      #   The agent reads events both through Loki (shipped by the collector's k8s_events
+      #   receiver) and directly here. Both paths matter: the Loki copy gives history and
+      #   correlation, the API gives the live, authoritative list for the object in hand.
+      - events
+      # services / endpoints / endpointslices
+      #   Answers "is this workload actually receiving traffic". A Service with zero ready
+      #   endpoints is invisible in pod-level metrics but is the difference between a
+      #   degraded service and a down one. Endpoint churn is the signal for chaos fixture
+      #   C8 (readiness flap) -- the false-positive test, where the correct answer is
+      #   "intermittent, not down".
+      #   `endpoints` is the legacy resource and `endpointslices` the modern one; which is
+      #   populated depends on the cluster, so both are granted.
+      - services
+      - endpoints
+      # nodes
+      #   Conditions (MemoryPressure, DiskPressure, Ready), allocatable capacity, taints.
+      #   Needed to answer "is this pod's problem actually the node's problem", which is
+      #   the difference between a correct remediation and restarting an innocent pod.
+      #   READ ONLY. `patch` on nodes is cordon/drain and lives in hephaisto-node, unbound.
+      - nodes
+      # namespaces
+      #   To enumerate what exists and read namespace labels -- notably
+      #   hephaisto.io/destructive-actions-allowed, which the agent's policy engine checks
+      #   as a second, independent confirmation before proposing any write. Belt and
+      #   braces with the RoleBinding scope below.
+      - namespaces
+      # configmaps
+      #   Diagnosing a config error means reading the config. Note the asymmetry that is
+      #   the whole point of this file: ConfigMaps are granted, Secrets are not. A
+      #   ConfigMap holds a connection string with a placeholder; a Secret holds the
+      #   password. The agent needs the former to explain a misconfiguration and must never
+      #   see the latter. (Reading a ConfigMap that someone has put a credential into is a
+      #   known residual risk -- the mitigation is not putting credentials in ConfigMaps.)
+      - configmaps
+      # persistentvolumeclaims
+      #   Requested size, storage class, bound phase. Needed to interpret the
+      #   kubelet_volume_stats_* metrics -- and in particular to notice the local-path
+      #   quirk documented in alerts/kubernetes-rules.yaml, where those metrics report the
+      #   node root filesystem rather than the claim.
+      - persistentvolumeclaims
+      # persistentvolumes
+      #   The other half of a storage diagnosis: which PV a claim is bound to, its reclaim
+      #   policy, and its host path. Cluster-scoped, read-only.
+      - persistentvolumes
+      # serviceaccounts
+      #   Only to resolve which ServiceAccount a pod runs as when explaining a 403 in that
+      #   pod's logs. Names only -- this does NOT grant the ability to read their tokens,
+      #   which are Secrets, which are denied everywhere.
+      - serviceaccounts
+      # replicationcontrollers
+      #   Legacy, but they exist and an owner chain can terminate in one.
+      - replicationcontrollers
+      # resourcequotas / limitranges
+      #   "Why was this pod rejected" and "why did this pod get these limits when the
+      #   manifest asked for none" are both answered here and nowhere else. A LimitRange
+      #   default is a common cause of an OOMKill nobody can explain from the manifest.
+      - resourcequotas
+      - limitranges
+    verbs: ["get", "list", "watch"]
+
+  # discovery.k8s.io -- EndpointSlices live in their own API group, so they need their own
+  # rule even though they are conceptually part of the block above.
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+
+  # -------------------------------------------------------------------------------------
+  # Workload controllers
+  # -------------------------------------------------------------------------------------
+  # The agent almost always starts from a pod and must walk UP the ownership chain to find
+  # the thing a human would actually name: pod -> ReplicaSet -> Deployment. Without
+  # replicasets that chain breaks at the first hop and the agent can only ever talk about
+  # pods, whose names are random and whose lifetimes are minutes.
+  #
+  # Desired vs available replicas, generation vs observedGeneration (a stuck rollout), and
+  # the pod template (which is what changed, if something changed) all live here.
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - deployments/status
+      - statefulsets
+      - statefulsets/status
+      - daemonsets
+      - daemonsets/status
+      - replicasets
+      - replicasets/status
+      - controllerrevisions
+    verbs: ["get", "list", "watch"]
+
+  # -------------------------------------------------------------------------------------
+  # Jobs
+  # -------------------------------------------------------------------------------------
+  # Chaos fixture C5 is a failing Job. Job pods are garbage-collected, sometimes before an
+  # investigation reaches them, so the Job object's status (failed count, conditions,
+  # BackoffLimitExceeded) is frequently the only surviving evidence. CronJobs are needed to
+  # tell "this Job failed" from "this Job has failed on every schedule for three days",
+  # which are different incidents with the same symptom.
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - jobs/status
+      - cronjobs
+      - cronjobs/status
+    verbs: ["get", "list", "watch"]
+
+  # -------------------------------------------------------------------------------------
+  # Autoscaling
+  # -------------------------------------------------------------------------------------
+  # An HPA is a frequent cause of "pods keep appearing and disappearing" that looks like
+  # instability and is in fact correct behaviour. Reading the HPA's current/desired
+  # replicas and its conditions (ScalingLimited, FailedGetResourceMetric) lets the agent
+  # rule that out instead of opening an incident about it -- a false positive it would
+  # otherwise have no way to avoid.
+  - apiGroups: ["autoscaling"]
+    resources:
+      - horizontalpodautoscalers
+      - horizontalpodautoscalers/status
+    verbs: ["get", "list", "watch"]
+
+  # -------------------------------------------------------------------------------------
+  # Live resource usage
+  # -------------------------------------------------------------------------------------
+  # metrics.k8s.io is the metrics-server API behind `kubectl top`. Deliberately granted in
+  # ADDITION to Prometheus, not instead of it, because the two answer different questions:
+  # Prometheus gives history and trend (the memory sawtooth that precedes an OOMKill);
+  # metrics.k8s.io gives the instantaneous truth right now.
+  #
+  # This also matters as a cross-check on the agent's own senses. If Prometheus is broken
+  # (see alerts/observability-selfcheck.yaml) this is an independent source that does not
+  # go through the same pipeline -- so the agent can distinguish "the pod is fine" from
+  # "my metrics pipeline is lying to me".
+  #
+  # Read-only by construction: this API has no write verbs.
+  - apiGroups: ["metrics.k8s.io"]
+    resources:
+      - nodes
+      - pods
+    verbs: ["get", "list"]
+
+  # -------------------------------------------------------------------------------------
+  # Networking (read)
+  # -------------------------------------------------------------------------------------
+  # "The pod is Running and Ready but nothing can reach it" is a real and common incident
+  # whose cause is a NetworkPolicy or an Ingress rule, and which is invisible in every
+  # workload-level signal. Read-only: the agent can explain a NetworkPolicy, never edit
+  # one -- including the one below that protects its own webhook endpoint.
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - networkpolicies
+      - ingresses
+    verbs: ["get", "list", "watch"]
+
+  # -------------------------------------------------------------------------------------
+  # Storage classes
+  # -------------------------------------------------------------------------------------
+  # Needed to explain a PVC stuck in Pending. On this cluster the answer is usually
+  # WaitForFirstConsumer (the claim binds only once a pod schedules, so a Pending PVC and
+  # a Pending pod are one deadlock, not two problems) -- which is only knowable by reading
+  # the StorageClass's volumeBindingMode.
+  - apiGroups: ["storage.k8s.io"]
+    resources:
+      - storageclasses
+      - volumeattachments
+    verbs: ["get", "list", "watch"]
+
+  # -------------------------------------------------------------------------------------
+  # Policy
+  # -------------------------------------------------------------------------------------
+  # A PodDisruptionBudget is why a drain hangs and why a rollout will not complete. Reading
+  # it turns "the rollout is stuck" into "the rollout is stuck because minAvailable is 1
+  # and there is 1 replica", which is an answer rather than a restatement.
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "hephaisto.fullname" . }}-read
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "hephaisto.fullname" . }}-read
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "hephaisto.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

@@ -4,19 +4,22 @@
 # mounts each data value as a dashboard file, so this ConfigMap does NOT need to live in the
 # Grafana namespace — it lives next to the thing it describes, in `hephaisto-obs`.
 #
-# DO NOT EDIT THE EMBEDDED JSON BY HAND. `hephaisto.json` in this directory is the source of
-# truth; this file is generated from it. After changing the JSON, regenerate with:
+# DO NOT EDIT THE EMBEDDED JSON BY HAND. The source of truth is
+# `charts/hephaisto/files/dashboards/hephaisto.json` - it moved into the chart, which renders
+# it with .Files.Get and needs no generation step at all. This pre-generated copy exists only
+# because the dev stack applies plain manifests rather than the chart.
 #
-#     cd infra/observability/dashboards
+# After changing the JSON, regenerate with (from the repo root):
+#
+#     OUT=infra/observability/dashboards/hephaisto-dashboard-configmap.yaml
 #     {
-#       sed -n '1,/^# END HEADER$/p' hephaisto-dashboard-configmap.yaml
+#       sed -n '1,/^# END HEADER$/p' "$OUT"
 #       kubectl create configmap hephaisto-dashboard \
 #         --namespace hephaisto-obs \
-#         --from-file=hephaisto.json=hephaisto.json \
+#         --from-file=hephaisto.json=charts/hephaisto/files/dashboards/hephaisto.json \
 #         --dry-run=client -o yaml \
 #       | kubectl label --local -f - grafana_dashboard=1 --dry-run=client -o yaml
-#     } > hephaisto-dashboard-configmap.yaml.new \
-#       && mv hephaisto-dashboard-configmap.yaml.new hephaisto-dashboard-configmap.yaml
+#     } > "$OUT.new" && mv "$OUT.new" "$OUT"
 #
 # Both kubectl invocations are `--dry-run=client` / `--local`: they never contact the API server.
 #

@@ -181,8 +181,12 @@ if observability:
     # not found". Nothing logs an error, because from Grafana's point of view it was simply
     # never told about any.
     k8s_yaml('infra/observability/grafana-datasources.yaml')
-    k8s_yaml('infra/observability/dashboards/hephaisto-dashboard-configmap.yaml')
-    k8s_yaml(listdir('infra/observability/alerts', recursive = True))
+    k8s_yaml('infra/observability/dashboards/hephaisto-dashboard-configmap.yaml')  # generated from charts/hephaisto/files/dashboards/hephaisto.json
+    # The alert rules live in the chart, because they are the agent's INPUT rather than this
+    # stack's own telemetry - a Hephaisto installed without them detects nothing and reports
+    # itself healthy. Applied directly here rather than through the chart so the dev stack and
+    # a chart install cannot drift: same files, one source of truth.
+    k8s_yaml(listdir('charts/hephaisto/files/alerts', recursive = True))
     k8s_resource(
         objects = [
             'hephaisto-kubernetes-rules:prometheusrule',

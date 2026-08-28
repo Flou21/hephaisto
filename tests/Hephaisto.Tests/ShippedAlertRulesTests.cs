@@ -104,6 +104,9 @@ public class ShippedAlertRulesTests
             dir = dir.Parent;
 
         Assert.NotNull(dir);
-        return Path.Combine(dir!.FullName, "infra", "observability", "alerts");
+        // The rules moved into the chart: they are the agent's INPUT, so they ship with it
+        // rather than with this repo's own observability stack. One source of truth - the
+        // Tiltfile applies these same files.
+        return Path.Combine(dir!.FullName, "charts", "hephaisto", "files", "alerts");
     }
 }

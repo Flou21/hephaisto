@@ -1,0 +1,257 @@
+{{- include "hephaisto.validateActionableNamespaces" . -}}
+{{/*
+=========================================================================================
+WHY replicas: 1 AND strategy: Recreate - and why the chart exposes no replicaCount
+=========================================================================================
+Before the agent executes any action it must, atomically: check the LLM budget, check the
+cooldown for this target, check the kill switch, and INSERT the action record claiming the
+right to perform it. All four are ONE Postgres transaction. If they are not, the gap between
+checking and acting is a TOCTOU window, and the code path that window sits on ends in
+`kubectl delete pod`.
+
+With two replicas that is a genuine distributed race: both read the cooldown as clear, both
+act, both write a correct-looking row, and the cooldown that exists precisely to stop
+repeated destructive action against one target did not hold. The same shape breaks the budget
+and, worst, the kill switch: a human flips it, one replica observes it, the other has already
+read the old value and proceeds. A kill switch a second replica can race is not a kill switch.
+
+`strategy: Recreate` is the same argument at rollout time - RollingUpdate deliberately runs
+old and new pods simultaneously, which is the two-replica scenario arriving through the back
+door on every deploy. Downtime is cheap: alerts that fire while the agent is down are re-sent
+by Alertmanager on its next repeat_interval.
+=========================================================================================
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hephaisto.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "hephaisto.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "hephaisto.labels" . | nindent 8 }}
+      annotations:
+        # Roll the pod when the switch ConfigMap's DEFAULTS change. Note this does not fight
+        # an emergency edit: the checksum is of the rendered template, not of the live object.
+        checksum/switches: {{ include (print $.Template.BasePath "/configmap-switches.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "hephaisto.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Long enough to finish an in-flight action and commit its transaction. Being killed
+      # mid-action is how the action log and reality diverge - the row says "restarted", the
+      # pod says otherwise - and a divergent action log poisons every later decision that
+      # reads it as history.
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 64198
+        runAsGroup: 64198
+        fsGroup: 64198
+      containers:
+        - name: hephaisto
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            # ---------------------------------------------------------------------------
+            # Mode - the env arm of the kill switch
+            # ---------------------------------------------------------------------------
+            - name: HEPHAISTO_MODE
+              value: {{ .Values.mode | quote }}
+
+            # ---------------------------------------------------------------------------
+            # Policy
+            # ---------------------------------------------------------------------------
+            # Same list that drives the RBAC write Role, so the grant and the app's own
+            # policy cannot disagree. .NET binds Policy__AllowedNamespaces__0.. to a set.
+            {{- range $i, $ns := .Values.policy.actionableNamespaces }}
+            - name: Policy__AllowedNamespaces__{{ $i }}
+              value: {{ $ns | quote }}
+            {{- end }}
+
+            # ---------------------------------------------------------------------------
+            # Database
+            # ---------------------------------------------------------------------------
+            # The agent does not read this Secret through the Kubernetes API - it has no `get`
+            # on secrets anywhere. The kubelet injects it; the agent cannot enumerate it.
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secrets.postgres is required: the chart never creates a Secret, it only references one." .Values.secrets.postgres }}
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secrets.postgres is required." .Values.secrets.postgres }}
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secrets.postgres is required." .Values.secrets.postgres }}
+                  key: POSTGRES_DB
+            - name: ConnectionStrings__hephaisto
+              value: "Host={{ if .Values.postgres.embedded.enabled }}{{ include "hephaisto.fullname" . }}-postgres{{ else }}{{ .Values.postgres.host }}{{ end }}.{{ .Release.Namespace }};Port={{ .Values.postgres.port }};Database=$(POSTGRES_DB);Username=$(POSTGRES_USER);Password=$(POSTGRES_PASSWORD);Include Error Detail=true"
+
+            # ---------------------------------------------------------------------------
+            # Telemetry
+            # ---------------------------------------------------------------------------
+            {{- if .Values.otel.endpoint }}
+            # HTTP/protobuf rather than gRPC: when this stops working, `curl -v` from inside
+            # the pod is a complete diagnosis. For the one service whose telemetry must be
+            # trustworthy, debuggability beats efficiency.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: {{ .Values.otel.protocol | quote }}
+            - name: OTEL_LOGS_EXPORTER
+              value: otlp
+            - name: OTEL_METRICS_EXPORTER
+              value: otlp
+            - name: OTEL_TRACES_EXPORTER
+              value: otlp
+            # Exemplars are what link the agent's own latency histograms to its traces.
+            - name: OTEL_METRICS_EXEMPLAR_FILTER
+              value: trace_based
+            {{- end }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ include "hephaisto.fullname" . }}
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "service.namespace={{ .Release.Namespace }}{{ with .Values.otel.environment }},deployment.environment={{ . }}{{ end }}"
+
+            # ---------------------------------------------------------------------------
+            # grafana-mcp - the agent's PromQL/LogQL/trace tools
+            # ---------------------------------------------------------------------------
+            # Unlike the inbound webhook, this call IS bearer-authenticated: the agent is our
+            # own code and can set a header.
+            #
+            # The names are `Grafana__<Property>`, matching GrafanaOptions.SectionName. They
+            # were once HEPHAISTO_GRAFANA_MCP_URL/_TOKEN, which nothing read - the binder
+            # wanted these names, McpUrl stayed null, and the agent ran for weeks with
+            # Kubernetes tools only and said nothing, because an empty tool list looks exactly
+            # like a legitimately unreachable grafana-mcp.
+            {{- if .Values.grafanaMcp.url }}
+            - name: Grafana__McpUrl
+              value: {{ .Values.grafanaMcp.url | quote }}
+            - name: Grafana__ServiceAccountToken
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secrets.grafanaMcp is required when grafanaMcp.url is set. Only Grafana can mint this token, so it cannot exist before install - create it first." .Values.secrets.grafanaMcp }}
+                  key: token
+            {{- end }}
+
+            # ---------------------------------------------------------------------------
+            # LLM
+            # ---------------------------------------------------------------------------
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secrets.llm is required: the chart never creates a Secret, it only references one." .Values.secrets.llm }}
+                  key: GEMINI_API_KEY
+
+            # A DIRECTORY, not a file: each ConfigMap key projects as its own file under it.
+            # Unset outside Kubernetes, which makes the ConfigMap arm silent rather than
+            # unreadable - someone running `dotnet run` has no ConfigMap and must not be
+            # pinned to Observe by its absence. Set-but-missing files ARE unreadable, and do
+            # pin to Observe.
+            - name: HEPHAISTO_SWITCHES_DIR
+              value: /etc/hephaisto
+
+            - name: ASPNETCORE_URLS
+              value: "http://0.0.0.0:8080"
+            - name: DOTNET_gcServer
+              value: "1"
+
+          volumeMounts:
+            - name: switches
+              mountPath: /etc/hephaisto
+              readOnly: true
+            # The published image writes nothing to its own filesystem, but .NET still wants
+            # somewhere for temp files, so a read-only root needs this.
+            - name: tmp
+              mountPath: /tmp
+
+          # -------------------------------------------------------------------------------
+          # Probes, on two DIFFERENT endpoints
+          # -------------------------------------------------------------------------------
+          # /healthz answers "is this process alive"; it must NOT check Postgres. /readyz
+          # answers "can this instance do useful work" and DOES.
+          #
+          # Conflating them is the classic self-inflicted outage: if liveness checked
+          # Postgres, a slow database would make the kubelet kill the agent, the new pod would
+          # find the same slow database, and the agent would CrashLoopBackOff because of a
+          # dependency it was supposed to be diagnosing. Liveness restarts; readiness only
+          # removes from the Service. Only the second is a safe response to a dependency.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          startupProbe:
+            # Covers EF Core migrations on first boot, which can outlast the liveness probe's
+            # patience. Without this, a cold start with pending migrations is killed halfway
+            # through and restarted forever.
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            # TRUE here, unlike the dev manifest in infra/: this chart runs the PUBLISHED
+            # image, which is a self-contained app rather than `dotnet watch`, so it needs no
+            # writable build output, NuGet cache or CLI home.
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+      volumes:
+        - name: switches
+          configMap:
+            name: {{ include "hephaisto.fullname" . }}-switches
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

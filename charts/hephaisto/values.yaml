@@ -1,0 +1,208 @@
+# =========================================================================================
+# Hephaisto
+# =========================================================================================
+# Defaults are for a consumer who is NOT this repo's dev cluster. Where the safe default and
+# the convenient default disagree, this file picks the safe one and says why. The dev cluster
+# gets its own overrides in values-dev.yaml.
+#
+# What this chart does NOT install: Prometheus, Alertmanager, Grafana, Loki, Tempo or an OTel
+# collector. You already run those, wired to your own storage and retention. It installs the
+# agent, its RBAC, the alert rules that are the agent's INPUT, and a dashboard.
+# =========================================================================================
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/flou21/hephaisto
+  # Defaults to .Chart.AppVersion, which CI stamps from the git tag - so the chart and the
+  # image it asks for can never drift. Override only to pin something else deliberately.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+serviceAccount:
+  name: ""
+  annotations: {}
+
+# -----------------------------------------------------------------------------------------
+# Where things live
+# -----------------------------------------------------------------------------------------
+# The namespace your Prometheus/Alertmanager/Grafana run in. Used by the NetworkPolicy, which
+# is the webhook's ENTIRE authentication - see networkPolicy below.
+observabilityNamespace: hephaisto-obs
+
+# -----------------------------------------------------------------------------------------
+# The Prometheus Operator selector - read the comment in _helpers.tpl before changing
+# -----------------------------------------------------------------------------------------
+# Must match `podMonitorSelector` / `ruleSelector` on your Prometheus resource. The default is
+# what kube-prometheus-stack uses when installed under its own name, which is right for most
+# consumers and wrong for anyone who named the release something else.
+#
+# Deliberately NOT defaulted to this repo's own value: that would be correct for exactly one
+# cluster and wrong-but-plausible everywhere else, which is the worst kind of default for a
+# setting whose failure mode is silence.
+prometheusOperator:
+  selectorLabels:
+    release: kube-prometheus-stack
+
+# -----------------------------------------------------------------------------------------
+# Policy - what the agent is allowed to touch
+# -----------------------------------------------------------------------------------------
+policy:
+  # THE NAMESPACES THE AGENT MAY ACT IN. Empty means act nowhere, which is the correct
+  # default for a process whose action set ends in `kubectl delete pod`.
+  #
+  # This one value drives BOTH the RBAC write Role/RoleBinding and the app's own
+  # Policy__AllowedNamespaces configuration, so the grant and the policy stop being two
+  # independent facts that nothing reconciles. An empty list renders no Role at all.
+  #
+  # Refused outright: kube-*, default, the release namespace, observabilityNamespace.
+  actionableNamespaces: []
+
+# -----------------------------------------------------------------------------------------
+# Mode
+# -----------------------------------------------------------------------------------------
+# Off | Observe | DryRun | Auto. The env arm; the ConfigMap and the database row are the other
+# two, and THE MOST RESTRICTIVE OF THE THREE WINS. Observe is the only defensible default:
+# it detects, investigates and reports, and mutates nothing.
+mode: Observe
+
+# -----------------------------------------------------------------------------------------
+# Secrets - referenced, never created
+# -----------------------------------------------------------------------------------------
+# This chart has no Secret template and will not grow one. A value passed to a chart ends up
+# in `helm get values`, in the release Secret, and in whatever git repo holds your Argo
+# Application - forever, and readable by anyone with get on Secrets in that namespace.
+#
+# Each name below is wrapped in `required`, so `helm template` fails loudly rather than
+# rendering a dangling secretKeyRef that surfaces twenty minutes later as
+# CreateContainerConfigError on a pod nobody is watching yet.
+secrets:
+  # Postgres credentials: keys POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB.
+  postgres: hephaisto-postgres
+  # The LLM API key: key GEMINI_API_KEY.
+  llm: hephaisto-llm
+  # The grafana-mcp bearer token: key `token`. Cannot exist before install - only Grafana can
+  # mint it - so this is necessarily a reference to something you create first.
+  grafanaMcp: grafana-mcp-caller-token
+
+# -----------------------------------------------------------------------------------------
+# Database
+# -----------------------------------------------------------------------------------------
+postgres:
+  # Host the agent connects to. Ignored when embedded.enabled is true.
+  host: postgres
+  port: 5432
+
+  # A single-replica StatefulSet with a local PVC, for evaluating the chart. It is NOT a
+  # production database: no backups, no replication, no connection pooling. Default off, so
+  # nobody gets one by accident and then discovers it during an incident.
+  embedded:
+    enabled: false
+    image: pgvector/pgvector:pg17
+    storage: 10Gi
+    storageClassName: ""
+
+# -----------------------------------------------------------------------------------------
+# Telemetry
+# -----------------------------------------------------------------------------------------
+otel:
+  # Empty means no OTLP export: console logging plus the /metrics scrape endpoint, never a
+  # crash and never silence. The agent has to start in a broken cluster, because a broken
+  # cluster is when someone needs it.
+  endpoint: ""
+  protocol: http/protobuf
+  # Free-form; ends up as resource attributes on every span, metric and log.
+  environment: ""
+
+# grafana-mcp gives the agent PromQL, LogQL and trace tools. Without it the agent degrades to
+# Kubernetes reads only - which works, and is much worse at diagnosis. Empty url disables it,
+# and the agent logs a warning saying so rather than starting silently toolless.
+grafanaMcp:
+  url: ""
+
+# -----------------------------------------------------------------------------------------
+# Alert rules - the agent's INPUT, not its telemetry
+# -----------------------------------------------------------------------------------------
+# These are in the chart because a Hephaisto installed without them detects nothing and
+# reports itself perfectly healthy. They are what turns your cluster's symptoms into the
+# signals it investigates.
+alerts:
+  kubernetes: true
+  slo: true
+  # The dead-man's switch. An always-firing alert whose ABSENCE is the signal: if it stops
+  # arriving, the whole alert path between Prometheus and the agent is broken. Leave it on.
+  watchdog: true
+  # OFF by default, and it should stay off unless you run this repo's exact collector
+  # topology. Its alerts assert facts about OUR pipeline; on a different stack they fire
+  # permanently - and are then fed to the agent as incidents, which is worse than useless.
+  observabilitySelfcheck: false
+
+dashboard:
+  # A ConfigMap labelled for the Grafana sidecar to pick up.
+  enabled: true
+  # The label the sidecar watches for. kube-prometheus-stack's default is grafana_dashboard.
+  sidecarLabel: grafana_dashboard
+  # Grafana folder annotation; empty means the sidecar's default folder.
+  folder: ""
+
+# -----------------------------------------------------------------------------------------
+# NetworkPolicy - this IS the webhook's authentication
+# -----------------------------------------------------------------------------------------
+# The Alertmanager webhook is unauthenticated, because Alertmanager cannot send credentials to
+# a receiver. Anything that can reach port 8080 can create incidents and, in Auto mode, cause
+# the agent to act on them. The only thing standing in front of it is this policy.
+networkPolicy:
+  enabled: true
+
+  # Extra CIDRs allowed to reach 8080. SHIPS EMPTY, and that is not caution for its own sake:
+  # `0.0.0.0/0` here means every pod in the cluster can post forged alerts.
+  #
+  # You may still need it. Kubelet probes arrive from the node's address, which no
+  # namespaceSelector can match, so on some clusters an empty list means the liveness probe
+  # fails and the pod is killed in a loop by its own protection. If that happens, prefer the
+  # node CIDR over 0.0.0.0/0.
+  extraIngressCIDRs: []
+
+# -----------------------------------------------------------------------------------------
+# RBAC
+# -----------------------------------------------------------------------------------------
+rbac:
+  # The cluster-wide read ClusterRole and its binding. Reads cannot break anything, and an SRE
+  # cannot diagnose a namespace in isolation.
+  #
+  # There is deliberately no `extraRules` value. A chart whose permission set is a
+  # values-driven loop is a chart where `--set rbac.extraRules[0].resources[0]='*'` grants
+  # cluster-wide Secret access and the `helm diff` looks unremarkable. Widening this stays a
+  # code change and a commit.
+  create: true
+
+  # The cordon/drain ClusterRole. It is CREATED but NEVER BOUND, and there is no value here to
+  # bind it: doing so would turn a recorded human decision into a line buried in an Argo
+  # Application. Binding it stays a hand-written ClusterRoleBinding in its own commit. The
+  # friction is the feature.
+  nodeRole: true
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    # No CPU limit: CFS throttling on a latency-sensitive process produces stalls that look
+    # exactly like the dependency slowness the agent is meant to be diagnosing. Memory IS
+    # limited, to bound a leak.
+    memory: 1Gi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+
+# NOTE: there is deliberately no `replicaCount`.
+#
+# The budget check, cooldown check, kill-switch check and the action INSERT are one
+# Serializable transaction. Two replicas make that a distributed TOCTOU race on the one code
+# path that ends in `kubectl delete pod` - and a kill switch a second replica can race is not
+# a kill switch. The Deployment is a documented singleton with strategy: Recreate.

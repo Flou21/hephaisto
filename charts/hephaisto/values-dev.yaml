@@ -1,0 +1,59 @@
+# Overrides for THIS repo's dev cluster (k3s under Rancher Desktop). Not an example to copy:
+# two of these values are actively unsafe anywhere else, and say so.
+
+image:
+  repository: hephaisto/agent
+  tag: dev
+  # The image is built straight into the node's docker daemon; there is no registry to pull
+  # from, so Always would fail on a tag that only exists locally.
+  pullPolicy: IfNotPresent
+
+observabilityNamespace: hephaisto-obs
+
+# This cluster's kube-prometheus-stack release is named `hephaisto`, so its selectors look for
+# release=hephaisto. This is exactly the value that is right here and wrong everywhere else.
+prometheusOperator:
+  selectorLabels:
+    release: hephaisto
+
+# The one namespace on this cluster that contains nothing anyone depends on.
+policy:
+  actionableNamespaces:
+    - hephaisto-chaos
+
+mode: Observe
+
+otel:
+  endpoint: http://otel-collector.hephaisto-obs:4318
+  protocol: http/protobuf
+  environment: studio-rancher-desktop
+
+grafanaMcp:
+  url: http://grafana-mcp.hephaisto-obs:8000/mcp
+
+postgres:
+  embedded:
+    enabled: true
+    storage: 10Gi
+
+alerts:
+  # On here, and only here: these assert facts about THIS collector topology, and would fire
+  # permanently on any other stack - and then be fed to the agent as incidents.
+  observabilitySelfcheck: true
+
+networkPolicy:
+  enabled: true
+  # UNSAFE AS A GENERAL DEFAULT, and deliberately not in values.yaml. On this node the kubelet
+  # probes arrive from an address no namespaceSelector can match, so without this the liveness
+  # probe fails and the pod is killed in a loop by its own protection. The cost is that any
+  # pod in this cluster can post a forged alert - acceptable only because this cluster is
+  # single-tenant and reachable from one private network.
+  extraIngressCIDRs:
+    - 0.0.0.0/0
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    memory: 1Gi

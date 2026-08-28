@@ -1,0 +1,96 @@
+{{- if .Values.networkPolicy.enabled }}
+{{/*
+=========================================================================================
+The NetworkPolicy IS the webhook's authentication
+=========================================================================================
+The Alertmanager receiver is unauthenticated - Alertmanager cannot send credentials to a
+receiver, so there is no header to check. An unauthenticated endpoint that CREATES INCIDENTS
+and can trigger REMEDIATION is a forged-alert injection point: anything able to POST to it can
+make the agent believe a workload is broken and, in Auto mode, act on it.
+
+So the mitigation is at the network layer, and this policy is not a hardening extra - it is
+the control. Remember that NetworkPolicy `from:` rules are OR'd: every entry below widens the
+set of things that can forge an alert.
+
+ALSO: your cluster must actually enforce NetworkPolicy. Many CNIs (kind's default among them)
+accept these objects and ignore them, in which case this file is documentation rather than a
+control, and the only remaining protection is that the cluster is trusted.
+=========================================================================================
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "hephaisto.fullname" . }}-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "hephaisto.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Alertmanager's webhooks and Prometheus's scrape. Selecting the NAMESPACE rather than
+    # specific pods is deliberate: Alertmanager and Prometheus pod labels are chart-managed
+    # and change across upgrades, and a policy that breaks on a `helm upgrade` would cut the
+    # agent off from its alert feed silently.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.observabilityNamespace }}
+      ports:
+        - protocol: TCP
+          port: 8080
+
+    # Within the namespace: the agent to its own Postgres, and any future sidecar.
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 5432
+
+    {{- if .Values.networkPolicy.extraIngressCIDRs }}
+    # Kubelet probes arrive from the NODE's address, which no namespaceSelector can match, so
+    # on some clusters the liveness probe fails without an entry here and the pod is killed in
+    # a loop by its own protection. This is the single most common way a first NetworkPolicy
+    # breaks a working service.
+    #
+    # Every CIDR here can forge an alert. Prefer the node CIDR over 0.0.0.0/0.
+    - from:
+        {{- range .Values.networkPolicy.extraIngressCIDRs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 8080
+    {{- end }}
+{{- if .Values.postgres.embedded.enabled }}
+---
+# Postgres accepts connections only from inside this namespace. It is deliberately not exposed
+# to the observability stack: that stack has no business reading the agent's incident history,
+# and the agent's memory is not a telemetry source.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "hephaisto.fullname" . }}-postgres-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "hephaisto.fullname" . }}-postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 5432
+{{- end }}
+{{- end }}
