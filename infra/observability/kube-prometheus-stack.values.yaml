@@ -44,6 +44,17 @@ prometheusOperator:
     # Skip the webhook + its cert-generating Jobs: on a single-node dev cluster they are pure
     # startup latency and a failure mode (the patch Job can wedge and block the whole release).
     enabled: false
+  tls:
+    # MUST be false whenever admissionWebhooks.enabled is false, and this is not optional.
+    # The two are separate flags but not independent: the operator Deployment mounts its
+    # serving cert from the `<release>-kube-prometheus-admission` Secret, and that Secret is
+    # created ONLY by the admission Jobs this chart just disabled. Leaving tls at its default
+    # true therefore wedges the operator in ContainerCreating forever with
+    #   MountVolume.SetUp failed for volume "tls-secret": secret ... not found
+    # and, because the operator never starts, Prometheus and Alertmanager are never created
+    # at all - the CRs sit there with nothing reconciling them. Nothing in the chart warns
+    # about this; it presents as an unrelated storage error.
+    enabled: false
   resources:
     requests:
       cpu: 50m

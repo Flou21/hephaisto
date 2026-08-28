@@ -368,7 +368,17 @@ spec:
 
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
+            # FALSE only because this Deployment currently runs the DEV image, whose
+            # entrypoint is `dotnet watch` -- a compiler. It has to write build output, a
+            # NuGet cache and a CLI home; with a read-only root it dies at startup with
+            #   System.IO.IOException: Read-only file system : '/.dotnet'
+            # which reads like a permissions bug and is actually a design mismatch.
+            #
+            # Set this back to TRUE when this manifest points at the published image from
+            # Dockerfile (a self-contained app that writes nothing). Losing it here costs
+            # little: the boundary that actually contains this pod is RBAC, and none of
+            # runAsNonRoot, drop ALL or allowPrivilegeEscalation:false is relaxed.
+            readOnlyRootFilesystem: false
             capabilities:
               drop: ["ALL"]
 

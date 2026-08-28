@@ -3,6 +3,19 @@
 # repos that cannot be rebuilt from a fresh clone.
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0
+
+# The manifest pins runAsUser 64198, so everything below has to be owned by and writable by
+# that uid. Restoring as root and then running as 64198 leaves a NuGet cache under /root the
+# runtime user cannot read, which surfaces much later as an unrelated-looking restore error.
+RUN useradd --uid 64198 --create-home --home-dir /home/watchtower watchtower \
+ && mkdir -p /app \
+ && chown -R 64198:64198 /app /home/watchtower
+
+USER 64198:64198
+ENV HOME=/home/watchtower \
+    DOTNET_CLI_HOME=/home/watchtower \
+    DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    DOTNET_NOLOGO=1
 WORKDIR /app
 
 COPY Directory.Build.props Directory.Packages.props ./

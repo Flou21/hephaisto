@@ -408,6 +408,14 @@ config:
         enabled: true
         # Short. Aspire is in-memory and disposable; there is nothing worth retrying into it
         # for a minute.
+        #
+        # max_interval MUST be set alongside it, and lower. It defaults to 30s, so a bare
+        # max_elapsed_time of 10s is rejected at startup with
+        #   'max_elapsed_time' must not be less than 'max_interval'
+        # and the collector refuses to start at all - taking traces, metrics AND logs down
+        # over a retry setting for a dashboard nothing depends on.
+        initial_interval: 1s
+        max_interval: 5s
         max_elapsed_time: 10s
       sending_queue:
         enabled: true
