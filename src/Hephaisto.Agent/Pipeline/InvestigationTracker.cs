@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Hephaisto.Core.Abstractions;
+using Hephaisto.Core.Domain;
 
 namespace Hephaisto.Agent.Pipeline;
 
@@ -53,11 +54,16 @@ public sealed class InvestigationTracker(IClock clock)
     /// <summary>
     /// Called as the loop progresses so a reader sees movement rather than a spinner.
     /// </summary>
-    public void Report(Guid incidentId, int steps, int toolCalls, decimal costUsd, string? activity)
+    public void Report(
+        Guid incidentId,
+        int toolCalls,
+        decimal costUsd,
+        string? activity,
+        IReadOnlyList<InvestigationStep> stepLog)
     {
         if (_running.TryGetValue(incidentId, out var entry))
         {
-            entry.Update(steps, toolCalls, costUsd, activity);
+            entry.Update(toolCalls, costUsd, activity, stepLog);
         }
     }
 
@@ -82,18 +88,37 @@ public sealed class InProgressInvestigation(Guid incidentId, string model, DateT
 
     public DateTimeOffset StartedAt { get; } = startedAt;
 
-    public int Steps { get; private set; }
+    public int Steps => StepLog.Count;
 
     public int ToolCalls { get; private set; }
 
     public decimal CostUsd { get; private set; }
 
+    /// <summary>
+    /// The steps taken so far, in order.
+    /// </summary>
+    /// <remarks>
+    /// A snapshot, not a live reference. The recorder mutates its list under a lock from the
+    /// investigation's own thread while a request may be reading this one, and handing out
+    /// the live list would make a page render race a tool call. The recorder's Steps property
+    /// already copies, so this holds the copy it was given.
+    ///
+    /// Counters alone are not enough here: "16 steps, 9 tool calls" says the agent is busy
+    /// and nothing about whether it is asking sensible questions, which is the thing a person
+    /// watching an investigation actually wants to judge.
+    /// </remarks>
+    public IReadOnlyList<InvestigationStep> StepLog { get; private set; } = [];
+
     /// <summary>What it is doing, e.g. the tool it is waiting on. Null before the first turn.</summary>
     public string? Activity { get; private set; }
 
-    internal void Update(int steps, int toolCalls, decimal costUsd, string? activity)
+    internal void Update(
+        int toolCalls,
+        decimal costUsd,
+        string? activity,
+        IReadOnlyList<InvestigationStep> stepLog)
     {
-        Steps = steps;
+        StepLog = stepLog;
         ToolCalls = toolCalls;
         CostUsd = costUsd;
 

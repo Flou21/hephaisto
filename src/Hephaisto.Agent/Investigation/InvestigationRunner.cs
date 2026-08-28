@@ -134,7 +134,7 @@ public sealed class InvestigationRunner(
             clock,
             opts.EvidenceBlobRetention,
             (rec, activity) => tracker.Report(
-                incident.Id, rec.Steps.Count, rec.ToolCallCount, rec.TotalCostUsd, activity));
+                incident.Id, rec.ToolCallCount, rec.TotalCostUsd, activity, rec.Steps));
         var budget = new InvestigationBudget(llm.Investigation, clock);
         var conclusion = new ConclusionHolder();
 

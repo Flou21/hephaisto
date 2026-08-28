@@ -221,9 +221,90 @@ else
                     <dd class="mono">@(live.Activity is { Length: > 0 } a ? a : "thinking")</dd>
                 </dl>
 
+                <h3>trace <span class="hp-muted">— live</span></h3>
+
+                @if (live.StepLog.Count == 0)
+                {
+                    <p class="hp-empty">Waiting for the first model turn.</p>
+                }
+                else
+                {
+                    @* The same fields as a finished investigation's trace, minus the raw
+                       expander. That omission is not a shortcut: RawBlobId points at a row
+                       that is not written until the investigation commits, so offering the
+                       expander here would be offering a link that cannot resolve. The digest
+                       is what the model actually saw, and it is already in memory. *@
+                    <ol class="hp-steps">
+                        @foreach (var step in live.StepLog)
+                        {
+                            <li @key="step.Id">
+                                <details class="hp-step @(step.Failed ? "step-failed" : "")">
+                                    <summary>
+                                        <span class="hp-ordinal mono">@step.Ordinal</span>
+                                        <span class="hp-step-kind @(step.Kind == StepKind.ToolCall ? "kind-tool" : "kind-llm")">
+                                            @(step.Kind == StepKind.ToolCall ? "tool" : "llm")
+                                        </span>
+                                        <span class="hp-step-name mono">@step.Label</span>
+                                        @if (step.ToolServer is { Length: > 0 })
+                                        {
+                                            <span class="hp-server mono">@step.ToolServer</span>
+                                        }
+                                        <span class="hp-step-metrics mono">
+                                            @Display.Millis(step.DurationMs)
+                                            @if (step.InputTokens + step.OutputTokens > 0)
+                                            {
+                                                <text> · @Display.Tokens(step.InputTokens + step.OutputTokens) tok</text>
+                                            }
+                                            @if (step.CostUsd > 0)
+                                            {
+                                                <text> · @Display.Usd(step.CostUsd)</text>
+                                            }
+                                            @if (step.ResultBytes > 0)
+                                            {
+                                                <text> · @Display.Bytes(step.ResultBytes)</text>
+                                            }
+                                        </span>
+                                        @if (step.ResultTruncated)
+                                        {
+                                            <span class="hp-truncated"><span class="glyph">~</span> truncated</span>
+                                        }
+                                        @if (step.Failed)
+                                        {
+                                            <span class="hp-failed"><span class="glyph">x</span> failed</span>
+                                        }
+                                    </summary>
+
+                                    <div class="hp-step-body">
+                                        @if (step.Error is { Length: > 0 })
+                                        {
+                                            <div class="hp-callout callout-error"><span class="glyph">x</span> @step.Error</div>
+                                        }
+
+                                        @if (step.Arguments is { Length: > 0 })
+                                        {
+                                            <h4>arguments</h4>
+                                            <pre class="hp-code">@step.Arguments</pre>
+                                        }
+
+                                        <h4>result digest <span class="hp-muted">— what the model actually saw</span></h4>
+                                        @if (string.IsNullOrEmpty(step.ResultDigest))
+                                        {
+                                            <p class="hp-empty">Still running.</p>
+                                        }
+                                        else
+                                        {
+                                            <pre class="hp-code">@step.ResultDigest</pre>
+                                        }
+                                    </div>
+                                </details>
+                            </li>
+                        }
+                    </ol>
+                }
+
                 <p class="hp-empty">
-                    Steps, findings and evidence are written when this finishes; they commit
-                    together so a crash cannot leave half an investigation behind.
+                    Findings, evidence and the plan are written when this finishes; they
+                    commit together so a crash cannot leave half an investigation behind.
                 </p>
             </article>
         }

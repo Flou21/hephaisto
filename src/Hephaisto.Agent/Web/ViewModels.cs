@@ -437,6 +437,17 @@ public sealed record InvestigationProgressView
 
     /// <summary>The last tool it called, which is the most legible "what is it doing".</summary>
     public string? Activity { get; init; }
+
+    /// <summary>
+    /// The steps taken so far, in order. Populated on the detail view only.
+    /// </summary>
+    /// <remarks>
+    /// Left empty by the list projection on purpose. A digest runs to a few kilobytes, and
+    /// attaching every step of every running investigation to a page that renders fifty rows
+    /// would push a lot of text over the circuit for something no one is reading at that
+    /// zoom level. The counters are what the list needs; the log is what the detail page is.
+    /// </remarks>
+    public IReadOnlyList<StepView> StepLog { get; init; } = [];
 }
 
 public sealed record AgentStatusView

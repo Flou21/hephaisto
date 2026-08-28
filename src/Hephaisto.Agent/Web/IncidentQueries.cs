@@ -206,6 +206,11 @@ public sealed class IncidentQueries(
                     ToolCalls = live.ToolCalls,
                     CostUsd = live.CostUsd,
                     Activity = live.Activity,
+
+                    // Mapped through the same MapStep the finished investigations use, so a
+                    // step renders identically whether it is still running or was read back
+                    // from Postgres. Two renderers for one thing is how they drift.
+                    StepLog = [.. live.StepLog.Select(MapStep)],
                 }
                 : null,
             Id = incident.Id,
