@@ -12,15 +12,47 @@
     <title>Hephaisto</title>
     @* Local stylesheet only. This pod may run in a cluster with no egress, and a console
        whose CSS silently fails to load is unreadable at exactly the moment it is needed. *@
-    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="@Assets["app.css"]" />
     <link rel="icon" href="data:," />
     <HeadOutlet @rendermode="InteractiveServer" />
 </head>
 
 <body>
+    @*
+        The reconnect overlay. Blazor drives this purely by id and by the classes it puts on
+        the container - if the element is absent, as it was here, a dropped circuit produces
+        NO indication of any kind: the page keeps rendering the last state it received, the
+        durations stop ticking, and a stale incident list is indistinguishable from a quiet
+        cluster. That is the same failure the AgentWatchdog exists to prevent, one layer up,
+        and it is worse here because a human is looking straight at it and being reassured.
+
+        The circuit drops on every pod restart, so this is the ordinary case, not the
+        exotic one.
+    *@
+    <div id="components-reconnect-modal" class="hp-reconnect">
+        <div class="hp-reconnect-box">
+            <p class="hp-reconnect-title">Connection to the agent lost</p>
+
+            <p class="hp-reconnect-retrying">
+                Reconnecting, attempt <span id="components-reconnect-current-attempt"></span>
+                of <span id="components-reconnect-max-retries"></span>.
+            </p>
+
+            <p class="hp-reconnect-failed">
+                Could not reconnect.
+                <button type="button" onclick="location.reload()">Reload the page</button>
+            </p>
+
+            <p class="hp-reconnect-note">
+                This page is frozen. Nothing on it has updated since the connection dropped,
+                and it may be badly out of date.
+            </p>
+        </div>
+    </div>
+
     <Routes @rendermode="InteractiveServer" />
-    <script src="_framework/blazor.web.js"></script>
-    <script src="app.js"></script>
+    <script src="@Assets["_framework/blazor.web.js"]"></script>
+    <script src="@Assets["app.js"]"></script>
 </body>
 
 </html>

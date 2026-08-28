@@ -1070,3 +1070,92 @@ details > summary {
   font-size: 0.85rem;
   line-height: 1.7;
 }
+
+/* ---------------------------------------------------------------------------------------
+ * Reconnect overlay.
+ *
+ * Blazor toggles the classes on #components-reconnect-modal; this file decides what they
+ * look like. Hidden by default, and deliberately loud when shown: the thing it is reporting
+ * is that every number on the page has stopped being true, which is the one failure an
+ * incident console must never present quietly.
+ * ------------------------------------------------------------------------------------ */
+
+.hp-reconnect {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgb(6 8 11 / 82%);
+    align-items: center;
+    justify-content: center;
+    font-family: var(--sans);
+}
+
+/* Blazor adds exactly one of these. `show` is a retry in progress; `failed` means the
+   retries are exhausted; `rejected` means the server came back but this circuit is gone -
+   its state died with the old process, so only a reload recovers. */
+.hp-reconnect.components-reconnect-show,
+.hp-reconnect.components-reconnect-failed,
+.hp-reconnect.components-reconnect-rejected {
+    display: flex;
+}
+
+.hp-reconnect-box {
+    max-width: 34rem;
+    padding: 1.5rem 1.75rem;
+    border: 1px solid var(--orange);
+    border-left: 4px solid var(--orange);
+    border-radius: 4px;
+    background: var(--bg-raised);
+    color: var(--fg);
+    box-shadow: 0 12px 40px rgb(0 0 0 / 55%);
+}
+
+.hp-reconnect-title {
+    margin: 0 0 0.6rem;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--orange);
+}
+
+.hp-reconnect-title::before {
+    content: "! ";
+    font-family: var(--mono);
+}
+
+.hp-reconnect-retrying,
+.hp-reconnect-failed {
+    display: none;
+    margin: 0 0 0.6rem;
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    color: var(--fg-dim);
+}
+
+.components-reconnect-show .hp-reconnect-retrying,
+.components-reconnect-failed .hp-reconnect-failed,
+.components-reconnect-rejected .hp-reconnect-failed {
+    display: block;
+}
+
+.hp-reconnect-note {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--fg-faint);
+}
+
+.hp-reconnect-box button {
+    margin-left: 0.4rem;
+    padding: 0.25rem 0.7rem;
+    border: 1px solid var(--border-strong);
+    border-radius: 3px;
+    background: var(--bg-hover);
+    color: var(--fg);
+    font: inherit;
+    cursor: pointer;
+}
+
+.hp-reconnect-box button:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}

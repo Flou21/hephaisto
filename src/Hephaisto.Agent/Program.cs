@@ -58,13 +58,20 @@ var app = builder.Build();
 // MigrateHephaistoDatabaseAsync for why this fails fast rather than degrading.
 await app.MigrateHephaistoDatabaseAsync();
 
-app.UseStaticFiles();
+// MapStaticAssets, not UseStaticFiles. It fingerprints app.css and app.js at build time and
+// serves them immutable, so a released fix to either actually reaches a browser that already
+// has the old one cached. With UseStaticFiles the URLs never change, and a console left open
+// on a wall keeps running last release's stylesheet and last release's scripts indefinitely -
+// which is how a fix to the reconnect overlay would ship and then not apply to the one page
+// that most needed it.
+app.MapStaticAssets();
 app.UseAntiforgery();
 
 app.MapDefaultEndpoints();
 app.MapHephaistoEndpoints();
 
 app.MapRazorComponents<App>()
-    .AddInteractiveServerRenderMode();
+    .AddInteractiveServerRenderMode()
+    .WithStaticAssets();
 
 await app.RunAsync();
