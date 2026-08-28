@@ -1,0 +1,65 @@
+namespace Watchtower.Agent.Pipeline;
+
+/// <summary>
+/// Drains <see cref="InvestigationQueue"/> and runs investigations with bounded concurrency.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Concurrency is 2, and the number matters. Each investigation holds an LLM conversation
+/// open for up to four minutes and costs real money, so unbounded parallelism turns a cluster
+/// event into a simultaneous spend spike and a rate-limit wall. Two is enough that one slow
+/// investigation does not block an unrelated urgent one, and small enough that a storm queues
+/// visibly rather than executing invisibly.
+/// </para>
+/// </remarks>
+public sealed class InvestigationWorker(
+    InvestigationQueue queue,
+    IServiceScopeFactory scopeFactory,
+    ILogger<InvestigationWorker> logger) : BackgroundService
+{
+    private const int MaxConcurrency = 2;
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        using var slots = new SemaphoreSlim(MaxConcurrency, MaxConcurrency);
+        var running = new List<Task>();
+
+        await foreach (var incidentId in queue.ReadAllAsync(stoppingToken).ConfigureAwait(false))
+        {
+            await slots.WaitAsync(stoppingToken).ConfigureAwait(false);
+
+            running.Add(RunAsync(incidentId, slots, stoppingToken));
+            running.RemoveAll(t => t.IsCompleted);
+        }
+
+        // Let in-flight investigations finish on shutdown. Killing one mid-loop burns the
+        // tokens already spent and produces nothing - the same reasoning as the budget
+        // service's "an in-flight investigation is allowed to finish".
+        await Task.WhenAll(running).ConfigureAwait(false);
+    }
+
+    private async Task RunAsync(Guid incidentId, SemaphoreSlim slots, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var investigator = scope.ServiceProvider.GetRequiredService<IIncidentInvestigator>();
+
+            await investigator.InvestigateAsync(incidentId, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Shutdown, not a failure.
+        }
+        catch (Exception ex)
+        {
+            // A failed investigation is an escalation, never a crash. The incident is real
+            // whether or not the model managed to say anything useful about it.
+            logger.LogError(ex, "Investigation of incident {IncidentId} failed.", incidentId);
+        }
+        finally
+        {
+            slots.Release();
+        }
+    }
+}
