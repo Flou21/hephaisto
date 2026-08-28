@@ -1,7 +1,38 @@
+# Keeps the build context small and keeps things that must never reach a layer out of one.
+#
+# Note that both Dockerfiles COPY explicit paths rather than the whole tree, so nothing here
+# is load-bearing for correctness of the agent image - it is for context size, and for the
+# guarantee that a secret cannot be picked up by a future wildcard COPY.
+
 **/bin/
 **/obj/
+TestResults/
+
+# MinVer reads git history for the version, but the version is passed in as a build arg
+# precisely so the image never needs .git.
 .git/
-infra/
+.github/
+
+# Never. backup/old-grafana/grafana.db is another system's credential database.
+backup/
+secrets/
+
 tests/
 docs/
+charts/
 *.md
+
+# Dev-time only: the Tiltfile and the watch image it builds have no place in a release layer.
+Tiltfile
+Dockerfile.dev
+
+# Manifests are applied to a cluster, not built into an image.
+infra/
+
+# ...except this one. infra/chaos/faulty-service/Dockerfile builds the C10 fixture with the
+# REPO ROOT as its context - it has to, because the project inherits Central Package
+# Management from /Directory.Packages.props and its TFM from /Directory.Build.props, and a
+# context that excludes those fails restore with NU1008. The blanket `infra/` rule above
+# therefore broke that build: `COPY infra/chaos/faulty-service/...` cannot find a path the
+# context excluded. Negations must come after the rule they carve out of.
+!infra/chaos/faulty-service/
