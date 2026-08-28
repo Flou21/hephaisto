@@ -1,4 +1,5 @@
 using Hephaisto.Agent.Persistence;
+using Hephaisto.Agent.Safety;
 using Hephaisto.Core.Domain;
 using Microsoft.EntityFrameworkCore;
 
@@ -32,6 +33,7 @@ namespace Hephaisto.Agent.Pipeline;
 public sealed class StrandedIncidentRequeue(
     IServiceScopeFactory scopes,
     InvestigationQueue queue,
+    IKillSwitch killSwitch,
     ILogger<StrandedIncidentRequeue> logger) : BackgroundService
 {
     /// <summary>Half the queue's capacity, leaving room for incidents arriving now.</summary>
@@ -46,6 +48,22 @@ public sealed class StrandedIncidentRequeue(
 
         try
         {
+            // An operator who switched the agent Off and then restarted it - which is the
+            // normal way to apply a config change - must not have this sweep start sixteen
+            // LLM investigations for them on the way up. Without this check, Off survives the
+            // restart but the backlog it was meant to stop does not.
+            var mode = await killSwitch.ResolveAsync(stoppingToken).ConfigureAwait(false);
+
+            if (mode.Effective == AgentMode.Off)
+            {
+                logger.LogInformation(
+                    "Agent is Off ({DecidedBy}); not re-queueing stranded incidents. They stay "
+                    + "in Investigating and are swept up by a later start once it is switched on.",
+                    mode.DecidedBy);
+
+                return;
+            }
+
             await using var scope = scopes.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<HephaistoDbContext>();
 

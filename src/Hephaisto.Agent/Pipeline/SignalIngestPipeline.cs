@@ -1,6 +1,7 @@
 using System.Threading.Channels;
 using Microsoft.Extensions.Options;
 using Hephaisto.Agent.Options;
+using Hephaisto.Agent.Safety;
 using Hephaisto.Agent.Web;
 using Hephaisto.Core.Abstractions;
 using Hephaisto.Core.Domain;
@@ -41,6 +42,7 @@ public sealed class SignalIngestPipeline : BackgroundService, ISignalSink
     private readonly InvestigationQueue investigationQueue;
     private readonly IClock clock;
     private readonly IOptionsMonitor<IngestOptions> options;
+    private readonly IKillSwitch killSwitch;
     private readonly ILogger<SignalIngestPipeline> logger;
     private readonly HephaistoMetrics metrics;
 
@@ -49,6 +51,7 @@ public sealed class SignalIngestPipeline : BackgroundService, ISignalSink
         InvestigationQueue investigationQueue,
         IClock clock,
         IOptionsMonitor<IngestOptions> options,
+        IKillSwitch killSwitch,
         HephaistoMetrics metrics,
         ILogger<SignalIngestPipeline> logger)
     {
@@ -56,6 +59,7 @@ public sealed class SignalIngestPipeline : BackgroundService, ISignalSink
         this.investigationQueue = investigationQueue;
         this.clock = clock;
         this.options = options;
+        this.killSwitch = killSwitch;
         this.metrics = metrics;
         this.logger = logger;
     }
@@ -102,6 +106,30 @@ public sealed class SignalIngestPipeline : BackgroundService, ISignalSink
 
     private async Task IngestAsync(Signal signal, CancellationToken ct)
     {
+        // AgentMode.Off is documented as "ingest nothing, investigate nothing. Full stop."
+        // This is where the first half of that promise is kept. Every producer funnels through
+        // here - the Alertmanager webhook and the Kubernetes watcher both reach triage only via
+        // this method - so one gate covers both, and there is no second path to keep in sync.
+        //
+        // Re-resolved per signal rather than read from ModeSnapshot. The snapshot exists for
+        // visibility and the `hephaisto.mode` gauge; SwitchWatcher says so itself. A gate behind
+        // a ten-second poller inherits the poller's latency and its failure modes, which is the
+        // whole reason KillSwitch re-reads the ConfigMap on every call.
+        //
+        // Gated here rather than in SubmitAsync deliberately: SubmitAsync only writes to a
+        // bounded channel, and making it await a database-backed resolve would put a round trip
+        // on the unauthenticated webhook's synchronous path. A signal may enter the channel; it
+        // may not become an incident.
+        var mode = await killSwitch.ResolveAsync(ct).ConfigureAwait(false);
+
+        if (mode.Effective == AgentMode.Off)
+        {
+            // Counted, not logged. A storm while Off would produce one log line per signal for
+            // no new information - SwitchWatcher already logs the transition that caused this.
+            metrics.SignalDropped(signal.Source, "mode-off");
+            return;
+        }
+
         var opts = options.CurrentValue;
         var now = clock.UtcNow;
 

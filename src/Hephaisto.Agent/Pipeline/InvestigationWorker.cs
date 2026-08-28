@@ -1,3 +1,6 @@
+using Hephaisto.Agent.Safety;
+using Hephaisto.Core.Domain;
+
 namespace Hephaisto.Agent.Pipeline;
 
 /// <summary>
@@ -15,6 +18,7 @@ namespace Hephaisto.Agent.Pipeline;
 public sealed class InvestigationWorker(
     InvestigationQueue queue,
     IServiceScopeFactory scopeFactory,
+    IKillSwitch killSwitch,
     ILogger<InvestigationWorker> logger) : BackgroundService
 {
     private const int MaxConcurrency = 2;
@@ -26,6 +30,27 @@ public sealed class InvestigationWorker(
 
         await foreach (var incidentId in queue.ReadAllAsync(stoppingToken).ConfigureAwait(false))
         {
+            // The second half of "ingest nothing, investigate nothing". The ingest gate stops
+            // new work becoming queued; this stops work that was ALREADY queued when the switch
+            // flipped, which is the window an operator cares about most - they hit the switch
+            // precisely because something is already in flight.
+            //
+            // Checked before taking a concurrency slot: there is no reason to hold one to
+            // decide not to run.
+            var mode = await killSwitch.ResolveAsync(stoppingToken).ConfigureAwait(false);
+
+            if (mode.Effective == AgentMode.Off)
+            {
+                // The incident itself is untouched and stays open and visible; only the
+                // investigation is declined. It is picked up again by StrandedIncidentRequeue
+                // on the next start, or by a human retry, once the agent is switched back on.
+                logger.LogInformation(
+                    "Agent is Off ({DecidedBy}); not investigating incident {IncidentId}. It stays open.",
+                    mode.DecidedBy, incidentId);
+
+                continue;
+            }
+
             await slots.WaitAsync(stoppingToken).ConfigureAwait(false);
 
             running.Add(RunAsync(incidentId, slots, stoppingToken));

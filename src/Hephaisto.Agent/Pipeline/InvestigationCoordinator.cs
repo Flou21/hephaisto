@@ -65,6 +65,22 @@ public sealed class InvestigationCoordinator(
         var mode = (await killSwitch.ResolveAsync(ct).ConfigureAwait(false)).Effective;
         incident.Mode = mode;
 
+        // The mode is already in hand from the line above, so this branch is free - and it is
+        // the last gate before runner.RunAsync opens an LLM conversation, which is to say the
+        // last gate before money. InvestigationWorker declines queued work as well, but this
+        // method is reachable directly, so it holds its own line rather than trusting callers.
+        //
+        // Before the notifier: publishing InvestigationStarted for an investigation that is not
+        // going to start would put a permanent spinner in the console.
+        if (mode == AgentMode.Off)
+        {
+            logger.LogInformation(
+                "Agent is Off; declining to investigate incident {IncidentId}. It stays open.",
+                incidentId);
+
+            return;
+        }
+
         notifier.Publish(new IncidentLiveEvent
         {
             IncidentId = incident.Id,

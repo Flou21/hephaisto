@@ -168,6 +168,46 @@ kubectl -n hephaisto exec deploy/postgres -- psql -U hephaisto -c \
 No row may have a null or empty `approved_by`. Automatic actions record
 `hephaisto/auto` with `approval_source = Auto`.
 
+## 15. `Off` actually stops the agent, and lets go again
+
+The enum says `Off` means "ingest nothing, investigate nothing. Full stop." This step exists
+because for a while it did neither: on a clean cluster reporting `effectiveMode: Off`, an
+injected fault was still ingested, opened as an incident and escalated.
+
+Note the deliberate contrast with step 12. Budget exhaustion must **degrade** - detection keeps
+running, because a cluster you cannot afford to investigate is still a cluster you have to
+watch. `Off` must **stop**. Those are opposite behaviours and neither should drift into the
+other.
+
+```sh
+kubectl -n hephaisto patch cm hephaisto-switches --type merge -p '{"data":{"mode":"Off"}}'
+# The kubelet takes up to ~60s to project a changed ConfigMap into the pod.
+curl -s http://$H:8100/api/status | jq '{effectiveMode, modeDecidedBy, openIncidents}'
+#   -> "Off", "configmap:mode".  Note openIncidents as N.
+
+kubectl -n hephaisto-chaos create deployment offtest --image=ghcr.io/flou21/nope:v9
+sleep 120
+curl -s http://$H:8100/api/status    | jq .openIncidents   # MUST still be N
+curl -s http://$H:8100/api/incidents | grep -c offtest     # MUST be 0
+```
+
+**`watchdogStale` must stay `false` throughout.** The heartbeat is deliberately not gated: it
+arrives at `/webhooks/watchdog`, which never touches the signal sink. An `Off` that silenced it
+would make the agent believe it had gone blind the moment it was switched back on.
+
+Then prove the gate lifts - a switch that stops things and cannot be released is a different
+bug:
+
+```sh
+kubectl -n hephaisto patch cm hephaisto-switches --type merge -p '{"data":{"mode":"Observe"}}'
+sleep 120
+curl -s http://$H:8100/api/incidents | grep -c offtest     # MUST now be 1
+kubectl -n hephaisto-chaos delete deployment offtest
+```
+
+`killSwitch: "true"` is a *different* control and does not do this: it clamps to `Observe`, not
+`Off`. It stops the agent acting, not the agent watching.
+
 ---
 
 ## The five-hop correlation test
