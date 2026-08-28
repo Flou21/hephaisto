@@ -73,17 +73,24 @@ console plus `/metrics`, never a crash and never silence.
 detached on 10350; the two share a cluster but no ports.
 
 ```sh
-cd ~/hephaisto && tilt up --port 10351
+cd ~/hephaisto && tilt up --host 100.91.41.104 --port 10351
 tilt logs -f hephaisto
 ```
+
+**`--host` is not optional.** The port-forwards in the Tiltfile bind to the tailnet because
+each one passes `host=` explicitly, but Tilt's own web UI is a separate server that defaults
+to `127.0.0.1` — so without the flag every service below is reachable from the laptop and the
+Tilt UI alone is not, which reads as a Tailscale problem rather than a missing flag. The IP is
+the tailnet address of this machine and matches `HOST_IP` in the Tiltfile; the `~/dev`
+instance on 10350 is started the same way.
 
 Everything binds to the Tailscale interface, so **use the hostname, not `localhost`** — not
 even from a shell on this machine:
 
     http://macstudio-von-florian.tail3043f4.ts.net:<port>
 
-| What | Port |
-|---|---|
+| What | Port | |
+|---|---|---|
 | Hephaisto UI | 8100 |
 | Prometheus | 9090 |
 | Grafana | 3030 |
@@ -94,7 +101,7 @@ even from a shell on this machine:
 | grafana-mcp | 8200 |
 | Aspire Dashboard | 18888 |
 | Postgres | 5433 |
-| Tilt UI | 10351 |
+| Tilt UI | 10351 | (needs `--host`, see above) |
 
 ### Never run a bare `tilt down`
 
