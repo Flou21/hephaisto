@@ -143,8 +143,8 @@ public class InvestigationBudgetTests
 
         using var guard = new BudgetGuardChatClient(fake, budget, Pricing(1m, 10m), "fake-model", recorder);
 
-        await guard.GetResponseAsync([new ChatMessage(ChatRole.User, "hello")]);
-        await guard.GetResponseAsync([new ChatMessage(ChatRole.User, "again")]);
+        await guard.GetResponseAsync([new ChatMessage(ChatRole.User, "hello")], cancellationToken: TestContext.Current.CancellationToken);
+        await guard.GetResponseAsync([new ChatMessage(ChatRole.User, "again")], cancellationToken: TestContext.Current.CancellationToken);
 
         budget.Steps.Should().Be(2);
         budget.InputTokens.Should().Be(1000);
@@ -174,7 +174,7 @@ public class InvestigationBudgetTests
 
         using var guard = new BudgetGuardChatClient(fake, budget, FreePricing, "fake-model", recorder);
 
-        var act = () => guard.GetResponseAsync([new ChatMessage(ChatRole.User, "hello")]);
+        var act = () => guard.GetResponseAsync([new ChatMessage(ChatRole.User, "hello")], cancellationToken: TestContext.Current.CancellationToken);
 
         await act.Should().ThrowAsync<HttpRequestException>();
 

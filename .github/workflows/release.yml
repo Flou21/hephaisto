@@ -1,0 +1,231 @@
+name: release
+
+# The ONLY thing that publishes. A release is `git tag v0.0.1 && git push --tags`, and
+# nothing else - no version bump commit, no file to edit, no chart to re-stamp by hand.
+on:
+  push:
+    tags: ['v*.*.*']
+
+# Still no deploy job, and still no kubeconfig. This workflow publishes an image and a chart
+# that no running cluster references. A cluster moves when a human changes a pinned version in
+# a GitOps repo, and the gap between those two events is where a person decides. The thing
+# being published can delete pods.
+permissions:
+  contents: read
+  packages: write
+  # For build provenance attestation on the published digest.
+  id-token: write
+  attestations: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/flou21/hephaisto
+  CHART_REPO: oci://ghcr.io/flou21/charts
+  DOTNET_NOLOGO: 1
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.minver.outputs.version }}
+      semver: ${{ steps.minver.outputs.semver }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - id: minver
+        run: |
+          set -euo pipefail
+          dotnet tool restore
+          V=$(dotnet minver -t v -p main.0)
+          SEMVER="${V%%+*}"
+
+          # On a tag, MinVer must produce exactly that tag. If it does not, the tag was pushed
+          # from a commit that is not what it looks like, and publishing would put a number on
+          # an artifact that does not correspond to it. Refuse rather than guess.
+          EXPECTED="${GITHUB_REF_NAME#v}"
+          if [ "$SEMVER" != "$EXPECTED" ]; then
+            echo "::error::tag is $GITHUB_REF_NAME but MinVer computed $SEMVER."
+            echo "::error::Publishing would label the artifacts with a version that is not this tag."
+            exit 1
+          fi
+
+          echo "version=$V"      >> "$GITHUB_OUTPUT"
+          echo "semver=$SEMVER"  >> "$GITHUB_OUTPUT"
+
+  # The same gates as ci.yml. A tag must not be able to publish something that would not have
+  # passed a pull request.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, fetch-tags: true }
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - run: dotnet build -c Release -warnaserror
+      - run: scripts/ci-test.sh tests/Hephaisto.Tests/Hephaisto.Tests.csproj 600 Release
+
+  chart-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with: { version: v3.16.4 }
+      - run: helm lint charts/hephaisto --strict --values charts/hephaisto/ci/full-values.yaml
+      - run: charts/hephaisto/ci/negative-tests.sh
+
+  # Build each architecture on its own native runner and push BY DIGEST, then join them into
+  # one multi-arch tag. Never arm64 under QEMU: a .NET publish under emulation takes 10-25
+  # minutes and is flaky.
+  image:
+    runs-on: ${{ matrix.runner }}
+    needs: [version, test, chart-checks]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, fetch-tags: true }
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          # The version cannot be computed inside the build: .dockerignore excludes .git/, so
+          # MinVer would stamp every image 0.0.0-alpha.0.
+          build-args: |
+            VERSION=${{ needs.version.outputs.semver }}
+            COMMIT=${{ github.sha }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+
+      # The FILENAME carries the digest; the file itself is empty. The merge job globs the
+      # directory to reassemble the list, which is how two independent runners hand their
+      # results to a third without a shared store.
+      - name: Export the digest
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/digests
+          DIGEST='${{ steps.build.outputs.digest }}'
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ strategy.job-index }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  publish-image:
+    runs-on: ubuntu-latest
+    needs: [version, image]
+    outputs:
+      digest: ${{ steps.merge.outputs.digest }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: merge
+        name: Join the per-architecture images into one tag
+        run: |
+          set -euo pipefail
+          cd /tmp/digests
+          V='${{ needs.version.outputs.semver }}'
+          MAJOR="${V%%.*}"
+          MINOR="${V%.*}"
+
+          TAGS=(-t "${{ env.IMAGE }}:$V" -t "${{ env.IMAGE }}:sha-${GITHUB_SHA::7}")
+          # Moving tags only for a real release. A prerelease must never become `latest` or
+          # take over `0` / `0.0`, or someone tracking a major gets a preview by surprise.
+          case "$V" in
+            *-*) echo "prerelease $V: no moving tags" ;;
+            *)   TAGS+=(-t "${{ env.IMAGE }}:$MAJOR" -t "${{ env.IMAGE }}:$MINOR" -t "${{ env.IMAGE }}:latest") ;;
+          esac
+
+          docker buildx imagetools create "${TAGS[@]}" \
+            $(printf '${{ env.IMAGE }}@sha256:%s ' *)
+
+          DIGEST=$(docker buildx imagetools inspect "${{ env.IMAGE }}:$V" --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          docker buildx imagetools inspect "${{ env.IMAGE }}:$V"
+
+      # Two minutes, and worth it for a workload that can delete pods: an operator can verify
+      # the image they are about to give cluster credentials to was built from this repo, by
+      # this workflow, from this commit.
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.merge.outputs.digest }}
+          push-to-registry: true
+
+  publish-chart:
+    runs-on: ubuntu-latest
+    needs: [version, publish-image]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with: { version: v3.16.4 }
+
+      - name: Package and push
+        run: |
+          set -euo pipefail
+          V='${{ needs.version.outputs.semver }}'
+
+          # --version/--app-version override without writing to Chart.yaml, which is what keeps
+          # `git tag` the only source of truth: no bump commit, no CI push back to main.
+          #
+          # Chart version == appVersion == image tag, always. The chart ships exactly one
+          # application and both are published from this same tag, so the chart cannot change
+          # without the app being republished. A chart-only fix is just `git tag v0.0.2`.
+          helm package charts/hephaisto --version "$V" --app-version "$V" --destination /tmp
+
+          echo '${{ secrets.GITHUB_TOKEN }}' | helm registry login ghcr.io \
+            --username '${{ github.actor }}' --password-stdin
+
+          helm push "/tmp/hephaisto-$V.tgz" '${{ env.CHART_REPO }}'
+
+      - name: Prove a consumer can actually pull it
+        run: |
+          set -euo pipefail
+          V='${{ needs.version.outputs.semver }}'
+          helm show chart '${{ env.CHART_REPO }}/hephaisto' --version "$V"
+          # And that it renders from the registry rather than only from the working tree.
+          helm template hephaisto '${{ env.CHART_REPO }}/hephaisto' --version "$V" \
+            --namespace hephaisto \
+            --set prometheusOperator.selectorLabels.release=kube-prometheus-stack > /tmp/rendered.yaml
+          grep -q "image: ${{ env.IMAGE }}:$V" /tmp/rendered.yaml \
+            || { echo "::error::the published chart does not point at the published image tag"; exit 1; }
+          echo "Published chart renders and points at ${{ env.IMAGE }}:$V"

@@ -157,7 +157,7 @@ public class SafeToolDecoratorTests
         var recorder = NewRecorder(out _);
         var tool = Wrap(Echo("FATAL: could not connect to mongo"), recorder: recorder);
 
-        var result = await tool.InvokeAsync(new AIFunctionArguments { ["query"] = "logs" });
+        var result = await tool.InvokeAsync(new AIFunctionArguments { ["query"] = "logs" }, TestContext.Current.CancellationToken);
 
         var step = recorder.Steps.Should().ContainSingle().Subject;
 
@@ -179,7 +179,7 @@ public class SafeToolDecoratorTests
         var recorder = NewRecorder(out _);
         var tool = Wrap(Echo("panic: nil map"), recorder: recorder);
 
-        var shown = await tool.InvokeAsync(new AIFunctionArguments { ["query"] = "logs" });
+        var shown = await tool.InvokeAsync(new AIFunctionArguments { ["query"] = "logs" }, TestContext.Current.CancellationToken);
 
         recorder.Steps[0].ResultDigest.Should().Be(shown!.ToString());
     }
@@ -194,7 +194,7 @@ public class SafeToolDecoratorTests
 
         var tool = Wrap(Echo(noisy), recorder: recorder);
 
-        var shown = await tool.InvokeAsync(new AIFunctionArguments { ["query"] = "logs" });
+        var shown = await tool.InvokeAsync(new AIFunctionArguments { ["query"] = "logs" }, TestContext.Current.CancellationToken);
 
         // Digest for the model, raw for the audit.
         shown!.ToString()!.Length.Should().BeLessThan(noisy.Length / 10);
@@ -214,7 +214,7 @@ public class SafeToolDecoratorTests
         var recorder = NewRecorder(out _);
         var tool = Wrap(Echo("short and complete"), recorder: recorder);
 
-        await tool.InvokeAsync(new AIFunctionArguments { ["query"] = "logs" });
+        await tool.InvokeAsync(new AIFunctionArguments { ["query"] = "logs" }, TestContext.Current.CancellationToken);
 
         recorder.Blobs.Should().BeEmpty();
         recorder.Steps[0].RawBlobId.Should().BeNull();
@@ -235,7 +235,7 @@ public class SafeToolDecoratorTests
 
         var tool = Wrap(throwing, recorder: recorder);
 
-        var result = await tool.InvokeAsync(new AIFunctionArguments { ["query"] = "x" });
+        var result = await tool.InvokeAsync(new AIFunctionArguments { ["query"] = "x" }, TestContext.Current.CancellationToken);
 
         result!.ToString().Should().Contain("pod not found");
         recorder.Steps.Should().ContainSingle().Which.Failed.Should().BeTrue();
@@ -248,9 +248,9 @@ public class SafeToolDecoratorTests
         var budget = new InvestigationBudget(new InvestigationBudgetOptions { MaxToolCalls = 1 }, clock);
         var tool = Wrap(Echo("ok"), budget: budget, recorder: recorder);
 
-        await tool.InvokeAsync(new AIFunctionArguments { ["query"] = "one" });
+        await tool.InvokeAsync(new AIFunctionArguments { ["query"] = "one" }, TestContext.Current.CancellationToken);
 
-        var refused = await tool.InvokeAsync(new AIFunctionArguments { ["query"] = "two" });
+        var refused = await tool.InvokeAsync(new AIFunctionArguments { ["query"] = "two" }, TestContext.Current.CancellationToken);
 
         refused!.ToString().Should().Contain("REFUSED");
         refused!.ToString().Should().Contain("Conclude now");
@@ -273,7 +273,7 @@ public class SafeToolDecoratorTests
         var result = await Wrap(inner).InvokeAsync(new AIFunctionArguments
         {
             ["expr"] = "rate(errors_total[30d])",
-        });
+        }, TestContext.Current.CancellationToken);
 
         invoked.Should().BeFalse();
         result!.ToString().Should().StartWith("REFUSED");
@@ -302,7 +302,7 @@ public class SafeToolDecoratorTests
         {
             ["query"] = "{app=\"api\"}",
             ["start"] = "now-15m",
-        });
+        }, TestContext.Current.CancellationToken);
 
         result!.ToString().Should().Contain("timed out");
         recorder.Steps.Should().ContainSingle().Which.Failed.Should().BeTrue();

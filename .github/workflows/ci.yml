@@ -1,0 +1,359 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# There is deliberately NO deploy job in this file, and there must not be one. This workflow
+# holds no kubeconfig and no cluster credential. It publishes versions that no deployed chart
+# references; a cluster moves only when a human changes a pinned version in a GitOps repo.
+# The gap between "CI is green" and "the cluster changed" is where a person decides, and the
+# thing this repo deploys can delete pods. The kind cluster below is a throwaway test fixture
+# that dies with the runner, not a deployment target.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: 1
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.minver.outputs.version }}
+      semver: ${{ steps.minver.outputs.semver }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # MinVer reads git. A shallow clone with no tags makes every build 0.0.0-alpha.0,
+          # silently, and the image tag then bears no relation to the commit.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - id: minver
+        run: |
+          dotnet tool restore
+          # `-p main.0` is NOT optional. minver-cli defaults to alpha.0 while this repo's
+          # Directory.Build.props says main.0, so without it the CLI and the compiler disagree
+          # about what this very commit is called - and the image tag stops matching the
+          # assembly inside it.
+          V=$(dotnet minver -t v -p main.0)
+          # Strip +metadata before anything sees it: OCI tags cannot contain '+', and Helm
+          # silently rewrites it to '_', so Chart.yaml would say 0.0.1+abc while the OCI tag
+          # is 0.0.1_abc and Argo cannot find the version it was told to install.
+          echo "version=$V"        >> "$GITHUB_OUTPUT"
+          echo "semver=${V%%+*}"   >> "$GITHUB_OUTPUT"
+          echo "MinVer: $V (semver ${V%%+*})" >> "$GITHUB_STEP_SUMMARY"
+
+  dotnet-test:
+    runs-on: ubuntu-latest
+    needs: [version]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # An explicit cache rather than setup-dotnet's: that one keys on lock files, and this
+      # repo has none.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props', '**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - run: dotnet restore
+      - run: dotnet build --no-restore -c Release -warnaserror
+
+      # NEVER `dotnet test`. On this toolchain it either hard-errors or launches the test
+      # executable in server mode and exits in ~200ms reporting "Zero tests ran" - with exit
+      # code 0. A xunit.v3 project is an executable; run it.
+      #
+      # ci-test.sh adds the floor: it parses the actual count out of the summary and fails if
+      # too few ran, because exiting 0 having tested nothing is a failure mode this repo has
+      # already hit. (The obvious `--minimum-expected-tests` flag does NOT exist in this
+      # runner - it prints `unknown option` and still exits 0, which is the same trap wearing
+      # a different hat.)
+      - name: Run tests
+        run: scripts/ci-test.sh tests/Hephaisto.Tests/Hephaisto.Tests.csproj 600 Release
+
+  integration-postgres:
+    runs-on: ubuntu-latest
+    # The highest-value job here. It closes the only structural gap in an otherwise
+    # well-tested repo: Hephaisto.Core is I/O-free by design, so the persistence bugs live in
+    # exactly the layer the unit suite cannot reach. Five separate change-detection bugs
+    # shipped before this existed.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: hephaisto
+          POSTGRES_PASSWORD: hephaisto
+          POSTGRES_DB: hephaisto
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U hephaisto -d hephaisto"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props', '**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # The role must exist BEFORE the migration runs. The migration's GRANT/REVOKE block is
+      # wrapped in `IF EXISTS (SELECT 1 FROM pg_roles ...)` and silently no-ops without it -
+      # so the audit-immutability test would pass while testing nothing at all.
+      - name: Create the hephaisto_app role
+        run: |
+          PGPASSWORD=hephaisto psql -h localhost -U hephaisto -d hephaisto -v ON_ERROR_STOP=1 -c \
+            "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='hephaisto_app')
+             THEN CREATE ROLE hephaisto_app LOGIN PASSWORD 'ci'; END IF; END \$\$;"
+
+      - name: Apply migrations
+        env:
+          ConnectionStrings__hephaisto: Host=localhost;Port=5432;Database=hephaisto;Username=hephaisto;Password=hephaisto
+        run: |
+          dotnet tool restore
+          dotnet ef database update --project src/Hephaisto.Agent --context HephaistoDbContext
+
+      - name: Run the integration suite
+        env:
+          # The fixture THROWS rather than skipping when this is unset. A silently skipped
+          # database suite is indistinguishable from a passing one.
+          ConnectionStrings__hephaisto: Host=localhost;Port=5432;Database=hephaisto;Username=hephaisto;Password=hephaisto
+        run: scripts/ci-test.sh tests/Hephaisto.IntegrationTests/Hephaisto.IntegrationTests.csproj 6 Release
+
+  chart:
+    runs-on: ubuntu-latest
+    needs: [version]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      - name: Install kubeconform
+        run: |
+          curl -sSLo /tmp/kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xzf /tmp/kubeconform.tar.gz -C /tmp kubeconform
+          sudo install /tmp/kubeconform /usr/local/bin/
+
+      - run: helm lint charts/hephaisto --strict --values charts/hephaisto/ci/full-values.yaml
+
+      # Rendered under HELM 3 specifically. Argo and Flux both embed Helm 3, so a chart that
+      # only renders under Helm 4 would install fine from a laptop and fail in the pipeline it
+      # was built for.
+      - name: Render and validate every values combination
+        run: |
+          set -euo pipefail
+          for values in ci/minimal-values.yaml ci/full-values.yaml values-dev.yaml; do
+            echo "::group::$values"
+            helm template hephaisto charts/hephaisto \
+              --namespace hephaisto \
+              --values "charts/hephaisto/$values" \
+            | kubeconform -strict -summary -verbose \
+                -kubernetes-version 1.31.0 \
+                -schema-location default \
+                -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+            echo "::endgroup::"
+          done
+        # Without the CRDs-catalog location kubeconform SKIPS PodMonitor and PrometheusRule
+        # entirely - and reports success - so it would validate everything except the two
+        # objects most likely to be wrong.
+
+      # The safety properties from the chart's design, as executable assertions. This is what
+      # stops them rotting into comments.
+      - run: charts/hephaisto/ci/negative-tests.sh
+
+      - name: Package with the computed version
+        run: |
+          helm package charts/hephaisto \
+            --version "${{ needs.version.outputs.semver }}" \
+            --app-version "${{ needs.version.outputs.semver }}" \
+            --destination /tmp/chart
+          ls -l /tmp/chart
+
+  image:
+    runs-on: ${{ matrix.runner }}
+    needs: [version]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+          # arm64 on a NATIVE arm runner, never under QEMU: a .NET publish under emulation
+          # takes 10-25 minutes and is flaky. arm runners are free on public repos.
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      # PRs build but do not push. The point is to know the image still builds - which is not
+      # hypothetical: this Dockerfile had never been built at all until it was tried, and it
+      # failed at `RUN adduser` because the aspnet base ships neither adduser nor useradd.
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          push: false
+          build-args: |
+            VERSION=${{ needs.version.outputs.semver }}
+            COMMIT=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+
+  e2e-kind:
+    runs-on: ubuntu-latest
+    needs: [version, chart]
+    # HONEST LIMITS, so nobody reads more into a green tick than is there:
+    #
+    #   - kind's default CNI ACCEPTS NetworkPolicy objects and does not enforce them. This job
+    #     validates their shape, not their effect - and their effect is the Alertmanager
+    #     webhook's entire authentication. That stays a manual acceptance step for 0.0.1.
+    #   - No Prometheus here, so the `release:` selector is only covered by the render-time
+    #     grep in the chart job.
+    #   - No real LLM key, so nothing exercises an investigation end to end.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: hephaisto-e2e
+
+      # The three CRDs the chart needs, not the whole kube-prometheus-stack: that takes 5+
+      # minutes and is the flakiest thing that could be in this job.
+      - name: Install the Prometheus Operator CRDs
+        run: |
+          BASE=https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.78.2/example/prometheus-operator-crd
+          for crd in monitoring.coreos.com_podmonitors monitoring.coreos.com_prometheusrules monitoring.coreos.com_prometheuses; do
+            kubectl apply --server-side -f "$BASE/${crd}.yaml"
+          done
+
+      - name: Create the namespaces and dummy secrets
+        run: |
+          kubectl create namespace hephaisto
+          kubectl create namespace hephaisto-chaos
+          kubectl create namespace hephaisto-obs
+          kubectl -n hephaisto create secret generic hephaisto-postgres \
+            --from-literal=POSTGRES_USER=hephaisto \
+            --from-literal=POSTGRES_PASSWORD=ci-not-a-real-password \
+            --from-literal=POSTGRES_DB=hephaisto
+          kubectl -n hephaisto create secret generic hephaisto-llm \
+            --from-literal=GEMINI_API_KEY=ci-not-a-real-key
+
+      - name: Build and load the image
+        run: |
+          docker build -t hephaisto/agent:e2e \
+            --build-arg VERSION=${{ needs.version.outputs.semver }} \
+            --build-arg COMMIT=${{ github.sha }} .
+          kind load docker-image hephaisto/agent:e2e --name hephaisto-e2e
+
+      - name: helm install
+        run: |
+          helm install hephaisto charts/hephaisto \
+            --namespace hephaisto \
+            --set image.repository=hephaisto/agent \
+            --set image.tag=e2e \
+            --set image.pullPolicy=Never \
+            --set postgres.embedded.enabled=true \
+            --set 'policy.actionableNamespaces[0]=hephaisto-chaos' \
+            --set prometheusOperator.selectorLabels.release=kube-prometheus-stack \
+            --wait --timeout 6m
+
+      # The most important prose in the repo, turned into an enforced test. Only a live API
+      # server can answer these.
+      - name: RBAC is actually bounded
+        run: |
+          set -euo pipefail
+          SA=system:serviceaccount:hephaisto:hephaisto
+          fail=0
+          must_not() {
+            if kubectl auth can-i $1 --as="$SA" ${2:-} >/dev/null 2>&1; then
+              echo "::error::the agent CAN $1 ${2:-} and must not"; fail=1
+            else
+              echo "ok: cannot $1 ${2:-}"
+            fi
+          }
+          must_not "get secrets" "-A"
+          must_not "delete secrets" "-A"
+          must_not "delete pods" "-n kube-system"
+          must_not "create clusterrolebindings"
+          must_not "delete pods" "-n hephaisto"
+
+          if kubectl auth can-i delete pods -n hephaisto-chaos --as="$SA" >/dev/null 2>&1; then
+            echo "ok: can delete pods in hephaisto-chaos"
+          else
+            echo "::error::the agent cannot act in its one allowed namespace"; fail=1
+          fi
+          exit $fail
+
+      - name: The published image runs read-only and non-root
+        run: |
+          set -euo pipefail
+          POD=$(kubectl -n hephaisto get pod -l app.kubernetes.io/name=hephaisto -o name | head -1)
+          # readOnlyRootFilesystem has never been exercised anywhere else: the dev cluster runs
+          # the dev image, which is `dotnet watch` and needs a writable filesystem. CI is the
+          # first thing that ever runs the production image under it.
+          kubectl -n hephaisto get "$POD" -o jsonpath='{.spec.containers[0].securityContext}' | tee /dev/stderr | grep -q '"readOnlyRootFilesystem":true'
+          kubectl -n hephaisto get "$POD" -o jsonpath='{.spec.securityContext.runAsUser}' | grep -q '^64198$'
+          kubectl -n hephaisto wait --for=condition=Ready "$POD" --timeout=120s
+
+      # git tag -> MinVer -> MSBuild -> image -> chart appVersion -> /api/version, asserted end
+      # to end. Every link in that chain has a way of quietly reporting something else.
+      - name: The version chain holds end to end
+        run: |
+          set -euo pipefail
+          EXPECTED='${{ needs.version.outputs.semver }}'
+          kubectl -n hephaisto port-forward svc/hephaisto 18080:8080 &
+          for i in $(seq 1 30); do
+            sleep 2
+            curl -sf localhost:18080/api/version > /tmp/version.json && break
+          done
+          cat /tmp/version.json
+          ACTUAL=$(jq -r .version /tmp/version.json)
+          [ "$ACTUAL" = "$EXPECTED" ] || { echo "::error::/api/version says $ACTUAL, expected $EXPECTED"; exit 1; }
+          CHART=$(helm -n hephaisto get metadata hephaisto -o json | jq -r .appVersion)
+          [ "$CHART" = "$EXPECTED" ] || { echo "::error::chart appVersion is $CHART, expected $EXPECTED"; exit 1; }
+          echo "version chain holds: $EXPECTED"
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n hephaisto get all
+          kubectl -n hephaisto describe pods
+          kubectl -n hephaisto logs -l app.kubernetes.io/name=hephaisto --tail=200 --all-containers || true

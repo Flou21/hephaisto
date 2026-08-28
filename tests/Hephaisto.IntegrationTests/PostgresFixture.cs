@@ -89,6 +89,13 @@ public sealed class PostgresFixture : IAsyncLifetime
 
         await using var db = CreateContext();
 
+        // EF1002 is suppressed rather than worked around, because the interpolated value is a
+        // table SCHEMA IDENTIFIER, and identifiers cannot be parameterised - ExecuteSqlAsync
+        // would send `TRUNCATE TABLE $1`, which is a syntax error, not a safer query. The
+        // value comes from SchemaAsync(), which reads it from the model this same assembly
+        // built; it is never user input. Narrowly scoped to this one statement so the rule
+        // still guards every other call site.
+#pragma warning disable EF1002 // Risk of vulnerability to SQL injection.
         await db.Database.ExecuteSqlRawAsync($"""
             TRUNCATE TABLE
               {schema}.evidence, {schema}.evidence_blobs, {schema}.findings,
@@ -100,6 +107,7 @@ public sealed class PostgresFixture : IAsyncLifetime
               {schema}.incidents
             RESTART IDENTITY CASCADE;
             """);
+#pragma warning restore EF1002
     }
 }
 

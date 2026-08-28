@@ -268,6 +268,19 @@ What is running is reported in four places, all reading the same assembly attrib
 `GET /api/version`, the console footer, OTel `service.version` on every span and metric, and
 `hephaisto_build_info{version,commit}` for joining against any other series.
 
+### Releasing
+
+`git tag v0.0.1 && git push --tags`. That is the whole procedure — `.github/workflows/release.yml`
+builds the image on native amd64 and arm64 runners, pushes by digest, joins them into one
+multi-arch tag, attaches build provenance, and publishes the chart to
+`oci://ghcr.io/flou21/charts` with `version == appVersion == image tag`.
+
+**There is no deploy job, and there must not be one.** CI holds no kubeconfig and no cluster
+credential. It publishes versions that no running cluster references; a cluster moves only
+when a human changes a pinned version in a GitOps repo. The gap between "CI is green" and
+"the cluster changed" is where a person decides — and the thing being published can delete
+pods.
+
 ## Repo layout
 
 ```

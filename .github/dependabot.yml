@@ -1,0 +1,34 @@
+version: 2
+updates:
+  # Grouped, because the alternative is one PR per transitive package every week and a review
+  # habit of clicking merge. A grouped PR is one diff someone actually reads.
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      dotnet:
+        patterns: ["Microsoft.*", "System.*"]
+      opentelemetry:
+        patterns: ["OpenTelemetry*"]
+      testing:
+        patterns: ["xunit*", "AwesomeAssertions", "NSubstitute*"]
+    ignore:
+      # MinVer decides what version everything else IS. Bumping it can change the computed
+      # version of an unchanged commit, so it moves deliberately and not on a schedule.
+      - dependency-name: MinVer
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Both Dockerfiles. The base image is where a CVE actually reaches this workload.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
