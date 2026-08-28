@@ -372,6 +372,25 @@ config:
           value: studio-rancher-desktop
           action: upsert
 
+    # --- resource/k8sevents ---------------------------------------------------------------
+    # The k8s_events receiver sets no service.name on the records it emits, so Loki files
+    # them under `unknown_service` - together with anything else lacking the attribute. The
+    # events then ARE queryable, but not by the selector everything documents
+    # ({service_name="k8s-events"}), which returns nothing and reads as "the events receiver
+    # is broken" rather than "the label is different".
+    #
+    # This matters more than a naming nit: Kubernetes Events are the narrative layer. A
+    # metric says a pod is Pending; only `FailedScheduling: insufficient memory` says why.
+    # An agent that cannot select them cannot reach for them.
+    resource/k8sevents:
+      attributes:
+        - key: cluster
+          value: studio-rancher-desktop
+          action: upsert
+        - key: service.name
+          value: k8s-events
+          action: upsert
+
     # --- batch ----------------------------------------------------------------------------
     # Last. Batching is an efficiency concern and belongs after everything that can drop or
     # enrich a record, so batches are not built out of data that is about to be discarded.
@@ -526,8 +545,22 @@ config:
       # reads an incident.
       # ---------------------------------------------------------------------------------
       logs:
-        receivers: [otlp, k8s_events, filelog]
+        receivers: [otlp, filelog]
         processors: [memory_limiter, k8sattributes, resource, batch]
+        exporters: [otlphttp/loki, otlp/aspire]
+
+      # ---------------------------------------------------------------------------------
+      # logs/events: k8s_events -> ... -> otlphttp/loki, otlp/aspire
+      #
+      # Separate ONLY so resource/k8sevents can stamp service.name on this source and not
+      # the other two - a processor list belongs to a pipeline, not to a receiver, so
+      # naming one source means splitting it out. Same processors otherwise, same
+      # exporters, same destination: the three sources still interleave into one timeline
+      # in Loki, which is the point of collecting them together.
+      # ---------------------------------------------------------------------------------
+      logs/events:
+        receivers: [k8s_events]
+        processors: [memory_limiter, k8sattributes, resource/k8sevents, batch]
         exporters: [otlphttp/loki, otlp/aspire]
 
     telemetry:

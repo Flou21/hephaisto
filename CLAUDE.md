@@ -74,7 +74,11 @@ detached on 10350; the two share a cluster but no ports.
 
 ```sh
 cd ~/hephaisto && tilt up --host 100.91.41.104 --port 10351
-tilt logs -f hephaisto
+
+# every other tilt CLI call needs the same two flags, because the client
+# defaults to localhost:10350 and the server is no longer there
+tilt logs   -f hephaisto        --host 100.91.41.104 --port 10351
+tilt trigger  hephaisto         --host 100.91.41.104 --port 10351
 ```
 
 **`--host` is not optional.** The port-forwards in the Tiltfile bind to the tailnet because
