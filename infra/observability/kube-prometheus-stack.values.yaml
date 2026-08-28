@@ -413,7 +413,7 @@ kube-state-metrics:
     limits:
       memory: 256Mi
   metricLabelsAllowlist:
-    - pods=[app.kubernetes.io/name,app.kubernetes.io/instance,hephaisto.io/scenario]
+    - pods=[app.kubernetes.io/name,app.kubernetes.io/instance,hephaisto.chaos/scenario]
 
 prometheus-node-exporter:
   # === PORT 9100 IS ALREADY TAKEN ======================================================

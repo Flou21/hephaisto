@@ -346,11 +346,11 @@ config:
           - container.image.name
           - container.image.tag
         labels:
-          # Chaos fixtures carry hephaisto.io/scenario so an alert can be traced back to
+          # Chaos fixtures carry hephaisto.chaos/scenario so an alert can be traced back to
           # the fixture that caused it -- which is how the regression suite asserts
           # "scenario c7 produced exactly the c7 alert and not the c4 alert".
           - tag_name: hephaisto.scenario
-            key: hephaisto.io/scenario
+            key: hephaisto.chaos/scenario
             from: pod
       pod_association:
         - sources:
