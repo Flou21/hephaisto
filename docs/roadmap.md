@@ -111,28 +111,61 @@ Editing the file to `Off` moved the gauge to 0 with no restart.
 
 ---
 
-## Step 1 — first light against the cluster
+## Step 1 — first light against the cluster — **done, 2026-08-28, with one bug open**
 
-Nothing has ever run in k3s. This is a day's work and mostly verification.
+The stack now runs in k3s. The old hand-installed observability stack was removed first
+(plan §6): `grafana.db` was copied off the PVC and audited before teardown (`backup/`), and
+Backstage and litellm were repointed at `watchtower-obs`.
 
-```sh
-cd ~/watchtower && ./scripts/dev-db.sh up   # optional, for local dev
-tilt up --port 10351
+### What works, verified against the running cluster
+
+| Area | Evidence |
+|---|---|
+| 14 pods | Prometheus, Grafana, Alertmanager, Loki, Tempo, otel-collector, grafana-mcp, Aspire, kube-state-metrics, node-exporter, operator, postgres, agent |
+| Datasources | 4 provisioned: prometheus (default), loki, tempo, alertmanager |
+| Alert path | 17 alerts firing; `AgentWatchdog` delivered to the webhook (`watchdogReceipts: 1`, not stale) |
+| Kill switch | All three arms live. `kubectl edit cm` pulled the agent Observe → **Off**, bound by `configmap:mode`, **no restart** |
+| RBAC | `secrets` denied everywhere incl. `get`; `kube-system`, `watchtower`, `watchtower-obs` writes denied; write **only** in `watchtower-chaos` |
+| Detection | Kubernetes watcher opens incidents for real cluster faults, resolved to the owning controller (`Deployment/c2-crashloop`, not the pod) |
+| Dedup / correlation | 42+ signals collapsing into ~20 incidents, up to 6 signals on one |
+| Self-protection | Signals about Watchtower's own namespaces hard-escalate as `SelfSignal` — including the agent's own OOMKill |
+| Chaos fixtures | C1–C5, C7 produce their documented states, incl. the C4/C7 discrimination pair |
+| grafana-mcp | 44 tools; rejects unauthenticated calls with 401 |
+| LLM | Gemini connected; the model calls Kubernetes read tools during investigations |
+| Persistence | pgvector, pg_trgm, pgcrypto; HNSW index; append-only audit rows written |
+| UI | Incident list with filters, detail with signal timeline and state transitions, status page with the kill-switch arms, feedback form |
+
+### Open: investigations do not persist
+
+**The one thing not working.** Investigations run — the model is called, it uses tools, it
+terminates — and then the save fails, so `investigations`, `steps`, `findings` and `evidence`
+are all still zero and incidents sit in `Investigating`.
+
+The cause is a class of EF Core bug this session fixed three instances of. Every domain
+entity assigns its own key (`Guid.CreateVersion7()`), so when change detection discovers one
+through a navigation it sees a set key, concludes the row exists, and emits an UPDATE that
+matches nothing. It only bites on an **already-persisted** incident: a new one goes in via
+`Incidents.Add`, which marks the whole graph Added.
+
+Fixed instances: signals (broke dedup and correlation), the investigation graph, the plan and
+its actions, and the escalation event on the failure path.
+
+The remaining one is reported by the new diagnostic as:
+
+```
+offending entity: IncidentEvent state=Modified key=01a047c5-...
 ```
 
-Then work `docs/verification.md` top to bottom. The two that matter most:
+Every `stateMachine` call site is now accounted for, so the next step is to log **all**
+tracked entries at save time rather than only the offending one, and identify which event is
+Modified without a row behind it. Worth ruling out that a state transition mutates a
+*previous* event rather than only appending a new one.
 
-- **Step 4, span metrics reaching Prometheus.** If `traces_spanmetrics_calls_total` is empty,
-  Tempo's generator samples are being rejected as out-of-order and nothing says so.
-- **The five-hop correlation test.** Exemplar → trace → logs → metrics → service graph. If all
-  five work, the entire observability stack is proven at once.
-
-Expect to spend the time on chart reality rather than code: the values files are rendered and
-schema-checked but have never been *applied*.
-
-Migration of the old stack (`docs/verification.md` and the plan's §6) is deliberately manual
-and destructive — repoint CaitBackstage and the `litellm-config` ConfigMap first, and back up
-the old Grafana PVC, which holds hand-made dashboards in SQLite and nothing else.
+**Two lessons worth keeping.** `dotnet watch` silently declined several edits with *"No
+managed code changes to apply"*, so a run of iterations tested stale code — when a fix seems
+not to take, `tilt trigger watchtower` for a real image build before believing the result.
+And the diagnostic that names the offending entity found in one iteration what inference had
+not found in five; it is committed, and it should be reached for early.
 
 ---
 
