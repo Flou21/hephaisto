@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 
 using Watchtower.Agent.Persistence;
 using Watchtower.Agent.Persistence.Repositories;
+using Watchtower.Agent.Safety;
 using Watchtower.Core.Abstractions;
 using Watchtower.Core.Domain;
 
@@ -49,6 +50,7 @@ public sealed record IncidentListQuery
 /// </remarks>
 public sealed class IncidentQueries(
     IServiceScopeFactory scopes,
+    IKillSwitch killSwitch,
     IIncidentNotifier notifier,
     WatchdogMonitor watchdog,
     IOptionsMonitor<LlmBudgetOptions> budgetOptions,
@@ -267,6 +269,7 @@ public sealed class IncidentQueries(
         var budget = sp.GetRequiredService<LlmBudgetService>();
 
         var mode = await modes.GetAsync(ct);
+        var resolved = await killSwitch.ResolveAsync(ct);
 
         // Both counts hit ix_incidents_state_open, the partial index that keeps this
         // proportional to the live set rather than to all history.
@@ -287,6 +290,10 @@ public sealed class IncidentQueries(
             // page, where "configured auto but latched" and "configured observe" are two
             // very different things to be looking at during an incident.
             Mode = mode.Mode,
+            EffectiveMode = resolved.Effective,
+            ModeDecidedBy = resolved.DecidedBy,
+            ModeArms = [.. resolved.Arms.Select(a => a.Describe())],
+            ModeConstrained = resolved.IsConstrained,
             RunawayLatched = mode.RunawayLatched,
             LatchReason = mode.LatchReason,
             LatchedAt = mode.LatchedAt,

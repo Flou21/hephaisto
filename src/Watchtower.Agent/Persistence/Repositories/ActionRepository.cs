@@ -6,13 +6,16 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Watchtower.Agent.Options;
+using Watchtower.Agent.Safety;
 using Watchtower.Core.Abstractions;
 using Watchtower.Core.Domain;
 using Watchtower.Core.Policy;
+using Watchtower.Core.Safety;
 
 namespace Watchtower.Agent.Persistence.Repositories;
 
 public sealed class ActionRepository(
+    IKillSwitch killSwitch,
     WatchtowerDbContext db,
     IAuditRepository audit,
     IClock clock,
@@ -148,7 +151,17 @@ public sealed class ActionRepository(
 
         // A missing row is an unreadable kill switch, and an unreadable kill switch reads
         // as Observe. Failing the other way makes a truncated database an autonomy upgrade.
-        var mode = modeRow?.Mode ?? AgentMode.Observe;
+        var databaseArm = modeRow is null
+            ? ModeArm.Unreadable(KillSwitch.DatabaseArm, "the agent_mode row is missing")
+            : ModeArm.Declaring(KillSwitch.DatabaseArm, modeRow.Mode);
+
+        // The row is read inside the transaction because that is the only arm that can be
+        // raced by a concurrent admission. The env and ConfigMap arms are in-memory and a
+        // file read, so folding them in here costs the transaction nothing while making the
+        // two arms an operator can actually reach at 3am bind the executor rather than only
+        // the investigation loop.
+        var resolution = ModeResolver.Resolve([.. killSwitch.ExternalArms, databaseArm]);
+        var mode = resolution.Effective;
 
         if (modeRow?.RunawayLatched == true)
         {
@@ -161,7 +174,8 @@ public sealed class ActionRepository(
         {
             return await RefuseAsync(
                 tx, action, AdmissionRefusal.KillSwitch, null, ct,
-                $"agent mode is {mode}; no action may execute");
+                $"agent mode is {mode}, bound by {resolution.DecidedBy}; no action may execute "
+                + $"[{string.Join("; ", resolution.Arms.Select(a => a.Describe()))}]");
         }
 
         var incident = await db.Incidents

@@ -1052,3 +1052,21 @@ details > summary {
     text-decoration: underline;
     margin-left: 0.6rem;
 }
+
+/* The kill-switch arm list on /status. Collapsed by default because three healthy arms
+   saying the same thing is noise; expanded it answers "which one do I change". */
+.wt-arms {
+  margin-top: 0.75rem;
+}
+
+.wt-arms summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.wt-arms ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  font-size: 0.85rem;
+  line-height: 1.7;
+}

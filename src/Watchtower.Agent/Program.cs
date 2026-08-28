@@ -4,6 +4,7 @@ using Watchtower.Agent.Kubernetes;
 using Watchtower.Agent.Llm;
 using Watchtower.Agent.Persistence;
 using Watchtower.Agent.Pipeline;
+using Watchtower.Agent.Safety;
 using Watchtower.Agent.Web;
 using Watchtower.ServiceDefaults;
 
@@ -21,6 +22,12 @@ builder.AddServiceDefaults();
 
 builder.Services.AddWatchtowerPersistence(builder.Configuration);
 builder.Services.AddWatchtowerKubernetes(builder.Configuration);
+
+// The kill switch, before anything that consults it. Three independent arms - the env var,
+// the projected ConfigMap and the database row - and the most restrictive one wins. This is
+// registered here rather than inside the pipeline because the executor, the investigation
+// coordinator and the UI all have to agree on one answer.
+builder.Services.AddWatchtowerSafety(builder.Configuration);
 
 // Order matters here. The pipeline registers the real ISignalSink; AddWatchtowerWeb
 // registers a logging no-op with TryAdd so the webhook route is exercisable before ingest

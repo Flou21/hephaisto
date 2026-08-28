@@ -81,88 +81,69 @@ metadata:
     app.kubernetes.io/part-of: watchtower
 data:
   # -------------------------------------------------------------------------------------
-  # The switch ConfigMap -- runtime controls, changeable without a rebuild
+  # The switch ConfigMap -- the runtime arm of the kill switch
   # -------------------------------------------------------------------------------------
-  # These are mounted as a file (not env vars) SPECIFICALLY so they can be changed at
-  # runtime. A ConfigMap mounted as a volume is updated in place by the kubelet within
-  # about a minute; the same ConfigMap consumed via envFrom is frozen at pod start and a
-  # change requires a restart.
+  # Mounted as a volume (not envFrom) SPECIFICALLY so it can be changed without a restart.
+  # A ConfigMap mounted as a volume is updated in place by the kubelet within about a
+  # minute; the same ConfigMap consumed via envFrom is frozen at pod start.
   #
-  # That difference is the entire point for `killSwitch`: the situation in which you reach
-  # for it is the situation in which you do NOT want to wait for a pod to restart, and do
-  # not want to risk the restart failing. `kubectl edit cm watchtower-switches`, wait, done.
+  # That difference is the entire point. The situation in which you reach for this is the
+  # situation in which you do NOT want to wait for a pod to restart, and do not want to
+  # risk the restart failing. `kubectl edit cm watchtower-switches`, wait, done.
   #
-  # The agent must therefore RE-READ this file on every decision, not cache it at startup.
-  switches.yaml: |
-    # -----------------------------------------------------------------------------------
-    # killSwitch: when true, the agent observes, investigates and reports, and executes
-    # NOTHING. It is checked inside the same transaction as the budget and cooldown checks
-    # (see the header comment) so it cannot be raced.
-    #
-    # This is the control a human reaches for when the agent is doing something wrong and
-    # there is no time to work out why. It must be the simplest possible thing.
-    # -----------------------------------------------------------------------------------
-    killSwitch: false
+  # The agent re-reads these on every decision rather than caching them at startup: a
+  # cached emergency stop is not an emergency stop. Read by
+  # src/Watchtower.Agent/Safety/KillSwitch.cs.
+  #
+  # Each key below becomes its own file under /etc/watchtower. That is deliberate: this
+  # used to be a single `switches.yaml` document, which meant the emergency stop was YAML
+  # nested inside a YAML string and could be broken by one bad indent, in the one file you
+  # least want to get wrong under pressure. Discrete keys need no parser at all.
+  # -------------------------------------------------------------------------------------
 
-    # -----------------------------------------------------------------------------------
-    # mode: must agree with the WATCHTOWER_MODE env var below. Both exist because they do
-    # different jobs -- the env var is the deploy-time declaration and appears in
-    # `kubectl describe`, this is the runtime override that does not need a restart.
-    #
-    #   Off      -- nothing at all
-    #   Observe  -- receive signals, investigate, record. Propose nothing, execute nothing.
-    #   DryRun   -- everything Observe does, plus produce a concrete action plan and
-    #               evaluate it against policy, but stop before execution. This is the mode
-    #               that generates the evidence for whether execution can be trusted.
-    #   Auto     -- execute approved actions.
-    #
-    # Names match AgentMode in src/Watchtower.Core.
-    # -----------------------------------------------------------------------------------
-    mode: Observe
+  # killSwitch: engaged by ANY value other than an unambiguous false ("no", "off", "0",
+  # "disengaged" also disengage it). The asymmetry is on purpose -- someone typing "yes"
+  # or "TRUE" or "STOP" into this key under pressure means stop, and a garbled emergency
+  # stop must read as engaged. Engaging it holds the agent at Observe: it keeps detecting,
+  # investigating and reporting, and executes nothing.
+  killSwitch: "false"
 
-    # -----------------------------------------------------------------------------------
-    # Cooldown: minimum interval between actions against the SAME target. The defence
-    # against the agent restarting a pod, seeing it crash again, restarting it again, and
-    # discovering it has built a very expensive CrashLoopBackOff of its own.
-    # -----------------------------------------------------------------------------------
-    cooldown:
-      perTargetSeconds: 900
-      globalMaxActionsPerHour: 6
+  # mode: the runtime override, checked against the WATCHTOWER_MODE env var below and the
+  # database row. THE MOST RESTRICTIVE OF THE THREE WINS -- this key can only ever hold the
+  # agent further back, never push it forward. Setting this to Auto does not grant Auto if
+  # the env var says observe.
+  #
+  #   Off      -- nothing at all
+  #   Observe  -- receive signals, investigate, record. Propose nothing, execute nothing.
+  #   DryRun   -- everything Observe does, plus produce a concrete action plan and evaluate
+  #               it against policy, but stop before execution. This is the mode that
+  #               generates the evidence for whether execution can be trusted.
+  #   Auto     -- execute allowlisted low-risk actions.
+  #
+  # Names match AgentMode in src/Watchtower.Core/Domain/Enums.cs. An unrecognised value
+  # here reads as Observe rather than as "no opinion", so a typo cannot widen autonomy.
+  # Deleting this key entirely also reads as Observe: a missing value is an unreadable
+  # switch, not an absent one.
+  mode: "Observe"
 
-    # -----------------------------------------------------------------------------------
-    # Budget. watchtower_llm_budget_utilization is derived from these and drives
-    # WatchtowerLlmBudgetWarning (>0.8) and WatchtowerLlmBudgetExhausted (>=1.0) in
-    # infra/observability/alerts/observability-selfcheck.yaml.
-    # -----------------------------------------------------------------------------------
-    budget:
-      perIncidentUsd: 0.50
-      dailyUsd: 10.00
-      monthlyUsd: 150.00
-
-    # -----------------------------------------------------------------------------------
-    # Namespaces the agent may propose write actions in. This duplicates the RoleBinding
-    # scope in rbac.yaml ON PURPOSE. RBAC is the boundary that cannot be argued with; this
-    # is a same-answer check inside the agent so that an out-of-scope action is refused
-    # with a clear, loggable reason ("namespace not permitted") instead of surfacing as an
-    # opaque 403 the agent then tries to reason its way around.
-    #
-    # If these two ever disagree, RBAC wins. Always.
-    # -----------------------------------------------------------------------------------
-    actionableNamespaces:
-      - watchtower-chaos
-
-    investigation:
-      # Hard ceiling on reasoning steps. The most expensive failure mode observed in
-      # agents like this is not a wrong answer, it is an unbounded loop of tool calls
-      # converging on nothing. Surfaced as watchtower_investigation_steps.
-      maxSteps: 25
-      maxDurationSeconds: 300
-
-    grounding:
-      # Every factual claim in a conclusion must be a substring of retrieved evidence.
-      # Rejections are counted in watchtower_grounding_rejected_total -- a rising count
-      # means prompt drift, not a broken cluster.
-      requireEvidenceSubstring: true
+  # -------------------------------------------------------------------------------------
+  # What is deliberately NOT here
+  # -------------------------------------------------------------------------------------
+  # This file used to also carry cooldown, budget, actionableNamespaces, investigation and
+  # grounding blocks. None of them was ever read by the agent -- they were a parallel copy
+  # of settings that live elsewhere, which is worse than no documentation because it reads
+  # like configuration and behaves like a comment. They were removed rather than wired up,
+  # because each already has exactly one real home:
+  #
+  #   cooldown, actionableNamespaces  -> PolicyOptions  (Policy:* in appsettings.json)
+  #                                      src/Watchtower.Core/Policy/PolicyOptions.cs
+  #   budget                          -> LlmBudgetOptions (Llm:Budget:*), enforced in
+  #                                      src/Watchtower.Agent/Persistence/LlmBudgetService.cs
+  #   investigation step/time limits  -> the budget guard chat client
+  #   grounding                       -> a runtime invariant in GroundingVerifier, not a
+  #                                      toggle; it cannot be switched off from config.
+  #
+  # Anything added here in future must have a reader in src/ in the same commit.
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -314,8 +295,13 @@ spec:
                   name: watchtower-llm
                   key: GEMINI_API_KEY
 
-            - name: WATCHTOWER_SWITCHES_PATH
-              value: /etc/watchtower/switches.yaml
+            # Directory, not a file: each ConfigMap key projects as its own file under it
+            # (/etc/watchtower/mode, /etc/watchtower/killSwitch). Unset outside Kubernetes,
+            # which makes the ConfigMap arm silent rather than unreadable -- a developer
+            # running `dotnet run` has no ConfigMap and must not be pinned to Observe by
+            # its absence. Set-but-missing files ARE unreadable, and do pin to Observe.
+            - name: WATCHTOWER_SWITCHES_DIR
+              value: /etc/watchtower
 
             - name: ASPNETCORE_URLS
               value: "http://0.0.0.0:8080"

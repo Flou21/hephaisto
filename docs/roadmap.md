@@ -32,31 +32,82 @@ disagree, this file follows the code.
 
 ---
 
-## Step 0 — close the kill-switch gap (do this first)
+## Step 0 — close the kill-switch gap — **done, 2026-08-28**
 
-**The design specified three independent kill switches. Only one is wired.**
+**The design specified three independent kill switches. Only one was wired.**
 
-`AgentMode` is read solely from the `agent_mode` database row. The `WATCHTOWER_MODE`
-environment variable is set by `infra/app/watchtower.yaml` and by the Aspire AppHost, and the
-manifest carries a ConfigMap `mode` key with a comment saying the two "must agree" — but
-**no code reads either of them.**
+`AgentMode` was read solely from the `agent_mode` database row. `WATCHTOWER_MODE` was set by
+`infra/app/watchtower.yaml` and by the AppHost, the manifest carried a ConfigMap `mode` key
+with a comment saying the two "must agree", and `WATCHTOWER_SWITCHES_PATH` pointed at a
+`switches.yaml` — and **no code read any of them.**
 
-Today this is harmless, because the missing controls fail in the safe direction: the database
-row defaults to `Observe`, and nothing can execute anything anyway. It stops being harmless
-the moment Phase 2 lands, and the dangerous direction is the one that looks safe:
+That was harmless only because the missing controls failed safe. The dangerous direction was
+the one that looked safe:
 
-> An operator who sets `WATCHTOWER_MODE=observe` to **stop** an agent running in `auto` will
+> An operator who sets `WATCHTOWER_MODE=observe` to **stop** an agent running in `auto` would
 > find it keeps acting. The big red button is painted on.
 
-Fix before any executor work:
+### What was built
 
-1. Read `WATCHTOWER_MODE` at startup; the **most restrictive** of (env, ConfigMap, DB row)
-   wins. This is deliberately not "last writer wins".
-2. Add the `SwitchWatcher` hosted service watching the ConfigMap live, so the button takes
-   effect in seconds without a restart.
-3. An unreadable ConfigMap or env value reads as `Observe`, never as `Auto`. Unreachable
-   Postgres means refuse to act.
-4. Unit-test the precedence table, including every unreadable-source case.
+`ModeResolver` in `Watchtower.Core/Safety` resolves the arms, and `KillSwitch` in
+`Watchtower.Agent/Safety` supplies them. **The most restrictive arm wins** — implemented as
+`Min` over `AgentMode`, whose declaration order (`Off < Observe < DryRun < Auto`) is therefore
+load-bearing and pinned by its own test. No arm can ever raise the mode, only lower it.
+
+The distinction that carries the safety property is **silent versus failed**:
+
+| Arm state | Meaning | Effect |
+|---|---|---|
+| Silent | not configured here (no env var, no mounted ConfigMap) | does not constrain |
+| Declared | configured and understood | constrains to its value |
+| Malformed | configured, not parseable (`WATCHTOWER_MODE=atuo`) | constrains to `Observe` |
+| Unreadable | configured, not reachable (file gone, Postgres down) | constrains to `Observe` |
+
+Collapsing malformed into silent is what would invert the whole thing: a typo would *remove*
+the restriction the operator was applying. Every arm silent resolves to `Observe` — not
+`Auto`, which would make "nobody configured it" the most dangerous state in the system, and
+not `Off`, because an agent that reports nothing looks exactly like a healthy cluster.
+
+Parsing is strict on purpose. `Enum.TryParse` alone would accept `WATCHTOWER_MODE=3` and
+quietly mean `Auto`; a number in a kill switch is a misunderstanding, and a misunderstanding
+reads as `Observe`. The `killSwitch` key parses the other way round: anything that is not an
+unambiguous false engages it, because a garbled emergency stop is an engaged one.
+
+### What changed around it
+
+- The switch ConfigMap holds **discrete keys**, so each projects as its own file and needs no
+  parser. It used to be a YAML document nested inside a YAML string — one bad indent away
+  from breaking, in the file you least want to get wrong under pressure. `WATCHTOWER_SWITCHES_PATH`
+  became `WATCHTOWER_SWITCHES_DIR`.
+- The ConfigMap's `cooldown`, `budget`, `actionableNamespaces`, `investigation` and
+  `grounding` blocks were **removed, not wired**. None was ever read; each duplicated a
+  setting with a real home (`PolicyOptions`, `LlmBudgetOptions`, `GroundingVerifier`).
+  Config that reads like configuration and behaves like a comment is worse than no docs.
+  Anything added there in future needs a reader in `src/` in the same commit.
+- `SwitchWatcher` polls every 10s, logs a mode change at Warning in both directions, and
+  publishes `watchtower_mode` — a gauge that was declared in Core's telemetry constants and
+  had never been registered as an instrument. You can now alert on "the agent is in Auto".
+- The admission transaction in `ActionRepository` folds the env and ConfigMap arms in beside
+  the row it already reads, so the two arms an operator can actually reach at 3am bind the
+  executor and not just the investigation loop. The row read stays inside the transaction,
+  because it is the only arm a concurrent admission can race.
+- `/status` shows configured and effective mode side by side, names the binding arm, and
+  lists all of them. "Configured Auto, running Observe" is the state that most needs seeing.
+
+### Verified
+
+64 tests, including the exhaustive 4×4×4 precedence table. Two negative controls confirm the
+tests detect the failure rather than passing vacuously: making a malformed arm read as silence
+fails 8 tests, and flipping `Min` to `Max` fails 15. Live against a running process with
+`WATCHTOWER_MODE=auto`, a ConfigMap file saying `Observe` and no Postgres:
+
+```
+Kill switch armed: effective mode Observe, bound by configmap:mode
+  [env:WATCHTOWER_MODE: Auto; configmap:killSwitch: not set; configmap:mode: Observe;
+   db:agent_mode: unreadable (...) - reads as Observe]
+```
+
+Editing the file to `Off` moved the gauge to 0 with no restart.
 
 ---
 

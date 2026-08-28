@@ -34,19 +34,53 @@ else
             </div>
 
             <div class="wt-stat">
-                @* The distinction the kill switch turns on. Configured mode and effective
-                   mode differ exactly when the runaway backstop has latched, and a status
-                   page that showed only one of them would be wrong in the one case that
-                   matters. *@
+                @* The distinction the kill switch turns on. Configured mode is what a human
+                   last asked for in the database; effective mode is the most restrictive of
+                   the env var, the switch ConfigMap and that row. A status page showing only
+                   one of them would be wrong in exactly the case that matters — someone has
+                   hit the ConfigMap and the row has not caught up. *@
                 <span class="wt-stat-label">effective</span>
-                <span class="wt-stat-value mono @(s.RunawayLatched ? "wt-alarm" : "")">
-                    @(s.RunawayLatched ? "observe" : s.Mode.ToString().ToLowerInvariant())
+                <span class="wt-stat-value mono @(s.EffectiveMode < s.Mode ? "wt-alarm" : "")">
+                    @s.EffectiveMode.ToString().ToLowerInvariant()
                 </span>
                 <span class="wt-muted">
-                    @(s.RunawayLatched ? "forced by the runaway latch" : "matches configuration")
+                    @(s.EffectiveMode == s.Mode
+                        ? "matches configuration"
+                        : $"held back by {s.ModeDecidedBy}")
                 </span>
             </div>
         </div>
+
+        @if (s.ModeArms.Count > 0)
+        {
+            @* Every arm, always — not just when they disagree. "Which of the three do I
+               change to stop this thing" is the question asked under pressure, and it must
+               be answerable by looking rather than by remembering. *@
+            <details class="wt-arms">
+                <summary class="wt-muted">
+                    kill switch: @s.ModeArms.Count arms, bound by <span class="mono">@s.ModeDecidedBy</span>
+                </summary>
+                <ul class="mono">
+                    @foreach (var arm in s.ModeArms)
+                    {
+                        <li>@arm</li>
+                    }
+                </ul>
+            </details>
+        }
+
+        @if (s.ModeConstrained)
+        {
+            <div class="wt-callout callout-escalated">
+                <span class="glyph">!!</span>
+                <strong>an arm is holding the agent back</strong>
+                <div class="wt-muted">
+                    Something asked for a more permissive mode than <span class="mono">@s.EffectiveMode.ToString().ToLowerInvariant()</span>
+                    and <span class="mono">@s.ModeDecidedBy</span> refused it. The most restrictive arm always
+                    wins, so raising the others changes nothing until this one is raised.
+                </div>
+            </div>
+        }
 
         @if (s.RunawayLatched)
         {
@@ -66,7 +100,7 @@ else
             </div>
         }
 
-        @if (s.Mode == AgentMode.Observe && !s.RunawayLatched)
+        @if (s.EffectiveMode == AgentMode.Observe && !s.RunawayLatched)
         {
             <p class="wt-note">
                 <span class="glyph">i</span>

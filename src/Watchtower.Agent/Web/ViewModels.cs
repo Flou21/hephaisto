@@ -400,7 +400,29 @@ public sealed record IncidentDetailView
 /// <summary>What <c>/api/status</c> and the status page both render.</summary>
 public sealed record AgentStatusView
 {
+    /// <summary>The mode CONFIGURED in the database row - what a human last asked for.</summary>
     public AgentMode Mode { get; init; }
+
+    /// <summary>
+    /// The mode actually in force: the most restrictive of the env var, the switch ConfigMap
+    /// and the database row.
+    /// </summary>
+    /// <remarks>
+    /// Shown next to <see cref="Mode"/> rather than instead of it, because the gap between
+    /// the two is the interesting part. "Configured Auto, running Observe" is the state an
+    /// operator most needs to see and the one a single mode field hides - it is what you get
+    /// after someone hits the ConfigMap and before anyone updates the row.
+    /// </remarks>
+    public AgentMode EffectiveMode { get; init; }
+
+    /// <summary>Which arm bound <see cref="EffectiveMode"/> - the one a human has to change.</summary>
+    public string ModeDecidedBy { get; init; } = "default";
+
+    /// <summary>Every arm, rendered, so the status page can show why without a debugger.</summary>
+    public IReadOnlyList<string> ModeArms { get; init; } = [];
+
+    /// <summary>True when some arm is holding the agent below what another arm asked for.</summary>
+    public bool ModeConstrained { get; init; }
 
     /// <summary>True means the mode column is a lie: the agent is running as
     /// <see cref="AgentMode.Observe"/> regardless, until a human re-arms it.</summary>

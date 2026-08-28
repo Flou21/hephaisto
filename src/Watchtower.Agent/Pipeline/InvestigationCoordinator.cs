@@ -4,6 +4,7 @@ using Watchtower.Agent.Investigations;
 using Watchtower.Agent.Llm;
 using Watchtower.Agent.Persistence;
 using Watchtower.Agent.Persistence.Repositories;
+using Watchtower.Agent.Safety;
 using Watchtower.Agent.Web;
 using Watchtower.Core;
 using Watchtower.Core.Abstractions;
@@ -36,7 +37,7 @@ public sealed class InvestigationCoordinator(
     WatchtowerDbContext db,
     IIncidentRepository incidents,
     IAuditRepository audit,
-    IAgentModeStore modeStore,
+    IKillSwitch killSwitch,
     IncidentStateMachine stateMachine,
     InvestigationRunner runner,
     IncidentEmbedder embedder,
@@ -56,7 +57,10 @@ public sealed class InvestigationCoordinator(
             return;
         }
 
-        var mode = await modeStore.GetModeAsync(ct).ConfigureAwait(false);
+        // The effective mode, not just the database row: an operator who sets
+        // WATCHTOWER_MODE=observe or edits the switch ConfigMap has to be able to hold this
+        // incident below whatever the row says, or those two arms are decorative.
+        var mode = (await killSwitch.ResolveAsync(ct).ConfigureAwait(false)).Effective;
         incident.Mode = mode;
 
         notifier.Publish(new IncidentLiveEvent
