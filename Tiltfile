@@ -48,6 +48,10 @@ k8s_yaml('infra/namespaces.yaml')
 if observability or tracing:
     helm_repo('prometheus-community', 'https://prometheus-community.github.io/helm-charts', labels = ['repos'])
     helm_repo('grafana-charts',       'https://grafana.github.io/helm-charts',              labels = ['repos'])
+    # Distinct repo, not a mirror. The Tempo and grafana-mcp charts migrated here after
+    # 2026-01-30; grafana/tempo tops out at 1.24.4 (deprecated) and grafana/grafana-mcp at
+    # 0.3.1, so the pinned versions below simply do not exist in grafana-charts.
+    helm_repo('grafana-community',    'https://grafana-community.github.io/helm-charts',    labels = ['repos'])
     helm_repo('open-telemetry',       'https://open-telemetry.github.io/opentelemetry-helm-charts', labels = ['repos'])
 
 # --- observability stack ------------------------------------------------------------------
@@ -66,7 +70,7 @@ if observability:
         resource_deps = ['prometheus-community'],
         port_forwards = [
             tailnet(9090, 9090),   # Prometheus
-            tailnet(3030, 3000),   # Grafana
+            tailnet(3030, 80),     # Grafana - the Service listens on 80, not 3000
             tailnet(9093, 9093),   # Alertmanager
         ],
         labels = ['observability'],
@@ -103,13 +107,13 @@ if observability:
 
     helm_resource(
         'grafana-mcp',
-        'grafana-charts/grafana-mcp',
+        'grafana-community/grafana-mcp',
         namespace = 'watchtower-obs',
         flags = [
             '--version', '0.19.0',
             '--values', 'infra/observability/grafana-mcp.values.yaml',
         ],
-        resource_deps = ['grafana-charts', 'kube-prometheus-stack'],
+        resource_deps = ['grafana-community', 'kube-prometheus-stack'],
         port_forwards = [tailnet(8200, 8000)],
         labels = ['observability'],
     )
@@ -135,14 +139,14 @@ if observability:
 if tracing:
     helm_resource(
         'tempo',
-        'grafana-charts/tempo',
+        'grafana-community/tempo',
         namespace = 'watchtower-obs',
         flags = [
             '--version', '2.3.0',
             '--values', 'infra/observability/tempo.values.yaml',
         ],
-        resource_deps = ['grafana-charts'],
-        port_forwards = [tailnet(3200, 3100)],
+        resource_deps = ['grafana-community'],
+        port_forwards = [tailnet(3200, 3200)],
         labels = ['observability'],
     )
 

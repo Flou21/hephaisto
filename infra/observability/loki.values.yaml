@@ -1,0 +1,261 @@
+# Loki values for Watchtower
+# ---------------------------------------------------------------------------------------
+#   chart:     grafana/loki
+#   version:   6.55.0   (Loki 3.6.7)
+#   release:   loki
+#   namespace: watchtower-obs
+#
+#   helm upgrade --install loki grafana/loki --version 6.55.0 \
+#     -n watchtower-obs -f infra/observability/loki.values.yaml
+#
+# ---------------------------------------------------------------------------------------
+# Why single binary, and why the OTLP endpoint is the whole point
+# ---------------------------------------------------------------------------------------
+# deploymentMode: SingleBinary runs read, write and backend paths in one process with
+# replication_factor 1. On a one-node cluster that is not a compromise, it is the only
+# correct choice: SimpleScalable (the chart default) wants a 3-replica ring, and a ring
+# that never reaches quorum produces a stream of "too many unhealthy instances" errors on
+# every restart. Watchtower would read those as a real incident. Every alert this agent
+# sees must mean something.
+#
+# Loki 3.x exposes a NATIVE OTLP ingest endpoint at POST /otlp/v1/logs. That endpoint is
+# the reason this whole stack is wired through OpenTelemetry rather than promtail:
+#
+#   * OTLP log records carry the active span context. Loki maps TraceId/SpanId onto
+#     STRUCTURED METADATA -- `trace_id` and `span_id` -- which are queryable per-line
+#     without being cardinality-exploding index labels.
+#   * That `trace_id` is exactly what Grafana's tracesToLogsV2 `filterByTraceID` joins on.
+#     Without it, the Tempo -> Loki hop degrades to a fuzzy label+time-window match.
+#
+# Structured metadata requires the TSDB v13 schema AND limits_config.allow_structured_metadata.
+# Both are set below. On an older schema Loki rejects OTLP writes outright with
+# "structured metadata is not supported", which surfaces as 4xx in the collector's
+# otelcol_exporter_send_failed_log_records -- one of the self-check alerts.
+# ---------------------------------------------------------------------------------------
+
+deploymentMode: SingleBinary
+
+loki:
+  # Single tenant. No X-Scope-OrgID plumbing anywhere in the stack.
+  auth_enabled: false
+
+  analytics:
+    reporting_enabled: false
+
+  commonConfig:
+    path_prefix: /var/loki
+    # MUST be 1. The chart default of 3 is what breaks single-node installs.
+    replication_factor: 1
+
+  storage:
+    # Filesystem, not the rustfs S3 in infra-storage. rustfs is a toggleable dev resource in
+    # the neighbouring Cait workspace; making the agent's log store depend on it means the
+    # agent loses its own memory whenever someone flips a Tilt toggle. Local PVC only.
+    type: filesystem
+
+  schemaConfig:
+    configs:
+      - from: "2025-01-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+
+  limits_config:
+    # The switch that makes trace_id/span_id from OTLP actually persist. Off by default.
+    allow_structured_metadata: true
+    volume_enabled: true
+
+    # 72h of logs against 24h of metrics and 48h of traces. Logs are the cheapest signal to
+    # keep and the most useful one for "what did this actually say at 03:00".
+    retention_period: 72h
+
+    # Dev-loop headroom. A crashlooping fixture plus the C10 traffic generator can burst
+    # well past the 4MB/s default and get rate-limited, which shows up as gaps in the log
+    # stream that look exactly like an outage.
+    ingestion_rate_mb: 20
+    ingestion_burst_size_mb: 40
+    max_streams_per_user: 0
+    max_global_streams_per_user: 0
+
+    reject_old_samples: true
+    reject_old_samples_max_age: 168h
+
+    otlp_config:
+      resource_attributes:
+        # Promote a small, bounded set of k8s resource attributes to real index labels so
+        # LogQL stream selectors are cheap. Everything else stays structured metadata.
+        # Keep this list SHORT -- each entry multiplies stream cardinality, and the README
+        # in infra/chaos/ writes its LogQL against exactly these names.
+        #
+        # These exact names are a CONTRACT. Loki renders them dots-to-underscores, so
+        # `k8s.namespace.name` becomes the label `k8s_namespace_name`, and every LogQL
+        # stream selector in infra/chaos/README.md is written against that spelling. An
+        # attribute NOT in this list still arrives -- as structured metadata -- but it
+        # cannot be used in a `{...}` stream selector, only in a `| attr="..."` filter
+        # after the fact. So dropping an entry here silently breaks a class of query
+        # rather than producing an error.
+        #
+        # k8s.job.name is included for chaos fixture C5 (failing Job), whose pods are
+        # garbage-collected: after GC the only way to find their logs is by job name.
+        attributes_config:
+          - action: index_label
+            attributes:
+              - k8s.namespace.name
+              - k8s.pod.name
+              - k8s.container.name
+              - k8s.deployment.name
+              - k8s.job.name
+              - k8s.node.name
+              - service.name
+
+  compactor:
+    working_directory: /var/loki/compactor
+    retention_enabled: true
+    delete_request_store: filesystem
+
+  server:
+    http_listen_port: 3100
+    grpc_listen_port: 9095
+    log_level: info
+    grpc_server_max_recv_msg_size: 25000000
+    grpc_server_max_send_msg_size: 25000000
+
+  podSecurityContext:
+    fsGroupChangePolicy: OnRootMismatch
+
+# ---------------------------------------------------------------------------------------
+# The one running component
+# ---------------------------------------------------------------------------------------
+singleBinary:
+  replicas: 1
+  persistence:
+    enabled: true
+    # `storageClass`, NOT `storageClassName` -- this chart's key is the short one, and a
+    # typo here yields a PVC bound to the default class rather than an error.
+    storageClass: local-path
+    size: 10Gi
+    accessModes:
+      - ReadWriteOnce
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      memory: 1Gi
+  extraArgs:
+    - -config.expand-env=true
+
+# ---------------------------------------------------------------------------------------
+# Zero out every distributed component
+# ---------------------------------------------------------------------------------------
+# These belong to SimpleScalable / Distributed mode. deploymentMode: SingleBinary already
+# suppresses most of them, but setting replicas 0 explicitly means that if someone later
+# flips deploymentMode back, they get zero pods and an obvious problem rather than a
+# half-built ring that fails intermittently.
+write:
+  replicas: 0
+read:
+  replicas: 0
+backend:
+  replicas: 0
+
+ingester:
+  replicas: 0
+distributor:
+  replicas: 0
+querier:
+  replicas: 0
+queryFrontend:
+  replicas: 0
+queryScheduler:
+  replicas: 0
+indexGateway:
+  replicas: 0
+compactor:
+  replicas: 0
+ruler:
+  replicas: 0
+bloomGateway:
+  replicas: 0
+bloomPlanner:
+  replicas: 0
+patternIngester:
+  replicas: 0
+
+# memcached tiers: pure overhead at this data volume, and two more pods to keep alive.
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+
+# The chart's bundled MinIO. Not used -- storage is the filesystem PVC above.
+minio:
+  enabled: false
+
+# ---------------------------------------------------------------------------------------
+# Gateway
+# ---------------------------------------------------------------------------------------
+gateway:
+  # The nginx gateway is what routes /otlp/v1/logs (as of chart 6.x it is in the default
+  # nginx config) alongside /loki/api/v1/*. Keeping it enabled means there is ONE address
+  # that serves both the OTLP ingest path used by the collector and the query path used by
+  # Grafana, so the two never drift.
+  enabled: true
+  replicas: 1
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+  service:
+    port: 80
+
+ingress:
+  # No Ingress anywhere in this stack. Access is via Tilt port-forwards bound to the
+  # Tailscale interface; Traefik answers 443 with a self-signed default cert, so a bare
+  # hostname fails the browser's HTTPS-first attempt.
+  enabled: false
+
+# ---------------------------------------------------------------------------------------
+# Self-monitoring
+# ---------------------------------------------------------------------------------------
+monitoring:
+  serviceMonitor:
+    enabled: true
+    labels:
+      # Must match prometheus.prometheusSpec.serviceMonitorSelector in
+      # kube-prometheus-stack.values.yaml or this ServiceMonitor is silently ignored.
+      release: watchtower
+  selfMonitoring:
+    enabled: false
+  # The chart's bundled Loki mixin dashboards and rules: off. Rules especially -- they
+  # would be picked up by our ruleSelector only if labelled release=watchtower, and their
+  # production `for:` durations contradict the dev-loop tuning in infra/observability/alerts/.
+  dashboards:
+    enabled: false
+  rules:
+    enabled: false
+    alerting: false
+  alerts:
+    enabled: false
+
+lokiCanary:
+  # The canary writes synthetic log lines and alerts if they do not come back. Tempting,
+  # but it is a second, parallel liveness mechanism to the one in
+  # observability-selfcheck.yaml, and two heartbeats that can disagree is worse than one.
+  enabled: false
+
+test:
+  enabled: false
+
+rbac:
+  pspEnabled: false
+
+# The chart normally installs the rollout-operator for zone-aware rollouts. Single node,
+# single replica: nothing to roll out in zones.
+rollout_operator:
+  enabled: false

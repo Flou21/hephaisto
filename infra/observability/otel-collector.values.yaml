@@ -1,0 +1,579 @@
+# OpenTelemetry Collector values for Watchtower
+# ---------------------------------------------------------------------------------------
+#   chart:     open-telemetry/opentelemetry-collector
+#   version:   0.171.0   (collector 0.158.0)
+#   release:   otel-collector
+#   namespace: watchtower-obs
+#
+#   helm upgrade --install otel-collector open-telemetry/opentelemetry-collector \
+#     --version 0.171.0 -n watchtower-obs -f infra/observability/otel-collector.values.yaml
+#
+# This collector is the single ingress point for all three signals. Everything the agent
+# ever reasons about passes through this pod.
+#
+# ---------------------------------------------------------------------------------------
+# DEVIATION FROM SPEC: the `-k8s` distro cannot be used. This runs `-contrib`.
+# ---------------------------------------------------------------------------------------
+# The plan called for `otel/opentelemetry-collector-k8s`, on the correct reasoning that the
+# `core` distro lacks k8sattributes, k8sobjects and k8s_events. That reasoning holds -- core
+# ships only otlp/prometheus receivers and has no Kubernetes awareness at all.
+#
+# But `-k8s` does not work either, for a reason that is not in its README. Verified against
+# the distribution manifest, otelcol-k8s ships exactly these exporters:
+#
+#     debug, nop, otlp, otlphttp, file, loadbalancing, otelarrow
+#
+# There is NO prometheusremotewrite exporter in that list. The metrics pipeline below
+# remote-writes into Prometheus, so `-k8s` fails at startup with
+# `error decoding 'exporters': unknown type: "prometheusremotewrite"`.
+#
+# `-contrib` is a superset: it has prometheusremotewrite AND k8sattributes AND k8s_events
+# AND filelog. It is a larger image (~250MB vs ~120MB) pulled once onto a machine with
+# 115GiB of RAM. That is the entire cost.
+#
+# If you ever want to go back to `-k8s`, the metrics path must change to OTLP into
+# Prometheus's native OTLP receiver (`--web.enable-otlp-receiver`) instead of remote write.
+# That is a real option, but it is a different design, not a values tweak.
+#
+# ---------------------------------------------------------------------------------------
+# DEVIATION: presets are NOT used, because presets.kubernetesEvents is broken here.
+# ---------------------------------------------------------------------------------------
+# The chart offers presets that would generate most of this file. Two problems:
+#
+#  1. `presets.kubernetesEvents.enabled: true` (with or without useK8sEventsReceiver)
+#     creates the ClusterRole rules for events but DOES NOT add any events receiver to the
+#     config. Verified by rendering chart 0.171.0: the logs pipeline comes out as
+#     `receivers: [otlp]` with no k8s_events and no k8sobjects. Silent no-op -- the RBAC
+#     exists, so it looks configured, and no events are ever collected.
+#
+#  2. `presets.kubernetesAttributes` PREPENDS k8s_attributes to every pipeline's processor
+#     list, ahead of memory_limiter. See the memory_limiter note below for why that
+#     ordering is wrong.
+#
+# So everything is written out longhand. More YAML, but what you read is what runs.
+#
+# ---------------------------------------------------------------------------------------
+# NOTE ON COMPONENT NAMES: the chart's `rewriteDeprecatedComponentNames: true` (default)
+# translates the familiar component IDs to the collector's newer canonical ones, including
+# inside pipeline references. Verified against the rendered ConfigMap:
+#
+#     k8sattributes  -> k8s_attributes
+#     filelog        -> file_log
+#     otlp/tempo     -> otlp_grpc/tempo
+#     otlphttp/loki  -> otlp_http/loki
+#
+# Both spellings work. The familiar ones are used in this file because that is what every
+# piece of upstream documentation you will search for uses. Do not be alarmed when
+# `kubectl get cm otel-collector-agent -o yaml` shows the other set.
+# ---------------------------------------------------------------------------------------
+
+# So the Service is `otel-collector.watchtower-obs`, not
+# `otel-collector-opentelemetry-collector.watchtower-obs`. Every OTEL_EXPORTER_OTLP_ENDPOINT
+# in this repo -- the agent's, the C10 fixture's -- points at the short name.
+fullnameOverride: otel-collector
+
+# DaemonSet, not Deployment: the filelog receiver reads /var/log/pods off the node's
+# filesystem, which only works from a pod on that node. One node here means one collector,
+# which incidentally sidesteps the usual k8s_events duplication problem (see below).
+mode: daemonset
+
+image:
+  repository: "ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib"
+  tag: "0.158.0"
+  pullPolicy: IfNotPresent
+
+# The chart does not infer the binary name from the repository -- `image.repository` and
+# `command.name` are two unrelated values, and getting one right while leaving the other
+# empty gives you a container that runs the wrong binary or no binary at all. For contrib
+# the entrypoint is /otelcol-contrib. (The chart has a values.schema.json, so a typo in a
+# key name is at least a hard error rather than a silent no-op -- rare and welcome.)
+command:
+  name: otelcol-contrib
+
+# ---------------------------------------------------------------------------------------
+# RBAC
+# ---------------------------------------------------------------------------------------
+# Read-only, cluster-scoped, and no more than the three components below actually need.
+# Note this is a DIFFERENT and much narrower grant than the agent's own ClusterRole in
+# infra/app/rbac.yaml -- the collector reads metadata, the agent reads state.
+clusterRole:
+  create: true
+  rules:
+    # --- k8sattributes processor -------------------------------------------------------
+    # Watches pods to resolve an incoming span's source IP / pod UID into k8s.pod.name,
+    # k8s.namespace.name and friends. Needs namespaces for k8s.cluster.uid, and nodes for
+    # k8s.node.* enrichment.
+    - apiGroups: [""]
+      resources: ["pods", "namespaces", "nodes"]
+      verbs: ["get", "list", "watch"]
+    # ReplicaSets are how k8s.deployment.name is derived: pod -> ownerRef ReplicaSet ->
+    # ownerRef Deployment. Without this rule, k8s.deployment.name is simply absent, and
+    # every LogQL selector in infra/chaos/README.md that uses k8s_deployment_name matches
+    # nothing. The `extensions` duplicate is for clusters still serving the old API group.
+    - apiGroups: ["apps"]
+      resources: ["replicasets"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["extensions"]
+      resources: ["replicasets"]
+      verbs: ["get", "list", "watch"]
+    # --- k8s_events receiver -----------------------------------------------------------
+    # Watches the Event stream cluster-wide. `events` in the core group is the legacy
+    # resource; `events.k8s.io` is the modern one. Both are granted because which one a
+    # given controller writes to is not something we control.
+    - apiGroups: [""]
+      resources: ["events"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["events.k8s.io"]
+      resources: ["events"]
+      verbs: ["get", "list", "watch"]
+
+  clusterRoleBinding:
+    annotations: {}
+
+serviceAccount:
+  create: true
+
+# ---------------------------------------------------------------------------------------
+# Ports
+# ---------------------------------------------------------------------------------------
+# In daemonset mode the chart sets a hostPort on every enabled port by default. This node is
+# shared with the Cait Tilt stack; claiming six host ports for protocols nothing here speaks
+# is asking for a "bind: address already in use" CrashLoop six months from now. (That exact
+# failure already exists on this node between the old and new node-exporters -- see the
+# comment in kube-prometheus-stack.values.yaml.)
+#
+# hostPort is dropped even on the OTLP ports: everything that sends to this collector is
+# in-cluster and reaches it through the ClusterIP Service.
+ports:
+  otlp:
+    enabled: true
+    containerPort: 4317
+    servicePort: 4317
+    hostPort: null
+    protocol: TCP
+    appProtocol: grpc
+  otlp-http:
+    enabled: true
+    containerPort: 4318
+    servicePort: 4318
+    hostPort: null
+    protocol: TCP
+  jaeger-compact:
+    enabled: false
+  jaeger-thrift:
+    enabled: false
+  jaeger-grpc:
+    enabled: false
+  zipkin:
+    enabled: false
+  metrics:
+    # The collector's own :8888 metrics are scraped by the `prometheus` receiver INSIDE the
+    # pod and flow out through the metrics pipeline like everything else, so there is no
+    # need to expose the port or run a ServiceMonitor against it. This is what makes the
+    # otelcol_* alerts in alerts/observability-selfcheck.yaml possible.
+    enabled: false
+
+# ---------------------------------------------------------------------------------------
+# Host log access
+# ---------------------------------------------------------------------------------------
+extraVolumes:
+  - name: varlogpods
+    hostPath:
+      path: /var/log/pods
+  - name: varlibdockercontainers
+    hostPath:
+      path: /var/lib/docker/containers
+extraVolumeMounts:
+  - name: varlogpods
+    mountPath: /var/log/pods
+    readOnly: true
+  - name: varlibdockercontainers
+    mountPath: /var/lib/docker/containers
+    readOnly: true
+
+extraEnvs:
+  # k8sattributes' `filter.node_from_env_var` uses this to restrict its pod cache to pods on
+  # THIS node. Without it every collector replica watches every pod in the cluster; with one
+  # node it is merely wasteful, but it is also what keeps the watch cheap.
+  - name: K8S_NODE_NAME
+    valueFrom:
+      fieldRef:
+        fieldPath: spec.nodeName
+
+# ---------------------------------------------------------------------------------------
+# Collector configuration
+# ---------------------------------------------------------------------------------------
+# Reminder: this map is MERGED over the chart's defaults, and Helm merges maps but replaces
+# lists. So the default `jaeger` and `zipkin` receivers survive unless explicitly nulled,
+# while every `receivers:`/`processors:`/`exporters:` list under service.pipelines is
+# replaced wholesale by what is written here.
+config:
+  # Delete the chart's default trace receivers. Unlike the Tempo chart, this one has no
+  # template that dereferences them, so nulling is safe. It matters: an unused receiver is
+  # still constructed and validated at startup, and it is one more listening socket.
+  receivers:
+    jaeger: null
+    zipkin: null
+
+    # --- otlp ---------------------------------------------------------------------------
+    # Everything instrumented sends here: the Watchtower agent itself, and the C10 faulty
+    # service. 0.0.0.0 rather than the chart's ${MY_POD_IP} default so the DaemonSet pod is
+    # reachable on the Service ClusterIP as well as its pod IP.
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+          max_recv_msg_size_mib: 16
+        http:
+          endpoint: 0.0.0.0:4318
+
+    # --- k8s_events ---------------------------------------------------------------------
+    # THE HIGHEST-VALUE RECEIVER IN THIS FILE. Read this before deciding it is optional.
+    #
+    # Metrics tell the agent THAT something changed. Logs tell it what a process said about
+    # itself. Neither tells it WHY the cluster did what it did. That is what Kubernetes
+    # Events are -- the control plane's own narration of its decisions:
+    #
+    #     FailedScheduling   0/1 nodes are available: 1 Insufficient memory
+    #     Failed             Failed to pull image "...": not found
+    #     BackOff            Back-off restarting failed container
+    #     OOMKilling         Memory cgroup out of memory: Killed process
+    #     Evicted            The node was low on resource: memory
+    #
+    # Without these, chaos fixture C3 (unschedulable) is literally invisible: a Deployment
+    # requesting 500Gi produces NO metric and NO log line, because no container ever starts.
+    # The only evidence in the entire cluster that anything is wrong is a FailedScheduling
+    # Event. An agent without this receiver sees kube_deployment_status_replicas_available
+    # sitting at 0 and has no reason -- it can report a symptom and nothing else.
+    #
+    # Events become OTLP log records, so they land in Loki next to application logs on the
+    # same timeline. That is the whole trick: `FailedScheduling` and the app's last words
+    # before it died are one LogQL query apart.
+    #
+    # Duplication caveat: this is a DaemonSet, and k8s_events watches cluster-wide, so N
+    # nodes would mean N copies of every event. This cluster has exactly one node, so there
+    # is no duplication. If a second node is ever added, this receiver must move to a
+    # single-replica Deployment (or use the k8sleaderelector extension).
+    k8s_events:
+      auth_type: serviceAccount
+      # Empty = all namespaces. The agent needs events from watchtower-chaos (the fixtures),
+      # watchtower-obs (its own stack breaking) and kube-system (node-level trouble).
+      namespaces: []
+
+    # --- filelog ------------------------------------------------------------------------
+    # stdout/stderr of every container on the node, straight off the kubelet's log files.
+    # The `container` operator handles CRI/docker format detection, multiline stitching and
+    # extracting k8s.pod.name / k8s.namespace.name / k8s.container.name from the path.
+    #
+    # These logs do NOT carry trace_id -- see the tracesToLogsV2 note in
+    # grafana-datasources.yaml. Only OTLP-shipped logs do. That is a real limitation, not an
+    # oversight, and it is why the C10 fixture (which ships via OTLP) is the only fixture
+    # that demonstrates full trace<->log correlation.
+    filelog:
+      include:
+        - /var/log/pods/*/*/*.log
+      # Do not read our own logs. A collector that ingests its own output about failing to
+      # export logs builds a feedback loop that grows without bound under any Loki outage.
+      exclude:
+        - /var/log/pods/watchtower-obs_otel-collector*_*/opentelemetry-collector/*.log
+      start_at: end
+      include_file_path: true
+      include_file_name: false
+      retry_on_failure:
+        enabled: true
+      operators:
+        - id: container-parser
+          type: container
+          max_log_size: 102400
+
+    # --- prometheus (self-scrape) --------------------------------------------------------
+    # Scrapes the collector's own :8888. This is the source of every otelcol_* series the
+    # self-check alerts fire on: otelcol_exporter_send_failed_spans,
+    # otelcol_processor_refused_*, otelcol_exporter_queue_size. The agent noticing that its
+    # OWN telemetry pipeline is degraded is a first-class requirement, not a nice-to-have.
+    prometheus:
+      config:
+        scrape_configs:
+          - job_name: otel-collector
+            scrape_interval: 15s
+            static_configs:
+              - targets:
+                  - ${env:MY_POD_IP}:8888
+
+  processors:
+    # --- memory_limiter -- ALWAYS FIRST ---------------------------------------------------
+    # This is not stylistic. memory_limiter works by REFUSING data when heap usage crosses
+    # its threshold, and refusal propagates backwards to the receiver, which applies
+    # backpressure to the sender. That only works if it sits at the head of the pipeline.
+    #
+    # Put it after k8sattributes or batch, and every record is fully enriched and buffered
+    # into a batch BEFORE the limiter gets a chance to say no. The memory spent building
+    # those batches is exactly the memory the limiter is supposed to protect, so under load
+    # the collector OOMs while the limiter reports it is doing its job. The chart's own
+    # kubernetesAttributes preset gets this wrong, which is one reason presets are not used
+    # here.
+    memory_limiter:
+      check_interval: 5s
+      limit_percentage: 80
+      spike_limit_percentage: 25
+
+    # --- k8sattributes --------------------------------------------------------------------
+    # Turns "a span arrived from 10.42.0.37" into k8s.namespace.name=watchtower-chaos,
+    # k8s.deployment.name=c2-crashloop. This is the join key for the entire correlation
+    # story: it is what lets a Tempo trace, a Loki log line and a Prometheus series all be
+    # attributed to the same workload, and it is what the chaos README's LogQL selectors
+    # (`{k8s_namespace_name=..., k8s_deployment_name=...}`) depend on existing.
+    k8sattributes:
+      auth_type: serviceAccount
+      passthrough: false
+      filter:
+        # Only pods on this node -- see the K8S_NODE_NAME env above.
+        node_from_env_var: K8S_NODE_NAME
+      extract:
+        metadata:
+          - k8s.namespace.name
+          - k8s.pod.name
+          - k8s.pod.uid
+          - k8s.pod.start_time
+          - k8s.deployment.name
+          - k8s.replicaset.name
+          - k8s.daemonset.name
+          - k8s.statefulset.name
+          - k8s.job.name
+          - k8s.cronjob.name
+          - k8s.node.name
+          - k8s.container.name
+          - container.image.name
+          - container.image.tag
+        labels:
+          # Chaos fixtures carry watchtower.io/scenario so an alert can be traced back to
+          # the fixture that caused it -- which is how the regression suite asserts
+          # "scenario c7 produced exactly the c7 alert and not the c4 alert".
+          - tag_name: watchtower.scenario
+            key: watchtower.io/scenario
+            from: pod
+      pod_association:
+        - sources:
+            - from: resource_attribute
+              name: k8s.pod.ip
+        - sources:
+            - from: resource_attribute
+              name: k8s.pod.uid
+        - sources:
+            - from: connection
+
+    # --- resource -------------------------------------------------------------------------
+    # `cluster` must be identical here, in Prometheus's externalLabels, and in Tempo's
+    # metricsGenerator.registry.external_labels. Any correlation query that filters on
+    # `cluster` and finds three different values returns nothing, with no error anywhere.
+    resource:
+      attributes:
+        - key: cluster
+          value: studio-rancher-desktop
+          action: upsert
+
+    # --- batch ----------------------------------------------------------------------------
+    # Last. Batching is an efficiency concern and belongs after everything that can drop or
+    # enrich a record, so batches are not built out of data that is about to be discarded.
+    batch:
+      timeout: 5s
+      send_batch_size: 1024
+      send_batch_max_size: 2048
+
+  exporters:
+    # Remove the chart's default debug exporter from the rendered config. It is referenced
+    # by nothing below, and leaving a `debug: {}` around invites someone to wire it into a
+    # pipeline "temporarily" and print every span in the cluster to stdout -- which filelog
+    # would then ingest.
+    debug: null
+
+    # --- traces -> Tempo -------------------------------------------------------------------
+    otlp/tempo:
+      endpoint: tempo.watchtower-obs:4317
+      tls:
+        insecure: true
+      retry_on_failure:
+        enabled: true
+        max_elapsed_time: 60s
+
+    # --- everything -> Aspire dashboard ------------------------------------------------------
+    # The .NET Aspire dashboard speaks OTLP/gRPC on 18889. It is a live view, not storage --
+    # see infra/observability/aspire-dashboard.yaml. Exporting to it in parallel with Tempo
+    # (rather than chaining) means an Aspire restart cannot affect the durable path.
+    otlp/aspire:
+      endpoint: aspire-dashboard.watchtower-obs:18889
+      tls:
+        insecure: true
+      retry_on_failure:
+        enabled: true
+        # Short. Aspire is in-memory and disposable; there is nothing worth retrying into it
+        # for a minute.
+        max_elapsed_time: 10s
+      sending_queue:
+        enabled: true
+        queue_size: 256
+
+    # --- logs -> Loki -------------------------------------------------------------------------
+    # `otlphttp`, NOT the dedicated `loki` exporter. The loki exporter was deprecated in
+    # collector v0.107 and removed from contrib; anything on the internet telling you to use
+    # `loki:` with `labels.attributes` is describing a component that no longer exists.
+    #
+    # The modern path is Loki's own OTLP endpoint. otlphttp appends the signal path, so this
+    # endpoint becomes POST http://loki.watchtower-obs:3100/otlp/v1/logs. That endpoint is
+    # what maps span context onto Loki structured metadata, giving us `trace_id` on log
+    # lines for free -- see the header of loki.values.yaml.
+    #
+    # This writes to the single-binary Service directly rather than through loki-gateway.
+    # Deliberate: the gateway is one more pod between the agent's log ingest and durability,
+    # and losing writes is worse than losing queries. Grafana reads through the gateway.
+    otlphttp/loki:
+      endpoint: http://loki.watchtower-obs:3100/otlp
+      # === Shed logs rather than wedge the collector =====================================
+      # Default retry backoff is 5 minutes. During a Loki outage the collector would hold
+      # five minutes' worth of every container's stdout in memory, hit memory_limiter,
+      # start refusing at the RECEIVERS -- and that backpressure is shared, so failing logs
+      # would stop traces and metrics too. The collector would look wedged, and the agent
+      # would go blind on all three signals because one of them broke.
+      #
+      # 30s + a bounded queue means a Loki outage costs logs (recoverable, and visible as
+      # otelcol_exporter_send_failed_log_records, which is alerted on) instead of costing
+      # the whole telemetry pipeline.
+      retry_on_failure:
+        enabled: true
+        initial_interval: 1s
+        max_interval: 10s
+        max_elapsed_time: 30s
+      sending_queue:
+        enabled: true
+        queue_size: 1000
+        num_consumers: 4
+
+    # --- metrics -> Prometheus ----------------------------------------------------------------
+    # Remote write, NOT the `prometheus` exporter.
+    #
+    # The `prometheus` exporter opens a /metrics page for Prometheus to scrape. That path
+    # goes through the Prometheus text exposition format, and the text format has no
+    # representation for exemplars on native OTLP histograms in the way we need. Exemplars
+    # are the trace_id pointers that make "click the latency spike, land on the trace" work
+    # -- the single most valuable correlation hop the agent has. Scraping loses them.
+    #
+    # Remote write carries exemplars in the protobuf. It requires
+    # prometheus.prometheusSpec.enableRemoteWriteReceiver: true on the receiving end -- see
+    # TRAP #1 in kube-prometheus-stack.values.yaml.
+    #
+    # Verified service name: the chart renders <release>-kube-prometheus-prometheus.
+    prometheusremotewrite:
+      endpoint: http://watchtower-kube-prometheus-prometheus.watchtower-obs:9090/api/v1/write
+      tls:
+        insecure: true
+      # Resource attributes do NOT become series labels on their own -- they become a
+      # separate `target_info` metric. `cluster` must be a real label on every series for
+      # the cross-signal queries to work, so it is added as an external label here in
+      # addition to the `resource` processor above.
+      external_labels:
+        cluster: studio-rancher-desktop
+      target_info:
+        enabled: true
+      send_metadata: true
+      remote_write_queue:
+        enabled: true
+        queue_size: 5000
+        num_consumers: 4
+      retry_on_failure:
+        enabled: true
+        max_elapsed_time: 30s
+
+  extensions:
+    health_check:
+      endpoint: ${env:MY_POD_IP}:13133
+
+  service:
+    extensions:
+      - health_check
+
+    pipelines:
+      # ---------------------------------------------------------------------------------
+      # traces:  otlp -> memory_limiter, k8sattributes, resource, batch
+      #                                        -> otlp/tempo, otlp/aspire
+      # ---------------------------------------------------------------------------------
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, k8sattributes, resource, batch]
+        exporters: [otlp/tempo, otlp/aspire]
+
+      # ---------------------------------------------------------------------------------
+      # metrics: otlp, prometheus -> ... -> prometheusremotewrite, otlp/aspire
+      # ---------------------------------------------------------------------------------
+      metrics:
+        receivers: [otlp, prometheus]
+        processors: [memory_limiter, k8sattributes, resource, batch]
+        exporters: [prometheusremotewrite, otlp/aspire]
+
+      # ---------------------------------------------------------------------------------
+      # logs: otlp, k8s_events, filelog -> ... -> otlphttp/loki, otlp/aspire
+      #
+      # Three sources, one stream, one timeline. The agent queries "everything that happened
+      # to this pod in this window" and gets the app's own words, the kubelet's narration
+      # and the control plane's decisions interleaved -- which is exactly how a human SRE
+      # reads an incident.
+      # ---------------------------------------------------------------------------------
+      logs:
+        receivers: [otlp, k8s_events, filelog]
+        processors: [memory_limiter, k8sattributes, resource, batch]
+        exporters: [otlphttp/loki, otlp/aspire]
+
+    telemetry:
+      logs:
+        level: info
+      metrics:
+        readers:
+          - pull:
+              exporter:
+                prometheus:
+                  host: ${env:MY_POD_IP}
+                  port: 8888
+
+# ---------------------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------------------
+# memory_limiter's limit_percentage is computed against limits.memory, so a limit MUST be
+# set or the limiter has no reference point and effectively does nothing. useGOMEMLIMIT
+# (chart default true) sets GOMEMLIMIT to 80% of it, which is what actually makes Go's GC
+# behave under pressure.
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+useGOMEMLIMIT: true
+
+# The collector's own metrics reach Prometheus through the metrics pipeline (see the
+# `prometheus` receiver), so no ServiceMonitor is needed. Enabling one would double-count.
+serviceMonitor:
+  enabled: false
+podMonitor:
+  enabled: false
+
+# The chart can emit its own PrometheusRule set. Ours live in
+# infra/observability/alerts/observability-selfcheck.yaml with dev-loop `for:` durations.
+prometheusRule:
+  enabled: false
+
+service:
+  enabled: true
+  type: ClusterIP
+
+ingress:
+  enabled: false
+
+# One node, one DaemonSet pod. Tolerate the control-plane taint so the collector actually
+# lands on it -- on k3s/Rancher Desktop the only node IS the control plane.
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+  - key: node-role.kubernetes.io/master
+    operator: Exists
+    effect: NoSchedule

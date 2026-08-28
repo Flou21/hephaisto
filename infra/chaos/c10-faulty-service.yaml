@@ -1,0 +1,281 @@
+# =============================================================================
+# C10 - faulty-service  (THE IMPORTANT ONE)
+# =============================================================================
+# WHAT IT BREAKS
+#   A small OpenTelemetry-instrumented ASP.NET Core minimal API that misbehaves
+#   in three independent, independently-tunable ways, plus a wget sidecar that
+#   keeps steady traffic flowing across every endpoint so the signals are
+#   continuous rather than needing a human to poke them.
+#
+#     GET /ok       always 200. The control. Proves the pipeline is healthy.
+#     GET /flaky    500 with probability ERROR_RATE (default 0.15).
+#     GET /slow     sleeps LATENCY_MS (default 750ms) then 200.
+#     GET /flap     200 on even UTC minutes, real HTTP 503 on odd ones.
+#     GET /healthz  always 200. Probe target only; excluded from the load mix.
+#
+# WHY THIS FIXTURE MATTERS MORE THAN THE OTHER NINE
+#   C1-C9 are single-signal or two-signal scenarios. Every one of them is
+#   diagnosable from metrics and events, and several deliberately have NO logs.
+#   C10 is THE ONLY FIXTURE THAT PRODUCES A FULLY CORRELATED THREE-SIGNAL
+#   TRAIL, and it is what makes the SLO rules and the five-hop correlation
+#   test demonstrable rather than theoretical:
+#
+#     1. METRIC   an SLO burn-rate rule fires on the error ratio derived from
+#                 traces_spanmetrics_calls_total (or the ASP.NET Core
+#                 http.server.request.duration histogram).
+#     2. EXEMPLAR the latency histogram carries exemplars - the app sets
+#                 SetExemplarFilter(ExemplarFilterType.TraceBased) precisely so
+#                 that a bucket sample carries the trace_id of a real request
+#                 that landed in it. This is the hop that is impossible without
+#                 instrumented code, which is why no busybox fixture can do it.
+#     3. TRACE    that trace_id resolves in Tempo to a real span tree:
+#                 the ASP.NET Core server span, with a child span named
+#                 "inventory.lookup" (/flaky) or "pricing.recalculate" (/slow),
+#                 the child carrying ActivityStatusCode.Error on failures.
+#     4. LOG      the ILogger lines emitted inside those spans are exported over
+#                 OTLP and carry TraceId/SpanId, so Loki lines for this service
+#                 have a trace_id. Filtering Loki BY trace_id returns exactly
+#                 the log lines belonging to that one request.
+#     5. CAUSE    the log message names the fault in plain text
+#                 ("inventory backend returned 500", "exceeded latency budget"),
+#                 which is the answer the agent has to produce.
+#
+#   An agent that can walk alert -> exemplar -> trace -> log -> cause on this
+#   fixture has demonstrated the whole capability. Nothing else here can test
+#   hops 2, 3 or 4.
+#
+# IMAGE
+#   watchtower/faulty-service:dev, built from infra/chaos/faulty-service/.
+#   THIS IMAGE IS NOT IN ANY REGISTRY and this manifest will sit in
+#   ErrImagePull until it is built locally:
+#
+#     cd /Users/flo/watchtower
+#     docker build -f infra/chaos/faulty-service/Dockerfile \
+#       -t watchtower/faulty-service:dev .
+#
+#   Note the build context is the REPO ROOT - the project inherits Central
+#   Package Management from /Directory.Packages.props. Rancher Desktop is
+#   configured with the dockerd engine, so an image built into the local docker
+#   daemon is visible to k3s directly; imagePullPolicy MUST be IfNotPresent (or
+#   Never) or the kubelet will try Docker Hub and fail.
+#   Base images sdk/aspnet:10.0-alpine both publish linux/arm64 manifests.
+#
+# EXPECTED KUBERNETES EVENTS
+#   In steady state: Scheduled / Pulled / Created / Started, and then NOTHING.
+#   This fixture is deliberately event-silent. It is a SERVICE-LEVEL failure,
+#   not an infrastructure-level one: Kubernetes considers the pod perfectly
+#   healthy while 15% of its requests fail. That is the whole point - an
+#   events-only or kubectl-only agent sees a green pod and reports "no issues
+#   found", which is wrong. Only the telemetry pipeline reveals this fault.
+#   (If /healthz ever failed you would see Warning Unhealthy - it never does.)
+#
+# EXPECTED METRIC / PROMQL SIGNAL
+#   Error ratio from Tempo's metrics-generator span metrics:
+#     sum(rate(traces_spanmetrics_calls_total{
+#           service_name="faulty-service", status_code="STATUS_CODE_ERROR"}[5m]))
+#       /
+#     sum(rate(traces_spanmetrics_calls_total{service_name="faulty-service"}[5m]))
+#       > 0.05
+#
+#   p95 latency, and the series that carries the exemplars:
+#     histogram_quantile(0.95, sum by (le, span_name) (
+#       rate(traces_spanmetrics_latency_bucket{service_name="faulty-service"}[5m])
+#     )) > 0.5
+#
+#   METRIC-NAME CAVEAT, stated honestly: Tempo's span-metrics processor has
+#   shipped two names for the latency histogram across versions -
+#   traces_spanmetrics_latency_bucket (classic, most deployments) and
+#   traces_spanmetrics_duration_seconds_bucket (newer / native-histogram
+#   config). Confirm against the deployed Tempo before pinning the regression
+#   test; both are syntactically valid and semantically identical here.
+#
+#   Independent of Tempo, straight from the app's own OTLP metrics (ASP.NET
+#   Core instrumentation, OTel semantic conventions, dots becoming underscores
+#   at the Prometheus boundary):
+#     sum(rate(http_server_request_duration_seconds_count{
+#           job=~".*faulty-service.*", http_response_status_code="500"}[5m])) > 0
+#
+#     histogram_quantile(0.95, sum by (le, http_route) (
+#       rate(http_server_request_duration_seconds_bucket{
+#         job=~".*faulty-service.*", http_route="/slow"}[5m]))) > 0.5
+#
+#   Kubernetes-level, for contrast - these all stay GREEN, on purpose:
+#     kube_deployment_status_replicas_available{
+#       namespace="watchtower-chaos", deployment="c10-faulty-service"} == 1
+#     kube_pod_container_status_restarts_total{
+#       namespace="watchtower-chaos", container="app"} == 0
+#
+# EXPECTED LOG SIGNAL
+#   {k8s_namespace_name="watchtower-chaos",
+#    k8s_deployment_name="c10-faulty-service",
+#    k8s_container_name="app"} |= "FAULT"
+#
+#   Exact expected lines:
+#     FAULT /flaky failed: inventory backend returned 500 (error_rate=0.15)
+#     FAULT /slow exceeded latency budget: took 750ms (budget 200ms)
+#     FAULT /flap in unavailable window: returning 503
+#
+#   The correlation query - the one that proves hop 4 - pivots on trace_id,
+#   which is present because the OTel logging provider stamps it from the
+#   ambient Activity:
+#     {k8s_namespace_name="watchtower-chaos",
+#      k8s_container_name="app"} | json | trace_id="<id from the exemplar>"
+#
+#   (If the collector writes OTLP logs to Loki with structured metadata rather
+#   than a JSON body, drop the `| json` and match directly:
+#     {k8s_namespace_name="watchtower-chaos"} | trace_id="<id>" )
+#
+#   The `traffic` sidecar's own output is a separate, quieter stream:
+#     {k8s_container_name="traffic"} |= "load generator"
+#   Filter on k8s_container_name="app" when asserting application behaviour, or
+#   the sidecar's heartbeat lines will pad the counts.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: c10-faulty-service
+  namespace: watchtower-chaos
+  labels:
+    app.kubernetes.io/name: c10-faulty-service
+    watchtower.chaos/scenario: c10
+    watchtower.chaos/fault: service-level-errors
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: c10-faulty-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: c10-faulty-service
+        watchtower.chaos/scenario: c10
+        watchtower.chaos/fault: service-level-errors
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: app
+          image: watchtower/faulty-service:dev
+          # MUST stay IfNotPresent: this image exists only in the local daemon.
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            # ---- fault knobs ------------------------------------------------
+            - name: ERROR_RATE
+              value: "0.15"
+            - name: LATENCY_MS
+              value: "750"
+            # ---- OpenTelemetry ----------------------------------------------
+            - name: OTEL_SERVICE_NAME
+              value: faulty-service
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.watchtower-obs:4318
+            # 4318 is the HTTP port, so the protocol MUST be http/protobuf.
+            # Leaving this unset makes the .NET exporter default to grpc and
+            # speak gRPC at an HTTP endpoint, which fails obscurely.
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: http/protobuf
+            # Export metrics every 15s so a 5m rate() has real resolution.
+            - name: OTEL_METRIC_EXPORT_INTERVAL
+              value: "15000"
+            - name: OTEL_TRACES_SAMPLER
+              value: always_on
+            # Downward API into resource attributes, so the collector's
+            # k8sattributes processor and the app agree on identity.
+            - name: K8S_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: >-
+                service.namespace=watchtower-chaos,
+                deployment.environment=chaos,
+                k8s.pod.name=$(K8S_POD_NAME),
+                k8s.namespace.name=$(K8S_NAMESPACE),
+                k8s.deployment.name=c10-faulty-service
+            - name: ASPNETCORE_HTTP_PORTS
+              value: "8080"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            # Generous: /healthz must never fail. A restart here would turn a
+            # service-level fixture into an infrastructure-level one.
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+
+        - name: traffic
+          # Steady, boring load so the SLO windows always have a denominator.
+          # busybox:1.37 - linux/arm64 manifest verified.
+          image: busybox:1.37
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              # Wait for the API to bind before the first request, otherwise the
+              # first loop logs connection refused and muddies the trail.
+              until wget -q -T 2 -O /dev/null http://127.0.0.1:8080/healthz 2>/dev/null; do
+                sleep 2
+              done
+              echo "INFO: load generator started against 127.0.0.1:8080"
+              n=0
+              while true; do
+                # Weighted mix: mostly /ok, so the overall error ratio lands
+                # near ERROR_RATE * (share of /flaky) plus the /flap window -
+                # the SLO is breached, but not pinned at 100%.
+                for path in ok ok ok ok flaky flaky slow flap; do
+                  # stderr silenced: busybox wget prints its own error line for
+                  # every 500/503, which would double-count in Loki.
+                  wget -q -T 5 -O /dev/null "http://127.0.0.1:8080/$path" 2>/dev/null || true
+                done
+                n=$((n + 8))
+                if [ $((n % 400)) -eq 0 ]; then
+                  echo "INFO: load generator has issued $n requests"
+                fi
+                sleep 2
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: c10-faulty-service
+  namespace: watchtower-chaos
+  labels:
+    app.kubernetes.io/name: c10-faulty-service
+    watchtower.chaos/scenario: c10
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: c10-faulty-service
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

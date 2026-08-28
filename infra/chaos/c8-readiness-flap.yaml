@@ -1,0 +1,202 @@
+# =============================================================================
+# C8 - Readiness flap  (THE FALSE-POSITIVE TEST)
+# =============================================================================
+# WHAT IT BREAKS
+#   A pod that is genuinely healthy roughly half the time. busybox httpd
+#   serves a static docroot on :8080. A supervising loop creates /www/healthz
+#   for 60 seconds (probe returns 200, pod Ready, endpoint in the Service),
+#   then deletes it for 60 seconds (probe returns 404, pod NotReady, endpoint
+#   withdrawn), forever. The container never crashes, never restarts, and the
+#   HTTP server never stops listening.
+#
+# ***************************************************************************
+# *  THIS IS THE FALSE-POSITIVE TEST. AN AGENT THAT OPENS A SEV1 HERE       *
+# *  HAS FAILED.                                                            *
+# *                                                                         *
+# *  Everything about this fixture is designed to look alarming to a naive  *
+# *  threshold rule:                                                        *
+# *    - kube_pod_status_ready drops to 0                                   *
+# *    - the Service has zero ready endpoints                               *
+# *    - a Prometheus scrape target disappears                              *
+# *    - availability is ~50%                                               *
+# *  and every one of those is TRUE - for 60 seconds at a time.             *
+# *                                                                         *
+# *  The correct report is:                                                 *
+# *    "c8-readiness-flap is INTERMITTENT, not down. It has been oscillating*
+# *     on a ~120s period for <duration>. Readiness has recovered N times.  *
+# *     The container has 0 restarts and the process has not died. Impact is*
+# *     degraded capacity, not an outage. This is a readiness-probe or       *
+# *     dependency-warmup problem, not a crash."                            *
+# *                                                                         *
+# *  The tell the agent must find: restarts_total == 0 while ready          *
+# *  oscillates, and changes(kube_pod_status_ready[30m]) is LARGE. A pod    *
+# *  that is really down has ready pinned at 0 with changes() == 0 (C2/C4/  *
+# *  C7 all look like that). Oscillation is the discriminator.              *
+# *                                                                         *
+# *  Escalation policy this fixture is asserting: intermittent -> Sev3 /    *
+# *  informational. Never page.                                             *
+# ***************************************************************************
+#
+#   THERE IS DELIBERATELY NO LIVENESS PROBE. Adding one would restart the pod
+#   during every unhealthy window and turn this into a crashloop fixture,
+#   destroying the distinction the scenario exists to teach.
+#
+# DEVIATION FROM SPEC, STATED PLAINLY
+#   The spec asked for an alternating 200/503. The unready response here is
+#   HTTP 404, not 503, because it is produced by removing a static file from
+#   busybox httpd's docroot rather than by synthesising a status line from a
+#   CGI script (busybox CGI + a configMap-mounted executable is a fragile
+#   dependency chain to hang a regression suite on). Kubernetes treats every
+#   non-2xx/3xx response identically as a probe failure, so the readiness
+#   behaviour, the endpoint churn and every metric below are unchanged. If a
+#   literal 503 is ever required, C10's /flap endpoint returns a real 503.
+#
+# EXPECTED KUBERNETES EVENTS
+#   - Warning  Unhealthy  kubelet
+#       Readiness probe failed: HTTP probe failed with statuscode: 404
+#     Repeats ~every 5s throughout each unhealthy window. This is the only
+#     recurring event; it is a Warning, which is exactly why it bait-triggers
+#     naive "any Warning event = incident" logic.
+#   - Normal   Scheduled / Pulled / Created / Started - ONCE, at the start.
+#   - NO BackOff event, NO Killing event, NO restarts. If any of those appear
+#     the fixture is misbehaving.
+#
+# EXPECTED METRIC / PROMQL SIGNAL
+#   Oscillates 1 -> 0 -> 1 on a ~120s period:
+#     kube_pod_status_ready{namespace="watchtower-chaos",
+#                           pod=~"c8-readiness-flap-.*", condition="true"}
+#
+#   THE DISCRIMINATOR - large over any window longer than the period:
+#     changes(kube_pod_status_ready{namespace="watchtower-chaos",
+#             pod=~"c8-readiness-flap-.*", condition="true"}[30m]) >= 4
+#
+#   THE COUNTER-DISCRIMINATOR - must stay flat at zero:
+#     increase(kube_pod_container_status_restarts_total{
+#       namespace="watchtower-chaos", container="server"}[30m]) == 0
+#
+#   Deployment-level view, oscillating between 1 and 0:
+#     kube_deployment_status_replicas_available{
+#       namespace="watchtower-chaos", deployment="c8-readiness-flap"}
+#
+#   Endpoint churn. VERIFIED against the kube-state-metrics running on this
+#   machine (registry.k8s.io/kube-state-metrics:v2.17.0): the whole
+#   kube_endpoint_* family is GONE in modern KSM - there is no
+#   kube_endpoint_address and no kube_endpoint_address_available. Do not write
+#   either; they silently return nothing. The EndpointSlice family replaces it:
+#     count(kube_endpointslice_endpoints{
+#       namespace="watchtower-chaos",
+#       endpointslice=~"c8-readiness-flap-.*", ready="true"})
+#   which oscillates between 1 and 0 (and goes absent, not to 0, while the
+#   endpoint is withdrawn - so wrap it in `count(...) or vector(0)` if the
+#   rule needs a continuous series).
+#
+#   ON PROMETHEUS `up`: honest note. This pod serves no /metrics endpoint, so
+#   it is only a scrape target if something explicitly targets it. And with
+#   the standard `role: endpoints` service discovery, NOT-READY endpoints are
+#   excluded from discovery entirely - so the target VANISHES rather than
+#   reporting up==0. The correct assertion is therefore on target absence:
+#     absent(up{namespace="watchtower-chaos", service="c8-readiness-flap"})
+#   ...and `up == 0` is the WRONG expression for this scenario. Asserting
+#   up==0 here is itself a bug the regression suite should not encode.
+#
+# EXPECTED LOG SIGNAL
+#   {k8s_namespace_name="watchtower-chaos", k8s_deployment_name="c8-readiness-flap"}
+#     |= "entering unhealthy window"
+#
+#   Exact expected lines, alternating every 60s:
+#     INFO: healthy window open, /healthz -> 200
+#     WARN: entering unhealthy window, /healthz -> 404 (readiness will fail)
+#
+#   Log rate is steady and low throughout - it does NOT spike during the
+#   unhealthy window. Another hint that this is a state flip, not an incident.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: c8-readiness-flap
+  namespace: watchtower-chaos
+  labels:
+    app.kubernetes.io/name: c8-readiness-flap
+    watchtower.chaos/scenario: c8
+    watchtower.chaos/fault: readiness-flap
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: c8-readiness-flap
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: c8-readiness-flap
+        watchtower.chaos/scenario: c8
+        watchtower.chaos/fault: readiness-flap
+    spec:
+      terminationGracePeriodSeconds: 5
+      containers:
+        - name: server
+          image: busybox:1.37
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              mkdir -p /www
+              echo "c8-readiness-flap" > /www/index.html
+              echo "ok" > /www/healthz
+              # busybox httpd: static docroot, foreground, backgrounded here so
+              # the flip loop can run in the same container without a sidecar.
+              httpd -f -p 8080 -h /www &
+              HTTPD_PID=$!
+              # Give the probe a chance to see Ready at least once before the
+              # first unhealthy window (initialDelaySeconds covers this too).
+              while kill -0 "$HTTPD_PID" 2>/dev/null; do
+                echo "INFO: healthy window open, /healthz -> 200"
+                echo "ok" > /www/healthz
+                sleep 60
+                echo "WARN: entering unhealthy window, /healthz -> 404 (readiness will fail)"
+                rm -f /www/healthz
+                sleep 60
+              done
+              echo "FATAL: httpd exited unexpectedly"
+              exit 1
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+            # 2 consecutive failures (~10s) to go NotReady, 1 success to
+            # recover: fast enough that the flap is unmistakable at a 15s
+            # or 30s Prometheus scrape interval.
+            failureThreshold: 2
+            successThreshold: 1
+          # NO livenessProbe. See the header. Do not add one.
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: c8-readiness-flap
+  namespace: watchtower-chaos
+  labels:
+    app.kubernetes.io/name: c8-readiness-flap
+    watchtower.chaos/scenario: c8
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: c8-readiness-flap
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

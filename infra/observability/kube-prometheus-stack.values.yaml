@@ -1,0 +1,480 @@
+# kube-prometheus-stack values for Watchtower
+# ---------------------------------------------------------------------------------------
+#   chart:    prometheus-community/kube-prometheus-stack
+#   version:  81.1.0   (prometheus-operator v0.88.0, grafana subchart 10.5.8 -> Grafana 12.3.1)
+#   release:  watchtower
+#   namespace: watchtower-obs
+#
+#   helm upgrade --install watchtower prometheus-community/kube-prometheus-stack \
+#     --version 81.1.0 -n watchtower-obs -f infra/observability/kube-prometheus-stack.values.yaml
+#
+# ---------------------------------------------------------------------------------------
+# EVERYTHING HERE MUST BE DECLARATIVE. READ THIS BEFORE TOUCHING GRAFANA'S UI.
+# ---------------------------------------------------------------------------------------
+# `tilt down` runs `helm uninstall`. Helm uninstall deletes the Grafana Deployment, and the
+# Grafana PVC below is provisioned by `local-path`, whose reclaim policy is Delete. So a
+# `tilt down` takes the Grafana database with it -- and with it every dashboard, datasource,
+# folder, alert rule and API token that was created by hand in the UI.
+#
+# Therefore:
+#   * dashboards live in infra/observability/dashboards/*.json, wrapped in ConfigMaps
+#     labelled `grafana_dashboard: "1"`, and are loaded by the sidecar below;
+#   * datasources live in infra/observability/grafana-datasources.yaml, a ConfigMap
+#     labelled `grafana_datasource: "1"`;
+#   * alert rules live in infra/observability/alerts/*.yaml as PrometheusRule CRs.
+#
+# The Grafana PVC below exists only so that per-user UI state (last viewed dashboard,
+# panel widths, starred items) survives a pod restart. It is a convenience, never a
+# source of truth. If it is lost, nothing of value is lost.
+# ---------------------------------------------------------------------------------------
+
+# The old hand-installed stack in the `prometheus` namespace also installs the operator and
+# its CRDs cluster-wide. CRDs are cluster-scoped and shared; this release must NOT try to
+# re-install or re-own them, or a `helm uninstall` of either release would rip the CRDs out
+# from under the other one. Set this to false while the old stack still exists.
+crds:
+  enabled: false
+  upgradeJob:
+    enabled: false
+
+# The operator watches only our namespace, so it cannot fight the old stack's operator over
+# the same Prometheus/Alertmanager CRs.
+prometheusOperator:
+  admissionWebhooks:
+    # Skip the webhook + its cert-generating Jobs: on a single-node dev cluster they are pure
+    # startup latency and a failure mode (the patch Job can wedge and block the whole release).
+    enabled: false
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 384Mi
+
+# ---------------------------------------------------------------------------------------
+# Prometheus
+# ---------------------------------------------------------------------------------------
+prometheus:
+  enabled: true
+
+  service:
+    port: 9090
+
+  prometheusSpec:
+    # === TRAP #1 =========================================================================
+    # This is a first-class field on the Prometheus CRD (operator >= 0.60). It renders
+    # `--web.enable-remote-write-receiver` onto the Prometheus container, which is what
+    # opens POST /api/v1/write so Tempo's metrics-generator and the OTel collector's
+    # prometheusremotewrite exporter can push into this Prometheus.
+    #
+    # It is NOT the same as `enableFeatures: ["remote-write-receiver"]`. That was the
+    # pre-0.60 spelling, and on this operator version it is passed through to
+    # `--enable-feature=remote-write-receiver`, which modern Prometheus silently ACCEPTS
+    # AND IGNORES (unknown feature flags are not fatal). The result is a Prometheus that
+    # starts cleanly, looks healthy, and returns 404 on /api/v1/write forever, while Tempo
+    # logs remote-write errors nobody reads. Get this key right.
+    enableRemoteWriteReceiver: true
+    # =====================================================================================
+
+    # Exemplars are the trace_id pointers attached to histogram samples. They are what makes
+    # "click the p99 spike -> land on the exact slow trace" work in Grafana. Storage is
+    # opt-in behind a feature flag, and the flag alone is not enough: exemplars.maxSize
+    # must also be non-zero or the in-memory exemplar circular buffer stays at 0 entries.
+    enableFeatures:
+      - exemplar-storage
+    exemplars:
+      maxSize: 100000
+
+    # === TRAP #2 =========================================================================
+    # Tempo's metrics-generator aggregates spans over a time window and only then remote-
+    # writes the resulting span metrics. The sample timestamps it writes are therefore
+    # seconds-to-minutes BEHIND wall clock. Prometheus's default out-of-order window is 0s,
+    # meaning "reject anything older than the head block's max timestamp".
+    #
+    # With outOfOrderTimeWindow at its 0s default, Prometheus answers Tempo's remote-write
+    # with 400 out-of-order sample, Tempo drops the batch, and `traces_spanmetrics_*` never
+    # appears. Nothing crashes. There is no alert. The SLO rules in alerts/slo-rules.yaml
+    # simply evaluate against an empty vector forever and never fire -- the worst possible
+    # failure mode for an SRE agent, because "no alerts" is indistinguishable from "healthy".
+    #
+    # 30m is generous on purpose: it also covers the collector restarting and flushing a
+    # backed-up queue.
+    tsdb:
+      outOfOrderTimeWindow: 30m
+    # =====================================================================================
+
+    # Dev-loop retention. This is a local laptop-class cluster, not a system of record.
+    # Tempo keeps traces for 48h (see tempo.values.yaml) so it outlives metrics deliberately:
+    # when the agent investigates "what happened last night", traces are the durable evidence.
+    retention: 24h
+    retentionSize: "8GB"
+
+    scrapeInterval: 30s
+    evaluationInterval: 30s
+
+    # === Selectors =======================================================================
+    # By default the chart sets *SelectorNilUsesHelmValues: true, which means "if the
+    # selector is empty, restrict to objects carrying release=<this release>". That default
+    # is fine, but it silently drops any rule whose label is missing. Being explicit here
+    # documents the contract that every PrometheusRule in infra/observability/alerts/ must
+    # carry `release: watchtower`, and every PodMonitor/ServiceMonitor likewise.
+    #
+    # ruleSelectorNilUsesHelmValues: false + an explicit ruleSelector means "match exactly
+    # this label, in any namespace" -- which is what lets our PrometheusRule CRs live
+    # alongside the manifests they describe rather than being forced into this values file.
+    ruleSelectorNilUsesHelmValues: false
+    ruleSelector:
+      matchLabels:
+        release: watchtower
+    ruleNamespaceSelector: {}
+
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelector:
+      matchLabels:
+        release: watchtower
+    serviceMonitorNamespaceSelector: {}
+
+    podMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelector:
+      matchLabels:
+        release: watchtower
+    podMonitorNamespaceSelector: {}
+
+    probeSelectorNilUsesHelmValues: false
+    scrapeConfigSelectorNilUsesHelmValues: false
+
+    # `cluster` is stamped on every series leaving this Prometheus AND is set identically in
+    # tempo.values.yaml (metricsGenerator.registry.external_labels) and in
+    # otel-collector.values.yaml (the `resource` processor). All three must agree or a
+    # correlation query that joins on `cluster` returns an empty result with no error.
+    externalLabels:
+      cluster: studio-rancher-desktop
+
+    # === Storage =========================================================================
+    # `local-path` is the ONLY StorageClass on this cluster (Delete / WaitForFirstConsumer).
+    # Any upstream example that says `standard`, `gp2` or `longhorn` will leave the PVC
+    # Pending forever and the StatefulSet stuck at 0/1 with no obvious error.
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 10Gi
+
+    resources:
+      requests:
+        cpu: 200m
+        memory: 1Gi
+      limits:
+        memory: 3Gi
+
+    replicas: 1
+    shards: 1
+
+    # Single-node cluster: never let the operator schedule anti-affinity it cannot satisfy.
+    podAntiAffinity: ""
+
+# ---------------------------------------------------------------------------------------
+# Alertmanager
+# ---------------------------------------------------------------------------------------
+alertmanager:
+  enabled: true
+
+  alertmanagerSpec:
+    replicas: 1
+    retention: 120h
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 2Gi
+    resources:
+      requests:
+        cpu: 25m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+
+  config:
+    global:
+      resolve_timeout: 2m
+
+    # === Inhibition is deliberately DISABLED ============================================
+    # The chart ships inhibit_rules that suppress severity=warning/info whenever a
+    # severity=critical alert is firing in the same namespace. For a human on-call that is
+    # noise reduction. For Watchtower it is evidence destruction: the warning-level alerts
+    # are exactly the context the agent needs to explain the critical one ("disk 85% first,
+    # then pod evicted"), and an inhibited alert never reaches the webhook at all.
+    #
+    # The agent does its own correlation and deduplication in Postgres. Alertmanager's job
+    # here is delivery, not editorial judgement.
+    inhibit_rules: []
+
+    route:
+      # Group by the identity of the thing that is broken, not just its namespace, so the
+      # agent gets one webhook per (alert, workload) rather than one per namespace.
+      group_by: ['alertname', 'namespace', 'pod']
+
+      # === Dev-loop timings, NOT production timings ====================================
+      # Production would use group_wait 30s / group_interval 5m / repeat_interval 1h,
+      # tuned so a human is not paged twice for the same thing before they can act.
+      #
+      # Watchtower is not a human and the loop we are optimising is "break something, see
+      # the agent react, fix it, repeat". A 30s group_wait alone would eat a third of the
+      # 90-second budget these alert rules are tuned for (see the short `for:` durations in
+      # infra/observability/alerts/). Do not copy these values into a real deployment.
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 15m
+
+      receiver: watchtower
+
+      routes:
+        # The heartbeat. See alerts/watchdog.yaml -- this alert fires permanently and its
+        # ONLY job is to prove the path Prometheus -> Alertmanager -> agent webhook is
+        # alive. It gets its own receiver and a tighter repeat_interval so the agent's
+        # "have I heard from the alert pipeline recently?" check has a tight bound.
+        #
+        # Note the name is AgentWatchdog, not Watchdog: kube-prometheus-stack ships its own
+        # `Watchdog` alert AND a default route that black-holes it to the `null` receiver.
+        # Reusing that name would mean our heartbeat silently never arrives.
+        - receiver: watchtower-watchdog
+          matchers:
+            - alertname = "AgentWatchdog"
+          group_wait: 0s
+          group_interval: 1m
+          repeat_interval: 5m
+          continue: false
+
+    receivers:
+      - name: watchtower
+        webhook_configs:
+          # === Why this endpoint is unauthenticated ====================================
+          # Alertmanager's webhook_configs has no field for custom headers. There is
+          # `http_config.authorization` (Bearer) and basic_auth, but both put the credential
+          # in Alertmanager's own config Secret, and the receiving side then has to be
+          # taught a second auth scheme purely for this one caller.
+          #
+          # The chosen answer is network-level instead of token-level: the agent's Service
+          # is ClusterIP-only, and the NetworkPolicy in infra/app/rbac.yaml permits inbound
+          # TCP 8080 into namespace `watchtower` ONLY from namespace `watchtower-obs`.
+          # Nothing outside the observability namespace can reach this endpoint at all, so
+          # a bearer check would be guarding a door that is already walled off.
+          #
+          # This trade is only acceptable because the cluster is single-tenant and local.
+          # If this stack is ever multi-tenant, put an authenticating proxy in front.
+          - url: http://watchtower.watchtower:8080/webhooks/alertmanager
+            # Resolution notifications are what let the agent close an incident and compute
+            # MTTR. Without send_resolved every incident stays open until a timeout, and the
+            # MTTR panel on the dashboard measures nothing.
+            send_resolved: true
+            max_alerts: 0
+
+      - name: watchtower-watchdog
+        webhook_configs:
+          - url: http://watchtower.watchtower:8080/webhooks/watchdog
+            send_resolved: true
+
+    templates:
+      - '/etc/alertmanager/config/*.tmpl'
+
+# ---------------------------------------------------------------------------------------
+# Grafana
+# ---------------------------------------------------------------------------------------
+grafana:
+  enabled: true
+
+  # Chart 10.5.8 pins appVersion 12.3.1; pinned explicitly so a `helm repo update` cannot
+  # move Grafana under us mid-investigation.
+  image:
+    tag: "12.3.1"
+
+  adminPassword: admin
+
+  persistence:
+    enabled: true
+    type: pvc
+    storageClassName: local-path
+    accessModes: ["ReadWriteOnce"]
+    size: 5Gi
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 768Mi
+
+  # The community kube/node dashboards that ship with the chart. Worth keeping: they give
+  # the agent's human reviewer a baseline view, and they are regenerated on every upgrade
+  # so there is nothing to maintain.
+  defaultDashboardsEnabled: true
+  defaultDashboardsTimezone: browser
+
+  grafana.ini:
+    analytics:
+      reporting_enabled: false
+      check_for_updates: false
+    users:
+      default_theme: dark
+    # Anonymous read access. The whole stack is reachable only over the tailnet via Tilt
+    # port-forwards, and the agent's grafana-mcp sidecar authenticates with a real token.
+    auth.anonymous:
+      enabled: true
+      org_role: Viewer
+    feature_toggles:
+      # traceqlEditor / traceQLStreaming power the Tempo query experience the correlation
+      # links in grafana-datasources.yaml depend on.
+      enable: traceqlEditor traceQLStreaming
+    explore:
+      enabled: true
+
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      # ALL, not the release namespace: dashboards are expected to live next to the thing
+      # they describe. The Watchtower dashboard ConfigMap ships from
+      # infra/observability/dashboards/, and chaos fixtures may ship their own.
+      searchNamespace: ALL
+      folder: /tmp/dashboards
+      provider:
+        # Deliberately false. If the UI could save over a provisioned dashboard, the file in
+        # git and the thing on screen would drift, and the drift would vanish on the next
+        # `tilt down`. Edits go through the JSON file.
+        allowUiUpdates: false
+      annotations: {}
+
+    datasources:
+      # The sidecar itself must stay enabled -- it is what discovers our own datasource
+      # ConfigMap in infra/observability/grafana-datasources.yaml.
+      enabled: true
+      label: grafana_datasource
+      labelValue: "1"
+      searchNamespace: ALL
+
+      # === Why both of these are false ==================================================
+      # This chart emits its own datasource ConfigMap containing a Prometheus datasource at
+      # `uid: prometheus` and an Alertmanager datasource at `uid: alertmanager`. We declare
+      # datasources of our own at those exact UIDs, because the dashboard JSON and the
+      # Tempo correlation blocks reference them by UID.
+      #
+      # Two provisioned datasources claiming one UID is not an error Grafana reports. The
+      # second one to be provisioned wins, non-deterministically across restarts, and the
+      # loser's settings (notably exemplarTraceIdDestinations) just disappear. Symptom:
+      # exemplars stop being clickable "sometimes". Turning the chart's copies off makes
+      # grafana-datasources.yaml the single source of truth.
+      defaultDatasourceEnabled: false
+      alertmanager:
+        enabled: false
+
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: watchtower
+
+  service:
+    type: ClusterIP
+    port: 80
+
+# ---------------------------------------------------------------------------------------
+# Bundled exporters
+# ---------------------------------------------------------------------------------------
+kube-state-metrics:
+  # kube-state-metrics is not optional here. Almost every rule in alerts/kubernetes-rules.yaml
+  # is built on kube_pod_container_status_*, kube_job_status_failed, kube_deployment_status_*.
+  # Without it the agent can see resource usage but not workload STATE.
+  prometheus:
+    monitor:
+      enabled: true
+      additionalLabels:
+        release: watchtower
+  resources:
+    requests:
+      cpu: 25m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+  metricLabelsAllowlist:
+    - pods=[app.kubernetes.io/name,app.kubernetes.io/instance,watchtower.io/scenario]
+
+prometheus-node-exporter:
+  # === PORT 9100 IS ALREADY TAKEN ======================================================
+  # node-exporter runs with hostNetwork: true and binds $(HOST_IP):9100 directly on the
+  # node. The OLD hand-installed stack in the `prometheus` namespace has a node-exporter
+  # DaemonSet doing exactly that right now (verified: hostPort 9100 on
+  # prometheus-prometheus-node-exporter-h97bh). Two DaemonSets cannot both bind 9100 on a
+  # one-node cluster.
+  #
+  # The failure is not a scheduling error -- the pod schedules fine and then CrashLoops with
+  # "listen tcp :9100: bind: address already in use", which looks like an application bug.
+  # Moving to 9101 sidesteps it until the old stack is decommissioned. Once it is gone this
+  # can go back to 9100, but there is no need to.
+  service:
+    port: 9101
+    targetPort: 9101
+  prometheus:
+    monitor:
+      enabled: true
+      additionalLabels:
+        release: watchtower
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      memory: 96Mi
+
+# ---------------------------------------------------------------------------------------
+# Control-plane scrape targets that do not exist on k3s / Rancher Desktop
+# ---------------------------------------------------------------------------------------
+# k3s runs the scheduler, controller-manager and etcd inside a single supervisor process
+# with no separately addressable metrics endpoints. Leaving these enabled produces three
+# permanently-down ServiceMonitors, which the TargetDown rule in alerts/kubernetes-rules.yaml
+# would then fire on forever -- teaching the agent that a firing TargetDown is background
+# noise, which is precisely the habit we must not build.
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+kubelet:
+  enabled: true
+  serviceMonitor:
+    # cAdvisor gives container_memory_working_set_bytes (the C1 OOM sawtooth) and
+    # kubelet_volume_stats_* (the C6 disk-fill signal).
+    cAdvisor: true
+    probes: true
+    resource: true
+
+# The chart's own bundled alert rules. Turned OFF wholesale: the rules in
+# infra/observability/alerts/ are deliberate rewrites of the same alert NAMES with much
+# shorter `for:` durations. Running both would produce two rules with identical names and
+# different thresholds in the same Prometheus, and the agent would see duplicate,
+# contradicting alerts for one condition.
+defaultRules:
+  create: false
+
+windowsMonitoring:
+  enabled: false
+
+# The stack scrapes itself; that is how observability-selfcheck.yaml can alert on
+# prometheus_remote_storage_samples_failed_total.
+prometheus-windows-exporter:
+  prometheus:
+    monitor:
+      enabled: false
+
+global:
+  rbac:
+    create: true

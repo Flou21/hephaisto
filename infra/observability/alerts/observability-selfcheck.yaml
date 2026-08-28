@@ -1,0 +1,328 @@
+# Observability self-check -- the agent watching its own senses
+# ---------------------------------------------------------------------------------------
+# Everything else in infra/observability/alerts/ tells the agent that something in the
+# CLUSTER is wrong. This file tells it that something in its own PERCEPTION is wrong.
+#
+# That distinction is the difference between an agent that is trustworthy and one that is
+# merely confident. Every failure mode below degrades the agent silently:
+#
+#   * the collector drops spans      -> traces are incomplete, and TraceQL happily returns
+#                                       the incomplete set with no indication of loss
+#   * a processor refuses data       -> a subset of pods vanish from Loki; queries against
+#                                       them return "no logs", which reads as "quiet pod"
+#   * Tempo receives nothing         -> the SLO rules in slo-rules.yaml evaluate an empty
+#                                       vector and never fire, which reads as "all green"
+#   * remote write fails             -> span metrics stop; same as above
+#
+# In none of those cases does anything crash, and in every one of them the natural
+# interpretation of the resulting silence is "healthy". An agent without these rules will
+# report a clean bill of health for a cluster it can no longer see.
+#
+# ---------------------------------------------------------------------------------------
+# A NOTE ON METRIC NAME SUFFIXES
+# ---------------------------------------------------------------------------------------
+# The collector's internal telemetry is exported through the OpenTelemetry Go SDK's
+# Prometheus reader, which appends `_total` to monotonic sums. Older collector builds, and
+# builds configured with `without_type_suffix`, do not. Rather than pick one and have these
+# rules silently match nothing on the wrong build, the expressions use
+# `__name__=~"...(_total)?"`. It is uglier than a plain metric name, and it is deliberate:
+# a self-check that fails to match its own metric is worse than no self-check, because it
+# looks like it is working.
+#
+# Confirm the actual names once the stack is up:
+#     curl -s .../api/v1/label/__name__/values | grep '^otelcol_'
+# and simplify these expressions if you like -- but only after checking.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: watchtower-observability-selfcheck
+  namespace: watchtower-obs
+  labels:
+    release: watchtower
+    app.kubernetes.io/part-of: watchtower
+spec:
+  groups:
+    # ===================================================================================
+    - name: watchtower.selfcheck.collector
+      interval: 30s
+      rules:
+        - alert: OtelCollectorSendFailures
+          # Covers all three signals in one rule; the `exporter` label says which
+          # destination is failing (otlp_grpc/tempo, otlp_http/loki,
+          # prometheusremotewrite, otlp_grpc/aspire), and __name__ says which signal.
+          #
+          # Note otlp_grpc/aspire failing is NOT interesting -- the Aspire dashboard is an
+          # in-memory viewer and is expected to be down sometimes. It is excluded so it
+          # cannot desensitise anyone to this alert.
+          expr: |
+            sum by (exporter) (
+              increase(
+                {__name__=~"otelcol_exporter_send_failed_(spans|metric_points|log_records)(_total)?",
+                 exporter!~".*aspire.*"}[5m]
+              )
+            ) > 0
+          for: 2m
+          labels:
+            severity: warning
+            watchtower_kind: TelemetryPipelineDegraded
+          annotations:
+            summary: 'OTel collector is failing to export to {{ $labels.exporter }}'
+            description: >-
+              {{ $value | printf "%.0f" }} items failed to export to {{ $labels.exporter }}
+              in the last 5 minutes. Data is being LOST, not delayed -- the Loki exporter is
+              configured with max_elapsed_time 30s specifically so that a Loki outage sheds
+              logs rather than back-pressuring the whole collector. That means any gap you
+              see in Loki around this time is real and unrecoverable. Do not interpret
+              missing logs during this window as a quiet workload.
+
+        - alert: OtelCollectorRefusingData
+          # `refused` is distinct from `failed`, and the distinction matters diagnostically.
+          # Failed = we tried to send downstream and the destination said no.
+          # Refused = the collector itself rejected the data at the processor, which in this
+          # configuration means memory_limiter tripped. That is backpressure, and it is the
+          # collector protecting itself from OOM -- working as designed, but it means the
+          # collector is undersized or something upstream is flooding it.
+          expr: |
+            sum by (processor) (
+              increase(
+                {__name__=~"otelcol_processor_refused_(spans|metric_points|log_records)(_total)?"}[5m]
+              )
+            ) > 0
+          for: 2m
+          labels:
+            severity: warning
+            watchtower_kind: TelemetryPipelineDegraded
+          annotations:
+            summary: 'OTel collector processor {{ $labels.processor }} is refusing data'
+            description: >-
+              {{ $labels.processor }} refused {{ $value | printf "%.0f" }} items in 5
+              minutes. If this is memory_limiter, the collector is at its memory ceiling and
+              applying backpressure -- data is being dropped at the receiver across ALL
+              signals, not just one. Raise resources.limits.memory in
+              otel-collector.values.yaml or reduce what is being ingested. Note the C9
+              memhog fixture can cause this indirectly by starving the node.
+
+        - alert: OtelCollectorQueueSaturated
+          # The sending queue filling up is the early warning that precedes send failures.
+          # Catching it here means the agent can say "Loki is getting slow" before it has to
+          # say "we lost the last four minutes of logs".
+          expr: |
+            (
+              otelcol_exporter_queue_size / otelcol_exporter_queue_capacity
+            ) > 0.8
+          for: 2m
+          labels:
+            severity: info
+            watchtower_kind: TelemetryPipelineDegraded
+          annotations:
+            summary: 'OTel collector export queue for {{ $labels.exporter }} is {{ $value | printf "%.0f%%" }} full'
+            description: >-
+              The queue for {{ $labels.exporter }} is nearly full. This is the state that
+              precedes OtelCollectorSendFailures. The destination is accepting data more
+              slowly than it arrives.
+
+        - alert: OtelCollectorDown
+          # `absent()`, not `up == 0`. When the collector's DaemonSet pod dies, its scrape
+          # target is removed from service discovery and the `up` series ceases to exist --
+          # so `up == 0` matches nothing precisely when the collector is most broken.
+          #
+          # Also: this collector self-scrapes and remote-writes its own metrics, so when it
+          # is down there is nothing left to report that it is down EXCEPT the absence of
+          # its series. This alert is the only thing that notices.
+          expr: |
+            absent({__name__=~"otelcol_process_uptime(_seconds)?(_total)?"})
+          for: 3m
+          labels:
+            severity: critical
+            watchtower_kind: TelemetryPipelineDown
+          annotations:
+            summary: 'OTel collector telemetry has stopped arriving'
+            description: >-
+              No otelcol_* metrics for 3 minutes. The collector is the ONLY ingress for
+              traces and logs in this stack, so the agent is now blind to both, and Loki and
+              Tempo will simply appear to have quiet workloads. Prometheus still scrapes
+              directly, so metric-based Kubernetes alerts keep working -- which makes this
+              a partial blindness that is easy to miss.
+
+    # ===================================================================================
+    - name: watchtower.selfcheck.tempo
+      interval: 30s
+      rules:
+        - alert: TempoNotReceivingSpans
+          # The spec for this rule was `tempo_distributor_spans_received_total == 0`, but a
+          # counter is cumulative: it sits at its last value forever when ingestion stops,
+          # so `== 0` is true only if Tempo has NEVER received a span since start-up.
+          # `increase(...[10m]) == 0` is what actually expresses "nothing arrived recently".
+          expr: |
+            sum(increase(tempo_distributor_spans_received_total[10m])) == 0
+          for: 10m
+          labels:
+            severity: warning
+            watchtower_kind: TelemetryPipelineDegraded
+          annotations:
+            summary: 'Tempo has received no spans for 10 minutes'
+            description: >-
+              The C10 fixture generates continuous traffic, so Tempo should never be idle.
+              Silence means the collector is not forwarding (check OtelCollectorSendFailures
+              for the otlp_grpc/tempo exporter) or nothing is producing traces. Every
+              trace-derived alert in slo-rules.yaml is now evaluating an empty vector and
+              cannot fire.
+
+        - alert: WatchtowerSpanMetricsMissing
+          # THE GUARD FOR THE SILENT-SLO FAILURE.
+          #
+          # Fires when Tempo is demonstrably receiving spans but no span metrics are
+          # reaching Prometheus. That combination isolates the failure to the
+          # metrics-generator -> remote-write path, which has four separate ways to be
+          # silently misconfigured (see the header of slo-rules.yaml). Every one of them
+          # produces a stack that looks completely healthy and an SLO that can never fire.
+          #
+          # Without this rule, that failure is undetectable by construction.
+          expr: |
+            absent(traces_spanmetrics_calls_total)
+            and on() (sum(increase(tempo_distributor_spans_received_total[10m])) > 0)
+          for: 10m
+          labels:
+            severity: critical
+            watchtower_kind: SloPipelineBroken
+          annotations:
+            summary: 'Tempo is receiving spans but producing no span metrics'
+            description: >-
+              traces_spanmetrics_* is absent while Tempo is actively ingesting. Check, in
+              order -- (1) tempo.metricsGenerator.enabled, (2)
+              tempo.overrides.defaults.metrics_generator.processors includes span-metrics
+              (enabling the component and enabling the processors are TWO separate keys),
+              (3) prometheus enableRemoteWriteReceiver is true (not enableFeatures), (4)
+              prometheus tsdb.outOfOrderTimeWindow is non-zero -- the generator writes
+              samples minutes late and the 0s default rejects all of them. Until this is
+              fixed, EVERY SLO alert is silently disabled.
+
+        - alert: RemoteWriteSamplesFailing
+          # Exposed by Tempo, which embeds the Prometheus remote-write client for its
+          # metrics-generator. This is the direct read on failure (4) above: if
+          # outOfOrderTimeWindow is wrong, Prometheus 400s every batch and this counter
+          # climbs while everything else looks fine.
+          expr: |
+            sum by (job, remote_name, url) (
+              rate(prometheus_remote_storage_samples_failed_total[5m])
+            ) > 0
+          for: 2m
+          labels:
+            severity: critical
+            watchtower_kind: SloPipelineBroken
+          annotations:
+            summary: 'Remote write to {{ $labels.url }} is failing'
+            description: >-
+              Samples are being rejected by the remote-write receiver at {{ $labels.url }}.
+              The overwhelmingly likely cause is out-of-order rejection: Tempo's
+              metrics-generator writes samples seconds-to-minutes behind wall clock, and
+              Prometheus rejects those unless tsdb.outOfOrderTimeWindow is set (30m here).
+              Second most likely: enableRemoteWriteReceiver is false, in which case the
+              endpoint 404s.
+
+    # ===================================================================================
+    - name: watchtower.selfcheck.loki
+      interval: 30s
+      rules:
+        - alert: LokiNotIngesting
+          expr: |
+            sum(increase(loki_distributor_lines_received_total[10m])) == 0
+          for: 10m
+          labels:
+            severity: warning
+            watchtower_kind: TelemetryPipelineDegraded
+          annotations:
+            summary: 'Loki has ingested no log lines for 10 minutes'
+            description: >-
+              The filelog receiver tails every container on the node, so Loki should never
+              be idle on a running cluster. Zero ingest means the collector's logs pipeline
+              is broken, not that the cluster went quiet. Every LogQL query the agent runs
+              during this window will correctly return nothing, which is exactly the sort of
+              true-but-misleading answer that produces a confidently wrong diagnosis.
+
+        - alert: LokiRejectingWrites
+          # Includes the structured-metadata rejection: if allow_structured_metadata were
+          # false, Loki 4xxs every OTLP write carrying trace_id, and the trace<->log
+          # correlation hop would break with no other symptom.
+          expr: |
+            sum by (reason) (rate(loki_discarded_samples_total[5m])) > 0
+          for: 2m
+          labels:
+            severity: warning
+            watchtower_kind: TelemetryPipelineDegraded
+          annotations:
+            summary: 'Loki is discarding samples ({{ $labels.reason }})'
+            description: >-
+              Loki discarded samples for reason "{{ $labels.reason }}". Common causes here:
+              rate_limited (raise ingestion_rate_mb), or a structured-metadata rejection,
+              which would mean allow_structured_metadata got turned off and trace_id is no
+              longer being stored -- silently disabling the Tempo-to-Loki correlation hop.
+
+    # ===================================================================================
+    # The agent's own budget. Not a telemetry-pipeline concern, but it belongs in the
+    # self-check group for the same reason: it is the agent noticing a limit on itself
+    # rather than on the cluster.
+    #
+    # Metric name from src/Watchtower.Core/Telemetry/WatchtowerTelemetry.cs:
+    #   Metrics.LlmBudgetUtilization = "watchtower.llm.budget_utilization"
+    # which the collector's prometheusremotewrite exporter renders as
+    #   watchtower_llm_budget_utilization
+    # It is a gauge in the range 0..1+, carrying a `scope` label (incident/daily/monthly).
+    # ===================================================================================
+    - name: watchtower.selfcheck.budget
+      interval: 30s
+      rules:
+        - alert: WatchtowerLlmBudgetWarning
+          expr: |
+            max by (scope) (watchtower_llm_budget_utilization) > 0.8
+          for: 5m
+          labels:
+            severity: warning
+            watchtower_kind: LlmBudget
+          annotations:
+            summary: 'Watchtower has used {{ $value | printf "%.0f%%" }} of its {{ $labels.scope }} LLM budget'
+            description: >-
+              The {{ $labels.scope }} budget is over 80% consumed. This is a warning, not a
+              stop -- the agent keeps investigating. Worth checking WHY: a runaway
+              investigation loop (see watchtower_investigation_steps) burns budget far
+              faster than normal operation, and the fix for that is a step limit, not a
+              bigger budget.
+
+        - alert: WatchtowerLlmBudgetExhausted
+          # >= 1.0, not > 1.0. At exactly 1.0 the budget is gone.
+          expr: |
+            max by (scope) (watchtower_llm_budget_utilization) >= 1.0
+          for: 0m
+          labels:
+            severity: critical
+            watchtower_kind: LlmBudget
+          annotations:
+            summary: 'Watchtower has exhausted its {{ $labels.scope }} LLM budget'
+            description: >-
+              The {{ $labels.scope }} budget is fully consumed. The agent will stop opening
+              investigations. IT IS NOW EFFECTIVELY OFF -- and, importantly, a cluster with
+              an out-of-budget agent looks identical to a cluster with a healthy agent that
+              simply has nothing to report. This alert is the only distinction between the
+              two. Fires immediately (for: 0m); there is nothing transient about being out
+              of money.
+
+        - alert: WatchtowerNotProcessingSignals
+          # The agent's own liveness, measured by output rather than by a health check. A
+          # process can pass /healthz while its signal loop is wedged.
+          #
+          # Deliberately paired with AgentWatchdog (watchdog.yaml), which proves the path
+          # INTO the agent. This proves the agent is doing something with what arrives.
+          expr: |
+            sum(increase(watchtower_signals_received_total[15m])) == 0
+          for: 15m
+          labels:
+            severity: warning
+            watchtower_kind: AgentStalled
+          annotations:
+            summary: 'Watchtower has received no signals for 15 minutes'
+            description: >-
+              The AgentWatchdog heartbeat alone should produce signal traffic every 5
+              minutes, so zero over 15 minutes means the agent's ingest loop is stalled even
+              though its process is alive. Check /healthz versus /readyz, and check whether
+              the webhook endpoint is returning non-2xx to Alertmanager.

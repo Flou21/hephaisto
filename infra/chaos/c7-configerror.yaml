@@ -1,0 +1,128 @@
+# =============================================================================
+# C7 - CreateContainerConfigError (missing Secret)
+# =============================================================================
+# WHAT IT BREAKS
+#   The container declares an env var sourced from
+#   secretKeyRef: name=c7-database-credentials, key=connection-string.
+#   That Secret DOES NOT EXIST and is deliberately not shipped in this file.
+#   The pod schedules, the image pulls successfully, and then the kubelet
+#   fails at the very last step - building the container config - because it
+#   cannot resolve the env var. The pod parks in CreateContainerConfigError
+#   and retries roughly every 10s, forever.
+#
+# ***************************************************************************
+# *  THIS IS A DISCRIMINATION TEST. IT IS DELIBERATELY EASY TO CONFUSE      *
+# *  WITH C4 (ImagePullBackOff).                                            *
+# *                                                                         *
+# *  From a naive vantage point C4 and C7 are indistinguishable:            *
+# *    - pod is Pending / not Ready                                         *
+# *    - container has NEVER started                                        *
+# *    - restarts_total is 0 (nothing ever ran, so nothing restarted)       *
+# *    - ZERO application logs exist for either                             *
+# *    - deployment has 0 available replicas                                *
+# *    - both look like "the container won't come up"                       *
+# *                                                                         *
+# *  An agent that reports "container failed to start" for both has FAILED  *
+# *  this test. The remediations are completely different - C4 needs an      *
+# *  image tag fixed, C7 needs a Secret created - and confusing them sends   *
+# *  a human down the wrong path.                                           *
+# *                                                                         *
+# *  THE DISCRIMINATORS, in order of strength:                              *
+# *   1. waiting_reason label:                                              *
+# *        C4 -> "ImagePullBackOff" / "ErrImagePull"                        *
+# *        C7 -> "CreateContainerConfigError"                               *
+# *      This alone is decisive and lives in the metric layer.              *
+# *   2. Event source and text:                                             *
+# *        C4 -> kubelet, "Failed to pull image ... not found"              *
+# *        C7 -> kubelet, 'Error: secret "c7-database-credentials" not found'*
+# *   3. C7 emits a SUCCESSFUL "Pulled" event; C4 never does. The image is  *
+# *      fine in C7. If the agent reasons about pull success it can rule    *
+# *      out the image without looking at anything else.                    *
+# *                                                                         *
+# *  An answer that names the missing Secret BY NAME is the passing bar.    *
+# ***************************************************************************
+#
+# EXPECTED KUBERNETES EVENTS
+#   - Normal   Scheduled  default-scheduler  Successfully assigned ...
+#   - Normal   Pulled     kubelet  Container image "busybox:1.37" already
+#                                  present on machine     <-- pull SUCCEEDS
+#   - Warning  Failed     kubelet  Error: secret "c7-database-credentials" not found
+#     (this Warning/Failed event repeats every sync loop, ~10s apart, and is
+#      the single most informative artefact in the whole scenario)
+#
+# EXPECTED METRIC / PROMQL SIGNAL
+#   kube_pod_container_status_waiting_reason{
+#     namespace="watchtower-chaos", container="app",
+#     reason="CreateContainerConfigError"} == 1
+#
+#   kube_deployment_status_replicas_available{
+#     namespace="watchtower-chaos", deployment="c7-configerror"} == 0
+#
+#   kube_pod_container_status_restarts_total{
+#     namespace="watchtower-chaos", container="app"} == 0
+#
+#   Discrimination assertion the regression test should make explicitly -
+#   C7 must NOT match the C4 reasons and vice versa:
+#     absent(kube_pod_container_status_waiting_reason{
+#       namespace="watchtower-chaos",
+#       pod=~"c7-configerror-.*",
+#       reason=~"ImagePullBackOff|ErrImagePull"}) == 1
+#
+#   NOTE: kube-state-metrics does NOT expose "this Secret is missing" as a
+#   metric. As with C3, the identity of the missing object exists only in the
+#   Event message. Another point for the k8s_events receiver.
+#
+# EXPECTED LOG SIGNAL
+#   NONE. The container config never completes, so no process ever runs.
+#     count_over_time({k8s_namespace_name="watchtower-chaos",
+#                      k8s_deployment_name="c7-configerror"}[15m]) == 0
+#   Identical log signature to C4 - which is exactly why logs cannot be the
+#   discriminator here and the agent must use the waiting_reason label.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: c7-configerror
+  namespace: watchtower-chaos
+  labels:
+    app.kubernetes.io/name: c7-configerror
+    watchtower.chaos/scenario: c7
+    watchtower.chaos/fault: configerror
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: c7-configerror
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: c7-configerror
+        watchtower.chaos/scenario: c7
+        watchtower.chaos/fault: configerror
+    spec:
+      terminationGracePeriodSeconds: 1
+      containers:
+        - name: app
+          # Image is valid and arm64-native on purpose: the failure must be
+          # unambiguously about configuration, not about the image.
+          image: busybox:1.37
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c", "echo started; sleep 86400"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  # DO NOT CREATE THIS SECRET. Its absence IS the fixture.
+                  name: c7-database-credentials
+                  key: connection-string
+                  # optional defaults to false; being explicit documents the
+                  # intent. optional: true would make the pod start happily
+                  # and destroy the scenario.
+                  optional: false
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi

@@ -1,0 +1,94 @@
+# AgentWatchdog -- the heartbeat
+# ---------------------------------------------------------------------------------------
+# SHIP THIS FIRST. Before the SLO rules, before the chaos fixtures, before the agent can
+# reason about anything. It is the end-to-end proof that the alert path works.
+# ---------------------------------------------------------------------------------------
+#
+# `vector(1)` is a constant expression that is always true. This alert therefore fires the
+# instant Prometheus loads the rule and never stops, for as long as the stack is healthy.
+# It carries no information about the cluster whatsoever -- and that is exactly the point.
+#
+# It exercises, end to end, every link in the chain:
+#
+#     rule file loaded by the operator into the Prometheus CR
+#       -> Prometheus rule evaluation running
+#         -> Prometheus can reach Alertmanager
+#           -> Alertmanager routing matches `alertname = "AgentWatchdog"`
+#             -> Alertmanager's webhook receiver can resolve watchtower.watchtower
+#               -> the NetworkPolicy permits watchtower-obs -> watchtower on 8080
+#                 -> the agent process is up and its HTTP handler is registered
+#                   -> the agent's webhook parser accepts the payload shape
+#
+# If any one of those eight links breaks, the heartbeat stops. Nothing else in this repo
+# tests them together, and most of them fail SILENTLY: a misspelled `release` label means
+# the rule is never loaded; a NetworkPolicy typo means the webhook is refused; a wrong
+# receiver name means Alertmanager drops the notification. In every one of those cases the
+# agent simply receives nothing -- and an agent that receives nothing looks exactly like an
+# agent watching a healthy cluster.
+#
+# ---------------------------------------------------------------------------------------
+# THE INVERSION THAT MAKES THIS WORTH HAVING
+# ---------------------------------------------------------------------------------------
+# Every other alert says "something is wrong". This one says "I can still hear you". The
+# agent tracks the arrival time of each /webhooks/watchdog call, and if it has not been
+# called within roughly 3x the repeat_interval it declares its own alert path broken and
+# says so -- loudly, in its own logs and metrics -- instead of silently reporting that the
+# cluster is fine.
+#
+# That inversion is the single most important property an autonomous monitoring agent can
+# have. An agent that cannot distinguish "nothing is wrong" from "I have gone blind" will
+# confidently report health while the cluster burns.
+#
+# ---------------------------------------------------------------------------------------
+# ROUTING
+# ---------------------------------------------------------------------------------------
+# Routed separately in kube-prometheus-stack.values.yaml:
+#
+#     - receiver: watchtower-watchdog
+#       matchers: [ alertname = "AgentWatchdog" ]
+#       group_wait: 0s
+#       repeat_interval: 5m          # tighter than the 15m default for everything else
+#
+# It goes to /webhooks/watchdog rather than /webhooks/alertmanager so the agent never has
+# to open an incident for it, never counts it in `watchtower_incidents_opened_total`, and
+# never lets a permanently-firing alert pollute the incident dashboard.
+#
+# NAME: `AgentWatchdog`, NOT `Watchdog`. kube-prometheus-stack ships its own alert called
+# `Watchdog` AND a default Alertmanager route that black-holes it to the `null` receiver.
+# Reusing that name would produce a heartbeat that fires correctly, routes correctly, and
+# is discarded before it reaches anything -- the exact failure this alert exists to detect,
+# self-inflicted. (defaultRules.create is false, so the upstream Watchdog is not loaded
+# here either, but the name is avoided regardless: it costs nothing and it survives someone
+# turning the default rules back on.)
+#
+# `for:` is deliberately absent (equivalent to 0s). A heartbeat that waits before beating
+# is not a heartbeat.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: watchtower-watchdog
+  namespace: watchtower-obs
+  labels:
+    release: watchtower
+    app.kubernetes.io/part-of: watchtower
+spec:
+  groups:
+    - name: watchtower.watchdog
+      # Faster than the 30s used elsewhere. The heartbeat should be the most responsive
+      # thing in the stack, because everything else's credibility depends on it.
+      interval: 15s
+      rules:
+        - alert: AgentWatchdog
+          expr: vector(1)
+          labels:
+            severity: none
+            watchtower_kind: Watchdog
+          annotations:
+            summary: 'Alerting pipeline heartbeat'
+            description: >-
+              This alert always fires and always will. It carries no information about the
+              cluster. Its only purpose is to prove that Prometheus rule evaluation,
+              Alertmanager routing and the agent's webhook endpoint are all working
+              together. If Watchtower stops receiving this, the alert path is broken and
+              the agent must report that it is blind -- NOT that the cluster is healthy.

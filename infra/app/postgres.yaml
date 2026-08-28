@@ -1,0 +1,229 @@
+# Postgres for Watchtower
+# ---------------------------------------------------------------------------------------
+# Plain manifests, not an operator and not the Bitnami chart. This is one single-replica
+# database on a single-node dev cluster; CloudNativePG would add a CRD set and an operator
+# Deployment to manage a thing that has no failover story anyway.
+#
+# WHY pgvector/pgvector:pg17 AND NOT postgres:17
+# ---------------------------------------------------------------------------------------
+# This database is not just the agent's transactional store. It is also its MEMORY: past
+# incidents, their investigations, what was tried and whether it worked, embedded as vectors
+# so a new incident can retrieve "have I seen this before". That needs the `vector` type and
+# its index types, which are an extension, not core Postgres.
+#
+# pgvector/pgvector:pg17 is the upstream image with the extension already compiled in. The
+# stock postgres:17 image cannot `CREATE EXTENSION vector` -- the shared library is not in
+# the image -- so switching to it produces a database that starts fine and fails the first
+# time the agent tries to write an embedding.
+#
+# THE CREDENTIALS SECRET IS NOT IN THIS FILE AND MUST NOT BE
+# ---------------------------------------------------------------------------------------
+#   kubectl -n watchtower create secret generic watchtower-postgres \
+#     --from-literal=POSTGRES_USER=watchtower \
+#     --from-literal=POSTGRES_PASSWORD="$(openssl rand -hex 24)" \
+#     --from-literal=POSTGRES_DB=watchtower
+#
+# A password committed to a manifest is a password in every clone, every `helm get values`
+# and every `kubectl get secret -o yaml` forever. Note also that the agent's ServiceAccount
+# deliberately has NO access to `secrets` (see rbac.yaml) -- it reads its own connection
+# string from its own env, and cannot enumerate this or any other Secret through the API.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: watchtower
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: watchtower
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+      protocol: TCP
+---
+# Headless companion. A StatefulSet needs a governing headless Service for stable network
+# identity; the ClusterIP one above is what callers actually use (postgres.watchtower:5432).
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-headless
+  namespace: watchtower
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: watchtower
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+# Initialisation SQL. The official Postgres entrypoint runs every *.sql and *.sh in
+# /docker-entrypoint-initdb.d ONCE, on first start against an empty PGDATA -- and never
+# again. Editing this ConfigMap after the PVC exists changes nothing; the volume must be
+# deleted, or the statements applied by hand.
+#
+# Everything here is written to be idempotent regardless, so re-running it by hand is safe.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: watchtower-postgres-init
+  namespace: watchtower
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: watchtower
+data:
+  00-extensions.sql: |
+    -- Runs against POSTGRES_DB (watchtower), which the entrypoint has already created
+    -- from the env var, so there is no CREATE DATABASE here -- issuing one would fail
+    -- because the database already exists and the connection is inside it.
+
+    -- The reason this image was chosen. Provides the `vector` column type plus the
+    -- ivfflat and hnsw index access methods.
+    CREATE EXTENSION IF NOT EXISTS vector;
+
+    -- gen_random_uuid() for primary keys. Built into PG13+ core, but the extension is
+    -- created anyway so the schema does not depend on which build is underneath.
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    -- Trigram indexes. The agent matches new incidents against historical ones by fuzzy
+    -- text similarity BEFORE falling back to vector search -- an exact-ish match on an
+    -- error message is cheaper and more precise than an embedding lookup.
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+    -- A schema for the agent's own objects, so EF Core migrations and any hand-written
+    -- diagnostics do not fight over `public`.
+    CREATE SCHEMA IF NOT EXISTS watchtower;
+
+    -- Sanity marker. If this row is missing, init did not run and the PVC predates this
+    -- ConfigMap -- which is the single most likely cause of "the vector type does not
+    -- exist" after someone reused an old volume.
+    CREATE TABLE IF NOT EXISTS watchtower.schema_bootstrap (
+      applied_at timestamptz NOT NULL DEFAULT now(),
+      note       text        NOT NULL
+    );
+    INSERT INTO watchtower.schema_bootstrap (note)
+      VALUES ('extensions: vector, pgcrypto, pg_trgm');
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: watchtower
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: watchtower
+spec:
+  serviceName: postgres-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/part-of: watchtower
+    spec:
+      # Long enough for a clean shutdown and checkpoint. The default 30s can leave the
+      # database needing crash recovery on every single pod restart, which turns a routine
+      # `tilt trigger` into 20 seconds of WAL replay and a failing readiness probe that
+      # looks like a real problem.
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: postgres
+          image: pgvector/pgvector:pg17
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: watchtower-postgres
+          env:
+            # PGDATA must be a SUBDIRECTORY of the mount, never the mount itself. A
+            # PersistentVolume mount point is not empty -- depending on the provisioner it
+            # can contain lost+found or ownership the entrypoint objects to -- and initdb
+            # refuses to run in a non-empty directory. The failure message ("directory
+            # exists but is not empty") is not obviously about the mount, and this is the
+            # most common way a first Postgres deployment fails.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            # Trust auth is NOT used; scram-sha-256 with the Secret's password.
+            - name: POSTGRES_INITDB_ARGS
+              value: "--auth-host=scram-sha-256"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          # pg_isready against the real database and user, not a TCP check. A TCP check
+          # passes while Postgres is still replaying WAL and refusing connections, which
+          # would let the agent start and immediately fail its first query.
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - exec pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" -h 127.0.0.1 -p 5432
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - exec pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" -h 127.0.0.1 -p 5432
+            initialDelaySeconds: 45
+            periodSeconds: 20
+            timeoutSeconds: 5
+            # Generous. A liveness probe that restarts a database under load turns a slow
+            # query into data loss.
+            failureThreshold: 6
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: init
+          configMap:
+            name: watchtower-postgres-init
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: postgres
+          app.kubernetes.io/part-of: watchtower
+      spec:
+        # local-path is the only StorageClass on this cluster. Its reclaim policy is Delete,
+        # but a StatefulSet's volumeClaimTemplate PVC is NOT removed when the StatefulSet is
+        # deleted -- Kubernetes keeps it deliberately. So the agent's memory survives
+        # `kubectl delete statefulset`, and survives `tilt down` for these plain manifests.
+        # It does NOT survive `kubectl delete pvc`.
+        storageClassName: local-path
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi

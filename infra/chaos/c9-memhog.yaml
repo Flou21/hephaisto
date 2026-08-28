@@ -1,0 +1,206 @@
+# #############################################################################
+# #############################################################################
+# ##                                                                         ##
+# ##   ####  ####    #    #   #  ####  ####   ##   #  #   ###                ##
+# ##   #  #  #  #   # #   ##  #  #     #     #  #  #  #  #                   ##
+# ##   #  #  ####  #####  # # #  # ##  ###   ####  #  #  # ##                ##
+# ##   #  #  #  #  #   #  #  ##  #  #  #     #  #  #  #  #  #                ##
+# ##   ####  #  #  #   #  #   #  ####  ####  #  #   ##    ###                ##
+# ##                                                                         ##
+# ##   C9 - NODE MEMORY PRESSURE.  THIS FIXTURE ATTACKS THE WHOLE NODE.      ##
+# ##                                                                         ##
+# ##   *** RUN THIS ONE ALONE AND DELIBERATELY. ***                          ##
+# ##                                                                         ##
+# ##   This is the ONLY fixture in this directory that can disturb           ##
+# ##   workloads it does not own. Every other fixture (C1-C8, C10) is        ##
+# ##   contained by its own resource limits and cannot hurt anything         ##
+# ##   outside watchtower-chaos. THIS ONE HAS NO MEMORY LIMIT ON PURPOSE.    ##
+# ##   That is the entire fault: an unbounded container is the only way to   ##
+# ##   drive a NODE-level condition instead of a container-level one.        ##
+# ##                                                                         ##
+# ##   WHAT IT CAN TAKE DOWN, on this shared Rancher Desktop node:           ##
+# ##     - the whole observability stack in watchtower-obs                   ##
+# ##       (if the collector is evicted you lose the very telemetry you      ##
+# ##        were trying to observe - which is itself instructive, but not    ##
+# ##        something to discover by accident)                               ##
+# ##     - every other chaos fixture, whose pods become eviction candidates  ##
+# ##     - unrelated dev workloads sharing this node                         ##
+# ##   Eviction order is driven by QoS class and by how far each pod exceeds ##
+# ##   its memory REQUEST. BestEffort pods die first, then Burstable pods    ##
+# ##   over their request. This container is Burstable-with-no-limit and     ##
+# ##   massively over its request, so the kubelet should pick IT first -     ##
+# ##   but "should" is not "will", and collateral damage is expected.        ##
+# ##                                                                         ##
+# ##   *** replicas IS SET TO 0. ***                                         ##
+# ##   Applying this file therefore does NOTHING. That is deliberate: it     ##
+# ##   makes `kubectl apply -f infra/chaos/` safe, and it makes firing this  ##
+# ##   fixture a conscious, separate, single-command act:                    ##
+# ##                                                                         ##
+# ##       kubectl -n watchtower-chaos scale deploy/c9-memhog --replicas=1   ##
+# ##                                                                         ##
+# ##   ...and to stop it, IMMEDIATELY:                                       ##
+# ##                                                                         ##
+# ##       kubectl -n watchtower-chaos scale deploy/c9-memhog --replicas=0   ##
+# ##                                                                         ##
+# ##   Do not leave it running. Budget ~3-5 minutes, capture the signal,     ##
+# ##   scale back to 0. Verify the node recovered:                           ##
+# ##       kubectl describe node lima-rancher-desktop | grep -A3 MemoryPressure
+# ##                                                                         ##
+# #############################################################################
+# #############################################################################
+#
+# WHAT IT BREAKS
+#   A container with NO memory limit allocates ~4Gi into a memory-backed
+#   emptyDir in 128Mi steps, then holds it. Because there is no limit, the
+#   cgroup OOM killer never fires; the pressure lands on the NODE. The kubelet
+#   crosses its memory.available eviction threshold, sets the node's
+#   MemoryPressure condition to True, and starts evicting pods.
+#
+#   4Gi against a 115 GiB node will not, on its own, cross the default
+#   eviction threshold on an idle machine - see the honesty note below.
+#
+# HONESTY NOTE ON WHETHER THIS ACTUALLY FIRES HERE
+#   This node has ~115 GiB. The kubelet's default hard eviction threshold is
+#   memory.available < 100Mi. 4Gi of allocation on a 115 GiB node will NOT by
+#   itself set MemoryPressure - it needs the node to already be near-full, or
+#   it needs a much larger ALLOC_MIB. The 4Gi default is the SAFE value: it is
+#   large enough to be unmistakable in container_memory_working_set_bytes and
+#   node memory graphs, and small enough that it is very unlikely to evict
+#   anything on an otherwise-idle node.
+#
+#   ALLOC_MIB is an env knob for that reason. To genuinely reproduce
+#   MemoryPressure and evictions you must raise it toward the node's free
+#   memory (`kubectl top node`), which is a materially more destructive act.
+#   Do that only with intent, and expect collateral eviction. The regression
+#   suite should assert the WORKING-SET signal (which always holds) and treat
+#   the MemoryPressure / Evicted signals as conditional on ALLOC_MIB having
+#   been raised.
+#
+# EXPECTED KUBERNETES EVENTS
+#   At the default 4Gi, typically none beyond the normal Scheduled/Started.
+#   At an ALLOC_MIB large enough to cross the threshold:
+#   - Node object:  Warning  NodeHasInsufficientMemory  kubelet
+#                            Node lima-rancher-desktop status is now:
+#                            NodeHasInsufficientMemory
+#   - Node object:  Warning  EvictionThresholdMet  kubelet
+#                            Attempting to reclaim memory
+#   - Pod objects (this one and/or innocent bystanders):
+#                   Warning  Evicted  kubelet
+#                            The node was low on resource: memory.
+#   - Node object:  Warning  SystemOOM  kubelet  (if the kernel wins the race
+#                            against the kubelet's soft eviction)
+#
+# EXPECTED METRIC / PROMQL SIGNAL
+#   Always holds at the default 4Gi - unbounded growth with no limit series:
+#     container_memory_working_set_bytes{
+#       namespace="watchtower-chaos", container="hog"} > 4e9
+#
+#     absent(kube_pod_container_resource_limits{
+#       namespace="watchtower-chaos", container="hog", resource="memory"}) == 1
+#     (the missing limit is itself the finding: the agent should call out that
+#      this workload is unbounded, independently of whether it has hurt
+#      anything yet)
+#
+#   Conditional on ALLOC_MIB being raised far enough:
+#     kube_node_status_condition{condition="MemoryPressure",
+#                                status="true"} == 1
+#
+#     kube_pod_status_reason{namespace="watchtower-chaos",
+#                            reason="Evicted"} == 1
+#
+#     sum(kube_pod_status_reason{reason="Evicted"}) > 0
+#     (deliberately NOT scoped to watchtower-chaos - the blast radius outside
+#      the chaos namespace is the thing worth measuring)
+#
+#   Node headroom, from node-exporter:
+#     node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.10
+#
+# EXPECTED LOG SIGNAL
+#   {k8s_namespace_name="watchtower-chaos", k8s_deployment_name="c9-memhog"}
+#     |= "allocated"
+#
+#   Exact expected lines, one per 128Mi step:
+#     WARN: allocated 128 MiB of 4096 MiB (no memory limit set)
+#     WARN: allocated 256 MiB of 4096 MiB (no memory limit set)
+#     ...
+#     WARN: allocation complete, holding 4096 MiB
+#
+#   Note the log STOPS at the target and the memory stays flat. Unlike C1
+#   there is no sawtooth: nothing kills this container, which is the point.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: c9-memhog
+  namespace: watchtower-chaos
+  labels:
+    app.kubernetes.io/name: c9-memhog
+    watchtower.chaos/scenario: c9
+    watchtower.chaos/fault: node-memory-pressure
+  annotations:
+    watchtower.chaos/danger: "node-wide"
+    watchtower.chaos/run-alone: "true"
+    watchtower.chaos/arm: "kubectl -n watchtower-chaos scale deploy/c9-memhog --replicas=1"
+    watchtower.chaos/disarm: "kubectl -n watchtower-chaos scale deploy/c9-memhog --replicas=0"
+spec:
+  # ***** DISARMED ON PURPOSE. See the banner. Scale to 1 to fire it. *****
+  replicas: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: c9-memhog
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: c9-memhog
+        watchtower.chaos/scenario: c9
+        watchtower.chaos/fault: node-memory-pressure
+    spec:
+      # Die fast when someone scales this back to 0.
+      terminationGracePeriodSeconds: 1
+      containers:
+        - name: hog
+          image: busybox:1.37
+          imagePullPolicy: IfNotPresent
+          env:
+            # Raise ONLY with intent. See the honesty note in the header.
+            - name: ALLOC_MIB
+              value: "4096"
+            - name: STEP_MIB
+              value: "128"
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              done_mib=0
+              while [ "$done_mib" -lt "$ALLOC_MIB" ]; do
+                dd if=/dev/zero of=/hog/block.$done_mib bs=1M count="$STEP_MIB" 2>/dev/null
+                done_mib=$((done_mib + STEP_MIB))
+                echo "WARN: allocated $done_mib MiB of $ALLOC_MIB MiB (no memory limit set)"
+                sleep 1
+              done
+              echo "WARN: allocation complete, holding $ALLOC_MIB MiB"
+              sleep 86400
+          volumeMounts:
+            - name: hog
+              mountPath: /hog
+          resources:
+            requests:
+              # A tiny request against an enormous actual footprint. This is
+              # what makes the pod the kubelet's preferred eviction victim,
+              # and it is realistic - it is exactly how real memory leaks look
+              # to the scheduler.
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              # CPU only. THERE IS DELIBERATELY NO MEMORY LIMIT. Adding one
+              # converts this fixture into C1 (a contained OOMKill) and it
+              # stops testing anything node-level.
+              cpu: "1"
+      volumes:
+        - name: hog
+          emptyDir:
+            medium: Memory
+            # Must exceed ALLOC_MIB, and is the second safety catch: even if
+            # ALLOC_MIB is raised carelessly, the tmpfs itself caps at 8Gi and
+            # the pod gets evicted for the volume rather than taking the node
+            # to zero. Raise this only together with ALLOC_MIB, knowingly.
+            sizeLimit: 8Gi

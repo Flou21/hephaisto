@@ -1,0 +1,168 @@
+# =============================================================================
+# C6 - PVC disk fill
+# =============================================================================
+# WHAT IT BREAKS
+#   A 1Gi local-path PVC is mounted at /data. The workload dd's a 950Mi file
+#   into it (95% of the claim), logs a warning, and then sleeps forever. The
+#   PVC stays full until the fixture is deleted.
+#
+# ---------------------------------------------------------------------------
+# !! READ THIS BEFORE WRITING THE ALERT RULE - MEASURED ON THIS CLUSTER !!
+# ---------------------------------------------------------------------------
+#   The textbook expression for this scenario is
+#       kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes > 0.90
+#   and on a cluster with a real CSI driver (one filesystem or quota per PV)
+#   it is correct. ON THIS RANCHER DESKTOP k3s NODE IT DOES NOT WORK, and the
+#   regression test must not assert it.
+#
+#   Reason: the only StorageClass is `local-path`, whose PVs are plain
+#   hostPath directories under /var/lib/rancher/k3s/storage/. There is no
+#   per-volume filesystem and no quota. The kubelet derives all three volume
+#   stats from statfs() of that path, which resolves to the NODE ROOT
+#   FILESYSTEM. Every local-path PVC on this node therefore reports the same
+#   numbers regardless of how full the claim actually is.
+#
+#   Measured directly from the kubelet
+#   (`kubectl get --raw /api/v1/nodes/lima-rancher-desktop/proxy/metrics`):
+#       kubelet_volume_stats_capacity_bytes  = 210778099712  (~196 GiB)
+#       kubelet_volume_stats_used_bytes      = 130322243584  (~121 GiB)
+#       kubelet_volume_stats_available_bytes =  69701718016  (~ 65 GiB)
+#   - identical for cait-postgres-pvc, mongo-pvc, redis-pvc, loki, everything.
+#   The ratio sits at ~0.62 node-wide. Adding 950Mi moves it by 0.0045. It
+#   will never cross 0.90 from this fixture, and local-path does NOT enforce
+#   the 1Gi claim - the dd simply succeeds.
+#
+#   CONSEQUENCE FOR THE AGENT'S TEST SUITE:
+#     * Assert the volume-ratio PromQL as a rule that PARSES and is wired up,
+#       not as a rule that FIRES on this node.
+#     * The signal that actually fires here is the LOG line below, plus the
+#       fill being visible in the container's own reporting.
+#     * To make the ratio genuinely cross 0.90 you would have to fill the
+#       node's 196 GiB root filesystem, which would evict every workload on
+#       the machine. That is C9-class destruction and is deliberately NOT what
+#       this fixture does.
+# ---------------------------------------------------------------------------
+#
+# EXPECTED KUBERNETES EVENTS
+#   - Normal  WaitForFirstConsumer  persistentvolume-controller
+#             waiting for first consumer to be created before binding
+#             (local-path is WaitForFirstConsumer; this always appears first)
+#   - Normal  Provisioning / ExternalProvisioning  rancher.io/local-path
+#   - Normal  ProvisioningSucceeded  Successfully provisioned volume pvc-<uid>
+#   - Normal  Scheduled / Pulled / Created / Started on the pod
+#   There is NO warning event for the fill itself. The kubelet does not police
+#   local-path volume size. Absence of an event here is expected and correct.
+#
+# EXPECTED METRIC / PROMQL SIGNAL
+#   Production-correct rule (parses, wired, does NOT fire on local-path):
+#     kubelet_volume_stats_used_bytes{namespace="watchtower-chaos",
+#                                     persistentvolumeclaim="c6-diskfill-data"}
+#       / kubelet_volume_stats_capacity_bytes{namespace="watchtower-chaos",
+#                                             persistentvolumeclaim="c6-diskfill-data"}
+#       > 0.90
+#
+#   What DOES hold on this node - the claim exists, is Bound, and is 1Gi:
+#     kube_persistentvolumeclaim_status_phase{
+#       namespace="watchtower-chaos",
+#       persistentvolumeclaim="c6-diskfill-data", phase="Bound"} == 1
+#
+#     kube_persistentvolumeclaim_resource_requests_storage_bytes{
+#       namespace="watchtower-chaos",
+#       persistentvolumeclaim="c6-diskfill-data"} == 1073741824
+#
+#   And the series simply existing proves the kubelet is scraping the volume:
+#     count(kubelet_volume_stats_capacity_bytes{
+#       namespace="watchtower-chaos",
+#       persistentvolumeclaim="c6-diskfill-data"}) == 1
+#
+# EXPECTED LOG SIGNAL
+#   {k8s_namespace_name="watchtower-chaos", k8s_deployment_name="c6-diskfill"}
+#     |= "volume is 95% full"
+#
+#   Exact expected lines:
+#     INFO: filling /data with 950 MiB
+#     WARN: volume is 95% full: 950MiB used of 1024MiB on /data
+#
+#   This is the fixture reporting its own fill level, because - per the block
+#   above - the platform will not report it on local-path. That is realistic:
+#   applications that care about their own disk usually do exactly this.
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: c6-diskfill-data
+  namespace: watchtower-chaos
+  labels:
+    app.kubernetes.io/name: c6-diskfill
+    watchtower.chaos/scenario: c6
+    watchtower.chaos/fault: diskfill
+spec:
+  accessModes:
+    - ReadWriteOnce
+  # local-path is the ONLY StorageClass on this cluster (Delete /
+  # WaitForFirstConsumer). Never write "standard" or "longhorn" here.
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: c6-diskfill
+  namespace: watchtower-chaos
+  labels:
+    app.kubernetes.io/name: c6-diskfill
+    watchtower.chaos/scenario: c6
+    watchtower.chaos/fault: diskfill
+spec:
+  replicas: 1
+  # RWO + local-path: never let two pods hold the volume during a rollout.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: c6-diskfill
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: c6-diskfill
+        watchtower.chaos/scenario: c6
+        watchtower.chaos/fault: diskfill
+    spec:
+      terminationGracePeriodSeconds: 5
+      containers:
+        - name: filler
+          image: busybox:1.37
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              echo "INFO: filling /data with 950 MiB"
+              # Idempotent: on a pod restart the file is already there and dd
+              # simply rewrites it, so the fixture converges rather than
+              # doubling up.
+              dd if=/dev/zero of=/data/fill.bin bs=1M count=950 2>/dev/null
+              sync
+              echo "WARN: volume is 95% full: 950MiB used of 1024MiB on /data"
+              # Re-state the warning periodically so a Loki query over a short
+              # window still finds it long after the pod started.
+              while true; do
+                sleep 60
+                echo "WARN: volume is 95% full: 950MiB used of 1024MiB on /data"
+              done
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 500m
+              memory: 64Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: c6-diskfill-data

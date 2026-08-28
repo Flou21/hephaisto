@@ -1,0 +1,252 @@
+# Grafana datasources for Watchtower
+# ---------------------------------------------------------------------------------------
+# WHY A CONFIGMAP AND NOT `grafana.additionalDataSources`
+# ---------------------------------------------------------------------------------------
+# Both mechanisms end up in the same place -- Grafana's provisioning directory -- so this is
+# a choice about where the text lives, not about behaviour. Three reasons for the ConfigMap:
+#
+#  1. A datasource change is a `kubectl apply` of one small file, not a `helm upgrade` of a
+#     chart with ~5500 values that also restarts Prometheus and Alertmanager. The Tempo
+#     correlation block below will be tuned repeatedly; each tune should not roll the whole
+#     monitoring stack.
+#  2. `additionalDataSources` is passed through Helm's `tpl`, so every `{{` in a datasource
+#     definition has to be escaped. The Tempo tracesToMetrics queries below are full of
+#     PromQL brace syntax. Escaping them would make the most important block in this file
+#     unreadable.
+#  3. It is a plain manifest, so `kubectl apply --dry-run=client` and any YAML linter can
+#     check it. Values files are checked by nothing until helm renders them.
+#
+# The choice is exclusive: do NOT also add entries to `grafana.additionalDataSources`.
+# Two provisioners writing datasources with overlapping UIDs is the exact failure the
+# `defaultDatasourceEnabled: false` comment below describes.
+#
+# ---------------------------------------------------------------------------------------
+# UID COLLISIONS ARE SILENT -- READ THIS
+# ---------------------------------------------------------------------------------------
+# kube-prometheus-stack emits its OWN datasource ConfigMap containing:
+#     * a Prometheus datasource at uid `prometheus`
+#     * an Alertmanager datasource at uid `alertmanager`
+#
+# This file declares datasources at those same UIDs, because the dashboard JSON and the
+# correlation blocks below reference datasources BY UID and the UIDs must be stable.
+#
+# When two provisioned datasources claim one UID, Grafana does not error. It does not warn.
+# The last file the sidecar processes wins, and sidecar file ordering is not deterministic
+# across pod restarts. So the symptom is: exemplars are clickable, then after some unrelated
+# restart they are not, then they are again. Nobody ever finds it.
+#
+# The fix is upstream of this file, in kube-prometheus-stack.values.yaml:
+#     grafana.sidecar.datasources.defaultDatasourceEnabled: false   # kills its Prometheus
+#     grafana.sidecar.datasources.alertmanager.enabled:      false   # kills its Alertmanager
+# Both are set. If either is ever turned back on, this file stops being authoritative.
+#
+# ---------------------------------------------------------------------------------------
+# Loaded by the Grafana sidecar, which watches ALL namespaces for ConfigMaps labelled
+# grafana_datasource: "1" (see grafana.sidecar.datasources in the stack values).
+# ---------------------------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: watchtower-datasources
+  namespace: watchtower-obs
+  labels:
+    grafana_datasource: "1"
+    app.kubernetes.io/part-of: watchtower
+data:
+  watchtower-datasources.yaml: |-
+    apiVersion: 1
+
+    # `prune` would let Grafana delete datasources that disappear from provisioning.
+    # Deliberately off: a transient sidecar failure should not delete every datasource.
+    deleteDatasources: []
+
+    datasources:
+      # ===================================================================================
+      # Prometheus -- the default
+      # ===================================================================================
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus
+        access: proxy
+        isDefault: true
+        editable: false
+        url: http://watchtower-kube-prometheus-prometheus.watchtower-obs:9090
+        jsonData:
+          httpMethod: POST
+          # Must match prometheus.prometheusSpec.scrapeInterval. If this is smaller than the
+          # real scrape interval, Grafana computes $__rate_interval too short and rate()
+          # over a single sample returns nothing -- graphs go blank at high zoom and look
+          # like an outage.
+          timeInterval: 30s
+          prometheusType: Prometheus
+          prometheusVersion: 3.7.0
+          # --- The metrics -> traces hop ------------------------------------------------
+          # This is what makes an exemplar dot on a histogram panel clickable. Requires,
+          # on the Prometheus side: enableFeatures: [exemplar-storage] AND a non-zero
+          # exemplars.maxSize -- the flag alone gives you a zero-length exemplar buffer.
+          # `name` is the label Grafana looks for on the exemplar; OTLP-produced exemplars
+          # carry `trace_id`.
+          exemplarTraceIdDestinations:
+            - name: trace_id
+              datasourceUid: tempo
+              urlDisplayLabel: View trace
+
+      # ===================================================================================
+      # Loki
+      # ===================================================================================
+      - name: Loki
+        type: loki
+        uid: loki
+        access: proxy
+        editable: false
+        # Reads go through the nginx gateway (the chart's supported query surface). Writes
+        # from the OTel collector go direct to loki:3100 -- see otel-collector.values.yaml.
+        # Splitting them means a gateway outage costs queries but never costs log ingest.
+        url: http://loki-gateway.watchtower-obs:80
+        jsonData:
+          maxLines: 2000
+          timeout: 60
+          # --- The logs -> traces hop ---------------------------------------------------
+          # Turns a `trace_id` in a log line into a link into Tempo. This works ONLY for
+          # logs that carry trace_id, which -- see the derivedFields caveat under Tempo
+          # below -- means OTLP-shipped logs only.
+          derivedFields:
+            - name: TraceID
+              datasourceUid: tempo
+              # Loki 3.x surfaces OTLP span context as structured metadata, so trace_id is
+              # a real field rather than something to regex out of the message body.
+              matcherType: label
+              matcherRegex: trace_id
+              url: "${__value.raw}"
+              urlDisplayLabel: View trace
+
+      # ===================================================================================
+      # Tempo -- the correlation hub
+      # ===================================================================================
+      # Every hop the agent can make between signals is configured here. This block is the
+      # single most valuable thing in this file: it is what turns three separate databases
+      # into one navigable incident.
+      - name: Tempo
+        type: tempo
+        uid: tempo
+        access: proxy
+        editable: false
+        url: http://tempo.watchtower-obs:3200
+        jsonData:
+          # -----------------------------------------------------------------------------
+          # traces -> logs
+          # -----------------------------------------------------------------------------
+          tracesToLogsV2:
+            datasourceUid: loki
+            # Look for logs from 5 minutes before the span started to 5 minutes after it
+            # ended. Generous on purpose: the log line that explains a slow span is
+            # frequently written by a DIFFERENT process (the kubelet, a sidecar) whose clock
+            # and flush cadence differ by seconds, and a tight window silently excludes it.
+            spanStartTimeShift: "-5m"
+            spanEndTimeShift: "5m"
+            # === THE HONEST LIMITATION ===============================================
+            # filterByTraceID narrows the Loki query to lines carrying THIS trace_id. It is
+            # exact, and it is the hop that makes five-hop correlation demonstrable.
+            #
+            # It only works when the log line actually has a trace_id. In this stack that is
+            # true for logs shipped over OTLP -- the Watchtower agent itself, and the C10
+            # faulty-service fixture -- because Loki's OTLP endpoint maps span context onto
+            # structured metadata.
+            #
+            # It is NOT true for logs scraped off the node by the filelog receiver, which is
+            # every other container in the cluster. A crashlooping Python pod's stdout has
+            # no trace context to carry; nothing can add one after the fact.
+            #
+            # So `tags` below is the fallback, not decoration: when filterByTraceID finds
+            # nothing, the resource-attribute match still lands the operator on the right
+            # pod's logs in the right time window. Leaving `tags` empty would make the
+            # traces->logs hop appear broken for most of the cluster.
+            filterByTraceID: true
+            filterBySpanID: false
+            tags:
+              # OTel resource attribute -> Loki index label. The Loki chart's otlp_config
+              # promotes these to real labels; the name mapping is dots -> underscores.
+              - key: "service.name"
+                value: "service_name"
+              - key: "k8s.namespace.name"
+                value: "k8s_namespace_name"
+              - key: "k8s.pod.name"
+                value: "k8s_pod_name"
+              - key: "k8s.deployment.name"
+                value: "k8s_deployment_name"
+
+          # -----------------------------------------------------------------------------
+          # traces -> metrics
+          # -----------------------------------------------------------------------------
+          # All three queries are built on traces_spanmetrics_*, which Tempo's own
+          # metrics-generator produces from the spans -- NOT on anything the application
+          # exports. That is deliberate and is the same reasoning as alerts/slo-rules.yaml:
+          # any service that emits traces gets RED metrics with zero code changes.
+          #
+          # These queries return nothing at all unless BOTH of these are true:
+          #   * tempo.overrides.defaults.metrics_generator.processors includes span-metrics
+          #   * prometheus tsdb.outOfOrderTimeWindow is non-zero
+          # See the TRAP comments in the respective values files.
+          tracesToMetrics:
+            datasourceUid: prometheus
+            spanStartTimeShift: "-5m"
+            spanEndTimeShift: "5m"
+            tags:
+              - key: "service.name"
+                value: "service_name"
+              - key: "k8s.namespace.name"
+                value: "k8s_namespace_name"
+            queries:
+              - name: "Request rate"
+                query: "sum(rate(traces_spanmetrics_calls_total{$__tags}[$__rate_interval]))"
+              - name: "p95 latency"
+                query: "histogram_quantile(0.95, sum(rate(traces_spanmetrics_latency_bucket{$__tags}[$__rate_interval])) by (le))"
+              - name: "Error rate"
+                query: "sum(rate(traces_spanmetrics_calls_total{$__tags, status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval])) / sum(rate(traces_spanmetrics_calls_total{$__tags}[$__rate_interval]))"
+
+          # -----------------------------------------------------------------------------
+          # Service map
+          # -----------------------------------------------------------------------------
+          # Renders the service graph from traces_service_graph_request_* -- again produced
+          # by Tempo's metrics-generator (the `service-graphs` processor) and read back out
+          # of Prometheus. Requires service_graphs.wait to be set (10s) or edges are emitted
+          # half-formed.
+          serviceMap:
+            datasourceUid: prometheus
+
+          nodeGraph:
+            enabled: true
+
+          # Results stream in as blocks are scanned instead of appearing all at once at the
+          # end. Requires tempo.streamOverHttpEnabled: true on the server, and the
+          # traceQLStreaming feature toggle in Grafana -- both are set.
+          streamingEnabled:
+            search: true
+
+          tracesToProfiles:
+            # No Pyroscope in this stack.
+            datasourceUid: ""
+
+          search:
+            hide: false
+          spanBar:
+            type: "Duration"
+
+      # ===================================================================================
+      # Alertmanager
+      # ===================================================================================
+      # Lets an operator see the same firing/silenced state the agent's webhook receives.
+      # When the agent claims "I never got alerted", this is where you check whether
+      # Alertmanager grouped, inhibited or silenced it before the webhook fired.
+      - name: Alertmanager
+        type: alertmanager
+        uid: alertmanager
+        access: proxy
+        editable: false
+        url: http://watchtower-kube-prometheus-alertmanager.watchtower-obs:9093
+        jsonData:
+          implementation: prometheus
+          # Grafana's own unified alerting is not used -- all rules are PrometheusRule CRs
+          # in infra/observability/alerts/. Leaving this true would put Grafana-managed
+          # alerts into the same Alertmanager and give the agent two sources of truth.
+          handleGrafanaManagedAlerts: false

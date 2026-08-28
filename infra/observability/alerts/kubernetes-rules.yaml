@@ -1,0 +1,431 @@
+# Kubernetes workload alerts for Watchtower
+# ---------------------------------------------------------------------------------------
+# Picked up by Prometheus because of `release: watchtower` -- see the ruleSelector in
+# infra/observability/kube-prometheus-stack.values.yaml. If that label is missing or
+# misspelled the rules are simply never loaded, with no error anywhere.
+#
+# NAMES ARE UPSTREAM, DURATIONS ARE NOT.
+# ---------------------------------------------------------------------------------------
+# Every alert here that has an upstream kube-prometheus-stack equivalent uses the upstream
+# name byte-for-byte -- KubePodCrashLooping, KubeContainerWaiting, KubeJobFailed,
+# KubeDeploymentReplicasMismatch, KubeNodeNotReady, TargetDown. That is deliberate: the
+# public runbooks at runbooks.prometheus-operator.dev are keyed on these names, so the
+# agent's retrieval and any human's muscle memory both transfer unchanged.
+#
+# What is NOT upstream is `for:`. Upstream KubePodCrashLooping waits 15 minutes, because in
+# production a 15-minute wait is what stops a rolling deploy from paging anyone. Here the
+# loop being optimised is "break something, watch the agent notice, fix it" and the target
+# is a signal inside ~90 seconds. So the waits are 0-2 minutes throughout.
+#
+# The cost is honest and worth stating: these rules WILL fire during a normal deploy. A pod
+# that restarts twice while its dependency comes up trips KubePodCrashLooping here and
+# would not upstream. That is acceptable -- and is itself training data, since an agent that
+# cannot tell "restarting during rollout" from "crashlooping forever" has a real gap.
+#
+# Because `defaultRules.create: false` in the stack values, these do not collide with the
+# chart's own copies. Turning that back on would load two rules with the same name and
+# different thresholds into one Prometheus.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: watchtower-kubernetes-rules
+  namespace: watchtower-obs
+  labels:
+    # THE selector label. Without it, nothing below is ever evaluated.
+    release: watchtower
+    app.kubernetes.io/part-of: watchtower
+spec:
+  groups:
+    # ===================================================================================
+    - name: watchtower.kubernetes.workloads
+      interval: 30s
+      rules:
+        # ---------------------------------------------------------------------------
+        # Restarting containers
+        # ---------------------------------------------------------------------------
+        - alert: KubePodCrashLooping
+          # Upstream uses a 15m rate window and `for: 15m`. A 5m window with `for: 1m`
+          # detects the C2 fixture (which exits ~immediately, so restarts accumulate fast)
+          # inside two evaluation cycles.
+          #
+          # The `>= 1` threshold on an increase over 5m means "at least one restart in the
+          # last five minutes", not "currently backing off". That is intentional: the
+          # CrashLoopBackOff state is intermittent -- the container flips between Waiting
+          # and Running -- so alerting on the state itself produces a flapping alert, while
+          # alerting on the restart COUNT is monotonic and stable.
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace=~"watchtower.*"}[5m]) >= 1
+          for: 1m
+          labels:
+            severity: warning
+            watchtower_kind: CrashLoopBackOff
+          annotations:
+            summary: 'Pod {{ $labels.namespace }}/{{ $labels.pod }} container {{ $labels.container }} is restarting'
+            description: >-
+              Container {{ $labels.container }} in pod {{ $labels.namespace }}/{{ $labels.pod }}
+              restarted {{ $value | printf "%.0f" }} time(s) in the last 5 minutes.
+              The restart count is the SYMPTOM. The cause is in the logs of the PREVIOUS
+              container instance (kubectl logs --previous), not the current one.
+            runbook_url: https://runbooks.prometheus-operator.dev/runbooks/kubernetes/kubepodcrashlooping
+
+        # ---------------------------------------------------------------------------
+        # OOMKill -- for: 0m, and here is why
+        # ---------------------------------------------------------------------------
+        # Not an upstream alert name; upstream has no OOMKill rule at all, which is a real
+        # gap given it is the single most common container failure in a memory-constrained
+        # cluster.
+        #
+        # `for: 0m` (i.e. fire on the first evaluation where the condition holds) is
+        # correct here in a way it is not for most alerts. last_terminated_reason is a
+        # STATEMENT OF FACT about something that already happened -- the kernel already
+        # killed the process. There is no transient state to wait out and no chance of the
+        # condition resolving itself. Waiting would only delay the signal.
+        - alert: KubeContainerOOMKilled
+          expr: |
+            kube_pod_container_status_last_terminated_reason{reason="OOMKilled", namespace=~"watchtower.*"} == 1
+          for: 0m
+          labels:
+            severity: critical
+            watchtower_kind: OOMKilled
+          annotations:
+            summary: 'Container {{ $labels.container }} in {{ $labels.namespace }}/{{ $labels.pod }} was OOMKilled'
+            description: >-
+              The kernel killed container {{ $labels.container }} for exceeding its memory
+              limit. Expect NO logs explaining it -- SIGKILL gives the process no chance to
+              write anything, so the last log line is whatever it happened to be doing.
+              The evidence is container_memory_working_set_bytes against the limit, plus a
+              node-level SystemOOM event. Absence of a log is the confirming signal here,
+              not a missing one. (Chaos fixture C1 exercises exactly this.)
+
+        # ---------------------------------------------------------------------------
+        # Pod not healthy
+        # ---------------------------------------------------------------------------
+        - alert: KubePodNotReady
+          # Upstream: for: 15m. Here 2m.
+          #
+          # Deliberately excludes Succeeded/Failed pods (completed Jobs are not "not
+          # ready", they are done) but does NOT exclude Pending -- Pending is precisely the
+          # state the C3 unschedulable fixture sits in, and it must alert.
+          expr: |
+            sum by (namespace, pod, cluster) (
+              max by (namespace, pod, cluster) (
+                kube_pod_status_phase{phase=~"Pending|Unknown", namespace=~"watchtower.*"}
+              ) * on (namespace, pod, cluster) group_left(owner_kind)
+              topk by (namespace, pod, cluster) (1, max by (namespace, pod, owner_kind, cluster) (kube_pod_owner{owner_kind!="Job"}))
+            ) > 0
+          for: 2m
+          labels:
+            severity: warning
+            watchtower_kind: PodNotReady
+          annotations:
+            summary: 'Pod {{ $labels.namespace }}/{{ $labels.pod }} has been non-ready for >2m'
+            description: >-
+              Pod {{ $labels.namespace }}/{{ $labels.pod }} is Pending or Unknown. If it is
+              Pending with no container statuses at all, the reason exists ONLY as a
+              FailedScheduling Event -- no metric carries it. Query the events stream in
+              Loki, not Prometheus.
+            runbook_url: https://runbooks.prometheus-operator.dev/runbooks/kubernetes/kubepodnotready
+
+        # ---------------------------------------------------------------------------
+        # KubeContainerWaiting -- split into two alerts on purpose
+        # ---------------------------------------------------------------------------
+        # Upstream ships ONE KubeContainerWaiting that matches every waiting reason except
+        # CrashLoopBackOff, with `for: 1h`. Both of those choices are wrong for this agent.
+        #
+        # The 1h is obvious. The single-alert design is the subtler problem: "container is
+        # waiting" bundles together failure modes with completely different causes and
+        # completely different remediations --
+        #
+        #     ImagePullBackOff / ErrImagePull  -> the image reference or the registry
+        #     CreateContainerConfigError       -> a missing Secret or ConfigMap
+        #     CreateContainerError             -> a bad command, mount or securityContext
+        #
+        # The chaos fixtures C4 (bad image tag) and C7 (missing Secret) are deliberately
+        # built to look identical from a distance: in both, a pod exists, no container ever
+        # starts, and there are no application logs. Discriminating between them is the
+        # test. Handing the agent one undifferentiated alert would make that test about the
+        # alert's vagueness rather than about the agent's reasoning.
+        #
+        # Splitting also lets each carry a distinct watchtower_kind, which is what the
+        # dashboard's "incidents by kind" panel and the regression suite key on.
+        - alert: KubeContainerWaiting
+          expr: |
+            kube_pod_container_status_waiting_reason{reason=~"ImagePullBackOff|ErrImagePull|InvalidImageName", namespace=~"watchtower.*"} == 1
+          for: 1m
+          labels:
+            severity: warning
+            watchtower_kind: ImagePullFailure
+          annotations:
+            summary: 'Container {{ $labels.container }} in {{ $labels.namespace }}/{{ $labels.pod }} cannot pull its image ({{ $labels.reason }})'
+            description: >-
+              Reason {{ $labels.reason }}. The registry's actual response text -- "manifest
+              unknown", "unauthorized", a DNS failure -- is in the Failed event, not in any
+              metric and not in any container log (no container exists to write one).
+              Distinguish from CreateContainerConfigError, which looks the same from the
+              outside but is a missing Secret/ConfigMap, not a registry problem.
+            runbook_url: https://runbooks.prometheus-operator.dev/runbooks/kubernetes/kubecontainerwaiting
+
+        - alert: KubeContainerWaitingConfigError
+          expr: |
+            kube_pod_container_status_waiting_reason{reason=~"CreateContainerConfigError|CreateContainerError|InvalidImageName", namespace=~"watchtower.*"} == 1
+          for: 1m
+          labels:
+            severity: warning
+            watchtower_kind: ConfigError
+          annotations:
+            summary: 'Container {{ $labels.container }} in {{ $labels.namespace }}/{{ $labels.pod }} cannot be created ({{ $labels.reason }})'
+            description: >-
+              Reason {{ $labels.reason }}. Usually an env var referencing a Secret or
+              ConfigMap key that does not exist. The kubelet names the missing object in
+              its Event ("secret ... not found") -- that name is the entire diagnosis and
+              it is available NOWHERE else. Do not confuse with ImagePullBackOff.
+
+        # ---------------------------------------------------------------------------
+        # Jobs
+        # ---------------------------------------------------------------------------
+        - alert: KubeJobFailed
+          # Upstream: for: 15m. A Job that has exhausted backoffLimit is terminal -- it will
+          # not recover, ever -- so waiting is pure latency. 1m only to let the
+          # BackoffLimitExceeded event and the metric settle into agreement.
+          expr: |
+            kube_job_status_failed{namespace=~"watchtower.*"} > 0
+          for: 1m
+          labels:
+            severity: warning
+            watchtower_kind: JobFailed
+          annotations:
+            summary: 'Job {{ $labels.namespace }}/{{ $labels.job_name }} failed'
+            description: >-
+              Job {{ $labels.job_name }} has {{ $value | printf "%.0f" }} failed pod(s).
+              Once backoffLimit is exceeded the Job is terminal and Kubernetes will not
+              retry. The failed pods may already have been garbage collected -- if so, the
+              only surviving evidence is the BackoffLimitExceeded event and whatever their
+              logs shipped to Loki before deletion.
+            runbook_url: https://runbooks.prometheus-operator.dev/runbooks/kubernetes/kubejobfailed
+
+        # ---------------------------------------------------------------------------
+        # Deployments not at their desired replica count
+        # ---------------------------------------------------------------------------
+        - alert: KubeDeploymentReplicasMismatch
+          # Upstream: for: 15m. Here 2m.
+          #
+          # This is the ONLY metric-based signal the C3 unschedulable fixture produces --
+          # and note how little it says. It reports "0 of 1 replicas available" and nothing
+          # about why. That gap is the entire argument for the k8s_events receiver in
+          # otel-collector.values.yaml.
+          expr: |
+            (
+              kube_deployment_spec_replicas{namespace=~"watchtower.*"}
+                > kube_deployment_status_replicas_available{namespace=~"watchtower.*"}
+            ) and (
+              changes(kube_deployment_status_replicas_updated{namespace=~"watchtower.*"}[5m]) == 0
+            )
+          for: 2m
+          labels:
+            severity: warning
+            watchtower_kind: ReplicasMismatch
+          annotations:
+            summary: 'Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has unavailable replicas'
+            description: >-
+              Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has fewer available
+              replicas than desired and has not progressed in 5 minutes. This metric states
+              THAT the Deployment is short; it never states WHY. The reason (unschedulable,
+              image pull, config error, crash) lives in the pod's status and in Events.
+            runbook_url: https://runbooks.prometheus-operator.dev/runbooks/kubernetes/kubedeploymentreplicasmismatch
+
+    # ===================================================================================
+    - name: watchtower.kubernetes.node
+      interval: 30s
+      rules:
+        - alert: KubeNodeNotReady
+          expr: |
+            kube_node_status_condition{condition="Ready", status="true"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            watchtower_kind: NodeNotReady
+          annotations:
+            summary: 'Node {{ $labels.node }} is not Ready'
+            description: >-
+              This cluster has exactly one node. A not-Ready node means everything is down,
+              including -- note carefully -- Prometheus, Alertmanager and the agent itself.
+              If this alert is ever DELIVERED, the situation has already recovered enough to
+              deliver it. Absence of the AgentWatchdog heartbeat is the real signal for this
+              class of failure.
+            runbook_url: https://runbooks.prometheus-operator.dev/runbooks/kubernetes/kubenodenotready
+
+        - alert: KubeNodePressure
+          # MemoryPressure or DiskPressure. Chaos fixture C9 (memhog) targets MemoryPressure.
+          # Note it is genuinely hard to trip on this node: 115 GiB of RAM against a default
+          # eviction threshold of memory.available<100Mi.
+          expr: |
+            kube_node_status_condition{condition=~"MemoryPressure|DiskPressure|PIDPressure", status="true"} == 1
+          for: 1m
+          labels:
+            severity: critical
+            watchtower_kind: NodePressure
+          annotations:
+            summary: 'Node {{ $labels.node }} reports {{ $labels.condition }}'
+            description: >-
+              The kubelet has set {{ $labels.condition }} on {{ $labels.node }} and will
+              begin evicting pods by QoS class -- BestEffort first, then Burstable over
+              their requests. Expect a wave of unrelated pods to fail shortly after this,
+              and do NOT treat those as separate incidents: they are consequences.
+            runbook_url: https://runbooks.prometheus-operator.dev/runbooks/kubernetes/kubenodepressure
+
+        - alert: KubeNodeEviction
+          expr: |
+            increase(kubelet_evictions[5m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+            watchtower_kind: NodeEviction
+          annotations:
+            summary: 'Node {{ $labels.node }} evicted pods ({{ $labels.eviction_signal }})'
+            description: >-
+              The kubelet evicted at least one pod because of {{ $labels.eviction_signal }}.
+              Evicted pods are victims, not causes. The cause is whatever consumed the
+              resource -- look for the workload whose usage climbed just before this.
+
+        - alert: NodeFilesystemAlmostOutOfSpace
+          # node-exporter, not kube-state-metrics. See the local-path caveat on the PVC
+          # alerts below for why this node-level rule matters more here than the PVC ones.
+          expr: |
+            (
+              node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs"}
+              / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs"}
+            ) * 100 < 10
+            and node_filesystem_readonly{fstype!~"tmpfs|overlay|squashfs|ramfs"} == 0
+          for: 2m
+          labels:
+            severity: warning
+            watchtower_kind: NodeDiskFilling
+          annotations:
+            summary: 'Filesystem {{ $labels.mountpoint }} on {{ $labels.instance }} has <10% space left'
+            description: >-
+              {{ $value | printf "%.1f" }}% free on {{ $labels.mountpoint }}. Because every
+              PVC on this cluster is a local-path directory on this filesystem, this single
+              alert covers disk exhaustion for every stateful workload at once.
+
+    # ===================================================================================
+    - name: watchtower.kubernetes.storage
+      interval: 30s
+      rules:
+        # ---------------------------------------------------------------------------
+        # !!! READ BEFORE TRUSTING THESE TWO ALERTS !!!
+        # ---------------------------------------------------------------------------
+        # These are the upstream PVC-fill alerts and they PARSE, EVALUATE and are WIRED
+        # correctly -- but on this cluster they do not measure what their names claim.
+        #
+        # local-path provisions a PV as a plain hostPath directory on the node's root
+        # filesystem. It does not create a device, a loopback file or a quota. The kubelet
+        # computes kubelet_volume_stats_* by calling statfs() on that directory, and statfs()
+        # on a directory reports the filesystem it lives on. Measured on this node right now:
+        #
+        #     kubelet_volume_stats_capacity_bytes{persistentvolumeclaim="cait-postgres-pvc"}  210778099712
+        #     kubelet_volume_stats_capacity_bytes{persistentvolumeclaim="open-webui"}         210778099712
+        #     kubelet_volume_stats_capacity_bytes{persistentvolumeclaim="cait-backstage-data"} 210778099712
+        #
+        # Identical for every claim, and equal to the node root filesystem -- not to any
+        # `resources.requests.storage` value. So:
+        #
+        #   * a PVC declared as 1Gi and filled to 950Mi moves this ratio by ~0.005;
+        #   * when the node disk does fill, ALL of these fire simultaneously, blaming every
+        #     PVC in the cluster for one node-level problem;
+        #   * local-path does not enforce the claim size, so a "full" PVC can keep growing.
+        #
+        # They are kept because the names and shapes are what transfer to a real cluster,
+        # and because the agent SHOULD have a rule for this class of failure. But the alert
+        # that actually fires for disk exhaustion here is NodeFilesystemAlmostOutOfSpace
+        # above. Chaos fixture C6 documents the same measurement.
+        - alert: KubePersistentVolumeFillingUp
+          expr: |
+            (
+              kubelet_volume_stats_used_bytes{namespace=~"watchtower.*"}
+              / kubelet_volume_stats_capacity_bytes{namespace=~"watchtower.*"}
+            ) > 0.85
+          for: 2m
+          labels:
+            severity: warning
+            watchtower_kind: PvcFillingUp
+          annotations:
+            summary: 'PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is >85% full'
+            description: >-
+              {{ $value | printf "%.1f%%" }} used. CAVEAT: on local-path this ratio is the
+              NODE ROOT FILESYSTEM, not this claim. If several PVCs alert at once with the
+              same percentage, that is one node disk problem, not N storage problems.
+            runbook_url: https://runbooks.prometheus-operator.dev/runbooks/kubernetes/kubepersistentvolumefillingup
+
+        - alert: KubePersistentVolumeFillingUpCritical
+          expr: |
+            (
+              kubelet_volume_stats_used_bytes{namespace=~"watchtower.*"}
+              / kubelet_volume_stats_capacity_bytes{namespace=~"watchtower.*"}
+            ) > 0.90
+          for: 1m
+          labels:
+            severity: critical
+            watchtower_kind: PvcFillingUp
+          annotations:
+            summary: 'PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is >90% full'
+            description: >-
+              {{ $value | printf "%.1f%%" }} used. Same local-path caveat as
+              KubePersistentVolumeFillingUp -- read that alert's description first.
+
+    # ===================================================================================
+    - name: watchtower.kubernetes.targets
+      interval: 30s
+      rules:
+        - alert: TargetDown
+          # Upstream: for: 10m, threshold 10% of a job's targets down. Here: any target,
+          # for 2m.
+          #
+          # This one is genuinely load-bearing for correctness, not just speed. If a scrape
+          # target is down, the metrics that would have alerted are ABSENT rather than
+          # breaching a threshold -- and an absent series makes every rule built on it
+          # evaluate to an empty vector, which never fires. Silence then means "healthy" and
+          # "blind" identically. TargetDown is what distinguishes them.
+          #
+          # This is also why kubeScheduler/kubeControllerManager/kubeEtcd/kubeProxy are all
+          # disabled in the stack values: on k3s those endpoints do not exist, so leaving
+          # them on would keep this alert permanently firing and train everyone -- human and
+          # agent -- to ignore it.
+          expr: |
+            up == 0
+          for: 2m
+          labels:
+            severity: warning
+            watchtower_kind: TargetDown
+          annotations:
+            summary: 'Scrape target {{ $labels.job }} ({{ $labels.instance }}) is down'
+            description: >-
+              Prometheus cannot scrape {{ $labels.instance }} for job {{ $labels.job }}.
+              Every alert rule that depends on this target's metrics is now evaluating an
+              empty vector and CANNOT fire. Treat this as loss of visibility, not as a
+              minor scrape hiccup.
+            runbook_url: https://runbooks.prometheus-operator.dev/runbooks/general/targetdown
+
+        - alert: TargetFlapping
+          # Not upstream. This is the counterpart to chaos fixture C8 (readiness flap) and
+          # exists to give the agent a way to say "intermittent" rather than "down".
+          #
+          # With Kubernetes endpoints service discovery, a pod that goes NotReady is REMOVED
+          # from discovery entirely -- its `up` series disappears rather than going to 0. So
+          # a flapping readiness probe produces a target that appears and vanishes, and
+          # `up == 0` never fires for it. Counting scrape-pool churn catches what `up`
+          # cannot.
+          expr: |
+            changes(up[10m]) > 4
+          for: 2m
+          labels:
+            severity: info
+            watchtower_kind: TargetFlapping
+          annotations:
+            summary: 'Scrape target {{ $labels.job }} ({{ $labels.instance }}) is flapping'
+            description: >-
+              {{ $labels.instance }} changed scrape state {{ $value | printf "%.0f" }} times
+              in 10 minutes. This is INTERMITTENT, not down. A correct response is to
+              investigate the readiness probe or a dependency that is slow rather than
+              absent; restarting the workload will not fix a flap and destroys the evidence.
+              Opening a Sev1 on this is a false positive.

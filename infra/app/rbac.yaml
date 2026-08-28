@@ -1,0 +1,643 @@
+# Watchtower RBAC
+# =======================================================================================
+# THIS IS THE MOST IMPORTANT FILE IN THE REPOSITORY.
+# =======================================================================================
+#
+# Everything else in this repo shapes what the agent CAN SEE. This file is the only thing
+# that bounds what it CAN DO. Every other control -- the policy engine, the budget check,
+# the cooldown, the kill switch, the grounding check -- lives inside the agent's own
+# process, which means every one of them is code the agent's own reasoning runs alongside.
+# They are good controls. They are not a boundary.
+#
+# This file is the boundary, and it is enforced by the API server, which does not read
+# prompts and cannot be argued with. If the agent concludes with total confidence that the
+# correct remediation is to delete the production database, the API server returns 403 and
+# the incident is that the agent wanted to, not that it did.
+#
+# The design in one line: READ EVERYWHERE, WRITE IN ONE NAMESPACE, NODE OPERATIONS NOWHERE.
+#
+#   ClusterRole watchtower-read   -> bound cluster-wide.        Read-only, no secrets.
+#   Role        watchtower-write  -> bound ONLY in watchtower-chaos.
+#   ClusterRole watchtower-node   -> DEFINED BUT DELIBERATELY NOT BOUND.
+#
+# Read the comment above each rule before changing it. Every verb here was granted for a
+# specific reason, and the reasons are written down so that a future reader can tell the
+# difference between "this is needed" and "this was convenient at the time".
+#
+# ---------------------------------------------------------------------------------------
+# WHAT IS ABSENT, AND WHY -- read this before adding anything
+# ---------------------------------------------------------------------------------------
+# The absences below are as deliberate as the grants. None of them is an oversight, and
+# each is a specific attack or accident that the omission makes impossible:
+#
+#   secrets  -- NOWHERE, not even `get`, not even in watchtower-chaos.
+#       This is the single most important omission in the file. The agent reads pod logs
+#       cluster-wide and feeds them to an LLM. Secret material that reaches the agent's
+#       context reaches the model provider, gets written into the investigation record in
+#       Postgres, and is rendered in the Aspire dashboard's gen_ai span view -- which is
+#       unauthenticated. Granting `get` on secrets, even scoped, turns every one of those
+#       into an exfiltration path. If the agent needs a credential it gets it as an env var
+#       from its own pod spec, which is a mount, not an API call.
+#       (Note: `kubectl describe pod` output includes secret NAMES but never values, and
+#       the agent can already see those via pods -- that is the intended level of access.)
+#
+#   `*` verbs or `*` resources -- nowhere.
+#       A wildcard grant is a grant whose blast radius changes every time someone installs
+#       a CRD. `resources: ["*"]` today means "pods and services"; after installing an
+#       operator it means "and every database, certificate and cloud IAM binding that
+#       operator manages". Enumerate resources explicitly, always.
+#
+#   escalate, bind -- nowhere.
+#       These two verbs exist specifically to bypass the privilege-escalation prevention
+#       that normally stops a subject from granting permissions it does not itself hold.
+#       With `escalate`, the agent could write itself a ClusterRole containing anything.
+#       Every other restriction in this file would become advisory.
+#
+#   impersonate -- nowhere.
+#       Would let the agent act as any user or ServiceAccount in the cluster, including
+#       cluster-admin, while the audit log records the impersonated identity. It defeats
+#       both the authorisation model and the audit trail in one verb.
+#
+#   anything in rbac.authorization.k8s.io -- nowhere, not even `get`.
+#       Not even read. Write access is obviously fatal (it is self-escalation with extra
+#       steps). Read access is denied on a narrower principle: the agent has no legitimate
+#       reason to enumerate the cluster's permission model, and an agent that can read its
+#       own limits is an agent that can reason about circumventing them. There is no
+#       diagnosis that requires knowing what a ClusterRoleBinding says.
+#
+#   customresourcedefinitions and CRs generally -- nowhere.
+#       CRDs are cluster-scoped and shared. Deleting one cascades to every custom resource
+#       of that kind in the cluster, instantly and irreversibly. There is no plausible
+#       remediation that requires touching a CRD, and the downside is unbounded.
+#
+#   namespaces: create/delete -- absent (only get/list/watch is granted).
+#       Deleting a namespace is the largest single destructive action the API offers: it
+#       cascades to every object inside it and cannot be undone or interrupted.
+#
+#   nodes: patch, and pods/eviction -- defined in watchtower-node below but NOT BOUND.
+#       See that ClusterRole's own comment.
+#
+#   validatingwebhookconfigurations / mutatingwebhookconfigurations -- nowhere.
+#       Deleting a webhook config silently disables an admission control plane. The cluster
+#       keeps working and stops enforcing.
+#
+#   Any write verb in kube-system, cait, infra-*, or watchtower-obs -- nowhere.
+#       The write Role is RoleBound in exactly one namespace. In particular the agent
+#       cannot restart its own observability stack, which is correct: an agent that can
+#       delete the Prometheus that is watching it can make its own failures invisible.
+# =======================================================================================
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: watchtower
+  namespace: watchtower
+  labels:
+    app.kubernetes.io/name: watchtower
+    app.kubernetes.io/part-of: watchtower
+automountServiceAccountToken: true
+
+# =======================================================================================
+# READ -- cluster-wide
+# =======================================================================================
+# Read access is broad on purpose. An SRE cannot diagnose a namespace in isolation: a pod
+# in `cait` failing because a node is under pressure, or because a Service in `infra-db`
+# has no endpoints, is a cross-namespace story. Narrowing reads would not make the agent
+# safer -- reads cannot break anything -- it would make it wrong.
+#
+# The safety property here is not "little access", it is "NO WRITE VERBS AND NO SECRETS".
+# Every rule below grants exactly get/list/watch.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: watchtower-read
+  labels:
+    app.kubernetes.io/part-of: watchtower
+rules:
+  # -------------------------------------------------------------------------------------
+  # Core workload state
+  # -------------------------------------------------------------------------------------
+  - apiGroups: [""]
+    resources:
+      # pods
+      #   get/list  -- the primary object of every investigation. Container statuses,
+      #                restart counts, waiting reasons (ImagePullBackOff vs
+      #                CreateContainerConfigError -- the C4/C7 discrimination test),
+      #                resource requests and limits (needed to explain an OOMKill), the
+      #                node the pod landed on, and its owner chain.
+      #   watch     -- so the agent sees a state transition when it happens rather than
+      #                discovering it on the next poll. Detection latency is a headline
+      #                metric (watchtower_detection_latency_seconds); polling adds the
+      #                poll interval to every incident's MTTD.
+      - pods
+      # pods/log
+      #   The container's own account of what went wrong. Note this subresource also
+      #   carries `previous=true`, which is the ONLY way to read the logs of a container
+      #   that has already restarted -- and for a CrashLoopBackOff, the previous
+      #   container's logs are the entire diagnosis while the current container's are
+      #   empty. Without this the agent can see that something is crashing and never why.
+      - pods/log
+      # pods/status
+      #   Read separately from `pods` because RBAC treats subresources as distinct. Some
+      #   clients read status directly; granting it avoids a class of 403 that only shows
+      #   up on a code path nobody tested.
+      - pods/status
+      # events
+      #   THE NARRATIVE LAYER. FailedScheduling with its scheduler predicate text, image
+      #   pull errors with the registry's actual response, BackOff, OOMKilling, Evicted,
+      #   FailedMount. For chaos fixture C3 (unschedulable) an Event is the ONLY evidence
+      #   anywhere in the cluster that anything is wrong -- no container starts, so there
+      #   is no log and no container metric.
+      #   The agent reads events both through Loki (shipped by the collector's k8s_events
+      #   receiver) and directly here. Both paths matter: the Loki copy gives history and
+      #   correlation, the API gives the live, authoritative list for the object in hand.
+      - events
+      # services / endpoints / endpointslices
+      #   Answers "is this workload actually receiving traffic". A Service with zero ready
+      #   endpoints is invisible in pod-level metrics but is the difference between a
+      #   degraded service and a down one. Endpoint churn is the signal for chaos fixture
+      #   C8 (readiness flap) -- the false-positive test, where the correct answer is
+      #   "intermittent, not down".
+      #   `endpoints` is the legacy resource and `endpointslices` the modern one; which is
+      #   populated depends on the cluster, so both are granted.
+      - services
+      - endpoints
+      # nodes
+      #   Conditions (MemoryPressure, DiskPressure, Ready), allocatable capacity, taints.
+      #   Needed to answer "is this pod's problem actually the node's problem", which is
+      #   the difference between a correct remediation and restarting an innocent pod.
+      #   READ ONLY. `patch` on nodes is cordon/drain and lives in watchtower-node, unbound.
+      - nodes
+      # namespaces
+      #   To enumerate what exists and read namespace labels -- notably
+      #   watchtower.io/destructive-actions-allowed, which the agent's policy engine checks
+      #   as a second, independent confirmation before proposing any write. Belt and
+      #   braces with the RoleBinding scope below.
+      - namespaces
+      # configmaps
+      #   Diagnosing a config error means reading the config. Note the asymmetry that is
+      #   the whole point of this file: ConfigMaps are granted, Secrets are not. A
+      #   ConfigMap holds a connection string with a placeholder; a Secret holds the
+      #   password. The agent needs the former to explain a misconfiguration and must never
+      #   see the latter. (Reading a ConfigMap that someone has put a credential into is a
+      #   known residual risk -- the mitigation is not putting credentials in ConfigMaps.)
+      - configmaps
+      # persistentvolumeclaims
+      #   Requested size, storage class, bound phase. Needed to interpret the
+      #   kubelet_volume_stats_* metrics -- and in particular to notice the local-path
+      #   quirk documented in alerts/kubernetes-rules.yaml, where those metrics report the
+      #   node root filesystem rather than the claim.
+      - persistentvolumeclaims
+      # persistentvolumes
+      #   The other half of a storage diagnosis: which PV a claim is bound to, its reclaim
+      #   policy, and its host path. Cluster-scoped, read-only.
+      - persistentvolumes
+      # serviceaccounts
+      #   Only to resolve which ServiceAccount a pod runs as when explaining a 403 in that
+      #   pod's logs. Names only -- this does NOT grant the ability to read their tokens,
+      #   which are Secrets, which are denied everywhere.
+      - serviceaccounts
+      # replicationcontrollers
+      #   Legacy, but they exist and an owner chain can terminate in one.
+      - replicationcontrollers
+      # resourcequotas / limitranges
+      #   "Why was this pod rejected" and "why did this pod get these limits when the
+      #   manifest asked for none" are both answered here and nowhere else. A LimitRange
+      #   default is a common cause of an OOMKill nobody can explain from the manifest.
+      - resourcequotas
+      - limitranges
+    verbs: ["get", "list", "watch"]
+
+  # discovery.k8s.io -- EndpointSlices live in their own API group, so they need their own
+  # rule even though they are conceptually part of the block above.
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+
+  # -------------------------------------------------------------------------------------
+  # Workload controllers
+  # -------------------------------------------------------------------------------------
+  # The agent almost always starts from a pod and must walk UP the ownership chain to find
+  # the thing a human would actually name: pod -> ReplicaSet -> Deployment. Without
+  # replicasets that chain breaks at the first hop and the agent can only ever talk about
+  # pods, whose names are random and whose lifetimes are minutes.
+  #
+  # Desired vs available replicas, generation vs observedGeneration (a stuck rollout), and
+  # the pod template (which is what changed, if something changed) all live here.
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - deployments/status
+      - statefulsets
+      - statefulsets/status
+      - daemonsets
+      - daemonsets/status
+      - replicasets
+      - replicasets/status
+      - controllerrevisions
+    verbs: ["get", "list", "watch"]
+
+  # -------------------------------------------------------------------------------------
+  # Jobs
+  # -------------------------------------------------------------------------------------
+  # Chaos fixture C5 is a failing Job. Job pods are garbage-collected, sometimes before an
+  # investigation reaches them, so the Job object's status (failed count, conditions,
+  # BackoffLimitExceeded) is frequently the only surviving evidence. CronJobs are needed to
+  # tell "this Job failed" from "this Job has failed on every schedule for three days",
+  # which are different incidents with the same symptom.
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - jobs/status
+      - cronjobs
+      - cronjobs/status
+    verbs: ["get", "list", "watch"]
+
+  # -------------------------------------------------------------------------------------
+  # Autoscaling
+  # -------------------------------------------------------------------------------------
+  # An HPA is a frequent cause of "pods keep appearing and disappearing" that looks like
+  # instability and is in fact correct behaviour. Reading the HPA's current/desired
+  # replicas and its conditions (ScalingLimited, FailedGetResourceMetric) lets the agent
+  # rule that out instead of opening an incident about it -- a false positive it would
+  # otherwise have no way to avoid.
+  - apiGroups: ["autoscaling"]
+    resources:
+      - horizontalpodautoscalers
+      - horizontalpodautoscalers/status
+    verbs: ["get", "list", "watch"]
+
+  # -------------------------------------------------------------------------------------
+  # Live resource usage
+  # -------------------------------------------------------------------------------------
+  # metrics.k8s.io is the metrics-server API behind `kubectl top`. Deliberately granted in
+  # ADDITION to Prometheus, not instead of it, because the two answer different questions:
+  # Prometheus gives history and trend (the memory sawtooth that precedes an OOMKill);
+  # metrics.k8s.io gives the instantaneous truth right now.
+  #
+  # This also matters as a cross-check on the agent's own senses. If Prometheus is broken
+  # (see alerts/observability-selfcheck.yaml) this is an independent source that does not
+  # go through the same pipeline -- so the agent can distinguish "the pod is fine" from
+  # "my metrics pipeline is lying to me".
+  #
+  # Read-only by construction: this API has no write verbs.
+  - apiGroups: ["metrics.k8s.io"]
+    resources:
+      - nodes
+      - pods
+    verbs: ["get", "list"]
+
+  # -------------------------------------------------------------------------------------
+  # Networking (read)
+  # -------------------------------------------------------------------------------------
+  # "The pod is Running and Ready but nothing can reach it" is a real and common incident
+  # whose cause is a NetworkPolicy or an Ingress rule, and which is invisible in every
+  # workload-level signal. Read-only: the agent can explain a NetworkPolicy, never edit
+  # one -- including the one below that protects its own webhook endpoint.
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - networkpolicies
+      - ingresses
+    verbs: ["get", "list", "watch"]
+
+  # -------------------------------------------------------------------------------------
+  # Storage classes
+  # -------------------------------------------------------------------------------------
+  # Needed to explain a PVC stuck in Pending. On this cluster the answer is usually
+  # WaitForFirstConsumer (the claim binds only once a pod schedules, so a Pending PVC and
+  # a Pending pod are one deadlock, not two problems) -- which is only knowable by reading
+  # the StorageClass's volumeBindingMode.
+  - apiGroups: ["storage.k8s.io"]
+    resources:
+      - storageclasses
+      - volumeattachments
+    verbs: ["get", "list", "watch"]
+
+  # -------------------------------------------------------------------------------------
+  # Policy
+  # -------------------------------------------------------------------------------------
+  # A PodDisruptionBudget is why a drain hangs and why a rollout will not complete. Reading
+  # it turns "the rollout is stuck" into "the rollout is stuck because minAvailable is 1
+  # and there is 1 replica", which is an answer rather than a restatement.
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: watchtower-read
+  labels:
+    app.kubernetes.io/part-of: watchtower
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: watchtower-read
+subjects:
+  - kind: ServiceAccount
+    name: watchtower
+    namespace: watchtower
+
+# =======================================================================================
+# WRITE -- a Role, and RoleBound into watchtower-chaos ONLY
+# =======================================================================================
+# Note the object kind: this is a `Role`, not a `ClusterRole`. That is not a stylistic
+# choice. A ClusterRole with a RoleBinding would work identically today, but it leaves a
+# cluster-scoped object lying around that someone can later attach a ClusterRoleBinding to
+# with a single command and no review. A namespaced Role in `watchtower-chaos` cannot be
+# bound outside `watchtower-chaos` at all -- the API server will not do it. The scope is a
+# property of the object, not of a binding someone might change.
+#
+# Everything below is destructive. The containment is that the only namespace it applies to
+# contains nothing anyone depends on (see the watchtower.io/destructive-actions-allowed
+# label in infra/namespaces.yaml).
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: watchtower-write
+  namespace: watchtower-chaos
+  labels:
+    app.kubernetes.io/part-of: watchtower
+rules:
+  # -------------------------------------------------------------------------------------
+  # delete on pods -- "restart the pod"
+  # -------------------------------------------------------------------------------------
+  # There is no RESTART verb in the Kubernetes API. The universal idiom for restarting a
+  # managed pod is to delete it and let its controller recreate it, so `delete` here IS the
+  # restart action -- the most common and most often correct remediation there is.
+  #
+  # It is also the action where a mistake is least recoverable, which is why the executor
+  # is a single replica (see watchtower.yaml): the budget check, cooldown check, kill-switch
+  # check and action INSERT are one Postgres transaction, and this verb is what makes that
+  # transaction matter.
+  #
+  # No `create` on pods. The agent may restart what exists; it may not invent workloads.
+  # No `delete` on the collection either -- deletecollection is absent deliberately, so a
+  # single bad label selector cannot take out the whole namespace in one call.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["delete"]
+
+  # -------------------------------------------------------------------------------------
+  # patch/update on workloads -- rollout restart, and image/env fixes
+  # -------------------------------------------------------------------------------------
+  # `patch` on a Deployment is how `kubectl rollout restart` works (it stamps
+  # kubectl.kubernetes.io/restartedAt on the pod template). It is a controlled, gradual
+  # replacement rather than the blunt pod delete above, and it is the correct action when
+  # the whole workload needs recycling.
+  #
+  # It also covers the genuinely corrective cases: fixing a bad image tag (chaos fixture
+  # C4) or a bad env var (C7). Those are the remediations where the agent is doing real
+  # repair rather than percussive maintenance.
+  #
+  # `update` is granted alongside `patch` because a client that reads-modifies-writes a
+  # whole object issues an update, and having only patch produces a 403 on a code path
+  # that looks identical to the one that works.
+  #
+  # NO `delete` and NO `create` on workloads. The agent can modify a Deployment that
+  # exists; it cannot remove one or bring a new one into being. That single asymmetry is
+  # what keeps every action reversible: a patched Deployment can be rolled back with
+  # `kubectl rollout undo`, and a deleted one cannot be recovered at all.
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+      - daemonsets
+      - replicasets
+    verbs: ["patch", "update"]
+
+  # -------------------------------------------------------------------------------------
+  # The /scale subresource -- "scale it down to stop the bleeding"
+  # -------------------------------------------------------------------------------------
+  # Granted separately because RBAC treats subresources as distinct resources: `patch` on
+  # `deployments` does NOT imply `patch` on `deployments/scale`.
+  #
+  # Scaling to zero is the mildest containment available -- it stops a runaway workload
+  # (chaos fixture C9, memhog) without destroying anything, and it is trivially reversible
+  # by scaling back up. It is frequently the right first action precisely because it is so
+  # easily undone.
+  - apiGroups: ["apps"]
+    resources:
+      - deployments/scale
+      - statefulsets/scale
+      - replicasets/scale
+    verbs: ["patch", "update"]
+
+  # -------------------------------------------------------------------------------------
+  # delete on jobs -- clearing a terminal failure
+  # -------------------------------------------------------------------------------------
+  # A Job that has exhausted its backoffLimit is terminal: Kubernetes will never retry it.
+  # Deleting it is the only way to allow a re-run, and it is exactly what a human does with
+  # chaos fixture C5. Deleting a Job is low-consequence because the Job object itself holds
+  # no state -- whatever it produced is elsewhere.
+  #
+  # No `create` on jobs. Creating a Job is arbitrary code execution in the cluster with the
+  # agent choosing the image and the command. That is a categorically different power from
+  # anything else in this Role, and it is not granted at any phase.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["delete"]
+
+  # -------------------------------------------------------------------------------------
+  # create on events -- writing back to the audit trail
+  # -------------------------------------------------------------------------------------
+  # When the agent takes an action, it records a Kubernetes Event against the object it
+  # acted on. This matters more than it looks: it means a human running
+  # `kubectl describe deployment/foo` sees "Watchtower restarted this at 03:14 because
+  # KubePodCrashLooping fired" in the place they were already looking, without knowing
+  # Watchtower exists or where its dashboard lives.
+  #
+  # It is `create` only -- no update, no delete, no patch. The agent can add to the record
+  # and can never edit or erase what it or anyone else previously wrote. An audit trail an
+  # actor can rewrite is not an audit trail.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create"]
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: watchtower-write
+  # THE CONTAINMENT. This namespace, and no other. Copying this RoleBinding into another
+  # namespace is the single change that widens the agent's blast radius, and it should be
+  # reviewed as such -- it is a bigger change than anything in the agent's own source.
+  namespace: watchtower-chaos
+  labels:
+    app.kubernetes.io/part-of: watchtower
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: watchtower-write
+subjects:
+  - kind: ServiceAccount
+    name: watchtower
+    namespace: watchtower
+
+# =======================================================================================
+# NODE OPERATIONS -- DEFINED, DELIBERATELY NOT BOUND
+# =======================================================================================
+# There is NO ClusterRoleBinding and NO RoleBinding for this ClusterRole anywhere in this
+# repository. Applying this file creates the role and grants nothing. That is the point.
+#
+# Cordon and drain are the two most consequential actions an SRE agent can take. Cordoning
+# marks a node unschedulable; draining evicts every pod on it. On THIS cluster -- one node
+# -- draining is indistinguishable from taking the entire cluster down, including
+# Prometheus, Alertmanager, the agent itself, and therefore the agent's ability to observe
+# or undo what it just did.
+#
+# The role is written out here rather than left to a future task for two reasons. First, so
+# that the exact permissions are reviewed now, in the calm, alongside the reasoning about
+# why they are dangerous -- rather than being written under pressure by whoever is enabling
+# Phase 3. Second, so that enabling it is a small, obvious, greppable diff (add a
+# ClusterRoleBinding) instead of an invisible one.
+#
+# BINDING THIS IS THE EXPLICIT HUMAN ACT THAT ENABLES PHASE 3. It should be a deliberate
+# decision by a person, recorded, after the agent has demonstrated correct judgement on the
+# reversible actions above for a meaningful period. It must not be something a future agent,
+# or a future automation, can do on its own -- which is exactly why `bind` and `escalate`
+# are denied everywhere.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: watchtower-node
+  labels:
+    app.kubernetes.io/part-of: watchtower
+    watchtower.io/phase: "3"
+    watchtower.io/bound: "false"
+  annotations:
+    watchtower.io/deliberately-unbound: >-
+      This ClusterRole has no binding anywhere in infra/. Creating one enables node
+      cordon and drain. On a single-node cluster a drain is a full cluster outage,
+      including the agent that ordered it. Do not bind this without a recorded human
+      decision.
+rules:
+  # `patch` on nodes is cordon: it sets spec.unschedulable. Reversible in principle -- but
+  # if the agent cordons the only node, nothing new can be scheduled, including any pod
+  # that would be needed to recover, and the agent cannot uncordon after its own eviction.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["patch", "update"]
+  # The eviction subresource is drain. It respects PodDisruptionBudgets, which is the only
+  # thing that makes it safer than deleting pods directly -- and on a single-node cluster
+  # that safety amounts to "the outage is orderly".
+  - apiGroups: [""]
+    resources: ["pods/eviction"]
+    verbs: ["create"]
+# NOTE: no ClusterRoleBinding follows. This is intentional. Do not add one here.
+
+# =======================================================================================
+# NETWORK POLICY -- what substitutes for the auth check Alertmanager cannot do
+# =======================================================================================
+# Alertmanager's webhook_configs has no field for custom headers, so /webhooks/alertmanager
+# cannot require a bearer token (see the receivers block in
+# infra/observability/kube-prometheus-stack.values.yaml). The endpoint is therefore
+# unauthenticated, and an unauthenticated endpoint that CREATES INCIDENTS and can trigger
+# REMEDIATION ACTIONS is a forged-alert injection point: anything able to POST to it can
+# make the agent believe a workload is broken and act on it.
+#
+# The mitigation is at the network layer instead. This policy makes port 8080 in namespace
+# `watchtower` reachable ONLY from `watchtower-obs`. Nothing in cait, infra-*, kube-system,
+# default, or watchtower-chaos can open a connection to it at all -- so there is no door for
+# a token to guard.
+#
+# Note what this implies about watchtower-chaos in particular: the chaos fixtures are the
+# workloads most likely to be running something unexpected, and they are explicitly on the
+# far side of this boundary from the agent's control plane.
+#
+# ENFORCEMENT IS VERIFIED ON THIS CLUSTER -- but check the reasoning, because the obvious
+# check gives the wrong answer. There is no calico/cilium/kube-router pod in kube-system,
+# and the CNI is flannel (node annotations flannel.alpha.coreos.com/*), which by itself
+# does NOT enforce NetworkPolicy. Looking for a CNI pod therefore suggests, incorrectly,
+# that this policy is inert.
+#
+# It is not: k3s embeds a kube-router-derived NetworkPolicy controller in the server
+# process itself, enabled unless `--disable-network-policy` is passed. This node's args are
+# visible on the node object and do not contain it:
+#
+#   kubectl get node lima-rancher-desktop -o jsonpath='{.metadata.annotations.k3s\.io/node-args}'
+#   ["server","--https-listen-port","6443","--node-ip",...,"--flannel-iface","vznat",
+#    "--node-external-ip",...,"--docker"]
+#
+# So the policy is enforced. Re-run that command if Rancher Desktop is ever reconfigured --
+# if `--disable-network-policy` appears, this file silently stops being a control and the
+# only remaining protection is that the cluster is single-tenant and tailnet-only.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: watchtower-ingress
+  namespace: watchtower
+  labels:
+    app.kubernetes.io/part-of: watchtower
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: watchtower
+  policyTypes:
+    - Ingress
+  ingress:
+    # Alertmanager's webhooks and Prometheus's scrape of the agent's own metrics. Both
+    # originate in watchtower-obs. Selecting the NAMESPACE rather than specific pods is
+    # deliberate: Alertmanager and Prometheus pod labels are chart-managed and change
+    # across upgrades, and a policy that breaks on a `helm upgrade` would cut the agent off
+    # from its alert feed silently.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: watchtower-obs
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 9464
+
+    # Within the namespace: the agent to its own Postgres, and any future sidecar.
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 9464
+        - protocol: TCP
+          port: 5432
+
+    # Kubelet probes. The kubelet connects from the NODE's address, which no
+    # namespaceSelector can match, so without this rule the readiness and liveness probes
+    # in watchtower.yaml fail and the pod is killed in a loop by its own protection.
+    # This is the single most common way a first NetworkPolicy breaks a working service.
+    - from:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+# Postgres accepts connections only from inside this namespace. It is not exposed to
+# watchtower-obs at all -- the observability stack has no business reading the agent's
+# incident history, and the agent's memory is not a telemetry source.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: watchtower-postgres-ingress
+  namespace: watchtower
+  labels:
+    app.kubernetes.io/part-of: watchtower
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 5432

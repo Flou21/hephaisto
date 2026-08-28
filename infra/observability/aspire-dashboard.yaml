@@ -1,0 +1,181 @@
+# .NET Aspire standalone dashboard
+# ---------------------------------------------------------------------------------------
+# There is no Helm chart for this; it is two plain objects. The OTel collector fans every
+# signal out to it in parallel with the durable backends (see the otlp/aspire exporter in
+# otel-collector.values.yaml), so it never sits between the agent and its system of record.
+#
+# ---------------------------------------------------------------------------------------
+# CAVEAT 1: IT IS IN-MEMORY ONLY. IT IS NEVER THE AUDIT TRAIL.
+# ---------------------------------------------------------------------------------------
+# The standalone dashboard holds telemetry in a bounded in-process ring buffer. There is no
+# volume here on purpose -- there is nothing to persist. Consequences that must stay
+# understood:
+#
+#   * A pod restart erases every trace, log and metric it was showing. Not "loses recent
+#     data" -- erases all of it.
+#   * Old data is evicted under load with no warning and no gap indicator.
+#   * Nothing here can be queried programmatically. The agent cannot read it, and MUST NOT
+#     be pointed at it.
+#
+# Tempo (48h, PVC-backed) is the durable system of record for traces; Loki for logs;
+# Prometheus for metrics. If a question needs an answer that survives a restart, it is
+# answered from those, never from here. This dashboard is a live window for a human, in the
+# same category as `kubectl logs -f`.
+#
+# ---------------------------------------------------------------------------------------
+# CAVEAT 2: IT IS COMPLETELY UNAUTHENTICATED.
+# ---------------------------------------------------------------------------------------
+# DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS=true disables the login token entirely. Anyone
+# who can reach port 18888 sees every trace in the cluster -- including, because it renders
+# gen_ai.* spans in full (see below), the complete text of prompts the agent has sent to
+# the LLM. That may include log excerpts and pod names from anywhere in the cluster.
+#
+# This is acceptable HERE and only here because:
+#   * the Service is ClusterIP -- there is no Ingress, no NodePort, no LoadBalancer;
+#   * the only path in is a Tilt port-forward, and Tilt binds its forwards to this machine's
+#     Tailscale interface -- not 0.0.0.0, not even localhost;
+#   * so the reachable audience is exactly "devices on this tailnet".
+#
+# The moment any of those three stops being true, this must gain real auth or be removed.
+# Do not add an Ingress for it.
+#
+# ---------------------------------------------------------------------------------------
+# WHY IT IS WORTH RUNNING AT ALL, GIVEN GRAFANA IS RIGHT THERE
+# ---------------------------------------------------------------------------------------
+# It renders OpenTelemetry `gen_ai.*` semantic-convention spans natively. Microsoft.
+# Extensions.AI emits those (see WatchtowerTelemetry.ExtensionsAiSourceName), and the
+# dashboard understands them as a first-class concept: it shows the model name, the input
+# and output token counts, the full prompt and completion text, and each tool call's
+# arguments and result, laid out as a readable conversation attached to the span.
+#
+# Grafana can show the same span. It shows it as a flat list of forty attributes, one of
+# which is a 6KB JSON blob on a single line. Getting to the Aspire view in Grafana means
+# building and maintaining a bespoke panel, and it would still be worse.
+#
+# For debugging why the agent reasoned its way to a wrong conclusion, "read the actual
+# conversation" is the whole task. That is what this is for.
+# ---------------------------------------------------------------------------------------
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aspire-dashboard
+  namespace: watchtower-obs
+  labels:
+    app.kubernetes.io/name: aspire-dashboard
+    app.kubernetes.io/part-of: watchtower
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: aspire-dashboard
+  ports:
+    # Browser UI. Reached at http://macstudio-von-florian.tail3043f4.ts.net:<tilt port>
+    - name: http
+      port: 18888
+      targetPort: http
+      protocol: TCP
+    # OTLP/gRPC ingest. This is where the collector's otlp/aspire exporter sends.
+    - name: otlp-grpc
+      port: 18889
+      targetPort: otlp-grpc
+      protocol: TCP
+      appProtocol: grpc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aspire-dashboard
+  namespace: watchtower-obs
+  labels:
+    app.kubernetes.io/name: aspire-dashboard
+    app.kubernetes.io/part-of: watchtower
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aspire-dashboard
+  strategy:
+    # Recreate, not RollingUpdate. During a rolling update two pods are briefly alive behind
+    # one Service, and the collector's gRPC exporter would split telemetry across both. Half
+    # your spans land in a pod that is about to be deleted. Since the store is in-memory
+    # there is no way to reconcile them -- you just get a dashboard that is missing a random
+    # half of a trace. A moment of downtime is strictly better.
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aspire-dashboard
+        app.kubernetes.io/part-of: watchtower
+    spec:
+      containers:
+        - name: aspire-dashboard
+          # Pinned to a real, verified tag. 13.5.2 is the newest 13.x in the MCR tag list
+          # and ships a linux/arm64v8 variant, which this node (Apple silicon, Alpine arm64)
+          # needs. `:latest` would work today and silently change under a pod restart --
+          # exactly the kind of unexplained behaviour change this whole project exists to
+          # catch, so it should not be self-inflicted.
+          image: mcr.microsoft.com/dotnet/aspire-dashboard:13.5.2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 18888
+              protocol: TCP
+            - name: otlp-grpc
+              containerPort: 18889
+              protocol: TCP
+          env:
+            # See CAVEAT 2 above. This is load-bearing: without it the dashboard prints a
+            # one-time login URL containing a token into its own stdout at startup, and
+            # after any restart the old URL is invalid. On a tailnet-only dev cluster that
+            # is friction with no security benefit -- but read CAVEAT 2 before copying this
+            # anywhere else.
+            - name: DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS
+              value: "true"
+            # Bind on all interfaces inside the pod so the Service can reach both ports.
+            # The defaults bind to localhost, which makes the container look healthy while
+            # every connection through the Service is refused.
+            - name: ASPNETCORE_URLS
+              value: "http://0.0.0.0:18888"
+            - name: DOTNET_DASHBOARD_OTLP_ENDPOINT_URL
+              value: "http://0.0.0.0:18889"
+            # Bound the ring buffers explicitly. The defaults are generous, and this pod
+            # shares a node with everything else; an unbounded-feeling buffer plus the C10
+            # traffic generator is a slow memory climb that ends in an OOMKill the agent
+            # would (correctly, but unhelpfully) open an incident about.
+            - name: DASHBOARD__TELEMETRYLIMITS__MAXLOGCOUNT
+              value: "10000"
+            - name: DASHBOARD__TELEMETRYLIMITS__MAXTRACECOUNT
+              value: "10000"
+            - name: DASHBOARD__TELEMETRYLIMITS__MAXMETRICSCOUNT
+              value: "50000"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 192Mi
+            limits:
+              # Hard cap. If this OOMKills, lower the TELEMETRYLIMITS above rather than
+              # raising the limit -- an in-memory viewer is not worth a GiB.
+              memory: 768Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 64198
+            capabilities:
+              drop: ["ALL"]
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 64198
+        fsGroup: 64198

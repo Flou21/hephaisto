@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    Central Package Management APPLIES to this project. MSBuild walks up from
+    infra/chaos/faulty-service/ and finds /Directory.Packages.props at the repo
+    root (ManagePackageVersionsCentrally=true), and /Directory.Build.props,
+    which supplies TargetFramework=net10.0, Nullable, ImplicitUsings and the
+    analyzer settings. Those files were NOT edited - this project simply
+    inherits them, so every PackageReference below is deliberately versionless.
+
+    CONSEQUENCE FOR THE CONTAINER BUILD: the Docker build context must be the
+    REPO ROOT, not this directory, so that both Directory.*.props files are
+    present at restore time. See the Dockerfile header for the exact command.
+
+    This project is intentionally NOT added to Watchtower.slnx - it is a test
+    fixture, not part of the product, and it must not appear in `dotnet build`
+    of the solution or in coverage.
+  -->
+  <PropertyGroup>
+    <AssemblyName>faulty-service</AssemblyName>
+    <RootNamespace>FaultyService</RootNamespace>
+    <!-- Fixture code: keep the build quiet rather than fighting analyzers. -->
+    <NoWarn>$(NoWarn);CA1848;CA2254;CA1305</NoWarn>
+    <UserSecretsId>watchtower-chaos-faulty-service</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+  </ItemGroup>
+
+</Project>

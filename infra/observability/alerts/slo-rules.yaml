@@ -1,0 +1,289 @@
+# Service-level alerts for Watchtower, built on Tempo span metrics
+# ---------------------------------------------------------------------------------------
+# THE POINT: these rules contain no application-specific metric names.
+# ---------------------------------------------------------------------------------------
+# Every expression below is built on `traces_spanmetrics_*`, which Tempo's metrics-generator
+# derives from the spans it receives. Nothing here depends on a service exporting a
+# request-count metric, naming its histogram a particular way, or agreeing on label names.
+#
+# The consequence is the whole reason for this design: ANY workload that emits traces gets
+# a working error-rate SLO and a working latency SLO with zero code changes and zero
+# per-service alert configuration. Deploy a new service with OTel auto-instrumentation and
+# it is covered the moment its first span lands. That is not achievable with app metrics,
+# where every new service means a new set of rules that someone has to remember to write.
+#
+# ---------------------------------------------------------------------------------------
+# THESE RULES FAIL SILENTLY IF THE PIPELINE IS MISCONFIGURED
+# ---------------------------------------------------------------------------------------
+# `traces_spanmetrics_*` exists only if ALL of the following hold. If any one is wrong,
+# these rules evaluate an empty vector forever -- they never fire, and "no alerts" is
+# indistinguishable from "everything is healthy".
+#
+#   1. tempo.metricsGenerator.enabled: true                                (tempo.values.yaml)
+#   2. tempo.overrides.defaults.metrics_generator.processors includes span-metrics
+#      -- (1) starts the component, (2) is what makes it DO anything. Two separate keys.
+#   3. prometheus.prometheusSpec.enableRemoteWriteReceiver: true           (stack values)
+#      -- NOT enableFeatures: [remote-write-receiver], which is a no-op.
+#   4. prometheus.prometheusSpec.tsdb.outOfOrderTimeWindow: 30m            (stack values)
+#      -- the generator writes samples minutes late; with the 0s default Prometheus
+#         rejects every one of them as out-of-order.
+#
+# The alert WatchtowerSpanMetricsMissing in observability-selfcheck.yaml is the guard
+# against exactly this: it fires when Tempo is receiving spans but no span metrics are
+# arriving, which is the only way to notice a silently-empty SLO.
+#
+# ---------------------------------------------------------------------------------------
+# METRIC NAME CAVEAT
+# ---------------------------------------------------------------------------------------
+# Tempo emits the latency histogram as `traces_spanmetrics_latency_*` when the span_metrics
+# processor is configured with explicit `histogram_buckets` (as it is in tempo.values.yaml).
+# Some Tempo builds and configurations instead emit `traces_spanmetrics_duration_seconds_*`.
+# If these rules return nothing on a cluster where spans are definitely flowing, check the
+# actual name first:
+#     curl -s .../api/v1/label/__name__/values | grep spanmetrics
+#
+# The bucket boundaries referenced below (le="0.256", le="1.024") must exist in
+# tempo.metricsGenerator.processor.span_metrics.histogram_buckets. They do -- the bucket
+# list there was chosen to include exactly these two so that these rules can use `le`
+# equality rather than an interpolating histogram_quantile, which is both cheaper and
+# exact at the SLO boundary.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: watchtower-slo-rules
+  namespace: watchtower-obs
+  labels:
+    release: watchtower
+    app.kubernetes.io/part-of: watchtower
+spec:
+  groups:
+    # ===================================================================================
+    - name: watchtower.slo.errors
+      interval: 30s
+      rules:
+        - alert: ServiceHighErrorRate
+          # More than 5% of spans in the last 5 minutes carry STATUS_CODE_ERROR.
+          #
+          # `> 5` rather than `> 0.05` because the expression is scaled to a percentage for
+          # a readable $value in the annotation.
+          #
+          # The trailing `and (rate(...) > 0.05)` guard is essential and easy to omit: a
+          # service handling one request every few minutes can hit 100% error rate from a
+          # single failure, and without a minimum-traffic floor this alert screams about
+          # statistically meaningless samples. 0.05 req/s over 5m is roughly "at least ~15
+          # requests in the window".
+          expr: |
+            (
+              sum by (service_name, k8s_namespace_name) (
+                rate(traces_spanmetrics_calls_total{status_code="STATUS_CODE_ERROR"}[5m])
+              )
+              /
+              sum by (service_name, k8s_namespace_name) (
+                rate(traces_spanmetrics_calls_total[5m])
+              )
+            ) * 100 > 5
+            and
+            sum by (service_name, k8s_namespace_name) (
+              rate(traces_spanmetrics_calls_total[5m])
+            ) > 0.05
+          for: 2m
+          labels:
+            severity: warning
+            watchtower_kind: ServiceErrorRate
+          annotations:
+            summary: 'Service {{ $labels.service_name }} error rate is {{ $value | printf "%.1f" }}%'
+            description: >-
+              {{ $value | printf "%.1f" }}% of spans from {{ $labels.service_name }} in
+              namespace {{ $labels.k8s_namespace_name }} have status STATUS_CODE_ERROR over
+              the last 5 minutes (SLO: <5%). These are derived from traces, so the failing
+              requests themselves are retrievable: TraceQL
+              `{ resource.service.name = "{{ $labels.service_name }}" && status = error }`
+              returns the exact spans this number was computed from. Start there, not with
+              a log search.
+
+        - alert: ServiceCriticalErrorRate
+          expr: |
+            (
+              sum by (service_name, k8s_namespace_name) (
+                rate(traces_spanmetrics_calls_total{status_code="STATUS_CODE_ERROR"}[5m])
+              )
+              /
+              sum by (service_name, k8s_namespace_name) (
+                rate(traces_spanmetrics_calls_total[5m])
+              )
+            ) * 100 > 25
+            and
+            sum by (service_name, k8s_namespace_name) (
+              rate(traces_spanmetrics_calls_total[5m])
+            ) > 0.05
+          for: 1m
+          labels:
+            severity: critical
+            watchtower_kind: ServiceErrorRate
+          annotations:
+            summary: 'Service {{ $labels.service_name }} error rate is {{ $value | printf "%.1f" }}% (critical)'
+            description: >-
+              More than a quarter of all requests to {{ $labels.service_name }} are failing.
+              At this rate the failure is systemic (a dependency, a config, a bad deploy),
+              not a tail of unlucky requests.
+
+    # ===================================================================================
+    - name: watchtower.slo.latency
+      interval: 30s
+      rules:
+        # -------------------------------------------------------------------------------
+        # Multiwindow, multi-burn-rate latency alerting
+        # -------------------------------------------------------------------------------
+        # SLO: 95% of requests complete within 256ms.
+        # Error budget: 5% of requests may be slower.
+        #
+        # A naive alert ("p95 > 256ms for 5 minutes") has two failure modes at once: it
+        # fires on any brief blip, and it does not fire at all on a small, sustained
+        # degradation that will exhaust the month's budget by Thursday. Burn-rate alerting
+        # fixes both by asking a different question -- "how fast am I spending the budget?"
+        #
+        # A burn rate of 1 means the budget lasts exactly the SLO window. 14.4x means it is
+        # gone in 1/14.4 of the window (~2 hours of a 30-day budget).
+        #
+        # Each alert requires BOTH a long and a short window to be burning. The long window
+        # establishes that the problem is real and sustained; the short window confirms it
+        # is still happening RIGHT NOW, so the alert resolves promptly instead of hanging
+        # around for an hour after recovery.
+        #
+        # The `for:` values are short (dev loop). The windows themselves are not shortened
+        # below 5m/1h, because shrinking the long window is exactly what destroys the
+        # property that makes burn-rate alerting worth having.
+        # -------------------------------------------------------------------------------
+        - alert: ServiceLatencyBudgetBurnFast
+          # 14.4x burn over 1h, confirmed by the same burn over the last 5m.
+          # At this rate a 30-day error budget is consumed in about 2 days.
+          expr: |
+            (
+              (
+                1 - (
+                  sum by (service_name) (rate(traces_spanmetrics_latency_bucket{le="0.256"}[1h]))
+                  /
+                  sum by (service_name) (rate(traces_spanmetrics_latency_count[1h]))
+                )
+              ) > (14.4 * 0.05)
+              and
+              (
+                1 - (
+                  sum by (service_name) (rate(traces_spanmetrics_latency_bucket{le="0.256"}[5m]))
+                  /
+                  sum by (service_name) (rate(traces_spanmetrics_latency_count[5m]))
+                )
+              ) > (14.4 * 0.05)
+            )
+            and
+            sum by (service_name) (rate(traces_spanmetrics_latency_count[5m])) > 0.05
+          for: 2m
+          labels:
+            severity: critical
+            watchtower_kind: LatencyBudgetBurn
+            burn_window: fast
+          annotations:
+            summary: 'Service {{ $labels.service_name }} is burning its latency budget 14.4x too fast'
+            description: >-
+              {{ $value | printf "%.1f%%" }} of requests to {{ $labels.service_name }} are
+              slower than the 256ms SLO threshold, sustained over an hour and still
+              happening now. Every latency histogram carries exemplars, so the slowest
+              actual traces are one click away in Grafana -- use those rather than guessing
+              which endpoint regressed.
+
+        - alert: ServiceLatencyBudgetBurnSlow
+          # 6x burn over 6h, confirmed over 30m. This is the alert that catches the
+          # degradation nobody notices: not bad enough to page, bad enough to run out of
+          # budget. It is the one a threshold alert would never produce.
+          expr: |
+            (
+              (
+                1 - (
+                  sum by (service_name) (rate(traces_spanmetrics_latency_bucket{le="0.256"}[6h]))
+                  /
+                  sum by (service_name) (rate(traces_spanmetrics_latency_count[6h]))
+                )
+              ) > (6 * 0.05)
+              and
+              (
+                1 - (
+                  sum by (service_name) (rate(traces_spanmetrics_latency_bucket{le="0.256"}[30m]))
+                  /
+                  sum by (service_name) (rate(traces_spanmetrics_latency_count[30m]))
+                )
+              ) > (6 * 0.05)
+            )
+            and
+            sum by (service_name) (rate(traces_spanmetrics_latency_count[30m])) > 0.05
+          for: 5m
+          labels:
+            severity: warning
+            watchtower_kind: LatencyBudgetBurn
+            burn_window: slow
+          annotations:
+            summary: 'Service {{ $labels.service_name }} is burning its latency budget 6x too fast'
+            description: >-
+              A sustained, low-grade latency regression on {{ $labels.service_name }}:
+              {{ $value | printf "%.1f%%" }} of requests over the last 6 hours exceeded
+              256ms. Not an outage. Compare against a deploy or config change 6h back --
+              this alert's whole value is that it surfaces slow drift, so the answer is
+              usually "what changed", not "what is broken".
+            # NOTE: the 6h window needs 6h of data. Prometheus retention is 24h, so this
+            # works -- but it produces nothing for the first 6 hours after a `tilt up`.
+            # That is expected, not a fault.
+
+        - alert: ServiceLatencyExtreme
+          # A blunt companion to the burn-rate rules. Burn-rate alerting is correct but
+          # slow to speak, and there is a class of failure -- a dependency timing out at
+          # 30 seconds -- where waiting an hour to confirm the trend is absurd. If more
+          # than half of requests exceed 1s, something is broken now.
+          expr: |
+            (
+              1 - (
+                sum by (service_name) (rate(traces_spanmetrics_latency_bucket{le="1.024"}[5m]))
+                /
+                sum by (service_name) (rate(traces_spanmetrics_latency_count[5m]))
+              )
+            ) > 0.5
+            and
+            sum by (service_name) (rate(traces_spanmetrics_latency_count[5m])) > 0.05
+          for: 2m
+          labels:
+            severity: critical
+            watchtower_kind: LatencyExtreme
+          annotations:
+            summary: 'Over half of requests to {{ $labels.service_name }} take longer than 1s'
+            description: >-
+              {{ $value | printf "%.0f%%" }} of requests exceed 1 second. At this magnitude
+              look for a blocked dependency or a saturated resource, not a code regression.
+              The service graph (traces_service_graph_request_*) shows which downstream
+              edge grew.
+
+    # ===================================================================================
+    - name: watchtower.slo.traffic
+      interval: 30s
+      rules:
+        - alert: ServiceNoTraffic
+          # `absent()` rather than `== 0`: when a service stops entirely, its span metrics
+          # series stop being produced and DISAPPEAR. A rule written as `rate(...) == 0`
+          # matches nothing once the series is gone, so it would go quiet at exactly the
+          # moment it should shout. This is the same trap as `up == 0` versus `absent(up)`.
+          #
+          # Scoped to the C10 fixture because absent() cannot be written generically -- it
+          # needs a concrete series to assert the absence of. Add a copy per service that
+          # is expected to have continuous traffic.
+          expr: |
+            absent(traces_spanmetrics_calls_total{service_name="faulty-service"})
+          for: 5m
+          labels:
+            severity: warning
+            watchtower_kind: ServiceNoTraffic
+          annotations:
+            summary: 'No span metrics from faulty-service for 5 minutes'
+            description: >-
+              The C10 fixture generates continuous traffic through a sidecar, so its span
+              metrics should never stop. Silence means one of: the fixture is down, the
+              collector is not forwarding traces, or Tempo's metrics-generator has stopped
+              remote-writing. Check WatchtowerSpanMetricsMissing and the otelcol_* alerts in
+              observability-selfcheck.yaml before concluding the service itself is at fault.
