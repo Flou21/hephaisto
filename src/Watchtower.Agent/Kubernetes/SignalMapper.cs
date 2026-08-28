@@ -1,5 +1,6 @@
 using k8s.Models;
 
+using Watchtower.Core.Classification;
 using Watchtower.Core.Domain;
 using Watchtower.Core.Fingerprinting;
 
@@ -580,54 +581,15 @@ public static class SignalMapper
         _ => null,
     };
 
-    /// <summary>
-    /// Substring matching rather than exact alertnames, because the same condition is called
-    /// <c>KubePodCrashLooping</c> by kube-prometheus and something else by whoever wrote the
-    /// last rule. Being wrong here costs a runbook lookup, not a safety property.
-    /// </summary>
-    private static SignalKind AlertKind(string alertName, IReadOnlyDictionary<string, string> labels)
-    {
-        if (Value(labels, "watchtower_kind") is { } explicitKind
-            && Enum.TryParse<SignalKind>(explicitKind, ignoreCase: true, out var parsed))
-        {
-            return parsed;
-        }
-
-        return alertName switch
-        {
-            var n when Has(n, "crashloop") => SignalKind.CrashLoopBackOff,
-            var n when Has(n, "oom") => SignalKind.OomKilled,
-            var n when Has(n, "imagepull") || Has(n, "errimage") => SignalKind.ImagePullBackOff,
-            var n when Has(n, "unschedulable") || Has(n, "pending") => SignalKind.Unschedulable,
-            var n when Has(n, "configerror") || Has(n, "createcontainerconfig") => SignalKind.ConfigError,
-            var n when Has(n, "readiness") || Has(n, "notready") => SignalKind.ReadinessFlapping,
-            var n when Has(n, "jobfailed") || Has(n, "jobfailure") => SignalKind.JobFailed,
-            var n when Has(n, "restart") => SignalKind.RestartStorm,
-            var n when Has(n, "nodepressure") || Has(n, "nodememory") || Has(n, "nodedisk") => SignalKind.NodePressure,
-            var n when Has(n, "pvc") || Has(n, "volumefill") => SignalKind.PvcNearlyFull,
-            var n when Has(n, "replica") => SignalKind.ReplicaMismatch,
-            var n when Has(n, "targetdown") || Has(n, "targetmissing") => SignalKind.TargetDown,
-            var n when Has(n, "errorrate") || Has(n, "5xx") => SignalKind.HighErrorRate,
-            var n when Has(n, "latency") || Has(n, "slo") => SignalKind.HighLatency,
-            _ => SignalKind.Unknown,
-        };
-
-        static bool Has(string haystack, string needle) =>
-            haystack.Contains(needle, StringComparison.OrdinalIgnoreCase);
-    }
+    // Shared with Web/AlertmanagerEndpoints via Watchtower.Core.Classification.AlertClassifier.
+    // Both paths carried a byte-identical copy of this table; since SignalKind selects the
+    // runbook, a divergence between them would silently hand an investigation the wrong
+    // instructions depending on which door the alert arrived through.
+    private static SignalKind AlertKind(string alertName, IReadOnlyDictionary<string, string> labels) =>
+        AlertClassifier.Kind(alertName, labels);
 
     private static Severity AlertSeverity(IReadOnlyDictionary<string, string> labels, SignalKind kind) =>
-        Value(labels, "severity")?.ToLowerInvariant() switch
-        {
-            "critical" or "page" or "emergency" => Severity.Critical,
-            "warning" or "warn" => Severity.Warning,
-            "info" or "none" => Severity.Info,
-
-            // An unlabelled alert falls back to what the kind implies rather than to Info: an
-            // unclassified alert that turns out to matter is worse than one investigated for
-            // nothing, and in observe mode the cost of the latter is a few cents.
-            _ => SeverityFor(kind),
-        };
+        AlertClassifier.SeverityOf(labels, kind);
 
     private static TargetRef AlertTarget(IReadOnlyDictionary<string, string> labels)
     {
@@ -696,12 +658,7 @@ public static class SignalMapper
     /// error is a pod that never started - equally broken, but almost always a fresh deploy
     /// that has not taken over from a working one.
     /// </summary>
-    private static Severity SeverityFor(SignalKind kind) => kind switch
-    {
-        SignalKind.OomKilled or SignalKind.CrashLoopBackOff or SignalKind.NodePressure
-            or SignalKind.TargetDown => Severity.Critical,
-        _ => Severity.Warning,
-    };
+    private static Severity SeverityFor(SignalKind kind) => AlertClassifier.SeverityFor(kind);
 
     private static void Apply(TargetRef target, OwnerRef? owner)
     {

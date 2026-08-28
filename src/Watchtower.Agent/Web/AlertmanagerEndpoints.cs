@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 
+using Watchtower.Core.Classification;
 using Watchtower.Core.Domain;
 
 namespace Watchtower.Agent.Web;
@@ -79,7 +80,7 @@ public static class AlertmanagerEndpoints
     /// for this agent; everything else is inferred, and Unknown is a legitimate outcome that
     /// routes to the default runbook rather than being dropped.
     /// </summary>
-    private const string KindLabel = "watchtower_kind";
+    private const string KindLabel = AlertClassifier.KindLabel;
 
     private static readonly JsonSerializerOptions RawPayloadJson = new(JsonSerializerDefaults.Web)
     {
@@ -205,11 +206,13 @@ public static class AlertmanagerEndpoints
         var labels = alert.Labels;
         var alertName = Label(labels, "alertname") ?? "UnknownAlert";
 
+        var kind = ResolveKind(alertName, labels);
+
         var signal = new Signal
         {
             Source = SignalSource.Alertmanager,
-            Kind = ResolveKind(alertName, labels),
-            Severity = ResolveSeverity(labels),
+            Kind = kind,
+            Severity = ResolveSeverity(labels, kind),
             Target = ResolveTarget(labels),
             Reason = alertName,
             Message = Label(alert.Annotations, "description")
@@ -246,55 +249,14 @@ public static class AlertmanagerEndpoints
         return signal;
     }
 
-    /// <summary>
-    /// Alertname to <see cref="SignalKind"/>. Substring matching rather than exact names,
-    /// because the same condition is called <c>KubePodCrashLooping</c> by kube-prometheus and
-    /// <c>PodCrashLoopBackOff</c> by whoever wrote the last rule, and being wrong here costs
-    /// a runbook lookup rather than a safety property.
-    /// </summary>
-    private static SignalKind ResolveKind(string alertName, IReadOnlyDictionary<string, string> labels)
-    {
-        if (Label(labels, KindLabel) is { } explicitKind
-            && Enum.TryParse<SignalKind>(explicitKind, ignoreCase: true, out var parsed))
-        {
-            return parsed;
-        }
+    // Kind and severity classification is shared with Kubernetes/SignalMapper via
+    // Watchtower.Core.Classification.AlertClassifier. Both callers used to carry a
+    // byte-identical copy of the switch, which is a table that does not stay identical.
+    private static SignalKind ResolveKind(string alertName, IReadOnlyDictionary<string, string> labels) =>
+        AlertClassifier.Kind(alertName, labels);
 
-        return alertName switch
-        {
-            var n when Has(n, "crashloop") => SignalKind.CrashLoopBackOff,
-            var n when Has(n, "oom") => SignalKind.OomKilled,
-            var n when Has(n, "imagepull") || Has(n, "errimage") => SignalKind.ImagePullBackOff,
-            var n when Has(n, "unschedulable") || Has(n, "pending") => SignalKind.Unschedulable,
-            var n when Has(n, "configerror") || Has(n, "createcontainerconfig") => SignalKind.ConfigError,
-            var n when Has(n, "readiness") || Has(n, "notready") => SignalKind.ReadinessFlapping,
-            var n when Has(n, "jobfailed") || Has(n, "jobfailure") => SignalKind.JobFailed,
-            var n when Has(n, "restart") => SignalKind.RestartStorm,
-            var n when Has(n, "nodepressure") || Has(n, "nodememory") || Has(n, "nodedisk") => SignalKind.NodePressure,
-            var n when Has(n, "pvc") || Has(n, "volumefill") => SignalKind.PvcNearlyFull,
-            var n when Has(n, "replica") => SignalKind.ReplicaMismatch,
-            var n when Has(n, "targetdown") || Has(n, "targetmissing") => SignalKind.TargetDown,
-            var n when Has(n, "errorrate") || Has(n, "5xx") => SignalKind.HighErrorRate,
-            var n when Has(n, "latency") || Has(n, "slo") => SignalKind.HighLatency,
-            _ => SignalKind.Unknown,
-        };
-
-        static bool Has(string haystack, string needle) =>
-            haystack.Contains(needle, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static Severity ResolveSeverity(IReadOnlyDictionary<string, string> labels) =>
-        Label(labels, "severity")?.ToLowerInvariant() switch
-        {
-            "critical" or "page" or "emergency" => Severity.Critical,
-            "warning" or "warn" => Severity.Warning,
-            "info" or "none" => Severity.Info,
-
-            // Unlabelled alerts read as Warning, not Info. An unclassified alert that turns
-            // out to matter is worse than one investigated for nothing, and in observe mode
-            // the cost of the latter is a few cents.
-            _ => Severity.Warning,
-        };
+    private static Severity ResolveSeverity(IReadOnlyDictionary<string, string> labels, SignalKind kind) =>
+        AlertClassifier.SeverityOf(labels, kind);
 
     /// <summary>
     /// Resolves the object and, where the labels allow, its controller.

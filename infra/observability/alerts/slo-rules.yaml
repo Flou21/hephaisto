@@ -90,7 +90,7 @@ spec:
           for: 2m
           labels:
             severity: warning
-            watchtower_kind: ServiceErrorRate
+            watchtower_kind: HighErrorRate
           annotations:
             summary: 'Service {{ $labels.service_name }} error rate is {{ $value | printf "%.1f" }}%'
             description: >-
@@ -120,7 +120,7 @@ spec:
           for: 1m
           labels:
             severity: critical
-            watchtower_kind: ServiceErrorRate
+            watchtower_kind: HighErrorRate
           annotations:
             summary: 'Service {{ $labels.service_name }} error rate is {{ $value | printf "%.1f" }}% (critical)'
             description: >-
@@ -181,7 +181,7 @@ spec:
           for: 2m
           labels:
             severity: critical
-            watchtower_kind: LatencyBudgetBurn
+            watchtower_kind: HighLatency
             burn_window: fast
           annotations:
             summary: 'Service {{ $labels.service_name }} is burning its latency budget 14.4x too fast'
@@ -219,7 +219,7 @@ spec:
           for: 5m
           labels:
             severity: warning
-            watchtower_kind: LatencyBudgetBurn
+            watchtower_kind: HighLatency
             burn_window: slow
           annotations:
             summary: 'Service {{ $labels.service_name }} is burning its latency budget 6x too fast'
@@ -251,7 +251,7 @@ spec:
           for: 2m
           labels:
             severity: critical
-            watchtower_kind: LatencyExtreme
+            watchtower_kind: HighLatency
           annotations:
             summary: 'Over half of requests to {{ $labels.service_name }} take longer than 1s'
             description: >-
@@ -278,7 +278,7 @@ spec:
           for: 5m
           labels:
             severity: warning
-            watchtower_kind: ServiceNoTraffic
+            watchtower_kind: TargetDown
           annotations:
             summary: 'No span metrics from faulty-service for 5 minutes'
             description: >-

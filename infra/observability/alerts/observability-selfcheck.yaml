@@ -65,7 +65,7 @@ spec:
           for: 2m
           labels:
             severity: warning
-            watchtower_kind: TelemetryPipelineDegraded
+            watchtower_kind: ObservabilityDegraded
           annotations:
             summary: 'OTel collector is failing to export to {{ $labels.exporter }}'
             description: >-
@@ -92,7 +92,7 @@ spec:
           for: 2m
           labels:
             severity: warning
-            watchtower_kind: TelemetryPipelineDegraded
+            watchtower_kind: ObservabilityDegraded
           annotations:
             summary: 'OTel collector processor {{ $labels.processor }} is refusing data'
             description: >-
@@ -114,7 +114,7 @@ spec:
           for: 2m
           labels:
             severity: info
-            watchtower_kind: TelemetryPipelineDegraded
+            watchtower_kind: ObservabilityDegraded
           annotations:
             summary: 'OTel collector export queue for {{ $labels.exporter }} is {{ $value | printf "%.0f%%" }} full'
             description: >-
@@ -135,7 +135,7 @@ spec:
           for: 3m
           labels:
             severity: critical
-            watchtower_kind: TelemetryPipelineDown
+            watchtower_kind: ObservabilityDegraded
           annotations:
             summary: 'OTel collector telemetry has stopped arriving'
             description: >-
@@ -159,7 +159,7 @@ spec:
           for: 10m
           labels:
             severity: warning
-            watchtower_kind: TelemetryPipelineDegraded
+            watchtower_kind: ObservabilityDegraded
           annotations:
             summary: 'Tempo has received no spans for 10 minutes'
             description: >-
@@ -185,7 +185,7 @@ spec:
           for: 10m
           labels:
             severity: critical
-            watchtower_kind: SloPipelineBroken
+            watchtower_kind: ObservabilityDegraded
           annotations:
             summary: 'Tempo is receiving spans but producing no span metrics'
             description: >-
@@ -210,7 +210,7 @@ spec:
           for: 2m
           labels:
             severity: critical
-            watchtower_kind: SloPipelineBroken
+            watchtower_kind: ObservabilityDegraded
           annotations:
             summary: 'Remote write to {{ $labels.url }} is failing'
             description: >-
@@ -231,7 +231,7 @@ spec:
           for: 10m
           labels:
             severity: warning
-            watchtower_kind: TelemetryPipelineDegraded
+            watchtower_kind: ObservabilityDegraded
           annotations:
             summary: 'Loki has ingested no log lines for 10 minutes'
             description: >-
@@ -250,7 +250,7 @@ spec:
           for: 2m
           labels:
             severity: warning
-            watchtower_kind: TelemetryPipelineDegraded
+            watchtower_kind: ObservabilityDegraded
           annotations:
             summary: 'Loki is discarding samples ({{ $labels.reason }})'
             description: >-
@@ -279,7 +279,7 @@ spec:
           for: 5m
           labels:
             severity: warning
-            watchtower_kind: LlmBudget
+            watchtower_kind: BudgetExhausted
           annotations:
             summary: 'Watchtower has used {{ $value | printf "%.0f%%" }} of its {{ $labels.scope }} LLM budget'
             description: >-
@@ -296,7 +296,7 @@ spec:
           for: 0m
           labels:
             severity: critical
-            watchtower_kind: LlmBudget
+            watchtower_kind: BudgetExhausted
           annotations:
             summary: 'Watchtower has exhausted its {{ $labels.scope }} LLM budget'
             description: >-
@@ -318,7 +318,7 @@ spec:
           for: 15m
           labels:
             severity: warning
-            watchtower_kind: AgentStalled
+            watchtower_kind: ObservabilityDegraded
           annotations:
             summary: 'Watchtower has received no signals for 15 minutes'
             description: >-

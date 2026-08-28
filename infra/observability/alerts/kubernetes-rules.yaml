@@ -87,7 +87,7 @@ spec:
           for: 0m
           labels:
             severity: critical
-            watchtower_kind: OOMKilled
+            watchtower_kind: OomKilled
           annotations:
             summary: 'Container {{ $labels.container }} in {{ $labels.namespace }}/{{ $labels.pod }} was OOMKilled'
             description: >-
@@ -117,7 +117,7 @@ spec:
           for: 2m
           labels:
             severity: warning
-            watchtower_kind: PodNotReady
+            watchtower_kind: ReadinessFlapping
           annotations:
             summary: 'Pod {{ $labels.namespace }}/{{ $labels.pod }} has been non-ready for >2m'
             description: >-
@@ -155,7 +155,7 @@ spec:
           for: 1m
           labels:
             severity: warning
-            watchtower_kind: ImagePullFailure
+            watchtower_kind: ImagePullBackOff
           annotations:
             summary: 'Container {{ $labels.container }} in {{ $labels.namespace }}/{{ $labels.pod }} cannot pull its image ({{ $labels.reason }})'
             description: >-
@@ -224,7 +224,7 @@ spec:
           for: 2m
           labels:
             severity: warning
-            watchtower_kind: ReplicasMismatch
+            watchtower_kind: ReplicaMismatch
           annotations:
             summary: 'Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has unavailable replicas'
             description: >-
@@ -244,7 +244,7 @@ spec:
           for: 2m
           labels:
             severity: critical
-            watchtower_kind: NodeNotReady
+            watchtower_kind: NodePressure
           annotations:
             summary: 'Node {{ $labels.node }} is not Ready'
             description: >-
@@ -280,7 +280,7 @@ spec:
           for: 0m
           labels:
             severity: critical
-            watchtower_kind: NodeEviction
+            watchtower_kind: NodePressure
           annotations:
             summary: 'Node {{ $labels.node }} evicted pods ({{ $labels.eviction_signal }})'
             description: >-
@@ -300,7 +300,7 @@ spec:
           for: 2m
           labels:
             severity: warning
-            watchtower_kind: NodeDiskFilling
+            watchtower_kind: NodePressure
           annotations:
             summary: 'Filesystem {{ $labels.mountpoint }} on {{ $labels.instance }} has <10% space left'
             description: >-
@@ -348,7 +348,7 @@ spec:
           for: 2m
           labels:
             severity: warning
-            watchtower_kind: PvcFillingUp
+            watchtower_kind: PvcNearlyFull
           annotations:
             summary: 'PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is >85% full'
             description: >-
@@ -366,7 +366,7 @@ spec:
           for: 1m
           labels:
             severity: critical
-            watchtower_kind: PvcFillingUp
+            watchtower_kind: PvcNearlyFull
           annotations:
             summary: 'PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is >90% full'
             description: >-
@@ -420,7 +420,7 @@ spec:
           for: 2m
           labels:
             severity: info
-            watchtower_kind: TargetFlapping
+            watchtower_kind: ReadinessFlapping
           annotations:
             summary: 'Scrape target {{ $labels.job }} ({{ $labels.instance }}) is flapping'
             description: >-

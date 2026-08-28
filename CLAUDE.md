@@ -118,6 +118,22 @@ it should produce. That table is the agent's regression suite; keep it accurate.
 A `helm_resource` without an explicit `--version` resolves "latest", which will silently
 major-upgrade Prometheus on some future `tilt up`.
 
+## Alert rules must declare a `watchtower_kind` that is a real `SignalKind`
+
+Every `PrometheusRule` carries a `watchtower_kind` label, and its value has to be a member
+name of `Watchtower.Core.Domain.SignalKind`. That label is how an alert selects the runbook
+the model is given.
+
+`Enum.TryParse` fails **silently** on anything else, and the classifier then falls back to
+guessing from the alertname — which for a name like `KubeContainerWaiting` yields `Unknown`
+and the default runbook instead of the image-pull one. Nothing about that is visible from
+either side: the YAML looks well-labelled and the classifier looks correct.
+
+`ShippedAlertRulesTests` reads the real files in `infra/observability/alerts/` and fails if
+any alert declares a kind that does not parse, or classifies as `Unknown`. If you add a rule
+whose failure mode has no matching `SignalKind`, add the member **and its runbook** rather
+than inventing a label value.
+
 ## The cluster is a single shared resource
 
 There is one k3s node, shared with the whole Cait stack from `~/dev`. Parallel agents can
