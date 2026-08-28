@@ -105,10 +105,7 @@ public sealed class InvestigationCoordinator(
         // evidence blobs added next carry a foreign key to it. Anything that runs
         // DetectChanges in between would otherwise fix the investigation as Unchanged and
         // the blob insert fails against a parent that was never written.
-        db.Investigations.Add(investigation);
-
-        if (outcome.Blobs.Count > 0)
-            db.EvidenceBlobs.AddRange(outcome.Blobs);
+        db.AddInvestigationGraph(investigation);
 
         metrics.InvestigationCompleted(
             clock.UtcNow - started,
@@ -136,6 +133,27 @@ public sealed class InvestigationCoordinator(
         incidents.TrackNewIncidentChildren(incident, eventsBefore);
 
         await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
+
+        // Blobs go in their own save, AFTER the investigation row exists.
+        //
+        // They carry a foreign key to the investigation, and batching them together relies
+        // on EF ordering the two inserts by that dependency. It does not do so reliably here
+        // - the relationship is configured without a navigation property
+        // (HasOne<Investigation>().WithMany()), and the blob insert kept being emitted first,
+        // failing the whole save with
+        //   23503: insert or update on table evidence_blobs violates foreign key constraint
+        // and taking the investigation down with it.
+        //
+        // Two saves means a crash in between could leave an investigation whose raw evidence
+        // is missing. That is the right way round to fail: the digested findings and their
+        // citations live on the investigation, and the blobs are the expandable raw backing
+        // that a human opens occasionally. Losing the diagnosis to preserve atomicity with
+        // the attachments would be the worse trade.
+        if (outcome.Blobs.Count > 0)
+        {
+            db.EvidenceBlobs.AddRange(outcome.Blobs);
+            await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
+        }
 
         // Indexing happens after the incident is safely written. Embedding is a network call
         // to a third party and must never be able to lose an investigation that already

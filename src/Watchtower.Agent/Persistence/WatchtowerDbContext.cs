@@ -114,9 +114,43 @@ public sealed class WatchtowerDbContext(DbContextOptions<WatchtowerDbContext> op
 
         if (newInvestigation is not null)
         {
-            // Adding the investigation walks its own graph, so steps, findings and evidence
-            // come with it.
-            Investigations.Add(newInvestigation);
+            AddInvestigationGraph(newInvestigation);
+        }
+    }
+
+    /// <summary>
+    /// Forces an investigation and every descendant into the Added state.
+    /// </summary>
+    /// <remarks>
+    /// <c>DbSet.Add</c> is not enough on its own. Its graph walk only visits entities the
+    /// context does not already track, and by the time it runs, anything reachable from a
+    /// tracked incident has usually been fixed as Unchanged by a DetectChanges pass. The
+    /// investigation row would then insert while its steps, findings and evidence either
+    /// vanished silently or emitted UPDATEs against rows that do not exist.
+    ///
+    /// Setting <c>Entry(x).State</c> works whether or not the entity is already tracked,
+    /// which is the property needed here. Walked explicitly rather than by reflection so
+    /// adding a collection to the aggregate is a compile-time-visible change to this method.
+    /// </remarks>
+    public void AddInvestigationGraph(Investigation investigation)
+    {
+        ArgumentNullException.ThrowIfNull(investigation);
+
+        Entry(investigation).State = EntityState.Added;
+
+        foreach (var step in investigation.Steps)
+        {
+            Entry(step).State = EntityState.Added;
+        }
+
+        foreach (var finding in investigation.Findings)
+        {
+            Entry(finding).State = EntityState.Added;
+
+            foreach (var evidence in finding.Evidence)
+            {
+                Entry(evidence).State = EntityState.Added;
+            }
         }
     }
 
