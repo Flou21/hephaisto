@@ -1,5 +1,6 @@
 @using Hephaisto.ServiceDefaults
 @inherits LayoutComponentBase
+@inject IConfiguration Configuration
 
 <div class="hp-shell">
     <NavMenu />
@@ -7,10 +8,17 @@
         @Body
 
         @* Read straight from the assembly rather than from /api/status, so the console still
-           says which build drew it when the database is the thing that is broken. *@
+           says which build drew it when the database is the thing that is broken.
+
+           The source link is not decoration: Hephaisto is AGPL-3.0 and this console is served
+           over a network, so the people using it never receive a copy of the binary. Section 13
+           entitles them to the source of the build they are talking to - which is why this
+           points at the exact commit, and why a fork must repoint it (Hephaisto:SourceUrl). *@
         <footer class="hp-version mono">
             hephaisto @BuildInfo.Version
             <span class="hp-version-commit">@BuildInfo.ShortCommit</span>
+            <span class="hp-version-sep">·</span>
+            <a href="@SourceUrl" target="_blank" rel="noopener noreferrer">AGPL-3.0 source</a>
         </footer>
     </main>
 </div>
@@ -23,3 +31,8 @@
     The live connection dropped. This page is no longer updating.
     <a href="" class="reload">Reload</a>
 </div>
+
+@code {
+    private string SourceUrl =>
+        BuildInfo.SourceUrlForThisBuild(Configuration["Hephaisto:SourceUrl"]);
+}

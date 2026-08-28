@@ -333,4 +333,23 @@ table is the agent's regression suite.
 
 ## Licence
 
-[Apache-2.0](LICENSE).
+Copyright (C) 2026 Florian (Flou21).
+
+Hephaisto is free software: you can redistribute it and/or modify it under the terms of the
+**GNU Affero General Public License, version 3** as published by the Free Software Foundation.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See
+the [GNU Affero General Public License](LICENSE) for more details.
+
+**What the "Affero" part means in practice.** Hephaisto serves a web console, so people will
+use it over a network without ever receiving a copy of the binary. AGPL §13 says that those
+users are entitled to the source of the version they are talking to. If you run a modified
+Hephaisto and let anyone else reach its UI or its API, you have to offer them your modified
+source. The console's footer carries a source link for exactly this reason — if you fork it,
+point that link at your fork.
+
+Running an unmodified Hephaisto for yourself triggers none of this.
+
+Every dependency is MIT, Apache-2.0 or the PostgreSQL licence — all permissive, and all
+one-way compatible into an AGPL-3.0 work, so nothing here is in tension with the above.

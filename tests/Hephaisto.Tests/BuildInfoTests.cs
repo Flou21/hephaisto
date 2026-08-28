@@ -89,6 +89,46 @@ public class BuildInfoTests
         commit.Should().Be("3f1a9c2");
     }
 
+    // ---------------------------------------------------------------------------------
+    // AGPL section 13. The console is served over a network, so the people using it never
+    // receive the binary; the footer link is how they get the source of the build they are
+    // actually talking to. Getting this wrong is not cosmetic - it is the licence term.
+    // ---------------------------------------------------------------------------------
+
+    [Fact]
+    public void An_unmodified_build_links_to_the_exact_commit_upstream()
+    {
+        // "whatever is on main today" is not the source of the version someone is using.
+        BuildInfo.SourceUrlForThisBuild(null)
+            .Should().Be($"{BuildInfo.SourceUrl}/tree/{BuildInfo.Commit}");
+    }
+
+    [Fact]
+    public void A_configured_fork_url_wins()
+    {
+        BuildInfo.SourceUrlForThisBuild("https://git.example.com/me/hephaisto")
+            .Should().Be("https://git.example.com/me/hephaisto");
+    }
+
+    [Fact]
+    public void A_configured_fork_url_is_never_rewritten_into_an_upstream_path()
+    {
+        // Appending /tree/<sha> to someone else's host would produce a dead link, and a dead
+        // source link is worse than none: it looks discharged and is not.
+        BuildInfo.SourceUrlForThisBuild("https://git.example.com/me/hephaisto/")
+            .Should().Be("https://git.example.com/me/hephaisto");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void No_configured_url_falls_back_to_upstream_rather_than_to_nothing(string? configured)
+    {
+        // An empty href in the footer would silently offer users no source at all.
+        BuildInfo.SourceUrlForThisBuild(configured).Should().StartWith(BuildInfo.SourceUrl);
+    }
+
     /// <summary>
     /// The real assembly, not a hand-made string: this is what actually ships. It asserts the
     /// build plumbing did something, without pinning a number that changes every commit.

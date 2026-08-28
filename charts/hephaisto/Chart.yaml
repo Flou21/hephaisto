@@ -5,6 +5,13 @@ type: application
 home: https://github.com/Flou21/hephaisto
 sources:
   - https://github.com/Flou21/hephaisto
+annotations:
+  # Artifact Hub surfaces the licence from here. Worth setting explicitly: a chart that
+  # installs an AGPL program should say so where someone browsing charts will see it.
+  artifacthub.io/license: AGPL-3.0-only
+  artifacthub.io/links: |
+    - name: source
+      url: https://github.com/Flou21/hephaisto
 keywords:
   - sre
   - kubernetes

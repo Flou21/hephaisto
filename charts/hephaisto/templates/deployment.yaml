@@ -77,6 +77,12 @@ spec:
             - name: HEPHAISTO_MODE
               value: {{ .Values.mode | quote }}
 
+            {{- with .Values.sourceUrl }}
+            # AGPL section 13: the source of the build these users are talking to.
+            - name: Hephaisto__SourceUrl
+              value: {{ . | quote }}
+            {{- end }}
+
             # ---------------------------------------------------------------------------
             # Policy
             # ---------------------------------------------------------------------------

@@ -62,4 +62,32 @@ public static class BuildInfo
 
     /// <summary>The first 12 characters of <see cref="Commit"/> - enough to identify it, short enough to read.</summary>
     public static string ShortCommit => Commit.Length <= 12 ? Commit : Commit[..12];
+
+    /// <summary>Where this program's source lives. Upstream unless overridden.</summary>
+    /// <remarks>
+    /// Hephaisto is AGPL-3.0 and serves a web console, so most people who use it will do so
+    /// over a network and never receive a copy of the binary. AGPL section 13 entitles those
+    /// users to the source of the version they are talking to, which is why the console footer
+    /// links here rather than leaving it to a README nobody reading the UI can see.
+    /// <para>
+    /// IF YOU RUN A MODIFIED HEPHAISTO AND ANYONE ELSE CAN REACH IT, POINT THIS AT YOUR OWN
+    /// SOURCE - set <c>Hephaisto:SourceUrl</c> (chart value <c>sourceUrl</c>). Leaving it on
+    /// upstream while serving a fork offers your users source that is not the program they are
+    /// using, which is the one thing section 13 is about.
+    /// </para>
+    /// </remarks>
+    public const string SourceUrl = "https://github.com/Flou21/hephaisto";
+
+    /// <summary>
+    /// The source of the exact build that is running, when the commit is known - so the link
+    /// answers "the version I am talking to" rather than "whatever is on main today".
+    /// </summary>
+    public static string SourceUrlForThisBuild(string? configuredBase = null)
+    {
+        var root = string.IsNullOrWhiteSpace(configuredBase) ? SourceUrl : configuredBase.TrimEnd('/');
+
+        return Commit is "unknown" || root != SourceUrl
+            ? root
+            : $"{root}/tree/{Commit}";
+    }
 }

@@ -27,6 +27,19 @@ serviceAccount:
   annotations: {}
 
 # -----------------------------------------------------------------------------------------
+# AGPL section 13: where YOUR source lives
+# -----------------------------------------------------------------------------------------
+# Hephaisto is AGPL-3.0 and serves a web console, so the people who use it do so over a
+# network and never receive a copy of the binary. Section 13 entitles them to the source of
+# the build they are talking to, and the console footer links here to discharge that.
+#
+# Empty means upstream, which is correct ONLY if you run an unmodified Hephaisto. If you build
+# from a fork and anyone else can reach the UI or the API, point this at your own source -
+# offering users the upstream source of a program they are not running is the one thing
+# section 13 exists to prevent.
+sourceUrl: ""
+
+# -----------------------------------------------------------------------------------------
 # Where things live
 # -----------------------------------------------------------------------------------------
 # The namespace your Prometheus/Alertmanager/Grafana run in. Used by the NetworkPolicy, which

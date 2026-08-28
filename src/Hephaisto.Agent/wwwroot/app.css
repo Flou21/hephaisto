@@ -1250,3 +1250,19 @@ details > summary {
     color: var(--fg-faint);
     opacity: 0.75;
 }
+
+.hp-version-sep {
+    margin: 0 0.4rem;
+    color: var(--fg-faint);
+    opacity: 0.6;
+}
+
+.hp-version a {
+    color: var(--fg-faint);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.hp-version a:hover {
+    color: var(--fg-dim);
+}

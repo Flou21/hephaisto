@@ -41,6 +41,17 @@ RUN dotnet publish src/Hephaisto.Agent/Hephaisto.Agent.csproj \
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 
+# OCI metadata. `licenses` in particular: an image is the form most people will actually
+# receive this program in, and AGPL-3.0 is not what a reader assumes by default.
+ARG VERSION
+ARG COMMIT
+LABEL org.opencontainers.image.title="Hephaisto" \
+      org.opencontainers.image.description="An autonomous SRE agent that investigates Kubernetes incidents." \
+      org.opencontainers.image.source="https://github.com/Flou21/hephaisto" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}"
+
 # Non-root. The agent holds a ServiceAccount token that can delete pods in one namespace;
 # there is no reason for the process to also be root inside its own container.
 #
