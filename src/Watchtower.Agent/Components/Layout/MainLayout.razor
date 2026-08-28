@@ -1,0 +1,17 @@
+@inherits LayoutComponentBase
+
+<div class="wt-shell">
+    <NavMenu />
+    <main class="wt-main">
+        @Body
+    </main>
+</div>
+
+@* The default Blazor error UI, kept: a circuit that has faulted stops updating silently,
+   and an incident console that has quietly stopped refreshing is worse than one that says
+   so. *@
+<div id="blazor-error-ui">
+    <span class="glyph">!!</span>
+    The live connection dropped. This page is no longer updating.
+    <a href="" class="reload">Reload</a>
+</div>

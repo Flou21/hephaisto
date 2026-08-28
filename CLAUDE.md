@@ -206,6 +206,22 @@ server-mode support rather than anything in this repo. A xunit.v3 test project i
 executable, and running it directly works: all 228 tests discover and run, and the exit code
 is honest (0 on pass, non-zero otherwise), so CI is safe.
 
+### Local database
+
+`./scripts/dev-db.sh up` starts a throwaway Postgres 17 + pgvector on port **5433** and
+applies the migrations; `down` removes it. It is a plain container, not the cluster's
+database, so it cannot disturb anything in k3s.
+
+If the pull fails with *"keychain cannot be accessed"*, docker's credential helper cannot
+reach the macOS keychain from a non-interactive shell — run the script from a normal
+terminal, or unlock the keychain once with
+`security -v unlock-keychain ~/Library/Keychains/login.keychain-db`.
+
+Without a database the agent still starts and serves `/healthz`, `/metrics`, the Blazor UI
+and the webhooks; only the `/api/*` routes that read incidents return 500. That is the
+intended degradation — a monitoring agent that refuses to boot because its own database is
+down is useless at exactly the wrong moment.
+
 There is deliberately **no `global.json` in this repo.** Adding one turns a loud, actionable
 error into a quiet *"Zero tests ran"* — and in a repo whose tests are the safety argument,
 the loud failure is worth more. Revisit after a xunit.v3 bump.

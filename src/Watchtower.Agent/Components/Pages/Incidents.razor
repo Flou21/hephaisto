@@ -1,0 +1,292 @@
+@page "/"
+@inject IncidentQueries Queries
+@inject IIncidentNotifier Notifier
+@inject NavigationManager Nav
+@implements IDisposable
+
+<PageTitle>watchtower — incidents</PageTitle>
+
+<h1>incidents</h1>
+
+<div class="wt-filters">
+    <label>
+        state
+        <select value="@_state" @onchange="OnStateChanged">
+            <option value="open">open</option>
+            <option value="all">all</option>
+            @foreach (var s in Enum.GetValues<IncidentState>())
+            {
+                <option value="@s">@s</option>
+            }
+        </select>
+    </label>
+
+    <label>
+        kind
+        <select value="@_kind" @onchange="OnKindChanged">
+            <option value="">any</option>
+            @foreach (var k in Enum.GetValues<SignalKind>())
+            {
+                <option value="@k">@k</option>
+            }
+        </select>
+    </label>
+
+    <label>
+        namespace
+        <select value="@_namespace" @onchange="OnNamespaceChanged">
+            <option value="">any</option>
+            @foreach (var ns in _namespaces)
+            {
+                <option value="@ns">@ns</option>
+            }
+        </select>
+    </label>
+
+    <span class="wt-filter-status">
+        @if (_loading)
+        {
+            <span class="wt-muted">loading…</span>
+        }
+        else
+        {
+            <span class="wt-muted">@_incidents.Count shown · refreshed @Display.TimeOnly(_refreshedAt)</span>
+        }
+        @if (_error is not null)
+        {
+            <span class="wt-error" title="@_error"><span class="glyph">!!</span> query failed</span>
+        }
+    </span>
+</div>
+
+@if (_incidents.Count == 0 && !_loading)
+{
+    <p class="wt-empty">
+        No incidents match this filter.
+        @if (_state == "open")
+        {
+            <text>Nothing is currently wrong, or nothing has reached the agent — the
+            <a href="status">status page</a> says which.</text>
+        }
+    </p>
+}
+else
+{
+    <table class="wt-table wt-incidents">
+        <thead>
+            <tr>
+                <th class="c-state">state</th>
+                <th class="c-sev">sev</th>
+                <th class="c-kind">kind</th>
+                <th class="c-target">workload</th>
+                <th class="c-title">title</th>
+                <th class="c-num">signals</th>
+                <th class="c-diag">diagnosis</th>
+                <th class="c-time">opened</th>
+                <th class="c-time">duration</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var incident in _incidents)
+            {
+                <tr @key="incident.Id" class="wt-row" @onclick="() => Open(incident.Id)">
+                    <td class="c-state">
+                        @* Glyph AND word AND colour. Two of the three survive a bad monitor
+                           or a colour-blind reader; colour alone survives neither. *@
+                        <span class="wt-state @Display.StateClass(incident.State)">
+                            <span class="glyph">@Display.StateGlyph(incident.State)</span>
+                            @incident.State.ToString().ToLowerInvariant()
+                        </span>
+                        @if (incident.State == IncidentState.Escalated && incident.EscalationReason != EscalationReason.None)
+                        {
+                            <span class="wt-sub">@incident.EscalationReason</span>
+                        }
+                        @if (incident.State == IncidentState.Suppressed && incident.SuppressionReason != SuppressionReason.None)
+                        {
+                            <span class="wt-sub">@incident.SuppressionReason</span>
+                        }
+                    </td>
+                    <td class="c-sev">
+                        <span class="wt-sev @Display.SeverityClass(incident.Severity)">
+                            <span class="glyph">@Display.SeverityGlyph(incident.Severity)</span>
+                            @incident.Severity.ToString().ToLowerInvariant()
+                        </span>
+                    </td>
+                    <td class="c-kind mono">@incident.Kind</td>
+                    <td class="c-target mono" title="@incident.Namespace/@incident.Workload">
+                        <span class="wt-ns">@incident.Namespace</span>/@incident.Workload
+                    </td>
+                    @* An anchor as well as the row handler: the row is a convenience for a
+                       mouse, the link is what a keyboard and a middle-click need. *@
+                    <td class="c-title"><a href="incidents/@incident.Id">@incident.Title</a></td>
+                    <td class="c-num mono">@incident.SignalCount</td>
+                    <td class="c-diag">
+                        @if (incident.HasDiagnosis)
+                        {
+                            <span class="wt-yes"><span class="glyph">+</span> yes</span>
+                        }
+                        else if (incident.InvestigationCount > 0)
+                        {
+                            @* Investigated but concluded nothing. A different fact from never
+                               having tried, and the one worth looking at. *@
+                            <span class="wt-partial" title="@incident.InvestigationCount investigation(s), no surviving finding">
+                                <span class="glyph">~</span> none
+                            </span>
+                        }
+                        else
+                        {
+                            <span class="wt-no"><span class="glyph">-</span> not run</span>
+                        }
+                    </td>
+                    <td class="c-time mono" title="@Display.Timestamp(incident.OpenedAt)">@Display.Timestamp(incident.OpenedAt)</td>
+                    <td class="c-time mono">@Display.Duration(incident.DurationAt(_now))</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private IReadOnlyList<IncidentListItem> _incidents = [];
+    private IReadOnlyList<string> _namespaces = [];
+    private DateTimeOffset _refreshedAt;
+    private DateTimeOffset _now = DateTimeOffset.UtcNow;
+    private bool _loading = true;
+    private string? _error;
+
+    private string _state = "open";
+    private string _kind = string.Empty;
+    private string _namespace = string.Empty;
+
+    private CancellationTokenSource? _cts;
+
+    /// <summary>
+    /// The fallback tick. Live updates arrive through <see cref="IIncidentNotifier"/> the
+    /// moment the pipeline publishes one, but nothing publishes when an incident is merely
+    /// getting older - and the duration column is the one a human is watching during an
+    /// outage. This also keeps the page honest when a producer has not been wired up yet.
+    /// </summary>
+    private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(10);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _cts = new CancellationTokenSource();
+
+        await LoadAsync();
+
+        var ct = _cts.Token;
+        _namespaces = await SafeAsync(() => Queries.NamespacesAsync(ct), []);
+
+        _ = TickAsync(_cts.Token);
+        _ = ListenAsync(_cts.Token);
+    }
+
+    /// <summary>
+    /// Coalesced on purpose: a burst of ten step events during one investigation must
+    /// produce one reload, not ten. The event says "something moved"; it never carries the
+    /// data, so the page re-reads and lands on current truth whatever it missed.
+    /// </summary>
+    private async Task ListenAsync(CancellationToken ct)
+    {
+        try
+        {
+            await foreach (var _ in Notifier.SubscribeAsync(ct))
+            {
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task TickAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(RefreshInterval);
+
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        var ct = _cts?.Token ?? CancellationToken.None;
+
+        var query = new IncidentListQuery
+        {
+            State = Enum.TryParse<IncidentState>(_state, ignoreCase: true, out var s) ? s : null,
+            OpenOnly = _state == "open",
+            Kind = Enum.TryParse<SignalKind>(_kind, ignoreCase: true, out var k) ? k : null,
+            Namespace = string.IsNullOrEmpty(_namespace) ? null : _namespace,
+            Limit = 200,
+        };
+
+        _incidents = await SafeAsync(() => Queries.ListAsync(query, ct), _incidents);
+        _now = DateTimeOffset.UtcNow;
+        _refreshedAt = _now;
+        _loading = false;
+    }
+
+    /// <summary>
+    /// Keeps the last good result on failure rather than blanking the table.
+    /// </summary>
+    /// <remarks>
+    /// A console that empties itself when its database blips reads as "everything is fine",
+    /// which is the single most dangerous thing this page could say. Stale data plus a
+    /// visible error is honest; an empty table is not.
+    /// </remarks>
+    private async Task<T> SafeAsync<T>(Func<Task<T>> load, T fallback)
+    {
+        try
+        {
+            var result = await load();
+            _error = null;
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            return fallback;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            return fallback;
+        }
+    }
+
+    private async Task OnStateChanged(ChangeEventArgs e)
+    {
+        _state = e.Value?.ToString() ?? "open";
+        await LoadAsync();
+    }
+
+    private async Task OnKindChanged(ChangeEventArgs e)
+    {
+        _kind = e.Value?.ToString() ?? string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task OnNamespaceChanged(ChangeEventArgs e)
+    {
+        _namespace = e.Value?.ToString() ?? string.Empty;
+        await LoadAsync();
+    }
+
+    private void Open(Guid id) => Nav.NavigateTo($"incidents/{id}");
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+}
