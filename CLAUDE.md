@@ -195,6 +195,20 @@ dotnet minver -t v -p main.0  # 0.0.0-main.0.47    <- what MSBuild stamps
 Get this wrong in a build script and the image tag disagrees with the assembly inside it,
 which surfaces as `/api/version` reporting something the registry has never heard of.
 
+**Release candidates need no special handling.** `v0.0.1-rc1` is just a tag; MinVer resolves it
+to `0.0.1-rc1` and the release workflow branches on `case "$V" in *-*)` to withhold the moving
+image tags and mark the GitHub release prerelease. Measured, not assumed:
+
+```
+tag v0.0.1-rc1   -> 0.0.1-rc1      + 2 commits -> 0.0.1-rc1.2
+tag v0.0.1-rc2   -> 0.0.1-rc2
+tag v0.0.1       -> 0.0.1          + 2 commits -> 0.0.2-main.0.2
+```
+
+Note the second column: while an rc is the newest tag, main builds are `0.0.1-rc1.N`, not
+`0.0.2-main.0.N`. MinVer appends height to an existing prerelease rather than incrementing past
+it. Harmless - the ordering is still correct - but do not "fix" it.
+
 The dev image reports `0.0.0-dev` on purpose: there is no `.git` inside the build context,
 and a dev image reporting a release-shaped number is how a dev build gets mistaken for a
 release in a screenshot.

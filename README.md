@@ -246,6 +246,8 @@ to bump: [MinVer](https://github.com/adamralph/MinVer) asks git, so a release is
 v0.0.1` and nothing else.
 
 ```
+tag v0.0.1-rc1      ->  0.0.1-rc1
+  + 2 commits       ->  0.0.1-rc1.2
 tag v0.0.1          ->  0.0.1
 main, 42 commits    ->  0.0.2-main.0.42        (+<commit> as build metadata)
 ```
@@ -268,12 +270,39 @@ What is running is reported in four places, all reading the same assembly attrib
 `GET /api/version`, the console footer, OTel `service.version` on every span and metric, and
 `hephaisto_build_info{version,commit}` for joining against any other series.
 
+### Release candidates
+
+A release candidate is an ordinary tag: `git tag v0.0.1-rc1 && git push --tags`. It runs the
+same workflow and publishes the same artifacts as a real release — same multi-arch image build,
+same provenance attestation, same chart push — which is what makes it a genuine rehearsal of
+the publish path rather than a simulation of one.
+
+What an rc deliberately does *not* get is any "this is the current version" signal:
+
+| | release | release candidate |
+|---|---|---|
+| image `X.Y.Z` tag | yes | yes |
+| image `latest`, `0`, `0.0` | yes | **no** |
+| chart pushed to OCI | yes | yes |
+| selected by a range like `^0.0` | yes | **no** — Helm and SemVer skip prereleases |
+| GitHub "Latest release" badge | yes | **no** — marked prerelease |
+
+So an rc is fully installable by anyone who names it exactly (`--version 0.0.1-rc1`) and
+reachable by accident by no one. Iterate with `-rc2`, `-rc3`; when it is good, tag `v0.0.1` on
+the same commit.
+
+One MinVer behaviour worth knowing: while an rc is the newest tag, untagged builds on main
+report `0.0.1-rc1.2` rather than `0.0.2-main.0.2`. MinVer appends height to an existing
+prerelease instead of auto-incrementing past it. It is correct — `0.0.1-rc1.2` sorts below
+`0.0.1` — and it resolves the moment the final tag lands.
+
 ### Releasing
 
 `git tag v0.0.1 && git push --tags`. That is the whole procedure — `.github/workflows/release.yml`
 builds the image on native amd64 and arm64 runners, pushes by digest, joins them into one
 multi-arch tag, attaches build provenance, and publishes the chart to
-`oci://ghcr.io/flou21/charts` with `version == appVersion == image tag`.
+`oci://ghcr.io/flou21/charts` with `version == appVersion == image tag`, then creates the
+GitHub release with the chart tarball attached.
 
 **There is no deploy job, and there must not be one.** CI holds no kubeconfig and no cluster
 credential. It publishes versions that no running cluster references; a cluster moves only

@@ -229,3 +229,74 @@ jobs:
           grep -q "image: ${{ env.IMAGE }}:$V" /tmp/rendered.yaml \
             || { echo "::error::the published chart does not point at the published image tag"; exit 1; }
           echo "Published chart renders and points at ${{ env.IMAGE }}:$V"
+
+  # The tag becomes a visible release. Rancher-style release candidates work here with no
+  # special casing: `v0.0.1-rc1` is an ordinary tag that MinVer resolves to `0.0.1-rc1`, so it
+  # publishes byte-identical machinery to a real release - same image build, same provenance,
+  # same chart push - while every "this is the current version" signal stays switched off:
+  # no `latest`/`0`/`0.0` image tags (see publish-image), not GitHub's Latest release, and
+  # excluded from Helm and SemVer ranges, which skip prereleases by default.
+  #
+  # That is the point of an rc: it exercises the entire publish path for real, and a consumer
+  # who has pinned a range still cannot be moved onto it by accident.
+  github-release:
+    runs-on: ubuntu-latest
+    needs: [version, publish-image, publish-chart]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, fetch-tags: true }
+
+      - uses: azure/setup-helm@v4
+        with: { version: v3.16.4 }
+
+      # Attached so the release page carries something installable without an OCI login.
+      # Repackaged rather than passed between jobs: `helm package` is deterministic given the
+      # same tree and version, and an artifact handoff is one more thing to get wrong.
+      - name: Package the chart for attachment
+        run: |
+          set -euo pipefail
+          helm package charts/hephaisto \
+            --version '${{ needs.version.outputs.semver }}' \
+            --app-version '${{ needs.version.outputs.semver }}' \
+            --destination /tmp
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          V='${{ needs.version.outputs.semver }}'
+
+          FLAGS=(--verify-tag --generate-notes --title "v$V")
+          case "$V" in
+            *-*)
+              # A prerelease must never be GitHub's "Latest release" either - that badge is
+              # what a human reads the same way a range does.
+              FLAGS+=(--prerelease --latest=false)
+              KIND='**Release candidate.** Published for testing. Not for production, and not
+          selected by any version range.'
+              ;;
+            *)
+              FLAGS+=(--latest)
+              KIND=''
+              ;;
+          esac
+
+          cat > /tmp/notes.md <<EOF
+          $KIND
+
+          \`\`\`sh
+          docker pull ${{ env.IMAGE }}:$V
+          helm install hephaisto ${{ env.CHART_REPO }}/hephaisto --version $V \\
+            --namespace hephaisto --create-namespace
+          \`\`\`
+
+          Image digest: \`${{ needs.publish-image.outputs.digest }}\`
+          Licensed under AGPL-3.0. Source for this exact build: ${{ github.server_url }}/${{ github.repository }}/tree/${{ github.sha }}
+          EOF
+
+          gh release create "$GITHUB_REF_NAME" "${FLAGS[@]}" \
+            --notes-file /tmp/notes.md \
+            /tmp/hephaisto-"$V".tgz
