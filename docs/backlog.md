@@ -248,7 +248,7 @@ writes it.
 
 **Size.** M. **Blocks:** operating v0.2.0.
 
-### 9. Semantic search returns nothing, and the recorded cause was wrong
+### 9. Semantic search returns nothing, and the recorded cause was wrong — FIXED
 
 **Symptom.** `/api/incidents/search?q=out+of+memory` and `q=crash` return empty. `q=ImagePullBackOff`,
 `q=image` and `q=pod` work.
@@ -296,6 +296,27 @@ hit came back with a `SemanticRank`, so once the vector arm lands, any query wit
 will still claim no embedding generator is wired up.
 
 **Size.** M. **Blocks:** runbook memory in v0.1.0, which assumes this search works.
+
+**Fixed 2026-08-29.** All four parts: `IncidentQueries.SearchAsync` generates the query embedding,
+a `pg_trgm` word-similarity arm was added as a third CTE with a GIN index behind it, `SearchAsync`
+now returns which arms actually ran instead of leaving the UI to infer it, and `Search.razor` reads
+that. `IncidentSearchTests` is the reproduction, on a real Postgres.
+
+**Two corrections to the analysis above, both found by measuring rather than reasoning:**
+
+- **`q=out of memory` was not empty.** Against the dev cluster's 32 digests it returned **9** hits.
+  The stop-word reasoning is right about `out` and `of`, but the digests say "memory" in prose often
+  enough that `memori` matches anyway. `q=crash` was the real symptom, and it was exact: **0** hits
+  before, **10** after.
+- **The fusion needed restructuring, not just a third CTE.** The two-arm form was a `FULL OUTER
+  JOIN` with a different `SELECT` per combination of arms; three arms would have needed seven of
+  them, each repeating the scoring expression. It is now a `UNION ALL` folded with `GROUP BY`, which
+  is one scoring expression and makes a fourth arm three lines.
+
+Fixing this also surfaced that `scripts/dev-db.sh` and CI's service container never created
+`pg_trgm` — only the chart did — so the first migration to use `gin_trgm_ops` failed locally with
+`operator class "gin_trgm_ops" does not exist`. The `CREATE EXTENSION` now lives in the migration
+beside the index, matching how `vector` is handled.
 
 ### 10. `hephaisto.io/destructive-actions-allowed` is read by no code
 

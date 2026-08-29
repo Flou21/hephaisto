@@ -134,13 +134,12 @@ public static class IncidentEndpoints
     /// <c>GET /api/incidents/search?q=</c> - hybrid retrieval over incident digests.
     /// </summary>
     /// <remarks>
-    /// Passes a null embedding, so this runs lexical-only until the embedding stream lands.
-    /// That path is the designed degradation rather than a stub: an SRE query is usually
-    /// three literals and one concept, and the lexical arm is the one that finds the
-    /// literals. Adding the vector arm later improves paraphrase recall and changes nothing
-    /// else about this endpoint.
+    /// All three arms - full text, vector similarity, trigram - so an SRE query gets its
+    /// literals from the lexical and trigram arms and its paraphrase from the vector one. The
+    /// response carries which arms actually ran, because an arm that ran and matched nothing is
+    /// otherwise indistinguishable from an arm that never ran.
     /// </remarks>
-    private static async Task<Ok<IReadOnlyList<IncidentSearchHit>>> SearchAsync(
+    private static async Task<Ok<IncidentSearchResult>> SearchAsync(
         IncidentQueries queries,
         CancellationToken ct,
         [FromQuery] string? q = null,
