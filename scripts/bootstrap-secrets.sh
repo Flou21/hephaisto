@@ -11,13 +11,21 @@
 # Grafana can mint it.
 set -euo pipefail
 
-CONTEXT_REQUIRED="studio-rancher-desktop"
+# Overridable, but NOT defaulted away. The e2e harness points this at its own throwaway kind
+# cluster; everything else gets the same refusal it always did. Making it a variable weakens
+# nothing, because the guard's job is to stop an ACCIDENTAL context - and a caller that sets
+# this has said which cluster it means.
+CONTEXT_REQUIRED="${CONTEXT_REQUIRED:-studio-rancher-desktop}"
 OBS_NS="hephaisto-obs"
 APP_NS="hephaisto"
 
 # The guard is not ceremony. This script creates secrets and reads a Grafana admin password;
 # the same kubeconfig can reach production, and the release names here are the same ones used
 # there. Refuse rather than assume.
+#
+# CONTEXT_REQUIRED above can be set by a caller that knows which cluster it means - the e2e
+# harness sets it to its own kind context. That is a deliberate statement, not a bypass: the
+# check still runs, and still refuses anything else.
 ctx=$(kubectl config current-context)
 if [ "$ctx" != "$CONTEXT_REQUIRED" ]; then
   echo "REFUSING: context is '$ctx', expected '$CONTEXT_REQUIRED'" >&2
