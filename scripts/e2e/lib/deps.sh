@@ -132,10 +132,36 @@ deps_secrets() {
             if grep -q '^data:' "$secret_file" 2>/dev/null && [ -n "$from_file" ]; then
                 from_file=$(printf '%s' "$from_file" | base64 -d 2>/dev/null || true)
             fi
-            if [ -n "$from_file" ] && [ "$from_file" != "REPLACE_ME" ]; then
+            # An exact `!= "REPLACE_ME"` test is not enough: the committed placeholder is
+            # `REPLACE_ME_WITH_A_REAL_KEY`-shaped, 35 characters long, and would sail past it
+            # to become an API key that fails every single call with a 400. Prefix match.
+            case "$from_file" in
+                REPLACE*|CHANGE*|YOUR_*|"") from_file="" ;;
+            esac
+            if [ -n "$from_file" ]; then
                 export HEPHAISTO_GEMINI_API_KEY="$from_file"
                 say "using the Gemini key from secrets/hephaisto-llm.secret.yaml"
             fi
+        fi
+    fi
+
+    # Validate the key NOW rather than discovering it is wrong fifteen minutes in, when four
+    # investigations have failed and the failure looks like a bug in the agent. One cheap call.
+    if [ -n "${HEPHAISTO_GEMINI_API_KEY:-}" ]; then
+        local probe
+        probe=$(curl -sS --max-time 30 \
+            "https://generativelanguage.googleapis.com/v1beta/models/${JUDGE_MODEL:-gemini-3.7-flash}:generateContent" \
+            -H "x-goog-api-key: ${HEPHAISTO_GEMINI_API_KEY}" \
+            -H 'Content-Type: application/json' \
+            -d '{"contents":[{"role":"user","parts":[{"text":"ok"}]}],"generationConfig":{"maxOutputTokens":1}}' \
+            2>/dev/null | jq -r '.error.message // "ok"' 2>/dev/null || echo "unreachable")
+
+        if [ "$probe" != "ok" ]; then
+            warn "the Gemini key was rejected: $probe"
+            warn "continuing without investigations; detection is still exercised"
+            unset HEPHAISTO_GEMINI_API_KEY
+        else
+            say "Gemini key accepted"
         fi
     fi
 
