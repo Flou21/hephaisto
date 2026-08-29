@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using Microsoft.Extensions.Options;
 using Hephaisto.Agent.Persistence;
 using Hephaisto.Core.Telemetry;
 
@@ -71,6 +72,21 @@ public sealed class BudgetGaugePublisher : BackgroundService
             description:
                 "Fraction of each LLM budget window consumed. Deliberately NOT clamped above 1: "
                 + "a window sitting at 1.4 is a different fact from one sitting at 1.0.");
+
+        // The same poll, published a second way. Utilization answers "how close to the limit";
+        // this answers "how much is left", which is the question asked mid-incident and the one
+        // a fraction is bad at - 0.93 of an unremembered cap is not an amount of money.
+        //
+        // USD only, per the dashboard's metric-spec table. The hour-tokens window has no
+        // dollar value and is deliberately absent rather than folded in under a unit it does
+        // not share; hephaisto.llm.budget_utilization still covers it.
+        meter.CreateObservableGauge(
+            HephaistoTelemetry.Metrics.BudgetRemaining,
+            snapshot.MeasureRemaining,
+            unit: "{USD}",
+            description:
+                "US dollars left in each LLM cost window. Clamped at 0 - an overspent window "
+                + "has nothing left, and the size of the overshoot is on budget_utilization.");
     }
 
     public override void Dispose()
@@ -111,7 +127,19 @@ public sealed class BudgetGaugePublisher : BackgroundService
             var dayCost = await budget
                 .GetUtilizationAsync(LlmBudgetService.WindowDayCost, ct).ConfigureAwait(false);
 
-            snapshot.Set(hourTokens, hourCost, dayCost);
+            // Derived from the utilizations already read rather than from three more queries:
+            // used = utilization * cap, so remaining = cap * (1 - utilization). Reading the
+            // caps from options here also means a raised limit shows up on the next poll
+            // without a restart, which is how the rest of the budget path behaves.
+            var caps = scope.ServiceProvider
+                .GetRequiredService<IOptionsMonitor<LlmBudgetOptions>>().CurrentValue;
+
+            snapshot.Set(
+                hourTokens,
+                hourCost,
+                dayCost,
+                Remaining(caps.MaxCostUsdPerHour, hourCost),
+                Remaining(caps.MaxCostUsdPerDay, dayCost));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -125,6 +153,9 @@ public sealed class BudgetGaugePublisher : BackgroundService
             logger.LogError(ex, "Budget utilization poll failed; keeping the previous values");
         }
     }
+
+    private static double Remaining(decimal cap, double utilization) =>
+        Math.Max(0, (double)cap * (1 - utilization));
 }
 
 /// <summary>
@@ -145,16 +176,25 @@ public sealed class BudgetUtilizationSnapshot
     private double hourTokens;
     private double hourCost;
     private double dayCost;
+    private double hourCostRemaining;
+    private double dayCostRemaining;
 
     public bool Published { get; private set; }
 
-    public void Set(double hourTokensValue, double hourCostValue, double dayCostValue)
+    public void Set(
+        double hourTokensValue,
+        double hourCostValue,
+        double dayCostValue,
+        double hourCostRemainingValue,
+        double dayCostRemainingValue)
     {
         lock (gate)
         {
             hourTokens = hourTokensValue;
             hourCost = hourCostValue;
             dayCost = dayCostValue;
+            hourCostRemaining = hourCostRemainingValue;
+            dayCostRemaining = dayCostRemainingValue;
             Published = true;
         }
     }
@@ -177,6 +217,32 @@ public sealed class BudgetUtilizationSnapshot
         return
         [
             new Measurement<double>(t, new KeyValuePair<string, object?>("scope", LlmBudgetService.WindowHourTokens)),
+            new Measurement<double>(h, new KeyValuePair<string, object?>("scope", LlmBudgetService.WindowHourCost)),
+            new Measurement<double>(d, new KeyValuePair<string, object?>("scope", LlmBudgetService.WindowDayCost)),
+        ];
+    }
+
+    /// <summary>
+    /// The dollars-remaining callback. Absent until the first successful poll, for the same
+    /// reason <see cref="Measure"/> is: publishing a full budget the agent has not yet read
+    /// would be a claim, and after a restart mid-incident it is the wrong one.
+    /// </summary>
+    public IEnumerable<Measurement<double>> MeasureRemaining()
+    {
+        double h, d;
+
+        lock (gate)
+        {
+            if (!Published)
+            {
+                return [];
+            }
+
+            (h, d) = (hourCostRemaining, dayCostRemaining);
+        }
+
+        return
+        [
             new Measurement<double>(h, new KeyValuePair<string, object?>("scope", LlmBudgetService.WindowHourCost)),
             new Measurement<double>(d, new KeyValuePair<string, object?>("scope", LlmBudgetService.WindowDayCost)),
         ];

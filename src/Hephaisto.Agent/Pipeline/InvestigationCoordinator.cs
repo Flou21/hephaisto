@@ -47,6 +47,7 @@ public sealed class InvestigationCoordinator(
     IOptionsMonitor<PolicyOptions> policyOptions,
     IClock clock,
     HephaistoMetrics metrics,
+    Observability.IGrafanaAnnotator annotator,
     ILogger<InvestigationCoordinator> logger) : IIncidentInvestigator
 {
     public async Task InvestigateAsync(Guid incidentId, CancellationToken ct)
@@ -121,6 +122,7 @@ public sealed class InvestigationCoordinator(
             // stated graph. See EnlistAudit.
             incidents.TrackNewIncidentChildren(incident, failedEventsBefore);
 
+            await RecordOutcomeAsync(incident, summary: null, ct).ConfigureAwait(false);
             EnlistAudit(incident, null, "investigation.failed", ex.Message);
 
             await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
@@ -174,6 +176,8 @@ public sealed class InvestigationCoordinator(
         // AddInvestigationGraph and the save below may call SaveChangesAsync.
         incidents.TrackNewIncidentChildren(incident, eventsBefore);
 
+        await RecordOutcomeAsync(incident, PrimaryHypothesis(investigation), ct).ConfigureAwait(false);
+
         EnlistAudit(incident, investigation.Id, "investigation.completed",
             $"{investigation.TerminationReason}; {escalation.Reason}");
 
@@ -225,6 +229,35 @@ public sealed class InvestigationCoordinator(
             Detail = escalation.Detail,
         });
     }
+
+    /// <summary>
+    /// The closed counter and the MTTR histogram, for an incident that has just reached its
+    /// outcome state.
+    /// </summary>
+    /// <remarks>
+    /// Both escalation paths in this class are unconditional, so in Observe mode this is where
+    /// MTTR actually comes from. Call it after the transition - it reads
+    /// <see cref="Incident.State"/> for the <c>outcome</c> label.
+    /// </remarks>
+    private async Task RecordOutcomeAsync(Incident incident, string? summary, CancellationToken ct)
+    {
+        metrics.IncidentClosed(
+            incident.Kind,
+            incident.Severity,
+            incident.State,
+            clock.UtcNow - incident.OpenedAt);
+
+        // The hypothesis rides along, so the annotation on a latency graph says what the agent
+        // concluded rather than merely that it concluded something.
+        await annotator.IncidentClosedAsync(incident, summary, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The primary finding's hypothesis, for the Grafana annotation. Null when there is none -
+    /// which is the dominant outcome and must read as "no finding", not as an empty string.
+    /// </summary>
+    private static string? PrimaryHypothesis(Investigation investigation) =>
+        investigation.Findings.FirstOrDefault(f => f.IsPrimary)?.Hypothesis;
 
     /// <summary>
     /// Runs every proposed action past the policy engine, records the verdict on the action,

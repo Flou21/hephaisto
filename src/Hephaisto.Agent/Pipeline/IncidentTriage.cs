@@ -36,6 +36,7 @@ public sealed class IncidentTriage(
     IClock clock,
     IOptionsMonitor<IngestOptions> options,
     HephaistoMetrics metrics,
+    Observability.IGrafanaAnnotator annotator,
     ILogger<IncidentTriage> logger)
 {
     public async Task<TriageResult> TriageAsync(Signal signal, CancellationToken ct)
@@ -70,10 +71,15 @@ public sealed class IncidentTriage(
         if (recent >= opts.FlapThreshold)
         {
             var flapping = OpenIncident(signal, now);
+            metrics.IncidentOpened(flapping.Kind, flapping.Severity);
+            await annotator.IncidentOpenedAsync(flapping, ct).ConfigureAwait(false);
+
             stateMachine.Triage(flapping, "flap detection");
             stateMachine.Suppress(flapping, SuppressionReason.Flapping,
                 $"{recent} incidents for {signal.Target.WorkloadKey} in {opts.FlapWindow}");
             flapping.QuarantinedUntil = now + opts.FlapCooldown;
+
+            await RecordOutcomeAsync(flapping, now, ct).ConfigureAwait(false);
 
             await incidents.AddAsync(flapping, ct).ConfigureAwait(false);
             EnlistAudit(flapping, "incident.suppressed", "Flapping workload");
@@ -105,8 +111,10 @@ public sealed class IncidentTriage(
         var incident = OpenIncident(signal, now);
         await incidents.AddAsync(incident, ct).ConfigureAwait(false);
 
-        metrics.IncidentOpened(signal.Kind);
+        metrics.IncidentOpened(incident.Kind, incident.Severity);
         metrics.DetectionLatency(now - signal.FirstSeen);
+
+        await annotator.IncidentOpenedAsync(incident, ct).ConfigureAwait(false);
 
         stateMachine.Triage(incident, "new signal");
 
@@ -118,6 +126,7 @@ public sealed class IncidentTriage(
             stateMachine.Escalate(incident, EscalationReason.SelfSignal,
                 "signal concerns Hephaisto's own namespace");
 
+            await RecordOutcomeAsync(incident, now, ct).ConfigureAwait(false);
             EnlistAudit(incident, "incident.escalated", "Self-signal");
             await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
 
@@ -147,9 +156,28 @@ public sealed class IncidentTriage(
         // appended below.
         incidents.TrackNewIncidentChildren(incident, eventsBefore);
 
+        await RecordOutcomeAsync(incident, clock.UtcNow, ct).ConfigureAwait(false);
         EnlistAudit(incident, "incident.escalated", reason.ToString());
 
         await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The closed counter and the MTTR histogram, from an incident that has just been moved to
+    /// its outcome state.
+    /// </summary>
+    /// <remarks>
+    /// Called after the transition, never before: it reads <see cref="Incident.State"/> for the
+    /// <c>outcome</c> label, so calling it first would record every incident as still
+    /// <c>Investigating</c>.
+    /// </remarks>
+    private async Task RecordOutcomeAsync(Incident incident, DateTimeOffset now, CancellationToken ct)
+    {
+        metrics.IncidentClosed(incident.Kind, incident.Severity, incident.State, now - incident.OpenedAt);
+
+        // No diagnosis on this path - triage suppresses and escalates without ever running an
+        // investigation - so the annotation carries the state and nothing more.
+        await annotator.IncidentClosedAsync(incident, summary: null, ct).ConfigureAwait(false);
     }
 
     private static bool IsSelfSignal(Signal signal, IngestOptions opts) =>

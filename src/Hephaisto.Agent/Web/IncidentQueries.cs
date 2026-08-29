@@ -406,7 +406,15 @@ public sealed class IncidentQueries(
         var db = sp.GetRequiredService<HephaistoDbContext>();
         var audit = sp.GetRequiredService<IAuditRepository>();
 
-        if (!await db.Incidents.AnyAsync(i => i.Id == incidentId, ct))
+        // The kind comes back with the existence check rather than in a second round trip:
+        // hephaisto.human.feedback carries it as a label, because "which failure mode do we
+        // get wrong" is the question the false-positive rate is actually asked.
+        var kind = await db.Incidents
+            .Where(i => i.Id == incidentId)
+            .Select(i => (SignalKind?)i.Kind)
+            .FirstOrDefaultAsync(ct);
+
+        if (kind is null)
         {
             return null;
         }
@@ -441,6 +449,10 @@ public sealed class IncidentQueries(
         });
 
         await db.SaveChangesAsync(ct);
+
+        // After the save, not before: a counter incremented for a row that then failed to
+        // commit would overstate the only externally-supplied quality signal the agent has.
+        sp.GetRequiredService<HephaistoMetrics>().HumanFeedback(feedback, kind.Value);
 
         notifier.Publish(new IncidentLiveEvent
         {
