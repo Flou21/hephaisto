@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Hephaisto.Agent.Investigations;
 
 namespace Hephaisto.Eval;
 
@@ -49,6 +50,16 @@ public sealed record Cassette
     /// <summary>Provenance: which investigation this came out of, and when.</summary>
     public CassetteOrigin? Origin { get; init; }
 
+    /// <summary>
+    /// The environment card the prompt was composed with.
+    /// </summary>
+    /// <remarks>
+    /// Config-only in the agent and persisted nowhere, yet it is rendered into every system
+    /// prompt - cluster name, in-scope namespaces, datasource UIDs. A cassette replayed against
+    /// different values is measuring a different prompt, so it travels with the recording.
+    /// </remarks>
+    public EnvironmentCardOptions? Environment { get; init; }
+
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
@@ -77,6 +88,19 @@ public sealed record CassetteOrigin
 
     /// <summary>The model that was investigating. Not replayed; recorded so a run can say so.</summary>
     public string? ModelId { get; init; }
+
+    /// <summary>The commit the agent was built from when this was recorded.</summary>
+    public string? AgentCommit { get; init; }
+
+    /// <summary>
+    /// Hash of the prompt fragments and the runbook used.
+    /// </summary>
+    /// <remarks>
+    /// Prompts and runbooks are files on disk, read fresh on every compose, so a cassette is
+    /// silently tied to the commit that produced it. Recording the hash turns "this fixture is
+    /// measuring a prompt that no longer exists" from invisible into a warning.
+    /// </remarks>
+    public string? PromptHash { get; init; }
 }
 
 /// <summary>

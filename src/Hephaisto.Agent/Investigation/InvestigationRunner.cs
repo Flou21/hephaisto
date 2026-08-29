@@ -63,7 +63,7 @@ public sealed class InvestigationRunner(
     IChatClientFactory clients,
     PromptComposer prompts,
     IEnumerable<AIFunction> clusterTools,
-    GrafanaMcpToolProvider grafana,
+    IGrafanaToolProvider grafana,
     IGlobalLlmBudget globalBudget,
     Pipeline.InvestigationTracker tracker,
     IClock clock,

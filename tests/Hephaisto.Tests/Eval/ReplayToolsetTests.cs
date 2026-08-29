@@ -7,6 +7,7 @@ using Hephaisto.Agent.Llm;
 using Hephaisto.Core.Domain;
 using Hephaisto.Eval;
 using Hephaisto.Tests.Investigations;
+using static Hephaisto.Tests.Eval.EvalScaffolding;
 
 namespace Hephaisto.Tests.Eval;
 
@@ -22,12 +23,6 @@ namespace Hephaisto.Tests.Eval;
 /// </remarks>
 public class ReplayToolsetTests
 {
-    private const string LogLine = "FATAL: could not connect to mongo: connection refused";
-
-    private static readonly LlmPricing FreePricing = new(new Dictionary<string, ModelPrice>());
-
-    private static JsonElement Schema(string json) => JsonDocument.Parse(json).RootElement.Clone();
-
     private static readonly string LogsSchema =
         """{"type":"object","properties":{"pod":{"type":"string"}},"required":["pod"]}""";
 
@@ -190,11 +185,8 @@ public class ReplayToolsetTests
                 "c2", "conclude", ConcludeArgs(conversation, LogLine)),
             (_, _) => FakeChatClient.Text("Concluded."));
 
-        var planning = new FakeChatClient((_, _) => FakeChatClient.Text(
-            """{"summary":"Nothing to do.","noActionRequired":true,"actions":[]}"""));
-
         var outcome = await Runner(
-                new FakeChatClientFactory(FreePricing, investigation, planning),
+                new FakeChatClientFactory(FreePricing, investigation, NoActionPlanner()),
                 toolset.Functions)
             .RunAsync(NewIncident(), CancellationToken.None);
 
@@ -227,90 +219,12 @@ public class ReplayToolsetTests
                 "c2", "conclude", ConcludeArgs(conversation, "No output for this call was recorded")),
             (_, _) => FakeChatClient.Text("Concluded."));
 
-        var planning = new FakeChatClient((_, _) => FakeChatClient.Text(
-            """{"summary":"Nothing to do.","noActionRequired":true,"actions":[]}"""));
-
-        await Runner(new FakeChatClientFactory(FreePricing, investigation, planning), toolset.Functions)
+        await Runner(new FakeChatClientFactory(FreePricing, investigation, NoActionPlanner()), toolset.Functions)
             .RunAsync(NewIncident(), CancellationToken.None);
 
         var summary = toolset.Summarise();
         summary.Missed.Should().Be(1);
         summary.MissedTools.Should().Contain("get_pod_logs");
         summary.ToString().Should().Contain("1 missed");
-    }
-
-    // ------------------------------------------------------------------ scaffolding
-
-    private static Incident NewIncident() => new()
-    {
-        Title = "hephaisto-chaos/api is crash-looping",
-        Kind = SignalKind.CrashLoopBackOff,
-        Severity = Severity.Critical,
-        OpenedAt = DateTimeOffset.UnixEpoch,
-        LastSignalAt = DateTimeOffset.UnixEpoch,
-        Target = new TargetRef
-        {
-            Namespace = "hephaisto-chaos",
-            Kind = "Pod",
-            Name = "api-7d9f8-xk2p1",
-            OwnerKind = "Deployment",
-            OwnerName = "api",
-        },
-    };
-
-    private static InvestigationRunner Runner(
-        FakeChatClientFactory factory,
-        IEnumerable<AIFunction> tools)
-    {
-        var clock = new TestClock();
-
-        var grafana = new GrafanaMcpToolProvider(
-            new TestOptionsMonitor<GrafanaOptions>(new GrafanaOptions()),
-            clock,
-            NullLoggerFactory.Instance);
-
-        return new InvestigationRunner(
-            factory,
-            new PromptComposer(Options.Create(new EnvironmentCardOptions())),
-            tools,
-            grafana,
-            new NullGlobalLlmBudget(),
-            new Hephaisto.Agent.Pipeline.InvestigationTracker(clock),
-            clock,
-            new TestOptionsMonitor<LlmOptions>(new LlmOptions()),
-            new TestOptionsMonitor<InvestigationOptions>(new InvestigationOptions()),
-            NullLogger<InvestigationRunner>.Instance);
-    }
-
-    private static readonly System.Text.RegularExpressions.Regex StepIdInTranscript =
-        new(@"\[step ([0-9a-fA-F-]{36})\]", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
-
-    private static Dictionary<string, object?> ConcludeArgs(
-        IReadOnlyList<ChatMessage> conversation,
-        string excerpt)
-    {
-        var stepId = StepIdInTranscript.Match(FakeChatClient.Transcript(conversation)).Groups[1].Value;
-
-        var request = new ConcludeRequest
-        {
-            Summary = "The container cannot reach mongo and exits.",
-            Confidence = 0.85,
-            Findings =
-            [
-                new FindingDraft
-                {
-                    Category = "dependency",
-                    Hypothesis = "api cannot reach mongo and exits non-zero on startup.",
-                    Confidence = 0.85,
-                    Primary = true,
-                    Evidence = [new EvidenceDraft { StepId = stepId, Excerpt = excerpt }],
-                },
-            ],
-        };
-
-        return new Dictionary<string, object?>
-        {
-            ["request"] = JsonSerializer.SerializeToElement(request),
-        };
     }
 }
