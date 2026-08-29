@@ -685,6 +685,48 @@ They are not.
 
 ## Documentation asserting things that do not exist
 
+### 37. The judge grades a different incident than the one the run asserted on
+
+**Symptom.** On the eight-fixture run the harness asserted `8 incident(s) have a primary
+finding`, and the judge then skipped c5, c8 and c10 with *"no primary finding"*. Both statements
+cannot be true of the same incidents.
+
+**Evidence.** `scripts/e2e/lib/judge.sh` resolves a fixture to an incident independently of
+`chaos.sh`, and the run collected detail for **17** incidents against 8 fixtures - a freshly built
+cluster opens its own (ReadinessFlapping on Grafana, Unschedulable on loki-0), and one fixture
+routinely opens two. Picking a different row than the one that was graded is the obvious way to
+get "no primary finding" for an incident that has one. c10 is the exception and is honest: it
+opened no incident at all on that run.
+
+**Why it is still open.** It costs grading coverage rather than correctness - 5 of 5 graded were
+correct, but three gradeable fixtures went ungraded, so the denominator is quietly smaller than
+the corpus. That is the same class of dishonesty the eval harness was built to remove.
+
+**Fix.** Resolve fixture to incident once, in `chaos.sh`, and have the judge grade the incident
+the detection assertion already matched.
+
+**Size.** S.
+
+### 38. `approval_source` reads `Ui` on actions nobody approved
+
+**Symptom.** Two `PatchResources` actions the policy engine **Denied** carry
+`approval_source = Ui`, which reads as "a human typed a name into the console" for actions no
+human ever saw. `approved_by` on the same rows is correctly null.
+
+**Evidence.** `ApprovalSource` is a non-nullable enum whose zero value is `Ui`
+(`Core/Domain/Enums.cs:186`), and `ActionPlan.ApprovalSource` is never set on the denial path -
+so the default is written verbatim. Found on the first eight-fixture e2e run; the four-fixture
+default set never produced an action proposal.
+
+**Why it is still open.** Not a safety issue: nothing executed, and `approved_by` - the field the
+audit trail actually rests on - is honest. It is misleading data on a screen, and the audit
+trail is exactly the place where misleading beats absent by the smallest margin.
+
+**Fix.** Make it nullable, or add a `NotApplicable = 0` member and shift `Ui`. Both are schema
+changes, which is why this is written down rather than done inside the v0.1.0 fix pass.
+
+**Size.** S for the enum, M with the migration and the UI that reads it.
+
 ### 20. The MVP acceptance test requires Grafana annotations, which are unbuilt
 
 **Status: fixed 2026-08-29** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.

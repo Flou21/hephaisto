@@ -33,6 +33,13 @@ the reason written down: c6 does not fire on `local-path` and c9 would evict the
 stack, so both need replacement fixtures that do not exist yet, and inventing them is open-ended
 work against a gate that is already met at 22/24.
 
+**rc3 installs and runs: 65 assertions passed, 7 of 8 fixtures classified, 5/5 graded correct,
+31 Grafana annotations written and read back, and Observe mode held.** Three failures, none of
+them the agent: the harness waited for a *count* of incidents rather than one per fixture, so the
+slowest fixture (c10) was failed while still on schedule; the `approvedBy` assertion covered
+actions the policy engine had **Denied**, which have no approver by construction; and the console
+phase had no timeout, so a contended browser install hung the run. rc4 carries those three fixes.
+
 **`v0.1.0-rc2` does not install, and rc3 is the fix.** The e2e caught it at the phase it exists to
 cover: `helm install` timed out with `Deployment/hephaisto not ready`. Making the agent serve on a
 non-owner role had repointed the registered `DbContext` at that role, and migrations run through

@@ -165,8 +165,15 @@ kubectl -n hephaisto exec deploy/postgres -- psql -U hephaisto -c \
   "select approval_source, approved_by, count(*) from actions group by 1,2;"
 ```
 
-No row may have a null or empty `approved_by`. Automatic actions record
-`hephaisto/auto` with `approval_source = Auto`.
+No **approved** row may have a null or empty `approved_by` - that is, none in
+`Approved`, `Executing`, `Executed`, `Failed`, `Verifying`, `Verified` or `RolledBack`. Automatic
+actions record `hephaisto/auto` with `approval_source = Auto`.
+
+A `Denied`, `Proposed`, `AwaitingApproval` or `Expired` action legitimately has **no** approver,
+and requiring a name there would mean inventing one. The e2e asserted over every row until the
+eight-fixture run produced two denied `PatchResources` proposals and reported the audit trail as
+broken; see [backlog #38](backlog.md#38-approvalsource-reads-ui-on-actions-nobody-approved) for
+the related `approval_source` wrinkle, which is real and separate.
 
 ## 15. `Off` actually stops the agent, and lets go again
 

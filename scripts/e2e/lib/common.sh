@@ -183,6 +183,51 @@ wait_for() {
     return 1
 }
 
+# Kill a process and everything it spawned.
+#
+# Not optional, and not paranoia. The failure that motivated it: a `playwright install`
+# whose parent exited while its download child kept the browser-cache lock, so the NEXT run
+# blocked forever on a lock held by a process nobody was waiting for. Killing only the pid
+# reproduces exactly that.
+kill_tree() {
+    local pid="$1" child
+
+    for child in $(pgrep -P "$pid" 2>/dev/null); do
+        kill_tree "$child"
+    done
+
+    kill -KILL "$pid" 2>/dev/null || true
+}
+
+# Run a command under a wall-clock deadline. Returns 124 if it had to be killed.
+#
+# macOS ships neither timeout(1) nor setsid(1), so this is done by hand. Every other wait in
+# this harness is bounded; the console phase was not, and a contended browser install hung a
+# whole run with no output for as long as anyone let it. An unbounded step in a test suite is
+# indistinguishable from a passing one until someone looks.
+run_bounded() {
+    local seconds="$1" label="$2"
+    shift 2
+
+    "$@" &
+    local pid=$! waited=0
+
+    while kill -0 "$pid" 2>/dev/null; do
+        if [ "$waited" -ge "$seconds" ]; then
+            warn "$label exceeded ${seconds}s; killing it and its children"
+            kill_tree "$pid"
+            wait "$pid" 2>/dev/null || true
+
+            return 124
+        fi
+
+        sleep 5
+        waited=$(( waited + 5 ))
+    done
+
+    wait "$pid"
+}
+
 require_tools() {
     local missing=()
     # yq and bc were used but never required. Their absence is silent and WRONG rather than

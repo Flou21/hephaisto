@@ -252,9 +252,22 @@ if should_run ui && [ "$RUN_UI" = "1" ]; then
     # missing entirely is still a skip - that is a real "not present" - but a file that exists
     # and merely is not chmod +x is not a reason to stop testing the console.
     if [ -f "$E2E_DIR/ui/run.sh" ]; then
-        HEPHAISTO_URL="http://127.0.0.1:$PF_PORT_APP" bash "$E2E_DIR/ui/run.sh" \
-            && pass "playwright suite" \
-            || fail "playwright suite" "see $E2E_DIR/ui/playwright-report"
+        # Bounded, because this phase is the one that hung a whole run with no output.
+        # Playwright serialises browser installs on a lock in ~/.cache/ms-playwright, so a
+        # second install - another run, another project, a leftover process - blocks this one
+        # indefinitely. Every other wait here has a deadline; this one did not, and an
+        # unbounded step looks exactly like a passing one until somebody checks.
+        export HEPHAISTO_URL="http://127.0.0.1:$PF_PORT_APP"
+
+        UI_STATUS=0
+        run_bounded "${UI_TIMEOUT:-900}" "the console suite" bash "$E2E_DIR/ui/run.sh" || UI_STATUS=$?
+
+        case "$UI_STATUS" in
+            0)   pass "playwright suite" ;;
+            124) fail "playwright suite" \
+                     "timed out after ${UI_TIMEOUT:-900}s; a contended browser install is the usual cause" ;;
+            *)   fail "playwright suite" "see $E2E_DIR/ui/playwright-report" ;;
+        esac
     else
         skip "playwright suite" "scripts/e2e/ui/run.sh not present"
     fi

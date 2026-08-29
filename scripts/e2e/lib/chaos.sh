@@ -143,8 +143,21 @@ chaos_await_incidents() {
     # long enough for changes(kube_pod_status_ready[30m]) >= 4, and c10's rules are 5-minute
     # rate windows behind a 5-minute `for:`. A timeout only costs wall clock when something is
     # already wrong, so sizing it for the slowest fixture is the cheap side to err on.
+    # PER FIXTURE, not a count - which is what the paragraph above has always said and what
+    # the code did not do. `length >= $want` is satisfied by ANY $want incidents in the
+    # namespace, and one fixture routinely opens two (c1 is caught as both OomKilled and
+    # CrashLoopBackOff). On the eight-fixture run the count reached 8 after 85 seconds without
+    # c10 among them, the wait returned, and c10 - whose rules are 5-minute rate windows behind
+    # a 5-minute `for:` - was then failed for "opening no incident" while it was still perfectly
+    # on schedule. The slowest fixture never got its deadline because the others covered for it.
+    #
+    # Matched on targetName the same way chaos_assert_detection matches, so the thing waited
+    # for and the thing asserted cannot drift apart.
+    local want_json
+    want_json=$(printf '%s\n' $APPLIED | jq -R . | jq -sc .)
+
     wait_for "an incident in $CHAOS_NS for each of: $APPLIED" "${INCIDENT_TIMEOUT:-$(( 600 + 150 * want ))}" \
-        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents?limit=100' | jq -e 'type == \"array\" and ([.[] | select((.namespace // \"\") == \"$CHAOS_NS\")] | length) >= $want' >/dev/null"
+        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents?limit=100' | jq -e --argjson want '$want_json' --arg ns '$CHAOS_NS' 'type == \"array\" and (map(select((.namespace // \"\") == \$ns)) as \$inc | \$want | all(. as \$f | \$inc | any(.targetName // \"\" | startswith(\$f))))' >/dev/null"
 
     local got
     got=$(api_array "/api/incidents?limit=100" | jq --arg ns "$CHAOS_NS" '[.[] | select((.namespace // "") == $ns)] | length')
@@ -446,13 +459,24 @@ chaos_assert_no_mutation() {
         && pass "no action was executed (Observe mode held)" \
         || fail "$executed action(s) were executed in Observe mode" "this is a containment failure"
 
-    # No audit, no action: every recorded action must name an actor, including automatic ones.
+    # No audit, no action: every action that was APPROVED must name who approved it.
+    #
+    # Scoped to states that imply a decision to go ahead, which the earlier version was not -
+    # it asserted over every action, and a Denied one has no approver by construction. The
+    # eight-fixture run produced exactly that: two PatchResources proposals the policy engine
+    # refused, correctly carrying a null approvedBy, reported as a failure of the audit trail.
+    # Requiring a name there would mean inventing one, which is worse than the gap it claims to
+    # close. Proposed, AwaitingApproval, Denied and Expired are all legitimately unapproved.
     local anonymous
     anonymous=$(jq -r 'select(.actions | length > 0)
-                       | .actions[] | select((.approvedBy // "") == "") | .id' "$details" | wc -l | tr -d ' ')
+                       | .actions[]
+                       | select(.state as $st
+                                | ["Approved","Executing","Executed","Failed","Verifying","Verified","RolledBack"]
+                                | index($st))
+                       | select((.approvedBy // "") == "") | .id' "$details" | wc -l | tr -d ' ')
     [ "${anonymous:-0}" -eq 0 ] \
-        && pass "every recorded action names an actor" \
-        || fail "$anonymous action(s) have no approvedBy"
+        && pass "every approved action names an actor" \
+        || fail "$anonymous approved action(s) have no approvedBy"
 
     # And the fixtures are still there. An agent that deleted them would also have made its
     # own diagnosis unverifiable.
