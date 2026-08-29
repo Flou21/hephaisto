@@ -3,436 +3,450 @@
 Written against what is **actually in the repo**, not against what was planned. Where the two
 disagree, this file follows the code.
 
-## Where the project stands today
+This file is **forward-looking only**. Two companions carry the rest:
+
+- [`backlog.md`](backlog.md) — everything known-broken and unfixed, with the evidence for each.
+  Milestones below link into it by number.
+- [`history.md`](history.md) — what is already done, and what was learned doing it.
+
+That rule has already earned its keep. The cause recorded here for the semantic-search bug turned
+out to be wrong, and the correction was only possible because this document is meant to be checked
+against the code rather than believed — see [backlog #9](backlog.md#9-semantic-search-returns-nothing-and-the-recorded-cause-was-wrong).
+
+---
+
+## Where it stands
+
+`v0.0.1` shipped on 2026-08-29: multi-arch image and Helm chart on GHCR, build provenance attested,
+both verified pulling anonymously.
 
 **Built, and verified by running it:**
 
 | Area | State |
 |---|---|
 | `Hephaisto.Core` — domain, state machine, policy engine, digester, oscillation, fingerprinting | Complete, zero I/O, ~500 unit tests |
-| Persistence — Postgres 17 + pgvector, migrations, hybrid RRF search, LLM budget, audit trail | Complete; admission is one `Serializable` transaction |
+| Persistence — Postgres 17 + pgvector, migrations, hybrid search, LLM budget, audit trail | Complete; admission is one `Serializable` transaction |
 | Kubernetes — watchers, 17 read-only tools, RBAC self-check, signal mapping | Complete, read-only by construction |
 | LLM — Gemini client, grafana-mcp, three-phase loop, grounding verifier, budget guard | Complete |
 | Ingest — dedup, flap suppression, correlation, storm breaker | Complete |
 | Blazor UI + HTTP API + webhooks | Complete |
-| Observability stack, alert rules, 10 chaos fixtures, RBAC manifests, Tiltfile | Complete, chart-rendered and PromQL-parsed |
+| Kill switch — three independent arms, most restrictive wins | Complete |
+| Observability stack, alert rules, 10 chaos fixtures, RBAC manifests, Tiltfile | Complete |
+| Release — three channels (release / rc / nightly), and `scripts/e2e/run.sh` | Complete |
 
-**Not built.** All of it is Phase 2 or later by design, except the first row:
+**What it does not do yet:** act on anything, tell anyone, or look like a project rather than a
+repository. That is what the milestones below are.
 
-| Missing | Belongs to |
+### The order, and why
+
+Diagnosis quality → acting → notifications → design language → open source.
+
+Each stage is a precondition for the next being worth doing. Acting on diagnoses that are wrong is
+worse than not acting. Paging a team with diagnoses nobody trusts teaches them to ignore the
+channel. Building three surfaces before there is a design language means building them twice. And
+marketing any of it before the rest is true is the one ordering that cannot be undone.
+
+---
+
+## v0.1.0 — Diagnosis you can trust
+
+**The gate on everything after it.**
+
+Accuracy stands at **3 findings from 11 runs**, and the interpretation matters more than the
+number: the model was not reasoning badly, it was **running out of steps in the wrong place**. On
+one `Unschedulable` incident it had the answer at step 8 from `get_events`, then spent 6 of its 12
+steps on Loki label discovery and reached `list_nodes` at step 24. Full record in
+[`history.md`](history.md#the-first-accuracy-measurement--2026-08-28).
+
+So the number to move is not "accuracy" directly.
+
+### Work, cheapest first
+
+1. **Build the eval harness first.** Replay recorded incidents against recorded tool output.
+   Without it every change below is a guess that costs real money per evaluation. `scripts/e2e/run.sh`
+   is the integration-level instrument; this is the unit-level one.
+   ([backlog #27](backlog.md#27-addhephaistollmwithoutpersistence-has-no-call-sites) is dead code
+   written for exactly this and should be adopted or deleted here.)
+2. **Raise `MaxSteps`** from 12 (`Llm/LlmOptions.cs`, `InvestigationBudgetOptions`). The simplest
+   experiment, and the one that says whether the ceiling is the binding constraint or an excuse.
+3. **Order tools by `SignalKind`** — node and event tools before log search on a scheduling
+   incident. The runbooks already carry the kind; nothing uses it to shape tool priority.
+4. **Charge label and metadata discovery differently from evidence gathering**, so exploring Loki's
+   label space does not consume the budget meant for answering.
+5. **Runbook memory** — retrieve the top-3 similar resolved incidents into the prompt. **Depends on
+   [backlog #9](backlog.md#9-semantic-search-returns-nothing-and-the-recorded-cause-was-wrong)**:
+   the storage exists, but the search it would use is running on one arm.
+6. **Grafana annotations on state transitions.** Deferred since the MVP, and it also unblocks
+   [backlog #20](backlog.md#20-the-mvp-acceptance-test-requires-grafana-annotations-which-are-unbuilt).
+
+### Measurement integrity — prerequisites, not extras
+
+A milestone whose entire purpose is producing a trustworthy number cannot ship on broken
+instruments. All of these are in the backlog and all of them land here:
+
+- [#1](backlog.md#1-the-e2e-playwright-phase-reports-pass-on-a-zero-assertion-run) the console phase
+  passes without asserting anything — 5 tests, 0 expected, 5 skipped, reported green
+- [#3](backlog.md#3-hephaistohumanfeedback-is-never-recorded) the false-positive rate is never
+  recorded, though it is one of the three numbers this milestone is defined by
+- [#4](backlog.md#4-hephaistoincidentsclosed-and-hephaistoincidentduration-are-never-recorded) MTTR
+  is never recorded
+- [#5](backlog.md#5-hephaistoincidentsopen-and-hephaistobudgetremaining-have-no-instrument-at-all)
+  two more metrics have no instrument at all — then the guard test, which must assert *is recorded*,
+  not *is created*, or it passes on #3 and #4
+- [#6](backlog.md#6-audit-immutability-is-not-enforced-in-the-deployed-database) audit immutability
+  is unenforced in the deployed database. "No audit, no action" is a standing constraint.
+
+### Exit criterion
+
+**≥ 7/10 correct root cause over ≥ 10 seeded scenarios**, plus cost per investigation, time to
+diagnosis, and the false-positive rate from the thumbs-up/down.
+
+**The bar needs a different instrument than it has.** Only 4 of the 10 chaos fixtures run in an
+automated gate, each of the other six excluded for a real reason
+([backlog #2](backlog.md#2-six-of-ten-chaos-fixtures-never-run-in-an-automated-gate)). So the
+**eval harness owns this number**, over recorded scenarios including the manually-run fixtures, and
+the kind harness stays a smaller integration gate. Say which instrument produced which number
+rather than quietly counting four.
+
+**If it lands at 4/10, v0.2.0 does not start.** That is the entire reason the executor was left
+unbuilt, and this file will keep saying so.
+
+---
+
+## v0.2.0 — It acts, carefully
+
+Gated on v0.1.0's number.
+
+**This is much less greenfield than it looks.** Almost everything except the executor already
+exists, built and tested, waiting for a caller:
+
+| Component | State |
 |---|---|
-| `HEPHAISTO_MODE` env var and ConfigMap kill switches | **Should have been MVP — see below** |
-| Grafana annotations on state transitions | MVP item 10, deferred |
-| `ActionExecutor`, `dryRun=All` shadow, `PreState` snapshots | Phase 2 |
-| `VerificationScheduler`, auto-rollback | Phase 2 |
-| Approval workflow and its UI | Phase 2 |
-| Kubernetes Event mirroring onto target objects | Phase 2 |
-| Runbook memory (retrieving similar past incidents into the prompt) | Phase 2 |
-| Eval harness | Phase 2 |
+| `ActionRepository.TryAdmitActionAsync` | Complete `Serializable` admission — workload row lock, kill switch re-resolved inside the transaction, quarantine, five budget and cooldown gates, INSERT plus audit row in one commit. **Zero callers.** This is the seam. |
+| `PolicyEngine` | Complete, default-deny, 14 numbered gates. Already runs for real on every investigation, even in Observe. |
+| `AgentAction.DryRun` / `PreState` / `PostState` / `RollbackSpec` / `Outcome` / `IsRollbackOf` | Schema, migrations, indices. **Written by nothing.** |
+| `Verification` entity | Table, DbSet, indices. **Never constructed.** |
+| `OscillationDetector` | Pure, fully tested. **Never called.** |
+| `AwaitApproval` / `BeginActing` / `BeginVerifying` / `Resolve` / `Reopen` | Implemented; **called only from tests**. |
+| Write RBAC Role — delete pods, patch workloads and `*/scale`, delete jobs, create events | Rendered per `policy.actionableNamespaces`, empty by default. **Entirely unused.** |
+| `ActionExecuted` / `ActionRolledBack` / `VerificationResult` metrics | Instrumented, zero callers |
+
+### Order
+
+1. **Fix the false claim in the prompt first**
+   ([#7](backlog.md#7-the-planning-prompt-claims-a-verification-and-rollback-mechanism-that-does-not-exist)).
+   The model is currently told that actions are checked at 60s / 5m / 15m and that a failed check
+   triggers a rollback. Nothing of the sort exists. Correct the text immediately — see
+   [Housekeeping](#housekeeping--small-and-now) — and build the mechanism at step 4.
+2. **Wire the mode writer** ([#8](backlog.md#8-nothing-writes-the-database-mode-arm)). The arm
+   documented as "the one a human flips from the UI" has no UI, no API, and no way to clear a
+   tripped runaway latch without opening Postgres. A prerequisite for operating Act mode, not a
+   nicety.
+3. **`ActionExecutor`**, calling `TryAdmitActionAsync`, with `dryRun=All` and `PreState` snapshots.
+   **Run in `dryrun` for two weeks.** The would-have-acted log is the evidence for enabling
+   anything.
+4. **`VerificationScheduler`** at T+60s / T+5m / T+15m, plus auto-rollback — making (1) true.
+5. **Oscillation detector wired to quarantine.** The pure logic is built and tested; nothing calls
+   it, and only flap suppression writes `QuarantinedUntil` today.
+6. **Approval workflow and UI**, writing `ApprovedBy` and `ApprovalSource`.
+7. **Wire the destructive-actions label into the policy engine**
+   ([#10](backlog.md#10-hephaistoiodestructive-actions-allowed-is-read-by-no-code)). It is applied
+   by manifests, documented as "a second independent confirmation", and asserted by the e2e
+   harness — and read by no code. `TargetLabels` is passed empty, so no label check of any kind is
+   live.
+8. **Bind the write `RoleBinding` — into `hephaisto-chaos` only.**
+9. **Enable `auto` for exactly one action type: `restart_pod`.**
+10. **Mirror actions to Kubernetes Events** on the target object, so `kubectl describe pod` shows
+    why something was restarted. That is where an on-call engineer actually looks, and the RBAC
+    already grants `create` on events for it.
+11. **Give incidents a path to `Resolved`**
+    ([#11](backlog.md#11-there-is-no-production-path-to-resolved)). Today the only production
+    terminal states are `Suppressed` and `Escalated`. An agent that fixes something and cannot close
+    the incident is not finished — and MTTR has nothing to measure until this exists.
+12. **Start `Spans.ActionExecute` and `Spans.Verification`** and record the three action metrics.
+    All are declared and drawn already.
+
+**Done when** a transiently-failing pod in `hephaisto-chaos` is auto-restarted, verification passes,
+the incident reaches `Resolved`, and the audit trail reconstructs the whole decision **without
+reading a log file** — and a seeded oscillating workload is quarantined after 3 attempts instead of
+looping forever.
 
 ---
 
-## Step 0 — close the kill-switch gap — **done, 2026-08-28**
+## v0.3.0 — It reaches people
 
-**The design specified three independent kill switches. Only one was wired.**
+Today **nothing leaves the process.** Escalation is a database state change, an `incident_events`
+row, an audit row, and a nudge to any open browser tab. There is no outbound HTTP anywhere in
+`src/` — no `AddHttpClient`, no `PostAsJsonAsync`, no notification package. The only out-of-band
+path to a human is *your* Alertmanager firing on Hephaisto's self-check rules, and that rule file
+ships disabled.
 
-`AgentMode` was read solely from the `agent_mode` database row. `HEPHAISTO_MODE` was set by
-`infra/app/hephaisto.yaml` and by the AppHost, the manifest carried a ConfigMap `mode` key
-with a comment saying the two "must agree", and `HEPHAISTO_SWITCHES_PATH` pointed at a
-`switches.yaml` — and **no code read any of them.**
+**Scope: two channels — a generic webhook and Microsoft Teams.** Slack, email/SMTP and
+PagerDuty/Opsgenie are deliberately deferred to [Later](#later--a-menu-not-a-queue). Building
+`INotificationChannel` properly is what makes each of them a small, self-contained addition
+afterwards.
 
-That was harmless only because the missing controls failed safe. The dangerous direction was
-the one that looked safe:
+### Three traps to design around
 
-> An operator who sets `HEPHAISTO_MODE=observe` to **stop** an agent running in `auto` would
-> find it keeps acting. The big red button is painted on.
+**`IIncidentNotifier` is not the transport.** It is an in-process `Channel<T>` fan-out to Blazor
+circuits, bounded at 64 with `DropOldest`, and it never blocks and never throws. That makes it a
+fine *hook point* and a catastrophic *delivery mechanism* — it is designed to drop. Delivery needs
+an **outbox with retry**, because "escalated, and nobody was told" is the worst failure this system
+has, and a pod restart must not be able to cause it.
 
-### What was built
+**Microsoft retired Office 365 connectors in Teams.** The classic "Incoming Webhook" URL in every
+tutorial is deprecated and being switched off. The supported path is a **Power Automate Workflows**
+trigger, or a Graph-based bot for anything interactive. Confirm against current Microsoft
+documentation when implementing rather than following an old blog post into a dead end.
 
-`ModeResolver` in `Hephaisto.Core/Safety` resolves the arms, and `KillSwitch` in
-`Hephaisto.Agent/Safety` supplies them. **The most restrictive arm wins** — implemented as
-`Min` over `AgentMode`, whose declaration order (`Off < Observe < DryRun < Auto`) is therefore
-load-bearing and pinned by its own test. No arm can ever raise the mode, only lower it.
+**A notifier can amplify a storm.** Ingest has dedup, flap suppression and a storm circuit breaker.
+The outbound side inherits none of it. Per-channel rate limiting, and reuse of the existing
+fingerprint, are part of the feature rather than a follow-up.
 
-The distinction that carries the safety property is **silent versus failed**:
+### Order
 
-| Arm state | Meaning | Effect |
-|---|---|---|
-| Silent | not configured here (no env var, no mounted ConfigMap) | does not constrain |
-| Declared | configured and understood | constrains to its value |
-| Malformed | configured, not parseable (`HEPHAISTO_MODE=atuo`) | constrains to `Observe` |
-| Unreadable | configured, not reachable (file gone, Postgres down) | constrains to `Observe` |
+1. **`INotificationChannel`, routing rules, and the outbox.** Which kinds, severities and namespaces
+   go where; at-least-once delivery with retry. Two channels is the right number to design against —
+   one lets channel-specific detail leak into the core.
+2. **Generic webhook first.** No third-party account, so it is testable in the e2e harness against a
+   local sink, and it proves the outbox and routing before any vendor-shaped payload is involved.
+   It is also the escape hatch for anyone using something this milestone does not ship.
+3. **Microsoft Teams**, via a Power Automate Workflows trigger posting an Adaptive Card.
+4. **Egress NetworkPolicy.** The chart is `policyTypes: [Ingress]` only. Nothing forces this today,
+   but once the agent posts outward it is worth being explicit about where it may talk.
+5. **Deep links in every message.** `generate_deeplink` is already an allowlisted grafana-mcp tool,
+   so a card can carry a real Grafana Explore link beside the diagnosis, plus a link to the incident.
+6. **Secrets by `secretRef` only.** A Workflows trigger URL is a bearer credential in a query
+   string and must never be a plaintext value.
 
-Collapsing malformed into silent is what would invert the whole thing: a typo would *remove*
-the restriction the operator was applying. Every arm silent resolves to `Observe` — not
-`Auto`, which would make "nobody configured it" the most dangerous state in the system, and
-not `Off`, because an agent that reports nothing looks exactly like a healthy cluster.
+### Approvals from Teams — and why v1 should not be interactive
 
-Parsing is strict on purpose. `Enum.TryParse` alone would accept `HEPHAISTO_MODE=3` and
-quietly mean `Auto`; a number in a kill switch is a misunderstanding, and a misunderstanding
-reads as `Observe`. The `killSwitch` key parses the other way round: anything that is not an
-unambiguous false engages it, because a garbled emergency stop is an engaged one.
+The payoff that joins this milestone to v0.2.0 is approving a `restart_pod` from where the
+escalation arrived. But Teams is the harder platform for it: its interactive paths go through Power
+Automate or a registered bot, and both mean accepting inbound calls on a service whose only current
+inbound route is deliberately unauthenticated and protected solely by NetworkPolicy. That is a real
+security change, not a feature increment.
 
-### What changed around it
+So **v1 of the card carries a deep link into Hephaisto's own approval UI**, not an Approve button.
+No new inbound surface, no signature verification, and the approval still happens where the audit
+row already lives. In-card approval gets its own gate later.
 
-- The switch ConfigMap holds **discrete keys**, so each projects as its own file and needs no
-  parser. It used to be a YAML document nested inside a YAML string — one bad indent away
-  from breaking, in the file you least want to get wrong under pressure. `HEPHAISTO_SWITCHES_PATH`
-  became `HEPHAISTO_SWITCHES_DIR`.
-- The ConfigMap's `cooldown`, `budget`, `actionableNamespaces`, `investigation` and
-  `grounding` blocks were **removed, not wired**. None was ever read; each duplicated a
-  setting with a real home (`PolicyOptions`, `LlmBudgetOptions`, `GroundingVerifier`).
-  Config that reads like configuration and behaves like a comment is worse than no docs.
-  Anything added there in future needs a reader in `src/` in the same commit.
-- `SwitchWatcher` polls every 10s, logs a mode change at Warning in both directions, and
-  publishes `hephaisto_mode` — a gauge that was declared in Core's telemetry constants and
-  had never been registered as an instrument. You can now alert on "the agent is in Auto".
-- The admission transaction in `ActionRepository` folds the env and ConfigMap arms in beside
-  the row it already reads, so the two arms an operator can actually reach at 3am bind the
-  executor and not just the investigation loop. The row read stays inside the transaction,
-  because it is the only arm a concurrent admission can race.
-- `/status` shows configured and effective mode side by side, names the binding arm, and
-  lists all of them. "Configured Auto, running Observe" is the state that most needs seeing.
-
-### Verified
-
-64 tests, including the exhaustive 4×4×4 precedence table. Two negative controls confirm the
-tests detect the failure rather than passing vacuously: making a malformed arm read as silence
-fails 8 tests, and flipping `Min` to `Max` fails 15. Live against a running process with
-`HEPHAISTO_MODE=auto`, a ConfigMap file saying `Observe` and no Postgres:
-
-```
-Kill switch armed: effective mode Observe, bound by configmap:mode
-  [env:HEPHAISTO_MODE: Auto; configmap:killSwitch: not set; configmap:mode: Observe;
-   db:agent_mode: unreadable (...) - reads as Observe]
-```
-
-Editing the file to `Off` moved the gauge to 0 with no restart.
+That also lines the identity story up correctly: approving in Hephaisto's UI makes the free-text
+`ApprovedBy` the weak point, and the fix is OIDC — which for a Teams shop is Entra ID, the same
+directory the card was delivered through. Interactive approval and OIDC approval converge on the
+same answer, so the link-out costs nothing and skips a throwaway design.
 
 ---
 
-## Step 1 — first light against the cluster — **done, 2026-08-28**
+## v0.4.0 — A design language
 
-The stack now runs in k3s. The old hand-installed observability stack was removed first
-(plan §6): `grafana.db` was copied off the PVC and audited before teardown (`backup/`), and
-Backstage and litellm were repointed at `hephaisto-obs`.
+**Before anything visual gets built, decide what it should look like.** Three surfaces are coming —
+the app UI that exists, a landing page, and a docs site — with nothing shared between them to build
+against.
 
-### What works, verified against the running cluster
+The honest starting position: **the app already has a design system, it is just not written down
+and not reusable.** `src/Hephaisto.Agent/wwwroot/app.css` is 1268 lines of hand-written plain CSS
+whose header states a real brief:
 
-| Area | Evidence |
+> Plain CSS, no framework, no CDN. This pod can run in a cluster with no egress, and an incident
+> console whose stylesheet fails to load is unreadable at exactly the moment somebody needs it.
+>
+> Dark first, dense, monospace for anything a human might compare character by character — ids,
+> workload keys, log excerpts, timestamps. Target reader: on call at 3am, on whatever monitor is in
+> the room.
+>
+> STATE IS NEVER COLOUR ALONE. Every state, severity, risk and decision carries a glyph and a word
+> next to it. Colour is the third channel, never the only one.
+
+That is a better brief than most projects write. But it is a comment in one file, next to ~110 `hp-`
+classes, a `:root` token block, and a light mode its own comment calls "a courtesy, not the design
+target". Nothing else can consume it, and nobody deciding a landing-page question can find it.
+
+### A — Direction, settled by asking before drafting
+
+The forks that change everything downstream. Judgement calls, not technical ones, and answered
+before any option is drawn:
+
+- **Should the landing page look like the product, or contrast with it?** The biggest fork. Dark,
+  dense and terminal-adjacent says "serious operator tool, here is exactly what you get". Light and
+  editorial reaches people evaluating rather than operating. Both defensible; deciding late is
+  expensive.
+- **Is dark-first non-negotiable across all three surfaces, or app-only?** Docs are overwhelmingly
+  read in light mode. A deliberate divergence is fine — an accidental one is not.
+- **Does light mode stop being "a courtesy"?** A landing page brings evaluators, and some of them
+  will open the UI in a bright room.
+- **Typography, under a hard constraint.** The app cannot load a CDN — the pod may have no egress —
+  so its fonts are self-hosted or system stacks. The landing page and docs have no such limit.
+  Either the shared type system respects the tighter constraint, or the divergence is deliberate and
+  documented.
+- **How much personality?** Hephaisto is the god of the forge, which offers an obvious metaphor and
+  an obvious cliché. Decide on purpose rather than drifting into anvils.
+- **Who is the landing page's reader** — an SRE choosing a tool, a platform team assessing autonomy
+  risk, or a potential contributor? The safety model is this project's most distinctive asset, and
+  how prominent it is follows directly from this answer.
+
+### B — Generate real options, not adjectives
+
+**Three complete, genuinely distinct directions**, each rendered as something you can look at rather
+than read about. A direction only counts as comparable if it commits to all of:
+
+- a full palette in **both themes**, with contrast ratios checked rather than assumed
+- a type pairing with a real fallback stack, honouring the no-CDN constraint
+- a density and spacing scale — this app is deliberately dense at a 13px base, and a landing page
+  must either inherit that or break it knowingly
+- the same four hard components in every direction, so the comparison is like-for-like: an incident
+  table row, a finding with its evidence citation, a budget meter, a code block
+- a landing hero and a docs page in the same language
+
+Judged side by side on the page, not in a spec.
+
+### C — Choose one, then write it down
+
+`docs/design.md` — the guideline this project does not have. It carries the rules that already exist
+implicitly, plus everything A settled, and it is what a contributor is pointed at before touching
+CSS.
+
+### D — One token source, three consumers
+
+The deliverable that makes this more than a document: **the `:root` custom properties become the
+canonical token set**, and the VitePress theme and landing page consume the same tokens. A colour
+that changes changes everywhere. Without it the guideline is advisory and the surfaces drift within
+one release.
+
+### E — Apply, with a safety net that must be repaired first
+
+Refactoring 1268 lines of framework-free CSS onto new tokens is an ordered refactor, and the `hp-`
+namespace is stable and semantic enough to survive it. There is nominally a safety net: a Playwright
+suite and `data-testid` attributes.
+
+**That suite currently runs nothing**
+([backlog #1](backlog.md#1-the-e2e-playwright-phase-reports-pass-on-a-zero-assertion-run)). It is a
+**hard dependency** of this milestone — without it the visual regression risk is entirely unmanaged.
+
+Also lands here, because these are design outputs rather than project chores: the **wordmark**, the
+**favicon** (currently disabled — `App.razor` has `<link rel="icon" href="data:," />`), and the
+**social preview image**. The repo contains zero image files today.
+
+Accessibility is part of acceptance, not a follow-up: contrast checked in both themes, visible focus
+states, `prefers-reduced-motion` honoured.
+
+**Done when** `docs/design.md` exists, one token source feeds all three surfaces, `app.css` is
+refactored onto it with the UI unchanged except where the chosen direction says otherwise, and the
+app has a favicon.
+
+---
+
+## The project track — landing page, docs, and the rest
+
+Not version-numbered; a website does not version with the agent. Deliberately last: every page here
+is an application of the design language, so building it first means building it twice.
+
+### Where the site lives
+
+**Same repository, `website/`. Not a separate repo.**
+
+The argument for splitting is that a VitePress toolchain sits oddly in a .NET repo, and that site
+commits add noise to the history. The argument against is decisive: **documentation in a separate
+repo goes stale.** A PR that changes the HTTP surface should change the page describing the HTTP
+surface, in the same diff and the same review. This repo documents itself unusually well and
+unusually honestly; splitting the docs away is the most reliable way to lose that. The toolchain
+objection is weak — `scripts/e2e/ui/` already carries a `package.json`.
+
+**Hosting: GitHub Pages first, self-hosting kept open.** VitePress emits static files, so this is a
+low-regret choice — a Pages workflow builds and deploys on push to `main`, the custom domain is a
+DNS record, nothing to operate. If it should later live on a self-managed cluster, the same build
+output goes into a small static image published by the same CI: a DNS change, not a rewrite.
+Self-hosting a marketing site is ops work that buys nothing until there is traffic.
+
+### Content mostly exists already
+
+| Site section | Source |
 |---|---|
-| 14 pods | Prometheus, Grafana, Alertmanager, Loki, Tempo, otel-collector, grafana-mcp, Aspire, kube-state-metrics, node-exporter, operator, postgres, agent |
-| Datasources | 4 provisioned: prometheus (default), loki, tempo, alertmanager |
-| Alert path | 17 alerts firing; `AgentWatchdog` delivered to the webhook (`watchdogReceipts: 1`, not stale) |
-| Kill switch | All three arms live. `kubectl edit cm` pulled the agent Observe → **Off**, bound by `configmap:mode`, **no restart** |
-| RBAC | `secrets` denied everywhere incl. `get`; `kube-system`, `hephaisto`, `hephaisto-obs` writes denied; write **only** in `hephaisto-chaos` |
-| Detection | Kubernetes watcher opens incidents for real cluster faults, resolved to the owning controller (`Deployment/c2-crashloop`, not the pod) |
-| Dedup / correlation | 42+ signals collapsing into ~20 incidents, up to 6 signals on one |
-| Self-protection | Signals about Hephaisto's own namespaces hard-escalate as `SelfSignal` — including the agent's own OOMKill |
-| Chaos fixtures | C1–C5, C7 produce their documented states, incl. the C4/C7 discrimination pair |
-| grafana-mcp | 44 tools; rejects unauthenticated calls with 401 |
-| LLM | Gemini connected; the model calls Kubernetes read tools during investigations |
-| Persistence | pgvector, pg_trgm, pgcrypto; HNSW index; append-only audit rows written |
-| UI | Incident list with filters, detail with signal timeline and state transitions, status page with the kill-switch arms, feedback form |
+| Landing / pitch | `README.md`'s one-liner and ASCII pipeline diagram |
+| Architecture | `docs/architecture.md` |
+| Install / operate | `README.md` "Running it", the chart's `values.schema.json` |
+| Safety model | `README.md` "The safety model", plus the kill-switch material in [`history.md`](history.md) |
+| Verification runbook | `docs/verification.md` |
+| Incident reference | `src/Hephaisto.Agent/Runbooks/*.md` — 11 shipped runbooks |
+| Chaos scenarios | `infra/chaos/README.md` |
 
-### Resolved: investigations now persist
+### Screenshots should be generated, not taken
 
-Fixed 2026-08-28. **The recorded hypothesis above was a dead end**, and it is worth saying so
-rather than deleting it: `IncidentStateMachine.Transition` only constructs and appends, so no
-state transition ever mutated a previous event. The bug was not *which* event was Modified, it
-was *when the save happened*.
+The repo contains no images. It does have a Playwright suite driving a UI with `data-testid`
+attributes against a kind cluster full of real seeded incidents. So screenshots should be **captured
+by a script in the e2e harness** — the alternative is a landing page showing a UI that shipped four
+versions ago. Depends on [backlog #1](backlog.md#1-the-e2e-playwright-phase-reports-pass-on-a-zero-assertion-run).
 
-The coordinator, the incident repo and the audit repo share one scoped `HephaistoDbContext`.
-`AuditRepository.AppendAsync` called `SaveChangesAsync` **one line after** the state machine
-appended an `IncidentEvent` and **before** `TrackNewIncidentChildren` marked it Added. EF ran
-`DetectChanges`, found the new event carrying a client-assigned `Guid.CreateVersion7()` key,
-concluded the row existed, and emitted an `UPDATE ... WHERE id = ...` matching zero rows. The
-staged graph then died with the scope.
+### Branding
 
-The fix is the pattern already used by `IncidentQueries.AddFeedbackAsync`: `audit.Enlist(...)`
-to stage, `TrackNewIncidentChildren` **before** any save, and exactly one `SaveChangesAsync`
-per unit of work. Applied to all three investigation paths.
+Settled by v0.4.0 and consumed here, not decided here.
 
-Three further bugs were only visible once this one was out of the way, each hidden by the one
-in front of it:
+### The rest — a checklist, all currently absent
 
-| Bug | Why it was invisible |
-|---|---|
-| Gemini overloads were never retried | `HttpRetryOptions` is accepted by the SDK and ignored on the `AsIChatClient` path. Proven by timing: failed turns returned in 1.2–5.7s when four retries need ≥15s. Fixed with `TransientRetryChatClient`. |
-| LLM turn boxes in the UI were empty | `RecordLlmTurn` recorded no text at all |
-| Tools rejected their own documented usage | a nullable parameter with no default is still emitted as `required` in the JSON schema |
-| **Investigations could never conclude** | concluding costs a step, and the step budget was spent before the model could call `conclude`. The codebase had already closed this exact hazard for the *tool* budget and never for steps. A step is now reserved. |
-
-Measured across three eras, all completions, from Postgres:
-
-| | Faulted | StepBudget | Concluded |
-|---|---|---|---|
-| Before any fix | 6 / 7 | 1 | 0 |
-| After the retry fix | 0 / 4 | 3 | 1 |
-| After the reserved step | **0 / 7** | 0 | **7 / 7** |
-
-Provider faults went 6-of-7 to **0-of-11**, and every run now reaches a conclusion. What that
-did *not* fix is accuracy — see Step 2.
-
-**Two lessons worth keeping.** `dotnet watch` silently declined several edits with *"No managed
-code changes to apply"*, so a run of iterations tested stale code — when a fix seems not to
-take, `tilt trigger hephaisto` for a real image build before believing the result. And the
-diagnostic that names the offending entity found in one iteration what inference had not found
-in five; it is committed, and it should be reached for early.
+- **Community files** — `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md` (there is no
+  vulnerability reporting path at all today), `SUPPORT.md`, `CHANGELOG.md`, issue and PR templates,
+  `CODEOWNERS`.
+- **Repo metadata** — description, topics and homepage are empty. Discussions off. Wiki on and
+  unused; turn it off rather than leave a second place for docs to rot.
+- **Discoverability** — no `artifacthub-repo.yml`, so the chart publishes and nothing announces it.
+  `Chart.yaml` has two Artifact Hub annotations but no `icon` (blank tile), no `maintainers`, no
+  `screenshots`.
+- **CI quality gates** — no `.editorconfig`, no `dotnet format`, no coverage, no link check, no
+  spell check, no markdown lint, no CodeQL, no SBOM, no image scanning. Build provenance attestation
+  is currently the only supply-chain signal.
+- **README** — no badges, no screenshots.
 
 ---
 
-## Step 2 — measure, before deciding anything
+## Housekeeping — small, and now
 
-**This is the real output of the MVP, and the gate on everything after it.**
+Four things are cheap and currently wrong, and should not wait behind four milestones:
 
-Run the ten chaos fixtures. For each, record whether the agent named the correct root cause,
-citing grounded evidence, and changed nothing.
-
-- Target: **≥ 7/10 correct root cause** over at least 10 seeded scenarios.
-- Also record: cost per investigation, time to diagnosis, and the false-positive rate from the
-  thumbs-up/down.
-
-### First real measurement — **3 findings from 11 runs. Well short.**
-
-Taken 2026-08-28, after the four bugs in Step 1 were fixed. Every run now completes and every
-run concludes, but only **3 of 11 produced a finding at all**; the rest conclude "insufficient
-evidence", which is honest — the final-turn nudge asks for exactly that rather than a guess —
-and is not a diagnosis.
-
-The cause is visible in the step traces, and it is not the model being wrong. It is the model
-**running out of budget in the wrong place**. On an `Unschedulable` incident it had the answer
-at step 8 from `get_events`, then spent 6 of its 12 steps on Loki label discovery and only
-reached `list_nodes` at step 24, long past the budget.
-
-So the number to move is not "accuracy" directly. The candidates, cheapest first:
-
-1. **Raise `MaxSteps`** from 12. The simplest experiment, and the one that says whether the
-   ceiling is the binding constraint or an excuse. Costs money per run to evaluate.
-2. **Order the tools by likely value per `SignalKind`** — for a scheduling incident, node and
-   event tools before log search. The runbooks already carry the kind; nothing uses it to
-   shape tool priority.
-3. **Charge label/metadata discovery differently from evidence-gathering**, so exploring
-   Loki's label space does not consume the budget meant for answering.
-
-**Do not conclude anything about Phase 2 from 3/11.** The measurement is of an agent that ran
-out of steps, not of an agent that reasoned badly, and those imply completely different work.
-
-Build the **eval harness** here rather than in Phase 2 — replaying recorded incidents against
-recorded tool output is the only way to tell whether a prompt change helped or just cost more.
-Without it every subsequent change is a guess.
-
-**The decision this produces:** if accuracy lands at 9/10, the gap to auto-restarting a pod is
-small and Phase 2 is worth building. At 4/10 it is not, and you want to know that *before*
-granting write RBAC — which is precisely why the executor was left unbuilt.
-
-Cheap wins worth doing in the same pass: Grafana annotations on state transitions, and
-runbook memory (retrieving the top-3 similar resolved incidents into the prompt). The storage
-and the hybrid search already exist; only the retrieval call is missing, and it is the highest
--leverage quality change available after the runbooks themselves.
+1. **The false verification claim in `Prompts/30-planning.md`** — a prompt telling the model a
+   rollback safety net exists when it does not is a correctness bug, not a documentation task.
+2. **`README.md`'s "Nothing is published yet — no image on a registry, no chart in an OCI repo."**
+   `v0.0.1` is on GHCR.
+3. **The GitHub description, topics and homepage.** Ten minutes; the repo is already public.
+4. **The `grounding.rejected` cardinality bug**
+   ([#12](backlog.md#12-unbounded-label-cardinality-on-hephaistogroundingrejected)) — one line, and
+   it is currently writing GUIDs into a Prometheus label.
 
 ---
 
-## Step 2b — packaged for release — **done, 2026-08-28**
-
-Not on the original plan, and done because the repo was about to be made public. It changes
-nothing about what the agent does.
-
-| | |
-|---|---|
-| Licence | **AGPL-3.0**. The console is served over a network, so §13 applies: the footer links to the source of the exact running commit, overridable via `Hephaisto:SourceUrl` for forks |
-| Versioning | MinVer — the git tag is the only source of truth. `/api/version`, the console footer, OTel `service.version` and `hephaisto_build_info{version,commit}` all read one assembly attribute |
-| Chart | `charts/hephaisto`, with `ci/negative-tests.sh` — 24 assertions of things the chart must refuse or never emit, mutation-tested |
-| CI | `ci.yml` and `release.yml`. **No deploy job, and there must not be one** |
-| Tilt | now renders the chart, so dev and prod cannot drift into two sources of truth |
-| Hygiene | `backup/` purged from history; this machine's tailnet address and the neighbouring project's name removed from every tracked file |
-
-Four latent defects surfaced only by doing it, none of which any amount of reading would have
-found:
-
-- **The production Dockerfile had never been built.** Every image on the dev machine came from
-  `Dockerfile.dev`. It failed at `RUN adduser` with exit 127: the `aspnet:10.0` base ships
-  neither `adduser` nor `useradd`.
-- **`--minimum-expected-tests` does not exist** in this runner. It prints `unknown option` and
-  **exits 0** — the same "green build that tested nothing" trap it was meant to close.
-  `scripts/ci-test.sh` parses the real count instead.
-- **`dotnet build -warnaserror` did not pass**, so the planned CI flag would have failed on its
-  first run. Also: an incremental build reported 0 warnings where a clean build reported 13.
-- **`readOnlyRootFilesystem` cannot be a constant** — `true` is right for the published image
-  and fatal for a dev image whose entrypoint is a compiler.
-
----
-
-## Step 2c — three channels and one command — **done, 2026-08-29**
-
-`v0.0.1-rc2` was verified by hand: twenty-odd commands and a person reading output. That does
-not survive being needed twice.
-
-**A third release channel.** `release.yml` publishes two kinds of thing and both are
-statements — `v0.0.1` says "ship this", `v0.0.1-rc1` says "I intend to ship this". Neither is
-right for "give me something installable to point a test at", and cutting a release candidate
-per test run would turn a meaningful list of shipping candidates into a log of CI invocations.
-`nightly.yml` publishes the same image and chart with every "this is the current version"
-signal off: no GitHub Release, no moving `latest`/`0`/`0.0`, a prerelease version that ranges
-skip. Manual dispatch only.
-
-Worth recording, because the obvious guess is wrong: MinVer does **not** produce
-`0.0.2-main.0.N` here. It appends the commit height to the newest tag, which is currently the
-`v0.0.1-rc2` prerelease, so `main` resolves to `0.0.1-rc2.5`. The `main.0` identifiers only
-appear once the newest tag is a release. Both shapes are prereleases, which is what matters,
-but nothing downstream may assume the spelling — the nightly prune job asks git which versions
-correspond to tags instead of pattern-matching one.
-
-**`scripts/e2e/run.sh`.** Dispatch a nightly, wait until the artifacts are genuinely pullable,
-create a single-node kind cluster, install the real observability stack from
-`infra/observability/*.values.yaml` unmodified, `helm install` the published chart from GHCR,
-break four things at once, and assert on what comes back. About 25 minutes and under a dollar.
-
-It closes two of the three limits `ci.yml`'s `e2e-kind` job admits to in its own comment — no
-Prometheus, and no real LLM key. The third, NetworkPolicy enforcement, is item 7 below and the
-harness says so at the end of every run rather than letting a green tick imply otherwise.
-
-Three defects were found and fixed on the way, all by checking rather than reading:
-`integration-postgres` had been red on every run since it was written (two password literals
-in different files that had to agree and did not); the chart validated against Kubernetes
-1.31, which kind no longer ships; and `hephaisto_llm_budget_utilization` was declared,
-documented, alerted on twice and charted twice with no instrument behind it.
-
-## Open — carried forward
-
-Verified against the running cluster on 2026-08-28, not inferred. Roughly in priority order.
-
-### ~~1. `AgentMode.Off` does not stop the automatic loop~~ — **fixed, 2026-08-28**
-
-Four gates added: `SignalIngestPipeline.IngestAsync` (the single funnel both producers reach
-triage through), `InvestigationWorker`'s drain loop, `InvestigationCoordinator` before the LLM
-call, and `StrandedIncidentRequeue` at startup. Each resolves the switch itself rather than
-reading the poller's snapshot, matching the precedent in `IncidentQueries`.
-
-Proved on a kind cluster, not just in tests: with `effectiveMode: Off` an injected
-`ImagePullBackOff` held open incidents at 6 with the fault genuinely present, and lifting to
-`Observe` took them to 8. `watchdogStale` stayed false throughout — the heartbeat is
-deliberately ungated, or the agent would believe it had gone blind the moment it was switched
-back on.
-
-### 2. Audit immutability is not enforced in the deployed configuration
-
-"No audit, no action" is a standing constraint and, in the deployed database, nothing enforces
-it. Measured:
-
-```
-connected_as     | hephaisto
-app_role_exists  | 0
-is_superuser     | t
-can_update_audit | t
-can_delete_audit | t
-```
-
-The agent connects as a **superuser**, and the `hephaisto_app` role does not exist — so the
-migration's `GRANT`/`REVOKE` block, wrapped in `IF EXISTS (SELECT 1 FROM pg_roles ...)`,
-silently no-opped. The integration test that asserts a 42501 on `UPDATE audit_events` passes
-in CI (which creates the role) and proves nothing about this cluster.
-
-Fix: create `hephaisto_app`, connect as it rather than as the owner, and re-run the migration
-so the REVOKE actually applies. The chart should make the connecting role a value.
-
-### 3. The retry path has never been observed firing in production
-
-`TransientRetryChatClient` is unit-tested nine ways, and the overload it exists for has not
-recurred since. It is the difference between "tested" and "proven", and it is worth forcing
-once — a fault-injecting `IChatClient` behind a dev-only flag would settle it.
-
-### 4. Semantic incident search returns `[]` for some queries
-
-`/api/incidents/search?q=out+of+memory` and `q=crash` return empty while `q=ImagePullBackOff`,
-`q=image` and `q=pod` work. Hybrid RRF over pgvector + pg_trgm, so the likely suspects are the
-embedding of short conceptual queries, or an RRF weighting that lets exact-match dominate.
-Unmeasured — do not guess at the fix before reproducing it against a fixed corpus.
-
-### 5. Two more declared metrics are never emitted
-
-`hephaisto.incidents.open` (an UpDownCounter) and `hephaisto.budget.remaining` (a gauge) are
-declared in `HephaistoTelemetry.cs` and drawn on the dashboard, and no instrument is ever
-created for either. Same class of bug as `hephaisto.llm.budget_utilization`, which was fixed on
-2026-08-29 — that one had two alert rules resting on it, which is why it went first.
-
-The general fix is worth more than either: a test asserting that every `hephaisto_*` metric
-named in the shipped alert rules and dashboard corresponds to a real instrument. It cannot be
-added until these two are emitted, because it would fail on them.
-
-### 6. The chart's budget values are write-only
-
-`extraEnv` (added 2026-08-29) makes `Llm__Budget__*` settable, which unblocked the e2e harness,
-but they are still not first-class values. Someone reading `values.yaml` cannot tell that a
-budget exists. Worth promoting the four caps to real values once their names have settled.
-
-### 7. NetworkPolicy enforcement is still unproven
-
-The Alertmanager webhook is unauthenticated and the NetworkPolicy is its entire authentication.
-Neither CI nor `scripts/e2e/run.sh` proves it works: kind's default CNI accepts the objects and
-does not enforce them. Testing it means `disableDefaultCNI: true` plus Calico in the harness's
-kind config — real install time and a real flake risk, so it is a documented `--enforce-netpol`
-tier rather than part of the default run. Until then this is verified by reading, on a cluster
-whose CNI does enforce.
-
-### 8. Loose ends, small
-
-- The old `data-postgres-0` PVC is orphaned on the dev cluster (the chart names its database
-  `hephaisto-postgres`). Deliberately left; the data was dumped and restored first.
-- `values-dev.yaml` sets `networkPolicy.extraIngressCIDRs: ["0.0.0.0/0"]` so kubelet probes
-  work on this node. That is the webhook's entire authentication, disabled. Acceptable only
-  because the cluster is single-tenant and reachable from one private network.
-- The workflows have never run — there is no remote yet. They are statically validated only.
-
----
-
-## Phase 3 — it acts, carefully
-
-Only after Step 2 says the diagnoses are good enough. Order matters:
-
-1. `ActionExecutor` with `dryRun=All` and `PreState` snapshots. **Run in `dryrun` for two
-   weeks.** The would-have-acted log is the evidence for enabling anything.
-2. `VerificationScheduler` at T+60s / T+5m / T+15m, plus auto-rollback.
-3. Oscillation detector wired to quarantine (the pure logic is already built and tested).
-4. Approval workflow and UI, capturing the free-text `ApprovedBy`.
-5. Bind the write `RoleBinding` — **into `hephaisto-chaos` only.**
-6. Enable `auto` for exactly **one** action type: `restart_pod`.
-7. Mirror actions to Kubernetes Events on the target object, so `kubectl describe pod` shows
-   why something was restarted. That is where an on-call engineer actually looks.
-
-Done when a transiently-failing pod in `hephaisto-chaos` is auto-restarted, verification
-passes, the incident closes, and the audit trail reconstructs the whole decision **without
-reading a log file** — and a seeded oscillating workload is quarantined after 3 attempts
-instead of looping forever.
-
----
-
-## Phase 4 and beyond — a menu, not a queue
+## Later — a menu, not a queue
 
 Roughly in order of value:
 
-- **OIDC for approvals.** No schema change; `ApprovedBy` is populated from a verified claim
-  instead of a text box. This stops being optional the moment more than one person operates
-  this, or it points at anything that matters.
+- **OIDC for approvals.** No schema change; `ApprovedBy` is populated from a verified claim instead
+  of a text box. Stops being optional the moment more than one person operates this, or it points at
+  anything that matters.
+- **The deferred notification channels** — Slack, email/SMTP, PagerDuty/Opsgenie. Small additions
+  once v0.3.0's abstraction exists.
+- **Interactive in-card approval**, with the inbound signature verification it requires.
 - **Change correlation** — "this started 4 minutes after the rollout of `x:sha`".
 - **Postmortem generation**, drawing on the digest index for "this has happened N times".
-- **Leading indicators** — PVC fill projection, memory trending to limit, cert expiry, HPA
-  pinned at max.
+- **Leading indicators** — PVC fill projection, memory trending to limit, cert expiry, HPA pinned at
+  max.
 - **Widen autonomy** to `rollout_restart` and `rollback_deployment`; widen namespaces.
 - **Alert-noise reduction** — find chronically flapping rules, propose changes as PRs.
-- **Topology / blast-radius reasoning** from the service graph.
-- **MCP server mode** so Claude Code can query incidents.
-- Chaos self-testing, natural-language history queries, Slack surfacing, Pyroscope,
-  multi-cluster.
+- **Topology and blast-radius reasoning** from the service graph.
+- **MCP server mode**, so an agent can query incidents.
+- **`--enforce-netpol`** tier in the e2e harness — Calico under kind, closing
+  [backlog #23](backlog.md#23-networkpolicy-enforcement-is-unproven).
+- Chaos self-testing, natural-language history queries, Pyroscope, multi-cluster.
 
 ---
 
 ## Standing constraints
 
-- **The cluster is a single shared resource.** Code and unit tests parallelise; cluster
-  verification does not.
+- **The cluster is a single shared resource.** Code and unit tests parallelise; cluster verification
+  does not.
 - **Never `tilt down`** — it `helm uninstall`s the stack and takes Grafana's PVC with it.
-- **Approval identity is attribution, not authentication** until OIDC lands. The risk to watch
-  is habituation.
+- **Approval identity is attribution, not authentication** until OIDC lands. The risk to watch is
+  habituation.
 - **No audit, no action.** If Postgres is unreachable the executor must refuse.
-- Promote autonomy **per action type**, never globally.
+- **Promote autonomy per action type, never globally.**
+- **Config needs a reader in `src/` in the same commit.** Config that reads like configuration and
+  behaves like a comment is worse than no documentation — see
+  [backlog #19](backlog.md#19-maxautoscalereplicas-and-maxautoscalestep-have-no-readers) for the two
+  that got through.

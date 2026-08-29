@@ -319,7 +319,13 @@ src/Hephaisto.Agent/           THE pod: tools, hosted services, Blazor UI, persi
 src/Hephaisto.AppHost/         Aspire — dev-time orchestration only, NEVER deployed
 src/Hephaisto.Simulator/       dev-only fault generator
 infra/                         namespaces, observability stack, chaos fixtures, RBAC
+docs/                          architecture, roadmap, backlog, history, verification
 ```
+
+Start with [`docs/architecture.md`](docs/architecture.md) for how it works,
+[`docs/roadmap.md`](docs/roadmap.md) for where it is going,
+[`docs/backlog.md`](docs/backlog.md) for what is known-broken and unfixed, and
+[`docs/history.md`](docs/history.md) for why it is shaped the way it is.
 
 **`Hephaisto.Core` has zero I/O dependencies, on purpose.** Every safety-critical decision —
 the policy engine, the state machine, budgets, oscillation detection, log digestion — is a
