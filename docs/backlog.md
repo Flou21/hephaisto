@@ -165,6 +165,47 @@ being lost, not an info line.
 
 ---
 
+### 34. `c1-oomkill` never produces an OOMKill on this node
+
+**Symptom.** The fixture built to produce `OomKilled` produces `CrashLoopBackOff`, and for a while
+produces a pod Kubernetes reports as `1/1 Running` while its cgroup sits at its memory limit.
+
+**Evidence.** Observed on `studio-rancher-desktop` on 2026-08-29, from a freshly created pod:
+
+- The balloon process writes 4Mi per second into a `medium: Memory` emptyDir against a 64Mi
+  container limit, and **is not killed**. The pod stays `1/1 Running` well past the ~16s at which
+  it crosses the limit.
+- The cgroup *is* at its limit, though - `kubectl exec` into the healthy-looking pod fails with
+  `error executing setns process: signal: killed (possibly OOM-killed)`. There is no headroom to
+  fork a process, and no event says so.
+- When the container does restart, init cannot start at all:
+  `Error response from daemon: ... container init was OOM-killed (memory limit too low?)`. The
+  tmpfs survives container restarts within the same pod, so the memory is already spent before
+  the entrypoint runs.
+- Every `c1` incident in the dev database is `CrashLoopBackOff`. Not one is `OomKilled` - including
+  one pod that restarted **265 times over 23 hours**.
+
+`infra/chaos/c1-oomkill.yaml` predicts "the kernel OOM killer terminates PID 1, the Deployment
+restarts it, and the cycle repeats roughly every 20-30s forever". What happens is a container that
+survives, then a create-time failure loop on a roughly five-minute period.
+
+**Why it is not a blocker.** The scenario is still gradeable, and the agent gets it right: recorded
+on 2026-08-29 it concluded *"the configured memory limit (64Mi) is too low, causing the OCI runtime
+container init process to be OOM-killed during startup"* in 11 steps, which names the cause. The
+cassette records `CrashLoopBackOff` as the kind while `AnswerKey` expects `OomKilled`, and that
+disagreement is worth being able to see - which is why the cassette records the kind it actually
+observed rather than the fixture's intended one.
+
+**Why it is still open.** The fixture's README already hedged - it notes no pod-scoped `OOMKilling`
+event on k3s+containerd - but the hedge understates it: the intended signal never appears at all.
+Nothing asserted the kind, because c1 is not in `DEFAULT_FIXTURES`.
+
+**Size.** M. Making it fire needs a heap allocation rather than tmpfs writes, or an emptyDir that
+does not survive container restarts. Worth doing: a pod reported `Running` while pinned at its
+memory limit is a genuine blind spot, and c1 is the only fixture that reveals it.
+
+---
+
 ### 32. `chaos.sh` maps c10 to `SloBurn`, which is not a `SignalKind`
 
 **Symptom.** The e2e harness's kind assertion for c10 can never match, whatever the agent does.
@@ -248,7 +289,10 @@ writes it.
 
 **Size.** M. **Blocks:** operating v0.2.0.
 
-### 9. Semantic search returns nothing, and the recorded cause was wrong — FIXED
+### 9. Semantic search returns nothing, and the recorded cause was wrong
+
+**Status: fixed 2026-08-29** — see the end of this entry. The heading is left as it was, because
+these numbers and titles are the anchors `roadmap.md` links by.
 
 **Symptom.** `/api/incidents/search?q=out+of+memory` and `q=crash` return empty. `q=ImagePullBackOff`,
 `q=image` and `q=pod` work.
