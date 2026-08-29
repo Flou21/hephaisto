@@ -33,12 +33,31 @@ the reason written down: c6 does not fire on `local-path` and c9 would evict the
 stack, so both need replacement fixtures that do not exist yet, and inventing them is open-ended
 work against a gate that is already met at 22/24.
 
-**rc3 installs and runs: 65 assertions passed, 7 of 8 fixtures classified, 5/5 graded correct,
-31 Grafana annotations written and read back, and Observe mode held.** Three failures, none of
-them the agent: the harness waited for a *count* of incidents rather than one per fixture, so the
-slowest fixture (c10) was failed while still on schedule; the `approvedBy` assertion covered
-actions the policy engine had **Denied**, which have no approver by construction; and the console
-phase had no timeout, so a contended browser install hung the run. rc4 carries those three fixes.
+**`v0.1.0-rc6` is green: 68 assertions passed, 0 failed, 2 skipped, in 9m19s for $1.41.** All
+eight fixtures detected, 11 investigations all terminating `Concluded` and all citing evidence,
+6/6 graded correct, 41 Grafana annotations written and read back with the agent's own token,
+Observe mode held with zero actions executed, and the console suite reporting
+`expected=5 skipped=0`. The two skips are the documented case where a fixture is detected by a
+different shipped rule than the README names, which is a fact about rule `for:` durations racing,
+not a detection failure.
+
+**It took six release candidates, and the agent was not the cause of any of them.** rc2 could not
+install; rc3, rc4 and rc5 each failed on the *harness's own instrumentation* rather than on the
+thing being measured. That is worth stating plainly rather than rounding off, because a milestone
+whose product is a trustworthy number spent five attempts discovering that its instruments lied:
+
+- the incident wait counted incidents instead of requiring one per fixture, so the slowest fixture
+  was failed while still on schedule;
+- c10's incident was there the whole time under a target the harness never looked for, and was
+  reported as undetected across two candidates;
+- the `approvedBy` assertion covered actions the policy engine had **Denied**, which have no
+  approver by construction;
+- the console phase had no timeout, and its one hanging step was the one step with its output
+  suppressed;
+- the rule-selection check sampled once, 20 seconds before the operator finished reconciling.
+
+Every one of those produced a red run about a healthy agent. None would have been found by the
+four-fixture default set.
 
 **`v0.1.0-rc2` does not install, and rc3 is the fix.** The e2e caught it at the phase it exists to
 cover: `helm install` timed out with `Deployment/hephaisto not ready`. Making the agent serve on a
