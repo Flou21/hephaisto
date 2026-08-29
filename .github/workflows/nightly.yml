@@ -1,0 +1,379 @@
+name: nightly
+
+# The third channel, and the one the e2e harness consumes.
+#
+# `release.yml` publishes two kinds of thing, and both are statements: `v0.0.1` says "ship
+# this", `v0.0.1-rc1` says "I intend to ship this, test it first". Neither is the right thing
+# to cut when all you want is something installable to point a test at, and a release
+# candidate per test run would turn a meaningful list of shipping candidates into a log of CI
+# invocations.
+#
+# So this publishes the same artifacts with every "this is the current version" signal
+# switched off: no GitHub Release, no moving `latest`/`0`/`0.0` tags, and a version that
+# Helm and SemVer ranges skip because it is a prerelease. A consumer cannot land on a nightly
+# by accident, and nothing may pin one - see the retention step at the bottom, which deletes
+# them.
+#
+# Manual only, deliberately. A schedule would publish builds nobody asked for and hold
+# storage for them; the harness dispatches one when it needs a subject. Adding `schedule:`
+# later is one stanza.
+on:
+  workflow_dispatch:
+
+# Same as release.yml minus `contents: write`. This workflow creates no Release, and the
+# permission to do so is what would let it.
+permissions:
+  contents: read
+  packages: write
+
+# Two nightlies of the same commit produce the same version and would race each other to the
+# same tag. Newest wins; there is no reason to run both.
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/flou21/hephaisto
+  CHART_REPO: oci://ghcr.io/flou21/charts
+  DOTNET_NOLOGO: 1
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.minver.outputs.version }}
+      semver: ${{ steps.minver.outputs.semver }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - id: minver
+        run: |
+          set -euo pipefail
+          dotnet tool restore
+
+          # IDENTICAL to ci.yml and release.yml, and it must stay that way. `-p main.0`
+          # matches MinVerDefaultPreReleaseIdentifiers in Directory.Build.props, so the
+          # number here is the number the compiler stamped into the assembly. Passing
+          # something more nightly-sounding - a date, `nightly.0` - would require changing
+          # the build too, and getting that half-right is how an image ends up tagged with a
+          # version the assembly inside it does not report.
+          #
+          # What this yields depends on the newest tag, and it is worth being precise because
+          # the obvious guess is wrong. MinVer appends the commit height to the newest tag
+          # rather than always bumping the patch:
+          #
+          #   newest tag v0.0.1-rc2 (a prerelease) -> 0.0.1-rc2.N
+          #   newest tag v0.0.1     (a release)    -> 0.0.2-main.0.N
+          #
+          # `main.0` only appears in the second case. Both forms are prereleases, which is
+          # the property that actually matters: unique per commit, sorting below the next
+          # release, and skipped by every default version range - so no consumer can land on
+          # a nightly by accident. Nothing downstream may assume the `main.0` spelling; the
+          # prune job below deliberately does not.
+          V=$(dotnet minver -t v -p main.0)
+          SEMVER="${V%%+*}"
+
+          # A tagged commit resolves to the tag itself, with no prerelease part. Publishing
+          # that from here would put a release-shaped version on an artifact with no GitHub
+          # Release, no provenance and a 10-build retention - and it would collide with
+          # whatever release.yml published for the same tag.
+          case "$SEMVER" in
+            *-*) ;;
+            *)
+              echo "::error::MinVer computed $SEMVER, which is a release version."
+              echo "::error::This commit is tagged; use release.yml. Nightlies build untagged commits."
+              exit 1
+              ;;
+          esac
+
+          echo "version=$V"     >> "$GITHUB_OUTPUT"
+          echo "semver=$SEMVER" >> "$GITHUB_OUTPUT"
+          echo "Nightly: $SEMVER" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s' "$SEMVER" > /tmp/nightly-version.txt
+
+      # A job output cannot be read from outside the workflow, and the harness has to know
+      # which version this run produced in order to install it. Recomputing MinVer locally
+      # would work only while the harness's checkout sits on exactly the commit that was
+      # built, and scraping the newest -main.0. tag out of the registry races other runs. An
+      # artifact is unambiguous: `gh run download <id> -n nightly-version`.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nightly-version
+          path: /tmp/nightly-version.txt
+          retention-days: 7
+
+  # The same gates as ci.yml and release.yml. A nightly that would not have passed a pull
+  # request is worthless as a test subject: the harness would spend twenty minutes proving
+  # that a known-broken build is broken.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, fetch-tags: true }
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - run: dotnet build -c Release -warnaserror
+      - run: scripts/ci-test.sh tests/Hephaisto.Tests/Hephaisto.Tests.csproj 600 Release
+
+  chart-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with: { version: v3.16.4 }
+      - run: helm lint charts/hephaisto --strict --values charts/hephaisto/ci/full-values.yaml
+      - run: charts/hephaisto/ci/negative-tests.sh
+
+  # Native runners per architecture, pushed by digest and joined below - same reasoning as
+  # release.yml. arm64 matters more here than there: the harness runs kind on an arm64 Mac,
+  # so the nightly it installs is the arm64 image.
+  image:
+    runs-on: ${{ matrix.runner }}
+    needs: [version, test, chart-checks]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, fetch-tags: true }
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            VERSION=${{ needs.version.outputs.semver }}
+            COMMIT=${{ github.sha }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+
+      - name: Export the digest
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/digests
+          DIGEST='${{ steps.build.outputs.digest }}'
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ strategy.job-index }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  publish-image:
+    runs-on: ubuntu-latest
+    needs: [version, image]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Join the per-architecture images into one tag
+        run: |
+          set -euo pipefail
+          cd /tmp/digests
+          V='${{ needs.version.outputs.semver }}'
+
+          # Exactly two tags, and `:nightly` is the only moving one. NOT `latest`, NOT the
+          # major or minor alias: those are what someone tracking a major reads, and moving
+          # them here would hand a preview to a consumer who asked for a release. The
+          # version job has already refused to run on a tagged commit, so `$V` is always a
+          # prerelease and cannot collide with anything release.yml published.
+          docker buildx imagetools create \
+            -t "${{ env.IMAGE }}:$V" \
+            -t "${{ env.IMAGE }}:nightly" \
+            $(printf '${{ env.IMAGE }}@sha256:%s ' *)
+
+          docker buildx imagetools inspect "${{ env.IMAGE }}:$V"
+
+      # No attest-build-provenance, unlike release.yml. Provenance is there so an operator can
+      # verify the image they are about to give cluster credentials to; nothing deploys a
+      # nightly, and the retention step below deletes them. Two minutes per run for a
+      # signature nobody checks.
+
+  publish-chart:
+    runs-on: ubuntu-latest
+    needs: [version, publish-image]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with: { version: v3.16.4 }
+
+      - name: Package and push
+        run: |
+          set -euo pipefail
+          V='${{ needs.version.outputs.semver }}'
+
+          # Same invariant as the release channel: chart version == appVersion == image tag,
+          # stamped at package time so Chart.yaml stays 0.0.0 in git.
+          helm package charts/hephaisto --version "$V" --app-version "$V" --destination /tmp
+
+          echo '${{ secrets.GITHUB_TOKEN }}' | helm registry login ghcr.io \
+            --username '${{ github.actor }}' --password-stdin
+
+          helm push "/tmp/hephaisto-$V.tgz" '${{ env.CHART_REPO }}'
+
+      - name: Prove a consumer can actually pull it
+        run: |
+          set -euo pipefail
+          V='${{ needs.version.outputs.semver }}'
+
+          # The harness installs from the registry, so "the job went green" is not enough -
+          # this is the step that catches a push that succeeded and produced something
+          # unpullable.
+          helm show chart '${{ env.CHART_REPO }}/hephaisto' --version "$V"
+          helm template hephaisto '${{ env.CHART_REPO }}/hephaisto' --version "$V" \
+            --namespace hephaisto \
+            --set prometheusOperator.selectorLabels.release=kube-prometheus-stack > /tmp/rendered.yaml
+          sed 's/"//g' /tmp/rendered.yaml > /tmp/rendered.unquoted.yaml
+          grep -qF "image: ${{ env.IMAGE }}:$V" /tmp/rendered.unquoted.yaml \
+            || { echo "::error::the published chart does not point at the published image tag"; exit 1; }
+
+          {
+            echo "### Nightly \`$V\`"
+            echo
+            echo '```sh'
+            echo "helm install hephaisto ${{ env.CHART_REPO }}/hephaisto --version $V \\"
+            echo "  --namespace hephaisto --create-namespace"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Nightlies accumulate, and unlike a release there is no argument for keeping them: nothing
+  # may pin one, and the whole channel exists to be thrown away. This is the one place in this
+  # repo where deleting a published artifact is right rather than harmful - which is exactly
+  # why the selection rule below is conservative to the point of being boring.
+  #
+  # It does NOT pattern-match the version string. The shape of a nightly version depends on
+  # what was tagged last (0.0.1-rc2.N today, 0.0.2-main.0.N once v0.0.1 exists), so a regex
+  # written against one of those silently stops matching after the next release - and a prune
+  # that quietly matches nothing is the good failure. The bad one is a regex that starts
+  # matching something it should not.
+  #
+  # The sound question is "did release.yml publish this?", and git already knows: every
+  # release and rc has a tag. Anything carrying a tag that corresponds to a git tag is
+  # protected, as is anything carrying a moving alias. What is left is a nightly.
+  #
+  # actions/delete-package-versions is deliberately not used here. For a CONTAINER package a
+  # version's `name` is its digest, not its tag, so its `ignore-versions` regex matches
+  # nothing and the newest-N rule becomes all that protects the released images. Its
+  # `delete-only-untagged-versions` option is wrong for a different reason: these images are
+  # pushed by digest and joined into a manifest list, so the untagged per-architecture
+  # manifests are the ones the multi-arch tags point AT.
+  prune:
+    runs-on: ubuntu-latest
+    needs: [publish-chart]
+    # Never let cleanup fail a build that succeeded. A full registry is a chore; a red
+    # workflow that already published correctly is a false alarm someone has to investigate.
+    # If this consistently prints 403, GITHUB_TOKEN cannot delete versions of a user-owned
+    # package and this needs a PAT with `delete:packages` - a settings change, not a code one.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Delete all but the newest 10 nightlies
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEEP: 10
+        run: |
+          set -euo pipefail
+
+          # Every version release.yml has ever published, by name, plus the moving aliases it
+          # and this workflow maintain. Built from git rather than hardcoded so a new rc
+          # protects itself the moment it is tagged.
+          git tag --list 'v*' | sed 's/^v//' > /tmp/protected.txt
+          printf '%s\n' latest nightly >> /tmp/protected.txt
+          # release.yml also publishes bare major/minor aliases and a sha- tag per build.
+          git tag --list 'v*' | sed 's/^v//' | awk -F. '{print $1; print $1"."$2}' >> /tmp/protected.txt
+
+          echo "protected tags:"
+          sort -u /tmp/protected.txt | sed 's/^/  /'
+
+          prune_package() {
+            local pkg="$1" encoded versions doomed
+            encoded="${pkg//\//%2F}"
+
+            echo "::group::$pkg"
+
+            if ! versions=$(gh api --paginate \
+                  "/users/${{ github.repository_owner }}/packages/container/$encoded/versions" 2>&1); then
+              echo "could not list versions of $pkg - skipping:"
+              head -3 <<<"$versions"
+              echo "::endgroup::"
+              return 0
+            fi
+
+            # A version survives if ANY of its tags is protected. jq notes:
+            #   - `(.metadata.container.tags // [])` because an untagged per-architecture
+            #     manifest has no tags key, and those must never be selected: the multi-arch
+            #     lists point at them.
+            #   - `length > 0` for the same reason - `any` is false on [], which would make
+            #     untagged manifests look prunable.
+            #   - a sha- prefixed tag is release.yml's per-commit alias; protect it too.
+            doomed=$(jq -r --argjson keep "$KEEP" --slurpfile p <(jq -R -s 'split("\n") - [""]' /tmp/protected.txt) '
+              ($p[0] | map(select(length > 0))) as $protected
+              | [ .[]
+                  | select((.metadata.container.tags // []) | length > 0)
+                  | select((.metadata.container.tags // [])
+                           | any(. as $t | ($protected | index($t)) != null or ($t | startswith("sha-"))) | not)
+                ]
+              | sort_by(.created_at) | reverse | .[$keep:] | .[]
+              | "\(.id)\t\(.metadata.container.tags | join(","))"
+            ' <<<"$versions")
+
+            if [ -z "$doomed" ]; then
+              echo "nothing to prune"
+              echo "::endgroup::"
+              return 0
+            fi
+
+            while IFS=$'\t' read -r id tags; do
+              [ -n "$id" ] || continue
+              echo "deleting $tags (id $id)"
+              gh api -X DELETE \
+                "/users/${{ github.repository_owner }}/packages/container/$encoded/versions/$id" \
+                || echo "  could not delete $id; leaving it"
+            done <<<"$doomed"
+
+            echo "::endgroup::"
+          }
+
+          prune_package hephaisto
+          prune_package charts/hephaisto
