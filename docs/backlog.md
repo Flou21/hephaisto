@@ -564,6 +564,59 @@ needs a reader in `src/` in the same commit."* Two survived the sweep.
 
 ---
 
+### 35. `AllowedTools` is documented "in order", and the order is the server's
+
+**Symptom.** The allowlist reads as though it sets the order the model sees tools in. It does not.
+
+**Evidence.** `Llm/GrafanaMcpToolProvider.cs` documents the option as *"The tools actually exposed
+to the model, **in order**. Everything grafana-mcp offers beyond this list is dropped."* The
+implementation filters the server's list instead:
+
+```csharp
+var allowed = tools
+    .Where(t => o.AllowedTools.Contains(t.Name, StringComparer.OrdinalIgnoreCase))
+```
+
+`tools` is what grafana-mcp returned, so the surviving order is grafana-mcp's, and rewriting the
+allowlist changes membership only. Driving the projection from `AllowedTools` instead — looking
+each name up in `tools` — would implement what the comment says, in about the same number of lines.
+
+**Why it matters, and why it is not urgent.** Tool *order* influencing selection is an
+**unvalidated hypothesis** — nothing in this repo measures it, and the eval harness now exists to
+settle it. Until then the honest fix is the cheap one: make the code match the comment, or change
+the comment. A doc-comment describing behaviour that was never written is how the next person
+plans an experiment against a lever that does not exist.
+
+**Size.** S.
+
+---
+
+### 36. The environment card never names a datasource uid, because nothing sets them
+
+**Symptom.** `EnvironmentCardOptions.DatasourceUids` is empty everywhere, so the prompt section
+that would say *"Datasource uids (pass these, not the names)"* is never rendered — and the model
+has to spend a tool call on `list_datasources` before it can query anything.
+
+**Evidence.** The dictionary defaults to empty in `Investigation/EnvironmentCardOptions.cs`, and
+`grep -rn DatasourceUids src/ charts/` finds only the declaration and the two lines in
+`PromptComposer` that read it. No chart value, no ConfigMap key, no `extraEnv` entry. The deployed
+Deployment carries no `Investigation__Environment__*` variable at all, so the whole environment
+card runs on its compiled-in defaults.
+
+**Why it is worth fixing.** It is the cheapest possible reduction in steps: a fact the agent cannot
+look up is exactly what the environment card is *for*, and supplying it removes a discovery call
+from every investigation that touches Grafana. Measured baseline for comparison: 7.5 steps and
+$0.080 per investigation.
+
+**Why it is still open.** Not noticed, because an empty dictionary renders as an absent section
+rather than an empty one — the prompt looks well-formed either way. It surfaced while planning the
+discovery-cap experiment, whose write-up asserted "the UIDs are already in the environment card".
+They are not.
+
+**Size.** S to populate from the chart; the uids are stable per cluster.
+
+---
+
 ## Documentation asserting things that do not exist
 
 ### 20. The MVP acceptance test requires Grafana annotations, which are unbuilt
