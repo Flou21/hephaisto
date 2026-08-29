@@ -36,14 +36,14 @@ jobs:
       version: ${{ steps.minver.outputs.version }}
       semver: ${{ steps.minver.outputs.semver }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # MinVer reads git. A shallow clone with no tags makes every build 0.0.0-alpha.0,
           # silently, and the image tag then bears no relation to the commit.
           fetch-depth: 0
           fetch-tags: true
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
@@ -66,18 +66,18 @@ jobs:
     runs-on: ubuntu-latest
     needs: [version]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
       # An explicit cache rather than setup-dotnet's: that one keys on lock files, and this
       # repo has none.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props', '**/*.csproj') }}
@@ -121,13 +121,13 @@ jobs:
           --health-cmd "pg_isready -U hephaisto -d hephaisto"
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props', '**/*.csproj') }}
@@ -165,9 +165,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [version]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           version: v3.16.4
 
@@ -216,7 +216,7 @@ jobs:
       # Handed to e2e-kind so that job installs the ARTIFACT A CONSUMER GETS, not the source
       # directory. Those differ in exactly the way that matters here: Chart.yaml stays 0.0.0
       # in git on purpose, and only `helm package --app-version` stamps the real number in.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: chart-package
           path: /tmp/chart/*.tgz
@@ -236,18 +236,18 @@ jobs:
           - runner: ubuntu-24.04-arm
             platform: linux/arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # PRs build but do not push. The point is to know the image still builds - which is not
       # hypothetical: this Dockerfile had never been built at all until it was tried, and it
       # failed at `RUN adduser` because the aspnet base ships neither adduser nor useradd.
       - name: Build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: ${{ matrix.platform }}
@@ -270,13 +270,13 @@ jobs:
     #     grep in the chart job.
     #   - No real LLM key, so nothing exercises an investigation end to end.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           version: v3.16.4
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: chart-package
           path: /tmp/chart
