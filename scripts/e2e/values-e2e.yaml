@@ -78,13 +78,22 @@ networkPolicy:
 # a real deployment, not for a test that can be re-run twenty times in an afternoon while
 # someone debugs the harness itself.
 #
-# The per-incident cap is the one that actually binds: four fixtures at $0.10 is the realistic
-# worst case for a run. The hourly and daily caps are the backstop for a loop, and they are
-# what makes "how much can one run cost" answerable rather than estimated.
+# The per-incident cap is the one that should bind: it is what stops a single runaway
+# investigation, and $0.10 is comfortably above the ~$0.08 mean.
+#
+# The hourly cap was $1.00, sized when a run meant FOUR fixtures. The eight-fixture run spends
+# about $0.88 on the chaos incidents alone and then keeps going - the cluster opens a dozen
+# incidents of its own while it settles - so the hour cap started binding instead of backstopping
+# and HephaistoLlmBudgetExhausted fired mid-run. A cap that stops a legitimate run is not a
+# safety limit, it is a broken test: the investigations it cuts short are reported as the agent
+# failing to produce a finding.
+#
+# Raised to leave headroom for the widest fixture set while still bounding a loop. If a run ever
+# approaches $3 something is genuinely wrong, which is what the cap is for.
 extraEnv:
   - name: Llm__Budget__MaxCostUsdPerIncident
     value: "0.10"
   - name: Llm__Budget__MaxCostUsdPerHour
-    value: "1.00"
+    value: "3.00"
   - name: Llm__Budget__MaxCostUsdPerDay
-    value: "2.00"
+    value: "6.00"

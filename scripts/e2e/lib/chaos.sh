@@ -86,6 +86,23 @@ chaos_build_images() {
     say "loaded hephaisto/faulty-service:dev into $E2E_CLUSTER"
 }
 
+# The target an incident opens under, which is NOT always the fixture's own name.
+#
+# Workload-derived fixtures are detected from a pod, so the incident carries that pod's name
+# and a `c<N>-` prefix matches. c10 is derived from a METRIC - Tempo's span metrics - whose
+# only identity label is `service`, so its incident opens on `faulty-service` with an EMPTY
+# namespace. That is docs/backlog.md #33, and no namespace fallback can rescue it: the
+# spanmetrics series carries no namespace label at all, so there is nothing to fall back to.
+#
+# The agent is right in both cases; only the harness's fixture-to-incident mapping was wrong,
+# and it reported c10 as undetected across two release candidates while the incident existed.
+fixture_target() {
+    case "$1" in
+        c10) echo faulty-service ;;
+        *)   echo "$1" ;;
+    esac
+}
+
 chaos_apply() {
     local fixtures="${FIXTURES:-$DEFAULT_FIXTURES}"
     APPLIED=""
@@ -153,11 +170,20 @@ chaos_await_incidents() {
     #
     # Matched on targetName the same way chaos_assert_detection matches, so the thing waited
     # for and the thing asserted cannot drift apart.
-    local want_json
-    want_json=$(printf '%s\n' $APPLIED | jq -R . | jq -sc .)
+    local f want_json
+    want_json=$(for f in $APPLIED; do fixture_target "$f"; done | jq -R . | jq -sc .)
 
-    wait_for "an incident in $CHAOS_NS for each of: $APPLIED" "${INCIDENT_TIMEOUT:-$(( 600 + 150 * want ))}" \
-        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents?limit=100' | jq -e --argjson want '$want_json' --arg ns '$CHAOS_NS' 'type == \"array\" and (map(select((.namespace // \"\") == \$ns)) as \$inc | \$want | all(. as \$f | \$inc | any(.targetName // \"\" | startswith(\$f))))' >/dev/null"
+    # Matched on target only. Requiring the chaos namespace as well would exclude c10, whose
+    # incident has none (#33), and the target prefixes are unique enough to stand alone.
+    #
+    # `|| true` because a timeout here must not abort the run. wait_for returns 1, and under
+    # `set -e` that killed the whole suite the first time this wait was made strict enough to
+    # actually time out: 46 assertions passed and the remaining forty never ran, so one slow
+    # fixture cost every other answer. The per-fixture check below reports precisely which one
+    # is missing, which is the useful output.
+    wait_for "an incident for each of: $APPLIED" "${INCIDENT_TIMEOUT:-$(( 600 + 150 * want ))}" \
+        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents?limit=100' | jq -e --argjson want '$want_json' 'type == \"array\" and (. as \$inc | \$want | all(. as \$t | \$inc | any(.targetName // \"\" | startswith(\$t))))' >/dev/null" \
+        || warn "not every fixture opened an incident within the deadline; see the per-fixture results below"
 
     local got
     got=$(api_array "/api/incidents?limit=100" | jq --arg ns "$CHAOS_NS" '[.[] | select((.namespace // "") == $ns)] | length')
@@ -182,13 +208,15 @@ chaos_assert_detection() {
 
         # Match on the workload rather than the kind alone: two fixtures producing one
         # incident each of the right kind is a different thing from one fixture producing two.
-        found=$(jq --arg f "$f" '[.[] | select(.targetName // "" | startswith($f))] | length' \
+        local target; target=$(fixture_target "$f")
+
+        found=$(jq --arg t "$target" '[.[] | select(.targetName // "" | startswith($t))] | length' \
                 <<<"$incidents")
 
         if [ "${found:-0}" -ge 1 ]; then
             local got_kind
-            got_kind=$(jq -r --arg f "$f" \
-                '[.[] | select(.targetName // "" | startswith($f))] | .[0].kind' <<<"$incidents")
+            got_kind=$(jq -r --arg t "$target" \
+                '[.[] | select(.targetName // "" | startswith($t))] | .[0].kind' <<<"$incidents")
             if [ "$got_kind" = "$kind" ]; then
                 pass "$f opened an incident classified $kind"
             else

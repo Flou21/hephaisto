@@ -517,6 +517,17 @@ stack was never registered, which does not happen in any shipped configuration.
 **Symptom.** Every incident opened from a metric-derived alert has an empty namespace, so the
 incident card tells the model to investigate `Target: `//faulty-service``.
 
+**Reproduced on the e2e, 2026-08-29**, and it cost two release candidates. c10's incident opened
+with an empty namespace and a target of `faulty-service`, so the harness - which matched fixtures
+by a `c<N>-` name prefix inside the chaos namespace - reported c10 as having opened no incident
+across rc3 and rc4 while the incident existed the whole time. The agent was right on both runs.
+
+Worth separating the two halves, because only one is fixable here: the **namespace** is
+recoverable, since the label set does carry `k8s_namespace_name`; the **target name** is not,
+because the spanmetrics series identifies the workload only as `service: faulty-service`. So
+fixing this entry would stop the incident card saying `//faulty-service`, and would still leave a
+target that no fixture-name match can find. The harness now maps c10 to its real target instead.
+
 **Evidence.** `src/Hephaisto.Agent/Web/AlertmanagerEndpoints.cs:276`:
 
 ```csharp
