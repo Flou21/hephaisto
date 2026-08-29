@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Hephaisto.Agent.Options;
 using Hephaisto.Agent.Persistence.Repositories;
 using Hephaisto.Core.Abstractions;
+using Hephaisto.Agent.Telemetry;
 
 namespace Hephaisto.Agent.Persistence;
 
@@ -62,6 +63,13 @@ public static class PersistenceServiceCollectionExtensions
         // Singleton by construction (BackgroundService), so it resolves its own scope per
         // sweep rather than holding a DbContext for the lifetime of the process.
         services.AddHostedService<RetentionService>();
+
+        // Same shape, and for the same reason: the budget gauge's callback is synchronous
+        // while the value behind it is a database read, so a poller does the awaiting and the
+        // callback reads what it cached. Visibility only - CheckAsync re-reads the windows
+        // itself for every decision, so losing this stops the dashboard, not the spending.
+        services.AddSingleton<BudgetUtilizationSnapshot>();
+        services.AddHostedService<BudgetGaugePublisher>();
 
         return services;
     }
