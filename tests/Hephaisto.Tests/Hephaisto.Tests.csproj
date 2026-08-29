@@ -12,6 +12,7 @@
   <ItemGroup>
     <ProjectReference Include="../../src/Hephaisto.Core/Hephaisto.Core.csproj" />
     <ProjectReference Include="../../src/Hephaisto.Agent/Hephaisto.Agent.csproj" />
+    <ProjectReference Include="../../src/Hephaisto.Eval/Hephaisto.Eval.csproj" />
   </ItemGroup>
 
   <ItemGroup>
