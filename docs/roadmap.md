@@ -263,25 +263,57 @@ found:
 
 ---
 
+## Step 2c — three channels and one command — **done, 2026-08-29**
+
+`v0.0.1-rc2` was verified by hand: twenty-odd commands and a person reading output. That does
+not survive being needed twice.
+
+**A third release channel.** `release.yml` publishes two kinds of thing and both are
+statements — `v0.0.1` says "ship this", `v0.0.1-rc1` says "I intend to ship this". Neither is
+right for "give me something installable to point a test at", and cutting a release candidate
+per test run would turn a meaningful list of shipping candidates into a log of CI invocations.
+`nightly.yml` publishes the same image and chart with every "this is the current version"
+signal off: no GitHub Release, no moving `latest`/`0`/`0.0`, a prerelease version that ranges
+skip. Manual dispatch only.
+
+Worth recording, because the obvious guess is wrong: MinVer does **not** produce
+`0.0.2-main.0.N` here. It appends the commit height to the newest tag, which is currently the
+`v0.0.1-rc2` prerelease, so `main` resolves to `0.0.1-rc2.5`. The `main.0` identifiers only
+appear once the newest tag is a release. Both shapes are prereleases, which is what matters,
+but nothing downstream may assume the spelling — the nightly prune job asks git which versions
+correspond to tags instead of pattern-matching one.
+
+**`scripts/e2e/run.sh`.** Dispatch a nightly, wait until the artifacts are genuinely pullable,
+create a single-node kind cluster, install the real observability stack from
+`infra/observability/*.values.yaml` unmodified, `helm install` the published chart from GHCR,
+break four things at once, and assert on what comes back. About 25 minutes and under a dollar.
+
+It closes two of the three limits `ci.yml`'s `e2e-kind` job admits to in its own comment — no
+Prometheus, and no real LLM key. The third, NetworkPolicy enforcement, is item 7 below and the
+harness says so at the end of every run rather than letting a green tick imply otherwise.
+
+Three defects were found and fixed on the way, all by checking rather than reading:
+`integration-postgres` had been red on every run since it was written (two password literals
+in different files that had to agree and did not); the chart validated against Kubernetes
+1.31, which kind no longer ships; and `hephaisto_llm_budget_utilization` was declared,
+documented, alerted on twice and charted twice with no instrument behind it.
+
 ## Open — carried forward
 
 Verified against the running cluster on 2026-08-28, not inferred. Roughly in priority order.
 
-### 1. `AgentMode.Off` does not stop the automatic loop
+### ~~1. `AgentMode.Off` does not stop the automatic loop~~ — **fixed, 2026-08-28**
 
-`Enums.cs` documents `Off` as *"Ingest nothing, investigate nothing. Full stop."* Neither
-happens. `InvestigationCoordinator` resolves the effective mode and **records** it on the
-incident (`incident.Mode = mode`) but never branches on it; `SignalIngestPipeline` does not
-consult the kill switch at all. Confirmed by reading both paths — there is no `Off` check in
-the coordinator, the worker or triage.
+Four gates added: `SignalIngestPipeline.IngestAsync` (the single funnel both producers reach
+triage through), `InvestigationWorker`'s drain loop, `InvestigationCoordinator` before the LLM
+call, and `StrandedIncidentRequeue` at startup. Each resolves the switch itself rather than
+reading the poller's snapshot, matching the precedent in `IncidentQueries`.
 
-The blast radius today is bounded: there is no executor, so `Off` cannot fail to stop an
-*action*. What it fails to stop is **detection and token spend** — an operator who hits the big
-red button to stop the agent costing money watches it keep investigating. The human retry path
-(`IncidentQueries.RequestReinvestigationAsync`) *does* enforce it, which makes the gap worse,
-not better: the two paths disagree about what the same switch means.
-
-This must be closed **before** `ActionExecutor` exists, not after.
+Proved on a kind cluster, not just in tests: with `effectiveMode: Off` an injected
+`ImagePullBackOff` held open incidents at 6 with the fault genuinely present, and lifting to
+`Observe` took them to 8. `watchdogStale` stayed false throughout — the heartbeat is
+deliberately ungated, or the agent would believe it had gone blind the moment it was switched
+back on.
 
 ### 2. Audit immutability is not enforced in the deployed configuration
 
@@ -317,7 +349,33 @@ once — a fault-injecting `IChatClient` behind a dev-only flag would settle it.
 embedding of short conceptual queries, or an RRF weighting that lets exact-match dominate.
 Unmeasured — do not guess at the fix before reproducing it against a fixed corpus.
 
-### 5. Loose ends, small
+### 5. Two more declared metrics are never emitted
+
+`hephaisto.incidents.open` (an UpDownCounter) and `hephaisto.budget.remaining` (a gauge) are
+declared in `HephaistoTelemetry.cs` and drawn on the dashboard, and no instrument is ever
+created for either. Same class of bug as `hephaisto.llm.budget_utilization`, which was fixed on
+2026-08-29 — that one had two alert rules resting on it, which is why it went first.
+
+The general fix is worth more than either: a test asserting that every `hephaisto_*` metric
+named in the shipped alert rules and dashboard corresponds to a real instrument. It cannot be
+added until these two are emitted, because it would fail on them.
+
+### 6. The chart's budget values are write-only
+
+`extraEnv` (added 2026-08-29) makes `Llm__Budget__*` settable, which unblocked the e2e harness,
+but they are still not first-class values. Someone reading `values.yaml` cannot tell that a
+budget exists. Worth promoting the four caps to real values once their names have settled.
+
+### 7. NetworkPolicy enforcement is still unproven
+
+The Alertmanager webhook is unauthenticated and the NetworkPolicy is its entire authentication.
+Neither CI nor `scripts/e2e/run.sh` proves it works: kind's default CNI accepts the objects and
+does not enforce them. Testing it means `disableDefaultCNI: true` plus Calico in the harness's
+kind config — real install time and a real flake risk, so it is a documented `--enforce-netpol`
+tier rather than part of the default run. Until then this is verified by reading, on a cluster
+whose CNI does enforce.
+
+### 8. Loose ends, small
 
 - The old `data-postgres-0` PVC is orphaned on the dev cluster (the chart names its database
   `hephaisto-postgres`). Deliberately left; the data was dumped and restored first.

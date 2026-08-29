@@ -1,0 +1,12 @@
+{
+  "name": "hephaisto-e2e-ui",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Browser assertions for the Hephaisto console, driven by scripts/e2e/run.sh",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}

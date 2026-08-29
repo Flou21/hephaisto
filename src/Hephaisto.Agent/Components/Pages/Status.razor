@@ -27,7 +27,7 @@ else
         <div class="hp-status-grid">
             <div class="hp-stat">
                 <span class="hp-stat-label">configured</span>
-                <span class="hp-stat-value mono">@s.Mode.ToString().ToLowerInvariant()</span>
+                <span class="hp-stat-value mono" data-testid="configured-mode">@s.Mode.ToString().ToLowerInvariant()</span>
                 <span class="hp-muted">
                     by @(s.ModeChangedBy ?? "—") at @Display.Timestamp(s.ModeChangedAt)
                 </span>
@@ -40,7 +40,8 @@ else
                    one of them would be wrong in exactly the case that matters — someone has
                    hit the ConfigMap and the row has not caught up. *@
                 <span class="hp-stat-label">effective</span>
-                <span class="hp-stat-value mono @(s.EffectiveMode < s.Mode ? "hp-alarm" : "")">
+                <span class="hp-stat-value mono @(s.EffectiveMode < s.Mode ? "hp-alarm" : "")"
+                      data-testid="effective-mode">
                     @s.EffectiveMode.ToString().ToLowerInvariant()
                 </span>
                 <span class="hp-muted">
@@ -117,12 +118,13 @@ else
         <div class="hp-status-grid">
             <div class="hp-stat">
                 <span class="hp-stat-label">open</span>
-                <span class="hp-stat-value mono">@s.OpenIncidents</span>
+                <span class="hp-stat-value mono" data-testid="open-incidents">@s.OpenIncidents</span>
                 <span class="hp-muted"><a href="">see the list</a></span>
             </div>
             <div class="hp-stat">
                 <span class="hp-stat-label">escalated</span>
-                <span class="hp-stat-value mono @(s.EscalatedIncidents > 0 ? "hp-alarm" : "")">@s.EscalatedIncidents</span>
+                <span class="hp-stat-value mono @(s.EscalatedIncidents > 0 ? "hp-alarm" : "")"
+                      data-testid="escalated-incidents">@s.EscalatedIncidents</span>
                 <span class="hp-muted">handed to a human</span>
             </div>
         </div>
@@ -173,7 +175,7 @@ else
 
             <div class="hp-stat">
                 <span class="hp-stat-label">deliveries</span>
-                <span class="hp-stat-value mono">@s.WatchdogReceipts</span>
+                <span class="hp-stat-value mono" data-testid="watchdog-deliveries">@s.WatchdogReceipts</span>
                 <span class="hp-muted">since process start</span>
             </div>
         </div>
@@ -251,10 +253,19 @@ else
     /// sitting at 140% is a different fact from one sitting at 100%, and clamping the bar
     /// while printing the true number is how the two stop being distinguishable at a glance.
     /// </remarks>
-    private RenderFragment BudgetMeter(string label, double utilization, double warnAt) => @<div class="hp-meter">
+    // A stable id per meter for the end-to-end suite, derived from the label so the two
+    // cannot drift. The label itself is prose ("cost · this hour") and would make a brittle
+    // selector - it carries a non-ASCII separator and is the kind of thing that gets reworded.
+    private static string MeterId(string label) => "meter-" + label
+        .Replace(" · ", "-")
+        .Replace(" ", "-");
+
+    private RenderFragment BudgetMeter(string label, double utilization, double warnAt) => @<div class="hp-meter"
+        data-testid="@MeterId(label)">
         <div class="hp-meter-head">
             <span class="hp-meter-label">@label</span>
-            <span class="mono @MeterClass(utilization, warnAt)">@Display.Percent(utilization)</span>
+            <span class="mono @MeterClass(utilization, warnAt)"
+                  data-testid="@(MeterId(label))-value">@Display.Percent(utilization)</span>
             @if (utilization >= 1)
             {
                 <span class="hp-alarm"><span class="glyph">!!</span> exhausted — no new investigations</span>

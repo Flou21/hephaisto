@@ -210,6 +210,33 @@ kubectl -n hephaisto-chaos delete deployment offtest
 
 ---
 
+## Running all of this automatically
+
+Everything above is the manual form, and it is still the right thing when you are chasing one
+specific behaviour. For a release, `scripts/e2e/run.sh` does the equivalent against a throwaway
+kind cluster and prints a verdict:
+
+```sh
+scripts/e2e/run.sh                    # dispatch a nightly build and test it
+scripts/e2e/run.sh --rc               # cut a real release candidate and test it
+scripts/e2e/run.sh --tag 0.0.1-rc2    # test something already published
+```
+
+It covers steps 1, 2, 5, 6, 9, 11, 12 and 14 above, plus the parts CI cannot reach: that the
+`release:` selector actually selects (CI installs no Prometheus), and that a real investigation
+runs end to end (CI has no key). See `scripts/e2e/README.md`.
+
+Two things it deliberately does **not** cover, and neither does anything else:
+
+- **NetworkPolicy enforcement (step 9's sibling).** kind's default CNI accepts the objects and
+  ignores them, and that policy is the webhook's entire authentication. Verify it by hand, on a
+  cluster whose CNI enforces.
+- **Root cause quality.** The harness grades each diagnosis against the answer key in
+  `infra/chaos/README.md` and reports a score, but never fails on it. The MVP bar — ≥ 7/10 over
+  ≥ 10 scenarios — is still a judgement someone makes by reading.
+
+---
+
 ## The five-hop correlation test
 
 **This is the acceptance test for the whole observability stack.** With chaos running, in

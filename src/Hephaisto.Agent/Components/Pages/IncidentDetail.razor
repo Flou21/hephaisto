@@ -546,7 +546,8 @@ else
                 {
                     @foreach (var finding in inv.Findings)
                     {
-                        <article class="hp-finding @(finding.IsPrimary ? "finding-primary" : "")" @key="finding.Id">
+                        <article class="hp-finding @(finding.IsPrimary ? "finding-primary" : "")" @key="finding.Id"
+                                 data-testid="@(finding.IsPrimary ? "primary-finding" : "finding")">
                             <header>
                                 @if (finding.IsPrimary)
                                 {
@@ -566,7 +567,7 @@ else
                                 </span>
                             </header>
 
-                            <p class="hp-hypothesis">@finding.Hypothesis</p>
+                            <p class="hp-hypothesis" data-testid="hypothesis">@finding.Hypothesis</p>
 
                             @if (finding.Evidence.Count == 0)
                             {

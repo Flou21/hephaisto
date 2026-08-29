@@ -89,7 +89,8 @@ else
         <tbody>
             @foreach (var incident in _incidents)
             {
-                <tr @key="incident.Id" class="hp-row" @onclick="() => Open(incident.Id)">
+                <tr @key="incident.Id" class="hp-row" @onclick="() => Open(incident.Id)"
+                    data-testid="incident-row" data-kind="@incident.Kind" data-target="@incident.TargetName">
                     <td class="c-state">
                         @* Glyph AND word AND colour. Two of the three survive a bad monitor
                            or a colour-blind reader; colour alone survives neither. *@
@@ -118,7 +119,7 @@ else
                     </td>
                     @* An anchor as well as the row handler: the row is a convenience for a
                        mouse, the link is what a keyboard and a middle-click need. *@
-                    <td class="c-title"><a href="incidents/@incident.Id">@incident.Title</a></td>
+                    <td class="c-title"><a href="incidents/@incident.Id" data-testid="incident-link">@incident.Title</a></td>
                     <td class="c-num mono">@incident.SignalCount</td>
                     <td class="c-diag">
                         @if (incident.InProgress is { } live)
