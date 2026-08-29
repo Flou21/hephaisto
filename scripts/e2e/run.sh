@@ -238,6 +238,7 @@ if should_run validate; then
     chaos_collect_details
     chaos_assert_investigations
     chaos_assert_budget
+    chaos_assert_annotations
     chaos_assert_no_mutation
     judge_run
 fi
@@ -246,8 +247,12 @@ fi
 CURRENT_PHASE=ui
 if should_run ui && [ "$RUN_UI" = "1" ]; then
     phase "7b. the console"
-    if [ -x "$E2E_DIR/ui/run.sh" ]; then
-        HEPHAISTO_URL="http://127.0.0.1:$PF_PORT_APP" "$E2E_DIR/ui/run.sh" \
+    # `bash <script>` rather than executing it directly: a lost exec bit used to turn this
+    # phase into a silent skip, which reads on the report as "the console is fine". The file
+    # missing entirely is still a skip - that is a real "not present" - but a file that exists
+    # and merely is not chmod +x is not a reason to stop testing the console.
+    if [ -f "$E2E_DIR/ui/run.sh" ]; then
+        HEPHAISTO_URL="http://127.0.0.1:$PF_PORT_APP" bash "$E2E_DIR/ui/run.sh" \
             && pass "playwright suite" \
             || fail "playwright suite" "see $E2E_DIR/ui/playwright-report"
     else

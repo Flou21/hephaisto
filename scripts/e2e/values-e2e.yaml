@@ -42,6 +42,13 @@ otel:
 grafanaMcp:
   url: http://grafana-mcp.hephaisto-obs:8000/mcp
 
+# Grafana's own API, for incident annotations. The release name for kube-prometheus-stack in
+# this harness is `hephaisto`, so its Grafana Service is hephaisto-grafana. The token comes
+# from the hephaisto-grafana-annotation Secret that bootstrap-secrets.sh mints - an Editor
+# service account, separate from grafana-mcp's Admin one.
+grafana:
+  url: http://hephaisto-grafana.hephaisto-obs
+
 postgres:
   embedded:
     enabled: true

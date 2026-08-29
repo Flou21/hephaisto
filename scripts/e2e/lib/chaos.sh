@@ -27,7 +27,9 @@
 #   c1  oomkill      the README records no pod-scoped OOMKilling event on k3s+containerd,
 #                    which makes it unreliable as a gate even though it is a fine fixture.
 #   c8  flap         needs a 30-minute window to satisfy changes(...)[30m] >= 4.
-#   c10 faulty-svc   needs a local image build plus `kind load`, and 5-minute rate windows.
+#   c10 faulty-svc   needs a local image build plus `kind load` - which chaos_build_images
+#                    now does - and 5-minute rate windows, so it is slow rather than
+#                    excluded. Still not in the default set for that reason.
 #
 # --fixtures overrides this. c5 is handled specially because a Job spec is immutable and must
 # be deleted before it can be re-applied.
@@ -44,14 +46,51 @@ fixture_kind() {
         c5)  echo JobFailed ;;
         c7)  echo ConfigError ;;
         c8)  echo ReadinessFlapping ;;
-        c10) echo SloBurn ;;
+        c10) echo HighErrorRate ;;
         *)   echo "" ;;
     esac
+}
+
+# Fixtures that need an image this repo builds rather than one a registry serves.
+#
+# Nothing did this before. The header above has said c10 "needs a local image build plus
+# `kind load`" since it was written, but no code anywhere in scripts/e2e/ ever ran either - so
+# asking for c10 produced a pod stuck in ImagePullBackOff on hephaisto/faulty-service:dev.
+# That is not merely a missing fixture: it opens a REAL incident of the wrong kind, and the
+# harness would then grade the agent on diagnosing the test rig.
+chaos_build_images() {
+    local fixtures="$1"
+
+    case ",$fixtures," in
+        *,c10,*) ;;
+        *) return 0 ;;
+    esac
+
+    say "building hephaisto/faulty-service:dev for c10"
+
+    # The build context is the REPO ROOT, not the Dockerfile's directory: the Dockerfile
+    # copies infra/chaos/faulty-service/ by a repo-relative path.
+    if ! docker build -q \
+            -t hephaisto/faulty-service:dev \
+            -f "$REPO/infra/chaos/faulty-service/Dockerfile" \
+            "$REPO" >/dev/null; then
+        warn "could not build hephaisto/faulty-service:dev; c10 will not start"
+        return 1
+    fi
+
+    if ! kind load docker-image hephaisto/faulty-service:dev --name "$E2E_CLUSTER" >/dev/null 2>&1; then
+        warn "could not load hephaisto/faulty-service:dev into $E2E_CLUSTER; c10 will not start"
+        return 1
+    fi
+
+    say "loaded hephaisto/faulty-service:dev into $E2E_CLUSTER"
 }
 
 chaos_apply() {
     local fixtures="${FIXTURES:-$DEFAULT_FIXTURES}"
     APPLIED=""
+
+    chaos_build_images "$fixtures" || true
 
     say "applying fixtures: $fixtures"
 
@@ -99,7 +138,12 @@ chaos_await_incidents() {
     # has had time to fire. `length >= 4` is then satisfied by the agent correctly noticing its
     # own neighbours, detection is asserted immediately, and three of four fixtures are
     # reported as having produced nothing. They had simply not happened yet.
-    wait_for "an incident in $CHAOS_NS for each of: $APPLIED" "${INCIDENT_TIMEOUT:-900}" \
+    # Scaled with the fixture count. A flat 900s was sized for the default four; the widest
+    # set is eight, and the two slowest are structural rather than incidental - c8 has to flap
+    # long enough for changes(kube_pod_status_ready[30m]) >= 4, and c10's rules are 5-minute
+    # rate windows behind a 5-minute `for:`. A timeout only costs wall clock when something is
+    # already wrong, so sizing it for the slowest fixture is the cheap side to err on.
+    wait_for "an incident in $CHAOS_NS for each of: $APPLIED" "${INCIDENT_TIMEOUT:-$(( 600 + 150 * want ))}" \
         bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents?limit=100' | jq -e 'type == \"array\" and ([.[] | select((.namespace // \"\") == \"$CHAOS_NS\")] | length) >= $want' >/dev/null"
 
     local got
@@ -171,7 +215,9 @@ chaos_await_investigations() {
     # Waiting on hasDiagnosis rather than on state, because an incident reaches a terminal
     # state on several paths that are not "it was investigated" - suppressed as a flap,
     # escalated on budget - and this phase is about the model actually running.
-    wait_for "investigations to conclude (expecting $want)" "${INVESTIGATION_TIMEOUT:-900}" \
+    # Investigations are serialised, so this one scales with the count for a plainer reason:
+    # the agent works through them one at a time at roughly a minute each.
+    wait_for "investigations to conclude (expecting $want)" "${INVESTIGATION_TIMEOUT:-$(( 600 + 180 * want ))}" \
         bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents' | jq -e 'type == \"array\" and ([.[] | select(.hasDiagnosis)] | length) >= $want' >/dev/null"
 
     local done_count
@@ -340,7 +386,10 @@ chaos_assert_budget() {
     # against the wrong denominator.
     max_hour=$(yq -r '.extraEnv[] | select(.name == "Llm__Budget__MaxCostUsdPerHour") | .value' \
                "$E2E_DIR/values-e2e.yaml" 2>/dev/null | head -1)
-    [ -n "$max_hour" ] || max_hour="3.00"
+    # A wrong denominator here does not fail loudly, it fails PLAUSIBLY - the utilisation just
+    # comes out low - so guessing is worse than stopping. yq is a required tool now, which
+    # makes this branch unreachable rather than merely unlikely.
+    [ -n "$max_hour" ] || die "could not read Llm__Budget__MaxCostUsdPerHour from values-e2e.yaml"
 
     expected=$(echo "scale=6; $total / $max_hour" | bc -l)
 
@@ -357,6 +406,33 @@ chaos_assert_budget() {
 # ---------------------------------------------------------------------------------------
 # Observe mode changed nothing
 # ---------------------------------------------------------------------------------------
+# docs/verification.md's MVP acceptance test requires that the agent "annotate Grafana" for
+# each fixture, and until now nothing implemented that clause - backlog #20 said in as many
+# words: build the annotations or restate the test, but do not silently drop it. This is what
+# stops it being dropped silently again.
+chaos_assert_annotations() {
+    local token count
+
+    token=$(kc -n "$APP_NS" get secret hephaisto-grafana-annotation \
+        -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null || true)
+
+    if [ -z "$token" ]; then
+        skip "grafana annotations" "no hephaisto-grafana-annotation secret; annotation is disabled"
+        return 0
+    fi
+
+    # Asserted with the AGENT's own token rather than admin basic-auth: if this credential can
+    # read them back it is the credential that wrote them, which is the thing in doubt.
+    count=$(curl -sS --max-time 15 \
+        -H "Authorization: Bearer $token" \
+        "http://127.0.0.1:$PF_PORT_GRAFANA/api/annotations?tags=hephaisto&limit=100" \
+        | jq 'if type == "array" then length else 0 end' 2>/dev/null || echo 0)
+
+    [ "${count:-0}" -ge 1 ] \
+        && pass "grafana annotations ($count written)" \
+        || fail "grafana annotations" "no annotation tagged 'hephaisto' after $(applied_count) fixtures"
+}
+
 chaos_assert_no_mutation() {
     local details="$WORKDIR/details.jsonl"
 

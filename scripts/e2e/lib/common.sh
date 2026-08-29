@@ -185,7 +185,11 @@ wait_for() {
 
 require_tools() {
     local missing=()
-    for t in kind kubectl helm gh docker jq git curl; do
+    # yq and bc were used but never required. Their absence is silent and WRONG rather than
+    # loud: chaos.sh reads MaxCostUsdPerHour out of values-e2e.yaml with yq and falls back to
+    # "3.00" when it is missing, while the values file says 1.00 - so the budget assertion
+    # compares against a denominator three times too large and reports a spurious failure.
+    for t in kind kubectl helm gh docker jq yq bc git curl; do
         command -v "$t" >/dev/null 2>&1 || missing+=("$t")
     done
     [ ${#missing[@]} -eq 0 ] || die "missing required tools: ${missing[*]}"

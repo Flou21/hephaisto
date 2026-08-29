@@ -25,9 +25,15 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 20_000 },
 
-  reporter: process.env.CI
-    ? [['list'], ['html', { outputFolder: 'playwright-report', open: 'never' }]]
-    : [['list'], ['html', { outputFolder: 'playwright-report', open: 'never' }]],
+  // The JSON reporter is not a convenience. `playwright test` exits 0 when every spec is
+  // SKIPPED, so the e2e harness recorded this phase as a pass on a run where nothing executed
+  // - the committed report read {"expected":0,"skipped":5} and still counted green. run.sh
+  // reads stats out of this file and asserts something actually ran; see docs/backlog.md #1.
+  reporter: [
+    ['list'],
+    ['html', { outputFolder: 'playwright-report', open: 'never' }],
+    ['json', { outputFile: 'results.json' }],
+  ],
 
   use: {
     // Set by scripts/e2e/run.sh to its supervised port-forward.
