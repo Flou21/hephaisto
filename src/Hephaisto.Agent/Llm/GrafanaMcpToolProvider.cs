@@ -84,7 +84,7 @@ public sealed class GrafanaOptions
 public sealed class GrafanaMcpToolProvider(
     IOptionsMonitor<GrafanaOptions> options,
     IClock clock,
-    ILoggerFactory loggerFactory) : IAsyncDisposable
+    ILoggerFactory loggerFactory) : IGrafanaToolProvider, IAsyncDisposable
 {
     /// <summary>
     /// Surfaced in the environment card because it is a trap that costs a whole

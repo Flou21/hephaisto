@@ -113,10 +113,14 @@ else if (_hits.Count > 0)
     private CancellationTokenSource? _cts;
 
     /// <summary>
-    /// True once any hit comes back with a semantic rank. Inferred rather than configured:
-    /// the search service decides per call whether the vector arm runs, and inferring keeps
-    /// this page from claiming a capability that is only wired up in configuration.
+    /// Whether the vector arm actually ran, as reported by the search itself.
     /// </summary>
+    /// <remarks>
+    /// This used to be inferred from whether any hit came back carrying a semantic rank, which
+    /// is wrong in exactly the case that matters: an arm that ran and legitimately matched
+    /// nothing looks identical to an arm that never ran, so the page announced "semantic search
+    /// unavailable" precisely when semantic search was working and had nothing to offer.
+    /// </remarks>
     private bool _semanticAvailable;
 
     protected override void OnInitialized() => _cts = new CancellationTokenSource();
@@ -143,13 +147,14 @@ else if (_hits.Count > 0)
 
         try
         {
-            _hits = await Queries.SearchAsync(
+            var result = await Queries.SearchAsync(
                 _query,
                 new SearchFilter { ResolvedOnly = _resolvedOnly },
                 limit: 25,
                 _cts?.Token ?? CancellationToken.None);
 
-            _semanticAvailable = _hits.Any(h => h.SemanticRank is not null);
+            _hits = result.Hits;
+            _semanticAvailable = result.SemanticArmRan;
             _ran = true;
         }
         catch (OperationCanceledException)

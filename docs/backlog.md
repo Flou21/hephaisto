@@ -12,6 +12,10 @@ a second ordering here would guarantee the two drift apart. Milestones link in b
 
 Sizes are honest guesses: **S** ≈ under an hour, **M** ≈ a day, **L** ≈ several days.
 
+Item numbers are **stable ids, not an ordering**. New items take the next free number and are
+filed under the area they belong to, so a number can appear out of sequence. Renumbering would
+break every anchor `roadmap.md` links by, which is a worse problem than a non-monotonic list.
+
 An item leaves this file by being fixed, or by being reclassified as a deliberate limitation and
 written down somewhere permanent. It does not leave by being ignored.
 
@@ -128,6 +132,98 @@ passes on #3 and #4. It must assert **"something records it"**.
 
 ---
 
+### 31. grafana-mcp exposes no Tempo tools, so c10's whole reason for existing is untestable
+
+**Symptom.** The fixture built to prove alert → exemplar → trace → log correlation cannot reach
+traces at all. The agent's own log says so on every startup:
+
+```
+grafana-mcp offers 44 tools; 4 allowlisted tools are absent:
+  query_tempo_traces, query_tempo_traceql, list_tempo_tag_names, list_tempo_tag_values
+```
+
+**Evidence.** `c10-faulty-service.yaml`'s header calls it "THE IMPORTANT ONE" and explains why:
+C1–C9 are single- or two-signal scenarios, and c10 "IS THE ONLY FIXTURE THAT PRODUCES A FULLY
+CORRELATED THREE-SIGNAL TRAIL". Hops 2, 3 and 4 of that trail — exemplar, trace, log-by-trace-id —
+all require Tempo.
+
+mcp-grafana reaches Tempo through its **proxied tools** mechanism, which discovers an external
+Tempo MCP server; the deployed `grafana-mcp` is started with `--disable-oncall --disable-incident
+--disable-asserts --disable-sift --disable-pyroscope` and no Tempo server configured, so those four
+tools are never registered. The allowlist naming them is aspirational.
+
+Measured on the dev cluster on 2026-08-29: recording c10 spent **13 steps and 16 tool calls and
+produced no primary finding** — the only fixture of the eight to produce none.
+
+**Why it is still open.** Not noticed, because nothing asserted it. The absence is logged at
+`Information` on a line that reads like a routine startup message, and no test or e2e phase checks
+that an allowlisted tool actually exists. The agent degrades silently to the two hops it can do.
+
+**Size.** M to wire a Tempo MCP server into grafana-mcp; S to make the absence loud — an
+allowlisted tool the server does not offer should be a startup warning that names the capability
+being lost, not an info line.
+
+---
+
+### 34. `c1-oomkill` never produces an OOMKill on this node
+
+**Symptom.** The fixture built to produce `OomKilled` produces `CrashLoopBackOff`, and for a while
+produces a pod Kubernetes reports as `1/1 Running` while its cgroup sits at its memory limit.
+
+**Evidence.** Observed on `studio-rancher-desktop` on 2026-08-29, from a freshly created pod:
+
+- The balloon process writes 4Mi per second into a `medium: Memory` emptyDir against a 64Mi
+  container limit, and **is not killed**. The pod stays `1/1 Running` well past the ~16s at which
+  it crosses the limit.
+- The cgroup *is* at its limit, though - `kubectl exec` into the healthy-looking pod fails with
+  `error executing setns process: signal: killed (possibly OOM-killed)`. There is no headroom to
+  fork a process, and no event says so.
+- When the container does restart, init cannot start at all:
+  `Error response from daemon: ... container init was OOM-killed (memory limit too low?)`. The
+  tmpfs survives container restarts within the same pod, so the memory is already spent before
+  the entrypoint runs.
+- Every `c1` incident in the dev database is `CrashLoopBackOff`. Not one is `OomKilled` - including
+  one pod that restarted **265 times over 23 hours**.
+
+`infra/chaos/c1-oomkill.yaml` predicts "the kernel OOM killer terminates PID 1, the Deployment
+restarts it, and the cycle repeats roughly every 20-30s forever". What happens is a container that
+survives, then a create-time failure loop on a roughly five-minute period.
+
+**Why it is not a blocker.** The scenario is still gradeable, and the agent gets it right: recorded
+on 2026-08-29 it concluded *"the configured memory limit (64Mi) is too low, causing the OCI runtime
+container init process to be OOM-killed during startup"* in 11 steps, which names the cause. The
+cassette records `CrashLoopBackOff` as the kind while `AnswerKey` expects `OomKilled`, and that
+disagreement is worth being able to see - which is why the cassette records the kind it actually
+observed rather than the fixture's intended one.
+
+**Why it is still open.** The fixture's README already hedged - it notes no pod-scoped `OOMKilling`
+event on k3s+containerd - but the hedge understates it: the intended signal never appears at all.
+Nothing asserted the kind, because c1 is not in `DEFAULT_FIXTURES`.
+
+**Size.** M. Making it fire needs a heap allocation rather than tmpfs writes, or an emptyDir that
+does not survive container restarts. Worth doing: a pod reported `Running` while pinned at its
+memory limit is a genuine blind spot, and c1 is the only fixture that reveals it.
+
+---
+
+### 32. `chaos.sh` maps c10 to `SloBurn`, which is not a `SignalKind`
+
+**Symptom.** The e2e harness's kind assertion for c10 can never match, whatever the agent does.
+
+**Evidence.** `scripts/e2e/lib/chaos.sh`'s `fixture_kind()` returns `SloBurn` for c10.
+`SignalKind` has eighteen members and none of them is `SloBurn`. The kind the shipped rule
+actually attaches is `HighErrorRate` — confirmed against the dev cluster, where the incident
+opened by `ServiceHighErrorRate` carries `hephaisto_kind: HighErrorRate`.
+
+The eval harness cannot make the same mistake: `AnswerKey.ExpectedKind` is typed as the enum and
+a test asserts every entry is a defined member. This item is about the shell harness.
+
+**Why it is still open.** c10 is not in `DEFAULT_FIXTURES`, so the assertion has never run.
+
+**Size.** S.
+
+---
+
 ## Correctness and safety
 
 ### 6. Audit immutability is not enforced in the deployed database
@@ -195,6 +291,9 @@ writes it.
 
 ### 9. Semantic search returns nothing, and the recorded cause was wrong
 
+**Status: fixed 2026-08-29** — see the end of this entry. The heading is left as it was, because
+these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** `/api/incidents/search?q=out+of+memory` and `q=crash` return empty. `q=ImagePullBackOff`,
 `q=image` and `q=pod` work.
 
@@ -241,6 +340,27 @@ hit came back with a `SemanticRank`, so once the vector arm lands, any query wit
 will still claim no embedding generator is wired up.
 
 **Size.** M. **Blocks:** runbook memory in v0.1.0, which assumes this search works.
+
+**Fixed 2026-08-29.** All four parts: `IncidentQueries.SearchAsync` generates the query embedding,
+a `pg_trgm` word-similarity arm was added as a third CTE with a GIN index behind it, `SearchAsync`
+now returns which arms actually ran instead of leaving the UI to infer it, and `Search.razor` reads
+that. `IncidentSearchTests` is the reproduction, on a real Postgres.
+
+**Two corrections to the analysis above, both found by measuring rather than reasoning:**
+
+- **`q=out of memory` was not empty.** Against the dev cluster's 32 digests it returned **9** hits.
+  The stop-word reasoning is right about `out` and `of`, but the digests say "memory" in prose often
+  enough that `memori` matches anyway. `q=crash` was the real symptom, and it was exact: **0** hits
+  before, **10** after.
+- **The fusion needed restructuring, not just a third CTE.** The two-arm form was a `FULL OUTER
+  JOIN` with a different `SELECT` per combination of arms; three arms would have needed seven of
+  them, each repeating the scoring expression. It is now a `UNION ALL` folded with `GROUP BY`, which
+  is one scoring expression and makes a fourth arm three lines.
+
+Fixing this also surfaced that `scripts/dev-db.sh` and CI's service container never created
+`pg_trgm` — only the chart did — so the first migration to use `gin_trgm_ops` failed locally with
+`operator class "gin_trgm_ops" does not exist`. The `CREATE EXTENSION` now lives in the migration
+beside the index, matching how `vector` is handled.
 
 ### 10. `hephaisto.io/destructive-actions-allowed` is read by no code
 
@@ -326,6 +446,42 @@ stack was never registered, which does not happen in any shipped configuration.
 
 ---
 
+### 33. Alertmanager signals lose their namespace when the alert labels it `k8s_namespace_name`
+
+**Symptom.** Every incident opened from a metric-derived alert has an empty namespace, so the
+incident card tells the model to investigate `Target: `//faulty-service``.
+
+**Evidence.** `src/Hephaisto.Agent/Web/AlertmanagerEndpoints.cs:276`:
+
+```csharp
+Namespace = Label(labels, "namespace") ?? Label(labels, "exported_namespace") ?? string.Empty,
+```
+
+The shipped OTel spanmetrics rules group by `k8s_namespace_name`, which is neither of those. From
+the dev cluster's `signals` row for `ServiceHighErrorRate`:
+
+```
+target_namespace | (empty)
+labels           | {"service": "faulty-service", "k8s_namespace_name": "hephaisto-chaos", ...}
+```
+
+The namespace is right there in the labels and is dropped on the way in. It also reaches the
+message text — "in namespace hephaisto-chaos" — so the model can sometimes recover it by reading
+prose, which is why this has looked like it works.
+
+**Why it matters more than it looks.** The namespace is not just prose. It is part of the signal
+fingerprint, it is what `Policy:AllowedNamespaces` is checked against, and it is what every tool
+call needs as an argument. An incident with no namespace is one the policy engine cannot admit and
+the model has to guess its way around.
+
+**Why it is still open.** Found on 2026-08-29 while recording the c10 cassette, which is the first
+time a metric-derived incident was investigated deliberately rather than incidentally.
+
+**Size.** S for the label fallback; M to add a test over the real rule labels, which is the part
+that stops it regressing.
+
+---
+
 ## Telemetry drift
 
 ### 15. Duplicate instrument registrations with conflicting types and units
@@ -405,6 +561,59 @@ like configuration and behaves like a comment is worse than no docs. Anything ad
 needs a reader in `src/` in the same commit."* Two survived the sweep.
 
 **Size.** S — either wire them or delete them.
+
+---
+
+### 35. `AllowedTools` is documented "in order", and the order is the server's
+
+**Symptom.** The allowlist reads as though it sets the order the model sees tools in. It does not.
+
+**Evidence.** `Llm/GrafanaMcpToolProvider.cs` documents the option as *"The tools actually exposed
+to the model, **in order**. Everything grafana-mcp offers beyond this list is dropped."* The
+implementation filters the server's list instead:
+
+```csharp
+var allowed = tools
+    .Where(t => o.AllowedTools.Contains(t.Name, StringComparer.OrdinalIgnoreCase))
+```
+
+`tools` is what grafana-mcp returned, so the surviving order is grafana-mcp's, and rewriting the
+allowlist changes membership only. Driving the projection from `AllowedTools` instead — looking
+each name up in `tools` — would implement what the comment says, in about the same number of lines.
+
+**Why it matters, and why it is not urgent.** Tool *order* influencing selection is an
+**unvalidated hypothesis** — nothing in this repo measures it, and the eval harness now exists to
+settle it. Until then the honest fix is the cheap one: make the code match the comment, or change
+the comment. A doc-comment describing behaviour that was never written is how the next person
+plans an experiment against a lever that does not exist.
+
+**Size.** S.
+
+---
+
+### 36. The environment card never names a datasource uid, because nothing sets them
+
+**Symptom.** `EnvironmentCardOptions.DatasourceUids` is empty everywhere, so the prompt section
+that would say *"Datasource uids (pass these, not the names)"* is never rendered — and the model
+has to spend a tool call on `list_datasources` before it can query anything.
+
+**Evidence.** The dictionary defaults to empty in `Investigation/EnvironmentCardOptions.cs`, and
+`grep -rn DatasourceUids src/ charts/` finds only the declaration and the two lines in
+`PromptComposer` that read it. No chart value, no ConfigMap key, no `extraEnv` entry. The deployed
+Deployment carries no `Investigation__Environment__*` variable at all, so the whole environment
+card runs on its compiled-in defaults.
+
+**Why it is worth fixing.** It is the cheapest possible reduction in steps: a fact the agent cannot
+look up is exactly what the environment card is *for*, and supplying it removes a discovery call
+from every investigation that touches Grafana. Measured baseline for comparison: 7.5 steps and
+$0.080 per investigation.
+
+**Why it is still open.** Not noticed, because an empty dictionary renders as an absent section
+rather than an empty one — the prompt looks well-formed either way. It surfaced while planning the
+discovery-cap experiment, whose write-up asserted "the UIDs are already in the environment card".
+They are not.
+
+**Size.** S to populate from the chart; the uids are stable per cluster.
 
 ---
 

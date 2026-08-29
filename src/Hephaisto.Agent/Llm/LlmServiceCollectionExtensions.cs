@@ -46,6 +46,10 @@ public static class LlmServiceCollectionExtensions
         });
 
         services.AddSingleton<GrafanaMcpToolProvider>();
+
+        // Same instance behind the interface, not a second one: the provider caches its tool
+        // list and owns the MCP connection, so two registrations would mean two connections.
+        services.AddSingleton<IGrafanaToolProvider>(sp => sp.GetRequiredService<GrafanaMcpToolProvider>());
         services.AddSingleton<PromptComposer>();
 
         // Gemini's own embedding generator, wrapped so its spans land on the same source as

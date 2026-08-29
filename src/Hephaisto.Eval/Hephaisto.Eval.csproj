@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The eval harness. Dev-only, and NEVER in the pod image: the Dockerfile copies
+       Core, ServiceDefaults and Agent only, so adding this project cannot grow the
+       shipped image. Same posture as Hephaisto.Simulator. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Hephaisto.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Hephaisto.Core/Hephaisto.Core.csproj" />
+    <ProjectReference Include="../Hephaisto.Agent/Hephaisto.Agent.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
+
+    <!-- For the container and the configuration pipeline only; this never builds an IHost.
+         Both AddHephaistoKubernetes and AddHephaistoPersistence register IHostedServices -
+         the cluster watcher, the retention sweep - and starting them would make the harness a
+         second agent in the cluster it is supposed to be reading. See EvalHost. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+</Project>

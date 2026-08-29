@@ -54,6 +54,38 @@ public sealed record IncidentSearchHit
     public int? LexicalRank { get; init; }
 
     public int? SemanticRank { get; init; }
+
+    /// <summary>
+    /// Rank in the trigram arm, null if that arm did not return it.
+    /// </summary>
+    /// <remarks>
+    /// The arm that exists because the other two both miss <c>CrashLoopBackOff</c>. See the
+    /// remarks on <see cref="IncidentSearch"/>.
+    /// </remarks>
+    public int? TrigramRank { get; init; }
+}
+
+/// <summary>
+/// A result set, and which arms actually produced it.
+/// </summary>
+/// <remarks>
+/// The arms are reported rather than inferred. The UI used to work out whether the vector arm
+/// was available by asking whether any hit came back with a semantic rank, which is wrong in
+/// the case that matters: an arm that ran and legitimately matched nothing is indistinguishable
+/// from an arm that never ran, so the page told the reader semantic search was unavailable
+/// exactly when it was working and simply had no similar incident to offer.
+/// </remarks>
+public sealed record IncidentSearchResult
+{
+    public required IReadOnlyList<IncidentSearchHit> Hits { get; init; }
+
+    /// <summary>True when a query embedding was available and the vector arm ran.</summary>
+    public required bool SemanticArmRan { get; init; }
+
+    public required bool TrigramArmRan { get; init; }
+
+    public static readonly IncidentSearchResult Empty =
+        new() { Hits = [], SemanticArmRan = false, TrigramArmRan = false };
 }
 
 /// <summary>
@@ -97,7 +129,7 @@ public sealed class IncidentSearch(
     // Postgres, so the fused score would come back as a numeric and reading it as a double
     // would throw at the reader rather than at compile time.
 
-    public async Task<IReadOnlyList<IncidentSearchHit>> SearchAsync(
+    public async Task<IncidentSearchResult> SearchAsync(
         string query,
         float[]? queryEmbedding,
         SearchFilter filter,
@@ -106,13 +138,14 @@ public sealed class IncidentSearch(
     {
         if (string.IsNullOrWhiteSpace(query) && queryEmbedding is null)
         {
-            return [];
+            return IncidentSearchResult.Empty;
         }
 
         var o = options.CurrentValue;
         var pool = Math.Max(o.SearchMinPool, limit * o.SearchPoolFactor);
 
         var lexical = !string.IsNullOrWhiteSpace(query);
+        var trigram = lexical;
         var semantic = queryEmbedding is { Length: > 0 };
 
         if (!semantic)
@@ -134,7 +167,7 @@ public sealed class IncidentSearch(
 
         try
         {
-            await using var cmd = new NpgsqlCommand(BuildSql(lexical, semantic, filter), connection);
+            await using var cmd = new NpgsqlCommand(BuildSql(lexical, semantic, trigram, filter), connection);
             cmd.Transaction = db.Database.CurrentTransaction?.GetDbTransaction() as NpgsqlTransaction;
 
             if (lexical)
@@ -173,10 +206,16 @@ public sealed class IncidentSearch(
                     Score = reader.GetDouble(8),
                     LexicalRank = reader.IsDBNull(9) ? null : (int)reader.GetInt64(9),
                     SemanticRank = reader.IsDBNull(10) ? null : (int)reader.GetInt64(10),
+                    TrigramRank = reader.IsDBNull(11) ? null : (int)reader.GetInt64(11),
                 });
             }
 
-            return hits;
+            return new IncidentSearchResult
+            {
+                Hits = hits,
+                SemanticArmRan = semantic,
+                TrigramArmRan = trigram,
+            };
         }
         finally
         {
@@ -187,9 +226,10 @@ public sealed class IncidentSearch(
         }
     }
 
-    private static string BuildSql(bool lexical, bool semantic, SearchFilter filter)
+    internal static string BuildSql(bool lexical, bool semantic, bool trigram, SearchFilter filter)
     {
         var sql = new StringBuilder();
+        var arms = new List<string>();
 
         sql.Append("WITH ");
 
@@ -200,6 +240,7 @@ public sealed class IncidentSearch(
             // The ORDER BY is repeated outside the window function on purpose: Postgres
             // computes window functions before LIMIT, so without it the pool would be an
             // arbitrary slice of the matches that happened to be ranked, not the top ones.
+            arms.Add("lex");
             sql.Append("""
                 lex AS (
                     SELECT d.id,
@@ -212,17 +253,14 @@ public sealed class IncidentSearch(
                 """);
         }
 
-        if (lexical && semantic)
-        {
-            sql.Append(", ");
-        }
-
         if (semantic)
         {
             // The inner select is ORDER BY ... LIMIT and nothing else, which is the only
             // shape the HNSW index can serve. Wrapping the ranking in a window function on
             // the outside keeps the index scan intact; ranking inside would force a sort
             // over every digest ever written.
+            AppendSeparator(sql, arms);
+            arms.Add("sem");
             sql.Append("""
                 sem AS (
                     SELECT id, ROW_NUMBER() OVER () AS rnk
@@ -237,43 +275,59 @@ public sealed class IncidentSearch(
                 """);
         }
 
-        sql.Append(", fused AS (");
-
-        if (lexical && semantic)
+        if (trigram)
         {
-            sql.Append($"""
-
-                SELECT COALESCE(lex.id, sem.id) AS id,
-                       (COALESCE(1.0 / ({RrfK} + lex.rnk), 0.0)
-                        + COALESCE(1.0 / ({RrfK} + sem.rnk), 0.0))::double precision AS score,
-                       lex.rnk AS lex_rank,
-                       sem.rnk AS sem_rank
-                FROM lex FULL OUTER JOIN sem ON sem.id = lex.id
+            // word_similarity and <%, not similarity and %. The plain operators compare two
+            // whole strings, so a five-character query against a paragraph-length digest
+            // scores near zero and never clears the threshold; the word_similarity family
+            // scores the query against the best matching extent inside the text, which is
+            // the question actually being asked. Both are served by the same GIN index.
+            //
+            // The query is the left operand in both the operator and the ranking, and the
+            // order is not symmetric: word_similarity(a, b) looks for a inside b.
+            AppendSeparator(sql, arms);
+            arms.Add("trg");
+            sql.Append("""
+                trg AS (
+                    SELECT d.id,
+                           ROW_NUMBER() OVER (
+                               ORDER BY word_similarity(@q, d.digest) DESC, d.created_at DESC) AS rnk
+                    FROM incident_digests d
+                    WHERE @q <% d.digest
+                    ORDER BY word_similarity(@q, d.digest) DESC, d.created_at DESC
+                    LIMIT @pool
+                )
                 """);
         }
-        else if (lexical)
-        {
-            sql.Append($"""
 
-                SELECT lex.id, (1.0 / ({RrfK} + lex.rnk))::double precision AS score,
-                       lex.rnk AS lex_rank, NULL::bigint AS sem_rank
-                FROM lex
-                """);
-        }
-        else
-        {
-            sql.Append($"""
+        // RRF as a fold over the arms rather than an outer join between them. The join
+        // formulation needs a different SELECT for every combination of arms - three arms is
+        // seven of them - and each one repeats the scoring expression, which is exactly the
+        // shape where a typo in one branch produces a plausible number nobody can trace. This
+        // is one scoring expression, and adding a fourth arm is three lines.
+        sql.Append(", arms AS (\n");
 
-                SELECT sem.id, (1.0 / ({RrfK} + sem.rnk))::double precision AS score,
-                       NULL::bigint AS lex_rank, sem.rnk AS sem_rank
-                FROM sem
-                """);
-        }
+        sql.Append(string.Join(
+            "\n    UNION ALL\n",
+            arms.Select(arm => $"""
+                    SELECT id, (1.0 / ({RrfK} + rnk))::double precision AS score,
+                           {Rank(arm, "lex")}, {Rank(arm, "sem")}, {Rank(arm, "trg")}
+                    FROM {arm}
+                """)));
 
         sql.Append("""
+            ),
+            fused AS (
+                SELECT id,
+                       SUM(score)::double precision AS score,
+                       MIN(lex_rank) AS lex_rank,
+                       MIN(sem_rank) AS sem_rank,
+                       MIN(trg_rank) AS trg_rank
+                FROM arms
+                GROUP BY id
             )
             SELECT d.id, d.incident_id, d.digest, d.namespace, d.workload_key, d.kind, d.resolved,
-                   d.created_at, f.score, f.lex_rank, f.sem_rank
+                   d.created_at, f.score, f.lex_rank, f.sem_rank, f.trg_rank
             FROM fused f
             JOIN incident_digests d ON d.id = f.id
             """);
@@ -322,6 +376,25 @@ public sealed class IncidentSearch(
 
         return sql.ToString();
     }
+
+    private static void AppendSeparator(StringBuilder sql, List<string> arms)
+    {
+        if (arms.Count > 0)
+        {
+            sql.Append(", ");
+        }
+    }
+
+    /// <summary>
+    /// One arm's rank column: its own rank in its own slot, NULL in the others.
+    /// </summary>
+    /// <remarks>
+    /// Every branch of the UNION has to project the same columns in the same order, and an
+    /// untyped NULL in a UNION takes the type of whichever branch Postgres resolves first -
+    /// so the casts are load-bearing, not decoration.
+    /// </remarks>
+    private static string Rank(string arm, string slot) =>
+        arm == slot ? $"rnk AS {slot}_rank" : $"NULL::bigint AS {slot}_rank";
 
     private static void AddFilterParameters(NpgsqlCommand cmd, SearchFilter filter)
     {

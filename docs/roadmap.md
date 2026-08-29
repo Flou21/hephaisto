@@ -50,34 +50,89 @@ marketing any of it before the rest is true is the one ordering that cannot be u
 
 ## v0.1.0 — Diagnosis you can trust
 
-**The gate on everything after it.**
+**The gate on everything after it — and, measured on 2026-08-29, it is met.**
 
-Accuracy stands at **3 findings from 11 runs**, and the interpretation matters more than the
-number: the model was not reasoning badly, it was **running out of steps in the wrong place**. On
-one `Unschedulable` incident it had the answer at step 8 from `get_events`, then spent 6 of its 12
-steps on Loki label discovery and reached `list_nodes` at step 24. Full record in
-[`history.md`](history.md#the-first-accuracy-measurement--2026-08-28).
+| | |
+|---|---|
+| **Cassette replay**, 3 passes over 8 scenarios | **22/24 correct**, 0 wrong, 2 no-finding, 180 steps, $1.92 |
+| Excluding c10, which the harness itself flags as unmeasurable | **21/21** |
+| **Live against the dev cluster**, one pass while recording | **7/8 correct** |
 
-So the number to move is not "accuracy" directly.
+Per fixture, over three passes: c1, c2, c3, c4, c5, c7 and c8 are **3/3 each**, at 4.3 to 9.0 steps.
+c10 is 1/3, and every c10 attempt failed the replay-coverage assertion, so the harness reports those
+verdicts as unsound rather than as a score. **Nothing was ever diagnosed wrongly** — the two
+failures are both "produced no finding at all", which stays the failure mode worth watching.
 
-### Work, cheapest first
+Mean cost is **$0.080 per investigation** and mean length **7.5 steps**, against a `MaxSteps` of 12.
+Both numbers matter for what comes next: the step ceiling is not the binding constraint, so the
+experiment that assumed it was has already been answered.
 
-1. **Build the eval harness first.** Replay recorded incidents against recorded tool output.
-   Without it every change below is a guess that costs real money per evaluation. `scripts/e2e/run.sh`
-   is the integration-level instrument; this is the unit-level one.
-   ([backlog #27](backlog.md#27-addhephaistollmwithoutpersistence-has-no-call-sites) is dead code
-   written for exactly this and should be adopted or deleted here.)
-2. **Raise `MaxSteps`** from 12 (`Llm/LlmOptions.cs`, `InvestigationBudgetOptions`). The simplest
-   experiment, and the one that says whether the ceiling is the binding constraint or an excuse.
-3. **Order tools by `SignalKind`** — node and event tools before log search on a scheduling
-   incident. The runbooks already carry the kind; nothing uses it to shape tool priority.
-4. **Charge label and metadata discovery differently from evidence gathering**, so exploring Loki's
-   label space does not consume the budget meant for answering.
-5. **Runbook memory** — retrieve the top-3 similar resolved incidents into the prompt. **Depends on
-   [backlog #9](backlog.md#9-semantic-search-returns-nothing-and-the-recorded-cause-was-wrong)**:
-   the storage exists, but the search it would use is running on one arm.
-6. **Grafana annotations on state transitions.** Deferred since the MVP, and it also unblocks
+**The previous number was 3 findings from 11 runs, and it is superseded rather than improved.**
+Those eleven runs predate the transient-retry fix: 9 of 12 investigations were terminating
+`Faulted` on the provider's own "high demand" wording, each discarding a complete run's tokens and
+producing nothing. What looked like a reasoning problem was a retry problem. The full record stays
+in [`history.md`](history.md#the-first-accuracy-measurement--2026-08-28) because a wrong diagnosis
+that survived a week is worth keeping.
+
+**So the four planned experiments are no longer gating work.** Raising `MaxSteps`, ordering tools
+by `SignalKind`, capping discovery calls and runbook memory were all aimed at a number that has
+already cleared the bar. They remain worth running — as **cost** experiments, against a baseline
+that now exists, since 7.5 steps and $0.080 per investigation is the thing left to improve — but
+nothing downstream waits on them.
+
+### Done
+
+1. **The eval harness.** `hephaisto-eval` with three commands: `record` runs a real investigation
+   against the live cluster and captures every tool declaration and untruncated result; `run`
+   replays a corpus and scores it, needing only the model; `inspect` reads a cassette. Recording is
+   **in-process**, wrapping tools inside `SafeToolDecorator`, because a Postgres exporter cannot
+   work — tool declarations are persisted nowhere, only 43 of 297 tool calls carried an untruncated
+   blob, and arguments are stored post-redaction. It adopted
+   [backlog #27](backlog.md#27-addhephaistollmwithoutpersistence-has-no-call-sites).
+
+   Two decisions in it carry the number's credibility:
+
+   - **The denominator is scenarios, not gradeable scenarios.** Both pre-existing instruments treat
+     "no primary finding" as a *skip*, and no-finding was the dominant failure mode — so a
+     regression that stopped producing findings would have pushed the reported score **up**.
+   - **A high replay miss rate invalidates the instrument, not the agent.** Over 25% and the
+     scenario is reported unsound; the answer is "re-record", never "it got worse". This is what
+     flags c10 rather than quietly scoring it 1/3.
+
+2. **[backlog #9](backlog.md#9-semantic-search-returns-nothing-and-the-recorded-cause-was-wrong) —
+   fixed**, which was the dependency for runbook memory. The vector arm had never executed; a
+   `pg_trgm` word-similarity arm was added beside it, and `q=crash` went from 0 hits to 10.
+
+### Still open here
+
+3. **Grafana annotations on state transitions.** Deferred since the MVP, and it also unblocks
    [backlog #20](backlog.md#20-the-mvp-acceptance-test-requires-grafana-annotations-which-are-unbuilt).
+4. **Widen the corpus from 8 back toward 10.** c6 does not fire on `local-path` and c9 would evict
+   the observability stack; both need replacement fixtures. Two defects found while recording bear
+   on the fixtures that *are* in the corpus and are worth fixing regardless:
+   [#31](backlog.md#31-grafana-mcp-exposes-no-tempo-tools-so-c10s-whole-reason-for-existing-is-untestable)
+   (c10 cannot reach Tempo, so the correlation walk it exists to prove is untestable) and
+   [#34](backlog.md#34-c1-oomkill-never-produces-an-oomkill-on-this-node) (c1 presents as
+   `CrashLoopBackOff`, never `OomKilled`).
+
+### The experiments, now cost rather than accuracy
+
+Kept because the method is worth running and the baseline exists; demoted because nothing waits on
+them. One variable at a time, three repeats, against `results/baseline-*.json`:
+
+- **Raise `MaxSteps`** from 12 — **probably pointless, and the baseline is why**: mean length is 7.5
+  steps and the longest successful run was 13. Investigations are concluding, not running out. If
+  it is tried anyway, `MaxWallClock` (10 min) and `MaxOuterTurns` (8) must move with it or they
+  silently become the binding constraint, and exceeding `MaxOuterTurns` returns `Stalled`, which
+  has no reserved-step rescue.
+- **Rewrite `Runbooks/Unschedulable.md`**, which tells the model to query Loki and never mentions
+  `get_events` or `list_nodes`. Note the baseline argues against this mattering much: c3 is 3/3 in
+  5.7 steps despite it.
+- **Cap discovery calls** in `SafeToolDecorator`, the only enforcement point that sees a tool name
+  at decrement time.
+- **Runbook memory** — retrieve the top-3 similar resolved incidents. The card must state that past
+  incidents are **not citable**, or grounding discards anything quoted from them and the change
+  *lowers* the finding count.
 
 ### Measurement integrity — prerequisites, not extras
 
@@ -101,15 +156,26 @@ instruments. All of these are in the backlog and all of them land here:
 **≥ 7/10 correct root cause over ≥ 10 seeded scenarios**, plus cost per investigation, time to
 diagnosis, and the false-positive rate from the thumbs-up/down.
 
-**The bar needs a different instrument than it has.** Only 4 of the 10 chaos fixtures run in an
-automated gate, each of the other six excluded for a real reason
-([backlog #2](backlog.md#2-six-of-ten-chaos-fixtures-never-run-in-an-automated-gate)). So the
-**eval harness owns this number**, over recorded scenarios including the manually-run fixtures, and
-the kind harness stays a smaller integration gate. Say which instrument produced which number
-rather than quietly counting four.
+**Restated as n/8, and met.** Two of the ten fixtures cannot be recorded here and the reason is
+written down for each: c6 does not fire on `local-path`, and c9 is node-wide and would evict the
+observability stack along with the agent. Reporting n/10 while running eight would be the same
+dishonesty the harness was built to remove. **Widening the corpus back toward ten is the
+outstanding work on this criterion**, not raising the ratio.
 
-**If it lands at 4/10, v0.2.0 does not start.** That is the entire reason the executor was left
-unbuilt, and this file will keep saying so.
+**Which instrument produced which number, always.** The 22/24 is cassette replay. The 7/8 is live
+against the dev cluster while recording. They were cross-checked on c4: recorded live, then
+replayed, verdicts agreed with a **0% miss rate** — which is what makes the cheap instrument usable
+for the rest. The two instruments disagree on nothing except c10, where replay recovered a finding
+once in three attempts that the live run did not.
+
+**The other three numbers are still not instrumented.** Cost per investigation now has a baseline
+($0.080 mean). Time to diagnosis and the false-positive rate do not
+([#3](backlog.md#3-hephaistohumanfeedback-is-never-recorded),
+[#4](backlog.md#4-hephaistoincidentsclosed-and-hephaistoincidentduration-are-never-recorded)), and
+this criterion is defined by all four.
+
+**The gate that was set — if it lands at 4/10, v0.2.0 does not start — is passed.** It stays
+written here because the executor being unbuilt until this held is the reason it can be trusted.
 
 ---
 

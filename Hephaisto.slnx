@@ -3,6 +3,7 @@
     <Project Path="src/Hephaisto.Agent/Hephaisto.Agent.csproj" />
     <Project Path="src/Hephaisto.AppHost/Hephaisto.AppHost.csproj" />
     <Project Path="src/Hephaisto.Core/Hephaisto.Core.csproj" />
+    <Project Path="src/Hephaisto.Eval/Hephaisto.Eval.csproj" />
     <Project Path="src/Hephaisto.ServiceDefaults/Hephaisto.ServiceDefaults.csproj" />
     <Project Path="src/Hephaisto.Simulator/Hephaisto.Simulator.csproj" />
   </Folder>

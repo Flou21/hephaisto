@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
+using Hephaisto.Agent.Llm;
 using Hephaisto.Agent.Persistence;
 using Hephaisto.Agent.Persistence.Repositories;
 using Hephaisto.Agent.Safety;
@@ -239,16 +240,23 @@ public sealed class IncidentQueries(
     }
 
     /// <summary>
-    /// Hybrid search over incident history.
+    /// Hybrid search over incident history: full text, vector similarity and trigrams.
     /// </summary>
     /// <remarks>
-    /// The embedding is passed as null: generating one is the retrieval stream's work, and
-    /// <c>IncidentSearch</c> degrades to its lexical arm when it is absent. That degradation
-    /// is designed for, not tolerated - search that returns worse results is useful, search
-    /// that throws because a provider is down is not - so wiring an embedding generator in
-    /// later changes result quality and nothing else here.
+    /// <para>
+    /// The query embedding is generated here. It used to be passed as null on the grounds that
+    /// generating one was the retrieval stream's work - which was true, and meant <b>the vector
+    /// arm had never run once</b> despite the corpus being fully embedded and HNSW-indexed. The
+    /// expensive half was paid for and the cheap half was missing.
+    /// </para>
+    /// <para>
+    /// <see cref="IncidentEmbedder.EmbedAsync"/> returns null on any failure and caches by content
+    /// hash, so a provider outage degrades this to the lexical and trigram arms rather than
+    /// failing the page, and a repeated query costs nothing. That degradation is designed for:
+    /// search returning worse results is useful, search that throws during an outage is not.
+    /// </para>
     /// </remarks>
-    public async Task<IReadOnlyList<IncidentSearchHit>> SearchAsync(
+    public async Task<IncidentSearchResult> SearchAsync(
         string query,
         SearchFilter filter,
         int limit,
@@ -256,13 +264,16 @@ public sealed class IncidentQueries(
     {
         if (string.IsNullOrWhiteSpace(query))
         {
-            return [];
+            return IncidentSearchResult.Empty;
         }
 
         await using var scope = scopes.CreateAsyncScope();
         var search = scope.ServiceProvider.GetRequiredService<IncidentSearch>();
+        var embedder = scope.ServiceProvider.GetRequiredService<IncidentEmbedder>();
 
-        return await search.SearchAsync(query, queryEmbedding: null, filter, Math.Clamp(limit, 1, 100), ct);
+        var queryEmbedding = await embedder.EmbedAsync(query, hash: null, ct);
+
+        return await search.SearchAsync(query, queryEmbedding, filter, Math.Clamp(limit, 1, 100), ct);
     }
 
     /// <summary>
