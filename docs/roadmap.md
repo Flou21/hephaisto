@@ -79,6 +79,15 @@ c10 is 1/3, and every c10 attempt failed the replay-coverage assertion, so the h
 verdicts as unsound rather than as a score. **Nothing was ever diagnosed wrongly** — the two
 failures are both "produced no finding at all", which stays the failure mode worth watching.
 
+**Re-measured on the rc2 tree: 22/24 again**, 183 steps, $1.97 — c1, c2, c3, c4, c5, c7 and c8 all
+3/3, c10 still 1/3. Two differences from the baseline row, both worth stating rather than rounding
+away. The instrument came out *sounder* — 21 of 24 attempts passed every structural assertion,
+against 19 — and one c10 attempt that produced no finding in the baseline produced a **wrong** one
+here, so "nothing was ever diagnosed wrongly" is now a statement about the baseline run and not
+about every run. Both c10 attempts that were not correct were flagged UNSOUND at 55–68% replay
+miss, which is the harness saying those verdicts are not evidence about the agent — but the honest
+version is that c10 has now been observed producing a wrong answer, not merely no answer.
+
 Mean cost is **$0.080 per investigation** and mean length **7.5 steps**, against a `MaxSteps` of 12.
 Both numbers matter for what comes next: the step ceiling is not the binding constraint, so the
 experiment that assumed it was has already been answered.
