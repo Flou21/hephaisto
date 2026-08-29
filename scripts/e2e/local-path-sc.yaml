@@ -1,0 +1,21 @@
+# A StorageClass named `local-path`, pointing at the provisioner kind already runs.
+#
+# This exists so the harness can install infra/observability/*.values.yaml BYTE FOR BYTE
+# UNMODIFIED. Those files pin `storageClassName: local-path` because that is what k3s calls
+# its provisioner; kind ships the same rancher.io/local-path provisioner but names the class
+# `standard`. Without this alias, every PVC in the observability stack would sit Pending
+# forever with no error beyond an event nobody is watching.
+#
+# The alternative was a set of kind-flavoured copies of those values files, which would then
+# be the thing under test - and the point of the harness is to exercise the real ones.
+#
+# WaitForFirstConsumer matches both the kind default and the k3s behaviour the fixtures were
+# written against: a PVC stays Pending until a pod needs it, which is why C3's unschedulable
+# pod does not also produce a storage error.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-path
+provisioner: rancher.io/local-path
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer

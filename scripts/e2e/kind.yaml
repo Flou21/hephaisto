@@ -1,0 +1,20 @@
+# The throwaway cluster the e2e harness builds and destroys on every run.
+#
+# SINGLE NODE, and that is a correctness requirement rather than a saving.
+# infra/chaos/README.md writes its expected Kubernetes events against a one-node cluster -
+# C3's is literally "0/1 nodes are available: 1 Insufficient memory." Add a worker and that
+# fixture's assertion, and the agent's diagnosis of it, both change.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: hephaisto-e2e
+nodes:
+  - role: control-plane
+    # kubeadm's default taint keeps ordinary workloads off a control-plane node. On a
+    # single-node cluster that means nothing schedules at all, so it has to come off -
+    # which is what kind's own single-node default does, made explicit here because this
+    # file overrides the default node list.
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          taints: []

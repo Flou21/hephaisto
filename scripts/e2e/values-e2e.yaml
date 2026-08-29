@@ -1,0 +1,83 @@
+# Chart values for the throwaway kind cluster.
+#
+# Derived from values-dev.yaml, and the differences are the point rather than incidental:
+#
+#   * `image` is NOT set. Left alone it resolves to ghcr.io/flou21/hephaisto:<appVersion>,
+#     which is the PUBLISHED image for the version under test. values-dev.yaml overrides it
+#     to a locally built hephaisto/agent:dev, and an e2e that installs a local build proves
+#     nothing about what was published.
+#
+#   * readOnlyRootFilesystem stays TRUE. values-dev.yaml turns it off because `dotnet watch`
+#     needs to write; the published image does not, and the production posture is the one
+#     worth testing. Nothing else in this repo exercises it.
+#
+#   * networkPolicy.extraIngressCIDRs is NOT widened to 0.0.0.0/0 as values-dev.yaml does.
+#     kind's default CNI does not enforce NetworkPolicy at all, so widening it would change
+#     nothing except to hide the fact that the policy is unenforced here. See the harness's
+#     summary, which says so out loud.
+#
+#   * extraEnv caps spend. Investigations here are real Gemini calls against a real key.
+
+observabilityNamespace: hephaisto-obs
+
+# Must match the kube-prometheus-stack release name the harness installs (`hephaisto`), or
+# every PodMonitor and PrometheusRule is created successfully and selected by nothing.
+prometheusOperator:
+  selectorLabels:
+    release: hephaisto
+
+policy:
+  actionableNamespaces:
+    - hephaisto-chaos
+
+# Observe: detect, investigate, report, mutate nothing. The harness asserts that no action
+# was executed, which is only a meaningful assertion in a mode where one could have been.
+mode: Observe
+
+otel:
+  endpoint: http://otel-collector.hephaisto-obs:4318
+  protocol: http/protobuf
+  environment: kind-e2e
+
+grafanaMcp:
+  url: http://grafana-mcp.hephaisto-obs:8000/mcp
+
+postgres:
+  embedded:
+    enabled: true
+    # Smaller than dev's 10Gi. The cluster lives for one run, and a kind node's disk is the
+    # Lima VM's disk.
+    storage: 2Gi
+
+alerts:
+  kubernetes: true
+  slo: true
+  watchdog: true
+  # The self-check rules, including the two budget rules that could not fire until
+  # hephaisto_llm_budget_utilization was actually emitted. Verifying those is part of why
+  # this harness exists, so they are on here and off in the chart's default.
+  observabilitySelfcheck: true
+
+dashboard:
+  enabled: true
+
+networkPolicy:
+  enabled: true
+
+# -------------------------------------------------------------------------------------------
+# Spend control
+# -------------------------------------------------------------------------------------------
+# Without these the C# defaults apply - $3/hour, $20/day, $0.50/incident - which are sized for
+# a real deployment, not for a test that can be re-run twenty times in an afternoon while
+# someone debugs the harness itself.
+#
+# The per-incident cap is the one that actually binds: four fixtures at $0.10 is the realistic
+# worst case for a run. The hourly and daily caps are the backstop for a loop, and they are
+# what makes "how much can one run cost" answerable rather than estimated.
+extraEnv:
+  - name: Llm__Budget__MaxCostUsdPerIncident
+    value: "0.10"
+  - name: Llm__Budget__MaxCostUsdPerHour
+    value: "1.00"
+  - name: Llm__Budget__MaxCostUsdPerDay
+    value: "2.00"
