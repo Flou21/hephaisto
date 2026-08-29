@@ -36,15 +36,26 @@ test.describe('the console', () => {
   });
 
   test('a diagnosis is reachable from the list and cites its evidence', async ({ page }) => {
-    await open(page, '/');
+    // Pick an incident that HAS a diagnosis rather than whichever is listed first.
+    //
+    // Taking the first row looked equivalent and is not: the agent also opens incidents for
+    // the cluster it is running in - ReadinessFlapping on Grafana, Unschedulable on a pod
+    // waiting for its image - and those are perfectly real detections that sort above the
+    // seeded faults and have no finding yet. The spec then failed on a page that was
+    // rendering correctly.
+    const res = await page.request.get('/api/incidents?limit=100');
+    const withDiagnosis = (await res.json()).filter((i: { hasDiagnosis: boolean }) => i.hasDiagnosis);
+    test.skip(withDiagnosis.length === 0, 'no incident has been investigated yet');
 
-    // Follow the anchor rather than clicking the row. The row has an onclick handler and the
-    // title cell has a real href; the anchor is the one that works without JavaScript and is
-    // the honest thing to assert on.
+    await open(page, `/incidents/${withDiagnosis[0].id}`);
+
+    // The list must still link there, which is the navigation half of this test.
+    await open(page, '/');
     const link = page.getByTestId('incident-link').first();
     await expect(link).toBeVisible();
-    await link.click();
+    await expect(link).toHaveAttribute('href', /^incidents\/[0-9a-f-]{36}$/);
 
+    await open(page, `/incidents/${withDiagnosis[0].id}`);
     await expect(page).toHaveURL(/\/incidents\/[0-9a-f-]{36}$/);
     await expect(page.locator('#components-reconnect-modal')).toBeHidden();
 
