@@ -148,7 +148,7 @@ wait_for() {
     local what="$1" timeout="$2"; shift 2
     local deadline=$(( SECONDS + timeout ))
 
-    printf '  %swaiting%s %s ' "$C_DIM" "$C_RESET" "$what"
+    printf '  %swaiting for%s %s ' "$C_DIM" "$C_RESET" "$what"
     while [ "$SECONDS" -lt "$deadline" ]; do
         if "$@" >/dev/null 2>&1; then
             printf ' %sok%s (%ss)\n' "$C_GREEN" "$C_RESET" "$(( timeout - (deadline - SECONDS) ))"
