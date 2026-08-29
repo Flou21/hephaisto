@@ -302,7 +302,14 @@ the REVOKE applies. The chart should make the connecting role a value.
 
 **Size.** M.
 
-**Fixed 2026-08-29.** The agent now serves on a **separate, non-owner role**. Privileges cannot
+**Fixed 2026-08-29**, and the first attempt (`v0.1.0-rc2`) shipped a chart that could not install.
+Repointing the registered `DbContext` at the serving role also repointed **migrations**, which run
+through it — so a fresh database tried to authenticate as a role that nothing had created yet and
+the agent never started. Every local database already had the role, so only the e2e's throwaway
+cluster could surface it. The startup path is now a single ordered `PrepareDatabaseAsync`, and
+`AuditRoleBootstrapTests` fails without it.
+
+The agent now serves on a **separate, non-owner role**. Privileges cannot
 restrain a table's owner — it can always grant itself back — so this was never fixable while the
 agent connected as `hephaisto`. `ConnectionStrings:hephaisto` stays the owner and is what migrates;
 `ConnectionStrings:hephaisto_app` is what serves. `EnsureAuditImmutabilityAsync` creates the role

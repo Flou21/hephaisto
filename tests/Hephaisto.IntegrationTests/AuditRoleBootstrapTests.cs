@@ -160,6 +160,115 @@ public sealed class AuditRoleBootstrapTests(PostgresFixture pg)
             .Should().NotThrowAsync();
     }
 
+    /// <summary>
+    /// Migration must work when the serving role does not exist yet.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The regression test for the defect that broke v0.1.0-rc2's chart install. The DbContext
+    /// was repointed at the serving role, and <c>MigrateHephaistoDatabaseAsync</c> resolved the
+    /// DbContext from DI - so on a database being migrated for the first time it tried to
+    /// authenticate as a role that nothing had created yet. The agent failed to start, the
+    /// Deployment never became Available, and <c>helm install</c> timed out.
+    /// </para>
+    /// <para>
+    /// It passed everywhere it was tried beforehand because every existing database already
+    /// had the role. So this test asserts the property directly: with the DbContext registered
+    /// on a connection whose role <b>does not exist at all</b>, migrating still succeeds -
+    /// which it can only do by using the owner connection.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Migration_runs_as_the_owner_even_when_the_serving_role_does_not_exist()
+    {
+        const string missing = "hephaisto_role_that_does_not_exist";
+
+        await using (var db = pg.CreateContext())
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                $"DROP ROLE IF EXISTS {missing}", TestContext.Current.CancellationToken);
+        }
+
+        var app = new NpgsqlConnectionStringBuilder(pg.ConnectionString)
+        {
+            Username = missing,
+            Password = "never-set",
+        }.ConnectionString;
+
+        var builder = Host.CreateApplicationBuilder();
+
+        builder.Services.AddSingleton(new DatabaseRoles(pg.ConnectionString, app));
+
+        // Exactly how production registers it: the DbContext serves as the non-owner role.
+        builder.Services.AddDbContext<HephaistoDbContext>(o => o.UseNpgsql(app, n => n.UseVector()));
+
+        using var host = builder.Build();
+
+        await host.Invoking(h => h.MigrateHephaistoDatabaseAsync(TestContext.Current.CancellationToken))
+            .Should().NotThrowAsync(
+                "migration must use the owner connection - the serving role may not exist yet");
+    }
+
+    /// <summary>
+    /// The full startup sequence works against a role that has never existed.
+    /// </summary>
+    /// <remarks>
+    /// The ordering is the thing under test: create the role, migrate as the owner, then grant.
+    /// Any other order fails, and each failure looks like a different problem.
+    /// </remarks>
+    [Fact]
+    public async Task The_startup_sequence_creates_the_role_migrates_and_grants_in_that_order()
+    {
+        const string fresh = "hephaisto_prepare_test";
+
+        // Start from "this role has never existed". DROP OWNED is required before DROP ROLE
+        // because a previous run left grants behind, and a role holding privileges cannot be
+        // dropped - the error names dependent objects rather than the grants, which is why
+        // this is spelled out rather than a bare DROP ROLE IF EXISTS.
+        await using (var db = pg.CreateContext())
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                $"""
+                 DO $$
+                 BEGIN
+                     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{fresh}') THEN
+                         EXECUTE 'DROP OWNED BY {fresh}';
+                         EXECUTE 'DROP ROLE {fresh}';
+                     END IF;
+                 END
+                 $$;
+                 """,
+                TestContext.Current.CancellationToken);
+        }
+
+        var app = new NpgsqlConnectionStringBuilder(pg.ConnectionString)
+        {
+            Username = fresh,
+            Password = "prepare-pw",
+        }.ConnectionString;
+
+        var builder = Host.CreateApplicationBuilder();
+        builder.Services.AddSingleton(new DatabaseRoles(pg.ConnectionString, app));
+        builder.Services.AddDbContext<HephaistoDbContext>(o => o.UseNpgsql(app, n => n.UseVector()));
+
+        using var host = builder.Build();
+
+        await host.PrepareDatabaseAsync(TestContext.Current.CancellationToken);
+
+        await using var check = pg.CreateContext();
+
+        var canInsert = await check.Database
+            .SqlQuery<bool>($"""select has_table_privilege({fresh}, 'audit_events', 'INSERT') as "Value" """)
+            .SingleAsync(TestContext.Current.CancellationToken);
+
+        var canUpdate = await check.Database
+            .SqlQuery<bool>($"""select has_table_privilege({fresh}, 'audit_events', 'UPDATE') as "Value" """)
+            .SingleAsync(TestContext.Current.CancellationToken);
+
+        canInsert.Should().BeTrue();
+        canUpdate.Should().BeFalse();
+    }
+
     private static string Quote(string identifier) => $"\"{identifier.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
 
     private async Task RunBootstrapAsync(string password = Password)

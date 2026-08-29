@@ -33,8 +33,17 @@ the reason written down: c6 does not fire on `local-path` and c9 would evict the
 stack, so both need replacement fixtures that do not exist yet, and inventing them is open-ended
 work against a gate that is already met at 22/24.
 
+**`v0.1.0-rc2` does not install, and rc3 is the fix.** The e2e caught it at the phase it exists to
+cover: `helm install` timed out with `Deployment/hephaisto not ready`. Making the agent serve on a
+non-owner role had repointed the registered `DbContext` at that role, and migrations run through
+that same `DbContext` — so on a database being migrated for the first time the agent tried to
+authenticate as a role nothing had created yet, and never started. It passed every local check
+because every developer and dev-cluster database already had the role; only a genuinely fresh
+install could show it. The startup sequence is now one method whose ordering cannot be got wrong —
+create the role, migrate as the owner, then grant — and two integration tests fail without it.
+
 A release candidate still selects by no version range; the rc exists to exercise the publish path
-for real.
+for real, and this is exactly what it caught.
 
 **Built, and verified by running it:**
 

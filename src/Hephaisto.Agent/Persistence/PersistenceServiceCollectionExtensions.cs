@@ -137,15 +137,57 @@ public static class PersistenceServiceCollectionExtensions
 /// </remarks>
 public static class PersistenceHostExtensions
 {
+    /// <summary>
+    /// The whole startup database sequence, in the one order that works.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This exists because the order is not obvious and getting it wrong is not survivable.
+    /// The role has to be created BEFORE migrating, migration has to run as the OWNER, and the
+    /// grants have to be applied AFTER migrating because they name tables that migration
+    /// creates. Exposing three methods and trusting the caller to sequence them is how
+    /// v0.1.0-rc2 shipped a chart that could not install: the DbContext had been repointed at
+    /// the serving role, migrations run through that DbContext, and on a fresh database that
+    /// role does not exist yet - so the agent failed to start and the Deployment never became
+    /// Available. Nothing caught it locally, because every developer database already had the
+    /// role.
+    /// </para>
+    /// </remarks>
+    public static async Task PrepareDatabaseAsync(this IHost host, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(host);
+
+        // 1. The role first: migration connects as it on every boot after this one, and it
+        //    cannot be created by a connection that is already trying to authenticate as it.
+        await host.EnsureAppRoleAsync(ct).ConfigureAwait(false);
+
+        // 2. Migrate as the owner. The serving role is deliberately not allowed to do this.
+        await host.MigrateHephaistoDatabaseAsync(ct).ConfigureAwait(false);
+
+        // 3. Grants last, because they name tables step 2 may have just created.
+        await host.EnsureAuditImmutabilityAsync(ct).ConfigureAwait(false);
+    }
+
     public static async Task MigrateHephaistoDatabaseAsync(this IHost host, CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(host);
+
         await using var scope = host.Services.CreateAsyncScope();
 
         var logger = scope.ServiceProvider
             .GetRequiredService<ILoggerFactory>()
             .CreateLogger("Hephaisto.Agent.Persistence.Migrations");
 
-        var db = scope.ServiceProvider.GetRequiredService<HephaistoDbContext>();
+        // The OWNER connection, built here rather than resolved from DI. The registered
+        // DbContext serves as the non-owner role, which holds no DDL rights and - on a
+        // database being migrated for the first time - does not exist yet.
+        var roles = scope.ServiceProvider.GetRequiredService<DatabaseRoles>();
+
+        var options = new DbContextOptionsBuilder<HephaistoDbContext>()
+            .UseNpgsql(roles.OwnerConnectionString, npgsql => npgsql.UseVector())
+            .Options;
+
+        await using var db = new HephaistoDbContext(options);
 
         var pending = (await db.Database.GetPendingMigrationsAsync(ct).ConfigureAwait(false)).ToList();
 
@@ -163,6 +205,51 @@ public static class PersistenceHostExtensions
         await db.Database.MigrateAsync(ct).ConfigureAwait(false);
 
         logger.LogInformation("Database schema is now current.");
+    }
+
+    /// <summary>
+    /// Creates (or re-passwords) the role the agent serves as. Safe before the schema exists.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately separate from the grants, and deliberately first. A role is not a table,
+    /// so this needs nothing to exist yet - whereas the grants name tables that migration has
+    /// to create, and migration itself now connects as this role.
+    /// </remarks>
+    public static async Task EnsureAppRoleAsync(this IHost host, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(host);
+
+        await using var scope = host.Services.CreateAsyncScope();
+        var roles = scope.ServiceProvider.GetRequiredService<DatabaseRoles>();
+
+        if (roles.AppConnectionString is null)
+        {
+            return;
+        }
+
+        var app = Validated(roles);
+
+        await using var connection = new NpgsqlConnection(roles.OwnerConnectionString);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+
+        var exists = await Scalar<bool>(
+            connection,
+            "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = @role)",
+            ct,
+            ("role", app.Username));
+
+        // ALTER rather than skip, so rotating the password in the Secret takes effect on the
+        // next roll instead of leaving the role on a credential nothing knows any more.
+        var ddl = await Scalar<string>(
+            connection,
+            exists
+                ? "SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', @role, @password)"
+                : "SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', @role, @password)",
+            ct,
+            ("role", app.Username),
+            ("password", app.Password));
+
+        await Execute(connection, ddl, ct);
     }
 
     /// <summary>
@@ -216,23 +303,11 @@ public static class PersistenceHostExtensions
             return;
         }
 
-        var app = new NpgsqlConnectionStringBuilder(roles.AppConnectionString);
+        var app = Validated(roles);
 
-        if (string.IsNullOrWhiteSpace(app.Username) || string.IsNullOrWhiteSpace(app.Password))
-        {
-            throw new InvalidOperationException(
-                "The hephaisto_app connection string must carry a Username and a Password: the "
-                + "role is created from them, so an incomplete one would produce a role nobody "
-                + "can log in as.");
-        }
-
-        if (string.Equals(app.Username, new NpgsqlConnectionStringBuilder(roles.OwnerConnectionString).Username, StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException(
-                $"The serving role and the owner are both '{app.Username}'. Postgres cannot "
-                + "restrain a table's owner - it may grant itself back - so this configuration "
-                + "would report success while enforcing nothing.");
-        }
+        // Idempotent, and here so this method is still correct called on its own - which is
+        // how the tests drive it. PrepareDatabaseAsync has already done it by this point.
+        await host.EnsureAppRoleAsync(ct).ConfigureAwait(false);
 
         // Identifiers and passwords cannot be bound as parameters in DDL, and a DO block is
         // no help: its body is a dollar-quoted string literal, so a placeholder inside one is
@@ -244,25 +319,6 @@ public static class PersistenceHostExtensions
         // supplied straight into a command, which is the one thing worth avoiding here.
         await using var connection = new NpgsqlConnection(roles.OwnerConnectionString);
         await connection.OpenAsync(ct).ConfigureAwait(false);
-
-        var exists = await Scalar<bool>(
-            connection,
-            "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = @role)",
-            ct,
-            ("role", app.Username));
-
-        // ALTER rather than skip, so rotating the password in the Secret takes effect on the
-        // next roll instead of leaving the role on a credential nothing knows any more.
-        var roleDdl = await Scalar<string>(
-            connection,
-            exists
-                ? "SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', @role, @password)"
-                : "SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', @role, @password)",
-            ct,
-            ("role", app.Username),
-            ("password", app.Password));
-
-        await Execute(connection, roleDdl, ct);
 
         // WHICH SCHEMA the tables are in is looked up, never assumed - and "public" would have
         // been wrong exactly where it matters.
@@ -315,6 +371,43 @@ public static class PersistenceHostExtensions
             + "(UPDATE, DELETE and TRUNCATE revoked).",
             app.Username,
             schema);
+    }
+
+    /// <summary>
+    /// The serving-role connection, checked. Throws rather than returning something unusable.
+    /// </summary>
+    /// <remarks>
+    /// The owner check is the one that matters. Pointing this at the owner would work - every
+    /// query would succeed - while enforcing nothing at all, because Postgres cannot restrain
+    /// a table's owner. A configuration that reports success while protecting nothing is the
+    /// exact failure this whole path exists to remove, so it is refused rather than accepted.
+    /// </remarks>
+    private static (string Username, string Password) Validated(DatabaseRoles roles)
+    {
+        var app = new NpgsqlConnectionStringBuilder(roles.AppConnectionString);
+
+        if (string.IsNullOrWhiteSpace(app.Username) || string.IsNullOrWhiteSpace(app.Password))
+        {
+            throw new InvalidOperationException(
+                "The hephaisto_app connection string must carry a Username and a Password: the "
+                + "role is created from them, so an incomplete one would produce a role nobody "
+                + "can log in as.");
+        }
+
+        var owner = new NpgsqlConnectionStringBuilder(roles.OwnerConnectionString).Username;
+
+        if (string.Equals(app.Username, owner, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"The serving role and the owner are both '{app.Username}'. Postgres cannot "
+                + "restrain a table's owner - it may grant itself back - so this configuration "
+                + "would report success while enforcing nothing.");
+        }
+
+        // Returned as plain non-null strings rather than the builder: every caller passes
+        // them as command parameters, and handing back nullable properties makes each of
+        // those a nullability warning that -warnaserror turns into a failed release.
+        return (app.Username, app.Password);
     }
 
     private static async Task<T> Scalar<T>(
