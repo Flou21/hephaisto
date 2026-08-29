@@ -306,12 +306,32 @@ jobs:
           kubectl -n hephaisto create secret generic hephaisto-llm \
             --from-literal=GEMINI_API_KEY=ci-not-a-real-key
 
-      - name: Build and load the image
-        run: |
-          docker build -t hephaisto/agent:e2e \
-            --build-arg VERSION=${{ needs.version.outputs.semver }} \
-            --build-arg COMMIT=${{ github.sha }} .
-          kind load docker-image hephaisto/agent:e2e --name hephaisto-e2e
+      # Built through buildx against the SAME gha cache scope the `image` job writes, rather
+      # than a plain `docker build` that starts cold every time. This was 45 seconds of a
+      # 2m11s job - more than half the setup - and on any commit that does not touch the
+      # application source it is now a cache hit measured in seconds.
+      #
+      # Deliberately NOT `needs: [image]` with an artifact handoff, which looks like the
+      # tidier way to avoid a second build and is slower: this job runs in PARALLEL with the
+      # image matrix today, and waiting for it would serialise ~1m of build in front of ~1m25
+      # of cluster work. Sharing a cache keeps both running at once.
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build the image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          tags: hephaisto/agent:e2e
+          # Into the runner's docker daemon, so `kind load docker-image` can find it.
+          load: true
+          build-args: |
+            VERSION=${{ needs.version.outputs.semver }}
+            COMMIT=${{ github.sha }}
+          cache-from: type=gha,scope=linux/amd64
+
+      - name: Load the image into kind
+        run: kind load docker-image hephaisto/agent:e2e --name hephaisto-e2e
 
       - name: helm install
         run: |
