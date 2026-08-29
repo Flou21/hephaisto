@@ -146,4 +146,23 @@ public sealed record AnswerKey
 
     public static AnswerKey? For(string fixture) =>
         All.FirstOrDefault(k => string.Equals(k.Fixture, fixture, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// The key for a cassette id, which may carry a descriptive suffix: <c>c4-imagepull</c>.
+    /// </summary>
+    /// <remarks>
+    /// Matching the leading fixture token rather than the whole id keeps the id readable on disk
+    /// - a directory of <c>c1.json</c> to <c>c10.json</c> tells you nothing about what broke - and
+    /// still resolves to exactly one key. It is deliberately a prefix up to the first <c>-</c> and
+    /// not a "starts with" test, because <c>c1</c> starts with the same characters as <c>c10</c>
+    /// and a "starts with" test would grade one fixture against the other's answer.
+    /// </remarks>
+    public static AnswerKey? ForCassette(string cassetteId)
+    {
+        ArgumentNullException.ThrowIfNull(cassetteId);
+
+        var separator = cassetteId.IndexOf('-', StringComparison.Ordinal);
+
+        return For(separator < 0 ? cassetteId : cassetteId[..separator]);
+    }
 }

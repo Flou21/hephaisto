@@ -47,6 +47,7 @@ public sealed class ReplayToolset
 {
     private readonly Dictionary<string, RecordedCall> byExactKey;
     private readonly Dictionary<string, List<RecordedCall>> byToolName;
+    private readonly Dictionary<string, IReadOnlyList<AIFunction>> byServer;
     private readonly ConcurrentQueue<ReplayEvent> events = new();
 
     public ReplayToolset(Cassette cassette)
@@ -69,12 +70,36 @@ public sealed class ReplayToolset
         }
 
         Functions = [.. cassette.Tools.Select(AIFunction (d) => new ReplayFunction(d, this))];
+
+        byServer = cassette.Tools
+            .Zip(Functions, (declaration, function) => (declaration.Server, function))
+            .GroupBy(pair => pair.Server, StringComparer.Ordinal)
+            .ToDictionary(
+                g => g.Key,
+                IReadOnlyList<AIFunction> (g) => [.. g.Select(pair => pair.function)],
+                StringComparer.Ordinal);
     }
 
     public Cassette Cassette { get; }
 
     /// <summary>The rebuilt tool surface, in the order it was declared.</summary>
     public IReadOnlyList<AIFunction> Functions { get; }
+
+    /// <summary>
+    /// Which servers this cassette holds tools from, so a caller can check the split is total.
+    /// </summary>
+    /// <remarks>
+    /// The runner takes its two halves through different seams - Kubernetes tools are injected,
+    /// Grafana tools are fetched - so replay has to route each recorded tool back to the seam it
+    /// came from. A declaration whose server matches neither would silently vanish from the
+    /// surface, and a run that never offered a tool the recording used would report a miss rate
+    /// caused by the harness rather than by the change under test.
+    /// </remarks>
+    public IReadOnlyList<string> Servers => [.. byServer.Keys.Order(StringComparer.Ordinal)];
+
+    /// <summary>The rebuilt tools that were declared by one server.</summary>
+    public IReadOnlyList<AIFunction> FunctionsFor(string server) =>
+        byServer.TryGetValue(server, out var functions) ? functions : [];
 
     /// <summary>Every call this toolset served, in order.</summary>
     public IReadOnlyList<ReplayEvent> Events => [.. events];
@@ -243,4 +268,20 @@ internal sealed class ReplayFunction(ToolDeclaration declaration, ReplayToolset 
 
         return ValueTask.FromResult<object?>(toolset.Resolve(declaration.Name, json));
     }
+}
+
+/// <summary>
+/// Serves the Grafana half of a cassette back through the seam the runner fetches it from.
+/// </summary>
+/// <remarks>
+/// The mirror of <see cref="RecordingGrafanaToolProvider"/>. It exists for the same reason: the
+/// runner asks for Grafana tools rather than being handed them, so this is the only place a
+/// replayed Loki or Prometheus tool can be substituted. Without it a replayed run would be
+/// offered the Kubernetes tools only, and every recorded Loki call would come back a miss -
+/// which is exactly the half of the surface the accuracy experiments are about.
+/// </remarks>
+public sealed class ReplayGrafanaToolProvider(ReplayToolset toolset) : Agent.Llm.IGrafanaToolProvider
+{
+    public Task<IReadOnlyList<AIFunction>> GetToolsAsync(CancellationToken ct) =>
+        Task.FromResult(toolset.FunctionsFor(ToolDeclaration.GrafanaMcp));
 }

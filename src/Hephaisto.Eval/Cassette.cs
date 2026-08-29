@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Hephaisto.Agent.Investigations;
+using Hephaisto.Core.Domain;
 
 namespace Hephaisto.Eval;
 
@@ -40,6 +41,16 @@ public sealed record Cassette
     /// grader scores a diagnosis against; it is never shown to the model.
     /// </summary>
     public required string ExpectedRootCause { get; init; }
+
+    /// <summary>
+    /// The incident, in the detail the system prompt renders.
+    /// </summary>
+    /// <remarks>
+    /// Nullable only so cassettes recorded before this existed still load. A replay without it
+    /// has to invent an incident card, which means measuring against a prompt that was never
+    /// sent - so <c>run</c> says so rather than quietly proceeding.
+    /// </remarks>
+    public RecordedIncident? Incident { get; init; }
 
     /// <summary>The tool surface as the model saw it.</summary>
     public required IReadOnlyList<ToolDeclaration> Tools { get; init; }
@@ -93,6 +104,17 @@ public sealed record CassetteOrigin
     public string? AgentCommit { get; init; }
 
     /// <summary>
+    /// The incident's signal kind, which selected the runbook.
+    /// </summary>
+    /// <remarks>
+    /// Recorded so <see cref="PromptHash"/> can be recomputed later. Without it there is no way to
+    /// know which runbook to hash, and the staleness check would have to guess from the answer key
+    /// - which is the fixture's <i>expected</i> kind, not necessarily the kind the incident was
+    /// actually opened with, and those disagreeing is itself a thing worth being able to see.
+    /// </remarks>
+    public SignalKind? IncidentKind { get; init; }
+
+    /// <summary>
     /// Hash of the prompt fragments and the runbook used.
     /// </summary>
     /// <remarks>
@@ -113,6 +135,12 @@ public sealed record CassetteOrigin
 /// </remarks>
 public sealed record ToolDeclaration
 {
+    /// <summary>The Kubernetes read tools, which reach the runner as <c>IEnumerable&lt;AIFunction&gt;</c>.</summary>
+    public const string Kubernetes = "kubernetes";
+
+    /// <summary>The tools the runner fetches for itself through <c>IGrafanaToolProvider</c>.</summary>
+    public const string GrafanaMcp = "grafana-mcp";
+
     public required string Name { get; init; }
 
     public required string Description { get; init; }

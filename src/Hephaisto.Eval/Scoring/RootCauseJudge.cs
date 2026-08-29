@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Hephaisto.Core.Domain;
 
 namespace Hephaisto.Eval.Scoring;
 
@@ -67,6 +68,25 @@ public sealed class GeminiRootCauseJudge(HttpClient http, string apiKey, string 
             http,
             key,
             string.IsNullOrWhiteSpace(model) ? DefaultModel : model);
+    }
+
+    /// <summary>
+    /// Renders a finding into the exact text the shell judge sends.
+    /// </summary>
+    /// <remarks>
+    /// Format and 4000-character cap copied from <c>judge.sh</c>, whose comment calls this "the
+    /// primary hypothesis plus its evidence excerpts - what a human would read". Sending a
+    /// differently shaped diagnosis to the same prompt would make the two harnesses'
+    /// numbers incomparable just as surely as rewording the prompt would.
+    /// </remarks>
+    public static string Describe(Finding finding)
+    {
+        ArgumentNullException.ThrowIfNull(finding);
+
+        var text = $"HYPOTHESIS: {finding.Hypothesis}\nEVIDENCE: "
+            + string.Join(" | ", finding.Evidence.Select(e => e.Excerpt));
+
+        return text.Length <= 4000 ? text : text[..4000];
     }
 
     public async Task<JudgeVerdict?> AskAsync(string truth, string diagnosis, CancellationToken ct)

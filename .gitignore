@@ -23,3 +23,10 @@ backup/
 # network. Copy tilt_config.sample.json to start; the Tiltfile defaults to localhost
 # without it, so a fresh clone works with no config at all.
 tilt_config.json
+
+# Recorded eval scenarios and the reports built from them. Never committed: SafeToolDecorator
+# redacts tool *arguments*, not tool *results*, so a cassette's raw describe_pod and
+# get_pod_logs output carries cluster env vars, hostnames and log contents verbatim. They are
+# reproducible with `hephaisto-eval record` against the dev cluster.
+cassettes/
+results/

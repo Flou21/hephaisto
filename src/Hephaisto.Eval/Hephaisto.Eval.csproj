@@ -19,6 +19,12 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
+
+    <!-- For the container and the configuration pipeline only; this never builds an IHost.
+         Both AddHephaistoKubernetes and AddHephaistoPersistence register IHostedServices -
+         the cluster watcher, the retention sweep - and starting them would make the harness a
+         second agent in the cluster it is supposed to be reading. See EvalHost. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
   </ItemGroup>
 
 </Project>

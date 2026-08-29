@@ -1,37 +1,90 @@
 using Hephaisto.Eval;
+using Hephaisto.Eval.Cli;
 
-// The eval harness CLI. One command today - `inspect` - because a cassette that cannot be read
-// and checked by hand is a fixture nobody will trust. `run` follows, once scenarios can be
-// scored; adding it here before it can score anything would be a subcommand that lies.
+// The eval harness CLI. Three commands, and the split between them is the design:
+//
+//   record   needs a cluster, a database and money. Run rarely, on the dev cluster.
+//   run      needs only the model. Run constantly, which is what makes experiments affordable.
+//   inspect  needs nothing. Reads a cassette so a fixture nobody can check by hand cannot exist.
+//
+// Nothing here is reachable from the agent: the Dockerfile copies Core, ServiceDefaults and
+// Agent only, so this project cannot grow the shipped image.
+
+using var lifetime = new CancellationTokenSource();
+
+Console.CancelKeyPress += (_, e) =>
+{
+    // First Ctrl-C cancels the investigation in flight so the loop unwinds and a partial
+    // recording is still written. A second one is the runtime's, and kills the process.
+    e.Cancel = !lifetime.IsCancellationRequested;
+    lifetime.Cancel();
+};
 
 if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
 {
     Console.WriteLine(
         """
-        hephaisto-eval - replay recorded incidents against recorded tool output
+        hephaisto-eval - measure the agent's diagnosis accuracy repeatably
 
-          inspect <cassette.json>...   validate a cassette and describe what it holds
+          record  --incident <guid> --fixture <c4> [--expect <text>] [--description <text>]
+                  [--out cassettes] [--set Key=Value]
+                  Runs a real investigation against the live cluster and records every tool
+                  call. Needs a database, a cluster and an API key.
 
-        A cassette records one scenario's tool surface and every answer it gave, so a prompt
-        or budget change can be measured without a cluster and without a seeded fault.
+          run     [--cassettes <dir> | <cassette.json>...] [--repeats 3] [--label baseline]
+                  [--no-judge] [--out results] [--set Key=Value]
+                  Replays the corpus and scores it. Needs only the model.
+
+          inspect <cassette.json>...
+                  Validates a cassette and describes what it holds.
+
+        A cassette records one scenario's tool surface, its incident and every answer the
+        cluster gave, so a prompt or budget change can be measured without a cluster and
+        without a seeded fault.
+
+        Experiment arms are `--set`, so an arm is one command line rather than an exported
+        variable that outlives the run that wanted it:
+
+          hephaisto-eval run --cassettes cassettes --repeats 3 --label baseline
+          hephaisto-eval run --cassettes cassettes --repeats 3 --label steps-20 \
+              --set Llm:Investigation:MaxSteps=20
         """);
 
     return 0;
 }
 
-switch (args[0])
+try
 {
-    case "inspect":
-        return Inspect(args.Skip(1).ToArray());
+    var parsed = EvalArguments.Parse(args.Skip(1).ToArray());
 
-    default:
-        Console.Error.WriteLine($"unknown command '{args[0]}'; try --help");
-        return 2;
+    return args[0] switch
+    {
+        "record" => await RecordCommand.RunAsync(parsed, lifetime.Token),
+        "run" => await RunCommand.RunAsync(parsed, lifetime.Token),
+        "inspect" => Inspect(parsed.Positional),
+        _ => Unknown(args[0]),
+    };
+}
+catch (OperationCanceledException)
+{
+    Console.Error.WriteLine("cancelled");
+    return 130;
+}
+catch (ArgumentException ex)
+{
+    Console.Error.WriteLine(ex.Message);
+    return 2;
 }
 
-static int Inspect(string[] paths)
+static int Unknown(string command)
 {
-    if (paths.Length == 0)
+    Console.Error.WriteLine($"unknown command '{command}'; try --help");
+    return 2;
+}
+
+static int Inspect(IReadOnlyList<string> paths)
+{
+    if (paths.Count == 0)
     {
         Console.Error.WriteLine("inspect needs at least one cassette path");
         return 2;
@@ -54,11 +107,33 @@ static int Inspect(string[] paths)
             Console.WriteLine($"  tools         {cassette.Tools.Count} declared, {called.Count} exercised");
             Console.WriteLine($"  calls         {cassette.Calls.Count}");
 
+            if (cassette.Incident is { } incident)
+            {
+                Console.WriteLine(
+                    $"  incident      {incident.Kind} {incident.Target.Namespace}/{incident.Target.Name}, "
+                    + $"{incident.Signals.Count} signals");
+            }
+            else
+            {
+                // Not fatal, but it means a replay of this file composes an invented incident
+                // card, so its numbers cannot be compared with a complete cassette's.
+                Console.WriteLine("  incident      NOT RECORDED - replay will invent the incident card");
+            }
+
             if (cassette.Origin is { } origin)
             {
                 Console.WriteLine(
                     $"  recorded      {origin.RecordedAt:u} from investigation {origin.InvestigationId} "
-                    + $"({origin.AgentVersion ?? "unknown version"}, {origin.ModelId ?? "unknown model"})");
+                    + $"({origin.AgentVersion ?? "unknown version"}, {origin.ModelId ?? "unknown model"}"
+                    + $"{(origin.AgentCommit is { } sha ? $", {sha}" : string.Empty)})");
+            }
+
+            // Whether the prompt fragments and runbook still say what they said when this was
+            // recorded. Stale is a warning, never a refusal: measuring a rewritten runbook
+            // against cassettes recorded before it is the experiment, not a mistake.
+            if (PromptFingerprint.Describe(cassette) is { } freshness)
+            {
+                Console.WriteLine($"  {freshness}");
             }
 
             // A call to a tool the cassette never declared can never be replayed: the model is
