@@ -15,7 +15,13 @@ if [ ! -d node_modules ]; then
 fi
 
 # --with-deps is Linux-only and fails on macOS; the browser alone is what is needed here.
-npx --no-install playwright install chromium >/dev/null 2>&1 || npx playwright install chromium
+#
+# NOT silenced. It used to be `>/dev/null 2>&1 || <retry>`, which made this the one step in the
+# suite you could not watch - and it is the step that hangs. On a cold cache it downloads ~130MB
+# and then unzips it, and with the output suppressed a run that had wedged looked exactly like a
+# run that was working. Twice.
+echo "ensuring the chromium build playwright wants is present (this is slow on a cold cache)"
+npx --no-install playwright install chromium || npx playwright install chromium
 
 # NOT `exec`: the exit status of `playwright test` is not sufficient on its own.
 #

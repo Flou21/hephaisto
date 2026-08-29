@@ -260,12 +260,12 @@ if should_run ui && [ "$RUN_UI" = "1" ]; then
         export HEPHAISTO_URL="http://127.0.0.1:$PF_PORT_APP"
 
         UI_STATUS=0
-        run_bounded "${UI_TIMEOUT:-900}" "the console suite" bash "$E2E_DIR/ui/run.sh" || UI_STATUS=$?
+        run_bounded "${UI_TIMEOUT:-1800}" "the console suite" bash "$E2E_DIR/ui/run.sh" || UI_STATUS=$?
 
         case "$UI_STATUS" in
             0)   pass "playwright suite" ;;
             124) fail "playwright suite" \
-                     "timed out after ${UI_TIMEOUT:-900}s; a contended browser install is the usual cause" ;;
+                     "timed out after ${UI_TIMEOUT:-1800}s; a cold or contended browser install is the usual cause" ;;
             *)   fail "playwright suite" "see $E2E_DIR/ui/playwright-report" ;;
         esac
     else

@@ -128,6 +128,18 @@ deploy_assert_rbac() {
 # covered there by a render-time grep. A rule that is created and never selected is the
 # chart's single most dangerous failure, because everything looks right.
 deploy_assert_selected() {
+    # Waited for, not sampled once. The operator has to notice the PrometheusRule objects,
+    # write a new config and signal Prometheus to reload, and none of that is synchronous with
+    # `helm install` returning. A single query right after the install is a race: it won on
+    # rc3 and rc4 and lost on rc5, reporting "selected none of the chart's rule groups" about
+    # a Prometheus that had 12 groups and 34 rules loaded a minute later.
+    #
+    # A flaky assertion on the failure this one exists to catch is worse than no assertion,
+    # because it teaches you to disbelieve it.
+    wait_for "prometheus to select the chart's rule groups" "${RULE_TIMEOUT:-180}" \
+        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_PROM/api/v1/rules' | jq -e '[.data.groups[] | select(.name | test(\"hephaisto|kubernetes|slo|watchdog\"))] | length > 0' >/dev/null" \
+        || true
+
     local groups
     groups=$(curl -sS --max-time 15 "http://127.0.0.1:$PF_PORT_PROM/api/v1/rules" \
              | jq -r '[.data.groups[] | select(.name | test("hephaisto|kubernetes|slo|watchdog"))] | length')
