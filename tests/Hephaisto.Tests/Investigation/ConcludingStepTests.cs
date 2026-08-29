@@ -2,7 +2,7 @@ using Hephaisto.Agent.Llm;
 using Hephaisto.Core.Domain;
 using Hephaisto.Tests.TestData;
 
-namespace Hephaisto.Tests.Investigation;
+namespace Hephaisto.Tests.Investigations;
 
 /// <summary>
 /// The step a run keeps back so it can answer.

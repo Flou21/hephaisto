@@ -1,0 +1,149 @@
+using Hephaisto.Core.Domain;
+
+namespace Hephaisto.Eval.Scoring;
+
+/// <summary>
+/// What a correct diagnosis looks like for one chaos fixture.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The <see cref="ExpectedRootCause"/> strings are copied <b>verbatim</b> from
+/// <c>scripts/e2e/lib/judge.sh</c>'s <c>fixture_truth()</c>, which is the curated answer key the
+/// e2e harness already grades against. Two graders scoring the same fixture against differently
+/// worded truths would produce two incomparable numbers, and the whole point of this harness is
+/// that its number can be compared.
+/// </para>
+/// <para>
+/// That file says why it is the canonical copy rather than the fixture YAML: <i>"Kept here rather
+/// than parsed out of the YAML so that a reworded comment cannot silently change the answer
+/// key."</i> The same reasoning applies again here, one level up.
+/// </para>
+/// </remarks>
+public sealed record AnswerKey
+{
+    public required string Fixture { get; init; }
+
+    /// <summary>The known-correct answer. Shown to the judge, never to the agent.</summary>
+    public required string ExpectedRootCause { get; init; }
+
+    /// <summary>The signal kind the shipped alert rules attach to this fixture.</summary>
+    public required SignalKind ExpectedKind { get; init; }
+
+    /// <summary>
+    /// Names a correct diagnosis must contain at least one of, matched case-insensitively.
+    /// </summary>
+    /// <remarks>
+    /// This is the deterministic half of grading, and it is stricter than what exists today. The
+    /// e2e harness's c4-vs-c7 check compares two hypothesis strings for exact equality, so
+    /// "the container cannot start" and "the container failed to start" both pass it while saying
+    /// nothing. Naming the missing Secret or the nonexistent tag cannot be faked by restating the
+    /// symptom - <c>c7-configerror.yaml</c> says as much: "An answer that names the missing Secret
+    /// BY NAME is the passing bar."
+    /// </remarks>
+    public IReadOnlyList<string> MustMentionAnyOf { get; init; } = [];
+
+    /// <summary>
+    /// The eight categories a finding may declare, from <c>Prompts/20-output-contract.md</c>.
+    /// Not a C# enum in the agent, so <c>Finding.Category</c> is an unvalidated free string -
+    /// which is exactly why it is worth asserting here.
+    /// </summary>
+    public static readonly IReadOnlySet<string> Categories = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "resource-limit", "dependency", "config", "image",
+        "scheduling", "application", "infrastructure", "unknown",
+    };
+
+    /// <summary>
+    /// The eight gradeable fixtures.
+    /// </summary>
+    /// <remarks>
+    /// <b>c6 and c9 are deliberately absent</b>, and their absence is the reason this harness
+    /// reports n/8 rather than n/10. <c>infra/chaos/README.md</c> measures c6 as unable to fire on
+    /// <c>local-path</c> - every PVC there reports the node filesystem, so the ratio "sits at ~0.62
+    /// node-wide and moves by 0.0045". c9 is node-wide and evicts pods across the cluster
+    /// including Prometheus and the agent; the e2e harness refuses to run it even when asked.
+    /// Neither has an entry in <c>fixture_truth()</c> either.
+    /// </remarks>
+    public static readonly IReadOnlyList<AnswerKey> All =
+    [
+        new()
+        {
+            Fixture = "c1",
+            ExpectedKind = SignalKind.OomKilled,
+            ExpectedRootCause =
+                "The container is being OOMKilled: it allocates roughly 200Mi against a 64Mi memory "
+                + "limit, so the kernel kills it and Kubernetes restarts it repeatedly.",
+            MustMentionAnyOf = ["oomkill", "out of memory", "memory limit"],
+        },
+        new()
+        {
+            Fixture = "c2",
+            ExpectedKind = SignalKind.CrashLoopBackOff,
+            ExpectedRootCause =
+                "The application exits deliberately at startup after failing to reach its database "
+                + "dependency at mongo.infra-db:27017, producing CrashLoopBackOff. The decisive "
+                + "evidence is a FATAL log line naming that host.",
+            MustMentionAnyOf = ["mongo"],
+        },
+        new()
+        {
+            Fixture = "c3",
+            ExpectedKind = SignalKind.Unschedulable,
+            ExpectedRootCause =
+                "The pod cannot be scheduled because it requests 500Gi of memory, which no node can "
+                + "satisfy. The cause appears only in a FailedScheduling event, not in any metric.",
+            MustMentionAnyOf = ["500gi", "insufficient memory"],
+        },
+        new()
+        {
+            Fixture = "c4",
+            ExpectedKind = SignalKind.ImagePullBackOff,
+            ExpectedRootCause =
+                "The image tag does not exist: the pod references busybox:this-tag-does-not-exist, "
+                + "so the pull fails with ImagePullBackOff/ErrImagePull.",
+            MustMentionAnyOf = ["this-tag-does-not-exist"],
+        },
+        new()
+        {
+            Fixture = "c5",
+            ExpectedKind = SignalKind.JobFailed,
+            ExpectedRootCause =
+                "The Job fails repeatedly and exceeds its backoffLimit of 2. Its logs name a failing "
+                + "migration step.",
+            MustMentionAnyOf = ["backofflimit", "backoff limit"],
+        },
+        new()
+        {
+            Fixture = "c7",
+            ExpectedKind = SignalKind.ConfigError,
+            ExpectedRootCause =
+                "A referenced Secret does not exist (c7-database-credentials), so the kubelet cannot "
+                + "construct the container environment and reports CreateContainerConfigError. This "
+                + "is NOT an image pull problem.",
+            MustMentionAnyOf = ["c7-database-credentials"],
+        },
+        new()
+        {
+            Fixture = "c8",
+            ExpectedKind = SignalKind.ReadinessFlapping,
+            ExpectedRootCause =
+                "The readiness probe alternates pass/fail on a 60s cycle, so the pod flaps in and out "
+                + "of the Service endpoints. The container is NOT crashing and restarts are zero - a "
+                + "Sev1 here would be a false positive.",
+            MustMentionAnyOf = ["readiness"],
+        },
+        new()
+        {
+            Fixture = "c10",
+            ExpectedKind = SignalKind.HighErrorRate,
+            ExpectedRootCause =
+                "The service returns 500s for about 15% of requests with an elevated p95 latency, "
+                + "while Kubernetes reports it perfectly healthy - the pod stays Ready and no event "
+                + "is emitted.",
+            MustMentionAnyOf = ["500", "error rate"],
+        },
+    ];
+
+    public static AnswerKey? For(string fixture) =>
+        All.FirstOrDefault(k => string.Equals(k.Fixture, fixture, StringComparison.OrdinalIgnoreCase));
+}
