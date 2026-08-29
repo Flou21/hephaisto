@@ -112,10 +112,17 @@ public sealed class AuditImmutabilityTests(PostgresFixture pg)
             await seed.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
+        // The password is NOT hardcoded, because the two places that create this role choose
+        // different ones: scripts/dev-db.sh uses 'dev', and CI uses whatever it exports here.
+        // Hardcoding either one makes the test pass in that environment and fail with
+        // "password authentication failed for user hephaisto_app" in the other - which is
+        // exactly what happened, silently, for every CI run until this was fixed.
+        var appPassword = Environment.GetEnvironmentVariable("HEPHAISTO_APP_PASSWORD") ?? "dev";
+
         var restricted = new NpgsqlConnectionStringBuilder(pg.ConnectionString)
         {
             Username = "hephaisto_app",
-            Password = "dev",
+            Password = appPassword,
         }.ConnectionString;
 
         await using var conn = new NpgsqlConnection(restricted);
