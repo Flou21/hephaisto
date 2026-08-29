@@ -20,6 +20,12 @@ against the code rather than believed — see [backlog #9](backlog.md#9-semantic
 `v0.0.1` shipped on 2026-08-29: multi-arch image and Helm chart on GHCR, build provenance attested,
 both verified pulling anonymously.
 
+`v0.1.0-rc1` followed the same day, carrying the eval harness and the hybrid-search fix. **It is a
+release candidate, not the milestone.** v0.1.0's accuracy gate is met and measured — 22/24, see
+below — but the rest of the milestone is not done: Grafana annotations, four unrecorded metrics,
+audit immutability in the deployed database, and widening the corpus from 8 fixtures back toward
+10. The rc exists to exercise the publish path for real; nothing selects it by a version range.
+
 **Built, and verified by running it:**
 
 | Area | State |
