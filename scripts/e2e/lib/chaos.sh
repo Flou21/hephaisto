@@ -94,11 +94,14 @@ chaos_await_incidents() {
 
     # The fault has to become real before it can be alerted on: an image pull has to actually
     # fail, a container has to actually crash twice. Then for: 1m has to elapse on top.
+    # NOT `state=all`. There is no such state: the endpoint takes `open` or an
+    # IncidentState name and 400s otherwise. Omitting it means OpenOnly, which is what is
+    # wanted here anyway - a freshly opened incident is open.
     wait_for "incidents to open (expecting $want)" "${INCIDENT_TIMEOUT:-600}" \
-        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents?state=all' | jq -e 'length >= $want' >/dev/null"
+        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents' | jq -e 'type == \"array\" and length >= $want' >/dev/null"
 
     local got
-    got=$(api "/api/incidents?state=all" | jq 'length')
+    got=$(api_array "/api/incidents" | jq 'length')
     [ "${got:-0}" -ge "$want" ] \
         && pass "$got incident(s) opened from $want fixture(s)" \
         || fail "only ${got:-0} incident(s) opened, expected $want" \
@@ -110,7 +113,7 @@ chaos_await_incidents() {
 # ---------------------------------------------------------------------------------------
 chaos_assert_detection() {
     local incidents
-    incidents=$(api "/api/incidents?state=all&limit=100")
+    incidents=$(api_array "/api/incidents?limit=100")
     printf '%s' "$incidents" > "$WORKDIR/incidents.json"
 
     local f kind found
@@ -160,10 +163,10 @@ chaos_await_investigations() {
     # state on several paths that are not "it was investigated" - suppressed as a flap,
     # escalated on budget - and this phase is about the model actually running.
     wait_for "investigations to conclude (expecting $want)" "${INVESTIGATION_TIMEOUT:-900}" \
-        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents?state=all' | jq -e '[.[] | select(.hasDiagnosis)] | length >= $want' >/dev/null"
+        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents' | jq -e 'type == \"array\" and ([.[] | select(.hasDiagnosis)] | length) >= $want' >/dev/null"
 
     local done_count
-    done_count=$(api "/api/incidents?state=all" | jq '[.[] | select(.hasDiagnosis)] | length')
+    done_count=$(api_array "/api/incidents" | jq '[.[] | select(.hasDiagnosis)] | length')
     [ "${done_count:-0}" -ge "$want" ] \
         && pass "$done_count investigation(s) produced a diagnosis" \
         || fail "only ${done_count:-0} of $want incidents were investigated"
@@ -173,7 +176,7 @@ chaos_await_investigations() {
 # the judge all read the same snapshot rather than racing a live system.
 chaos_collect_details() {
     local ids
-    ids=$(api "/api/incidents?state=all&limit=100" | jq -r '.[].id')
+    ids=$(api_array "/api/incidents?limit=100" | jq -r '.[].id')
 
     : > "$WORKDIR/details.jsonl"
     local id

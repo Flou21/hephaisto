@@ -191,7 +191,12 @@ teardown() {
     say "your kubeconfig is untouched; current context is still '$host_ctx'"
 
     if [ -s "$RESULTS" ] && [ "${SKIP_REPORT:-0}" != "1" ]; then
-        report_render
+        # The exit status matters to the report, not just to the shell. A run that aborted
+        # part-way - a `set -e` trip, a jq error, a Ctrl-C - has recorded no failures, so a
+        # reporter that only counts recorded failures happily prints PASSED over a run that
+        # never reached its most important phase. That happened, and it is the worst possible
+        # bug in a release gate: the one that says yes when it does not know.
+        report_render "$exit_code"
     fi
 
     exit "$exit_code"

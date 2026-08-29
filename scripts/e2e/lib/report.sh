@@ -6,6 +6,7 @@
 # which is exactly when the summary is most useful.
 
 report_render() {
+    local aborted="${1:-0}"
     local total passed failed skipped
     total=$(wc -l < "$RESULTS" | tr -d ' ')
     passed=$(jq -r 'select(.status == "pass")' "$RESULTS" | jq -s length)
@@ -37,7 +38,15 @@ report_render() {
             "$(jq -r --arg p "$ph" 'select(.phase == $p and .status == "fail")' "$RESULTS" | jq -s length)" \
             "$(jq -r --arg p "$ph" 'select(.phase == $p and .status == "skip")' "$RESULTS" | jq -s length)"
     done
-    printf '\n'
+    # Phases that recorded nothing at all. An absent row reads as "no assertions here",
+    # which is indistinguishable from "this phase never ran" - and those are very different.
+    local ph_missing="" ph
+    for ph in "${PHASES[@]}"; do
+        case "$ph" in report) continue ;; esac
+        grep -q "\"phase\":\"$ph\"" "$RESULTS" 2>/dev/null || ph_missing="${ph_missing:+$ph_missing }$ph"
+    done
+    [ -z "$ph_missing" ] || printf '  %sphases that recorded nothing:%s %s\n\n' \
+        "$C_YELLOW" "$C_RESET" "$ph_missing"
 
     if [ "$failed" -gt 0 ]; then
         printf '  %sfailures%s\n' "$C_RED" "$C_RESET"
@@ -92,7 +101,15 @@ report_render() {
 
     printf '  full results: %s\n' "$RESULTS"
     printf '\n'
-    if [ "$failed" -gt 0 ]; then
+
+    # Three outcomes, not two. "Nothing recorded a failure" is not the same as "everything
+    # was checked": a run that died before its last phase has an empty failure list and a
+    # perfectly clean tally, and calling that PASSED is how a release gate lies.
+    if [ "$aborted" != "0" ]; then
+        printf '%s  ABORTED -- the run exited %s before finishing.%s\n' "$C_RED" "$aborted" "$C_RESET"
+        printf '%s  %d assertions passed before it stopped; the rest never ran.%s\n\n' \
+            "$C_RED" "$passed" "$C_RESET"
+    elif [ "$failed" -gt 0 ]; then
         printf '%s  FAILED -- %d of %d assertions%s\n\n' "$C_RED" "$failed" "$total" "$C_RESET"
     else
         printf '%s  PASSED -- %d assertions, %d skipped%s\n\n' "$C_GREEN" "$passed" "$skipped" "$C_RESET"

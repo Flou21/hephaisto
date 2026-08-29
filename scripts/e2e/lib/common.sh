@@ -142,6 +142,28 @@ api() {
 
 api_json() { api "$@" | jq "${JQ_ARGS[@]:-.}"; }
 
+# Fetch a path that MUST return a JSON array, and fail loudly if it does not.
+#
+# This exists because of a false positive it would have caught. The harness asked for
+# `/api/incidents?state=all`, which is not a valid state - the endpoint accepts `open` or an
+# IncidentState name and returns a 400 ValidationProblem for anything else. `jq length` over
+# that error OBJECT counts its keys, which happened to be four, so "4 incidents opened from 4
+# fixtures" passed while the agent had in fact been asked a question it rejected.
+#
+# An assertion that reads an error body as data is worse than one that fails.
+api_array() {
+    local path="$1" timeout="${2:-10}" body kind
+    body=$(api "$path" "$timeout")
+
+    kind=$(jq -r 'type' <<<"$body" 2>/dev/null || echo "not-json")
+    if [ "$kind" != "array" ]; then
+        printf '%s' "$body" >&2
+        die "GET $path returned $kind, not an array -- see the body above"
+    fi
+
+    printf '%s' "$body"
+}
+
 # Waits for a condition, polling, with a bounded total. Prints a dot per attempt so a long
 # wait looks like progress rather than a hang.
 wait_for() {
