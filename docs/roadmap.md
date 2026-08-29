@@ -20,11 +20,21 @@ against the code rather than believed — see [backlog #9](backlog.md#9-semantic
 `v0.0.1` shipped on 2026-08-29: multi-arch image and Helm chart on GHCR, build provenance attested,
 both verified pulling anonymously.
 
-`v0.1.0-rc1` followed the same day, carrying the eval harness and the hybrid-search fix. **It is a
-release candidate, not the milestone.** v0.1.0's accuracy gate is met and measured — 22/24, see
-below — but the rest of the milestone is not done: Grafana annotations, four unrecorded metrics,
-audit immutability in the deployed database, and widening the corpus from 8 fixtures back toward
-10. The rc exists to exercise the publish path for real; nothing selects it by a version range.
+`v0.1.0-rc1` followed the same day, carrying the eval harness and the hybrid-search fix. It was a
+release candidate with most of the milestone still open: Grafana annotations, four unrecorded
+metrics, audit immutability in the deployed database, and the corpus at 8 fixtures rather than 10.
+
+`v0.1.0-rc2` closes all of that except the corpus. Grafana annotations are built and asserted in
+the e2e; the four metrics are recorded by production code and guarded by a test that asserts *is
+recorded* rather than *is created*; and the agent now serves on a non-owner Postgres role, which is
+the only way audit immutability was ever going to hold — privileges cannot restrain a table's
+owner. **Widening the corpus from 8 back toward 10 is deferred to v0.1.1**, deliberately and with
+the reason written down: c6 does not fire on `local-path` and c9 would evict the observability
+stack, so both need replacement fixtures that do not exist yet, and inventing them is open-ended
+work against a gate that is already met at 22/24.
+
+A release candidate still selects by no version range; the rc exists to exercise the publish path
+for real.
 
 **Built, and verified by running it:**
 
@@ -109,17 +119,36 @@ nothing downstream waits on them.
    fixed**, which was the dependency for runbook memory. The vector arm had never executed; a
    `pg_trgm` word-similarity arm was added beside it, and `q=crash` went from 0 hits to 10.
 
+3. **Grafana annotations on state transitions — built in rc2.** `GrafanaAnnotator` marks the open
+   as a point and the outcome as a region carrying the primary hypothesis, so a diagnosis is read
+   against the graph it came from. It closes
+   [backlog #20](backlog.md#20-the-mvp-acceptance-test-requires-grafana-annotations-which-are-unbuilt),
+   whose instruction was "build the annotations or restate the test, do not silently drop the
+   clause" — and the e2e now asserts them, so the clause in `verification.md` is checked rather
+   than assumed. The token is a separate Editor service account: this is the only Grafana
+   credential in the system that may write.
+
 ### Still open here
 
-3. **Grafana annotations on state transitions.** Deferred since the MVP, and it also unblocks
-   [backlog #20](backlog.md#20-the-mvp-acceptance-test-requires-grafana-annotations-which-are-unbuilt).
-4. **Widen the corpus from 8 back toward 10.** c6 does not fire on `local-path` and c9 would evict
-   the observability stack; both need replacement fixtures. Two defects found while recording bear
-   on the fixtures that *are* in the corpus and are worth fixing regardless:
+4. **Widen the corpus from 8 back toward 10 — deferred to v0.1.1.** c6 does not fire on
+   `local-path` and c9 would evict the observability stack, so both need replacement fixtures that
+   do not exist yet. That is open-ended design work against a gate already met at 22/24, so it is
+   the one v0.1.0 item deliberately carried forward rather than finished. **The number stays n/8
+   and says so.**
+
+   Two defects found while recording bear on the fixtures that *are* in the corpus.
    [#31](backlog.md#31-grafana-mcp-exposes-no-tempo-tools-so-c10s-whole-reason-for-existing-is-untestable)
-   (c10 cannot reach Tempo, so the correlation walk it exists to prove is untestable) and
+   (c10 cannot reach Tempo, so the correlation walk it exists to prove is untestable) is still open.
    [#34](backlog.md#34-c1-oomkill-never-produces-an-oomkill-on-this-node) (c1 presents as
-   `CrashLoopBackOff`, never `OomKilled`).
+   `CrashLoopBackOff`, never `OomKilled`) is open and documented as non-blocking.
+
+   What rc2 *did* fix here is narrower and was blocking the widened e2e run:
+   [#32](backlog.md#32-chaossh-maps-c10-to-sloburn-which-is-not-a-signalkind) mapped c10 to a
+   `SignalKind` that does not exist, and nothing in `scripts/e2e/` ever built or `kind load`ed
+   c10's image despite a comment saying it must — so asking for c10 produced an `ImagePullBackOff`
+   and graded the agent on the test rig. All eight recordable fixtures now run in the harness,
+   which also closes most of
+   [#2](backlog.md#2-six-of-ten-chaos-fixtures-never-run-in-an-automated-gate).
 
 ### The experiments, now cost rather than accuracy
 
@@ -140,22 +169,39 @@ them. One variable at a time, three repeats, against `results/baseline-*.json`:
   incidents are **not citable**, or grounding discards anything quoted from them and the change
   *lowers* the finding count.
 
-### Measurement integrity — prerequisites, not extras
+### Measurement integrity — done in rc2
 
 A milestone whose entire purpose is producing a trustworthy number cannot ship on broken
-instruments. All of these are in the backlog and all of them land here:
+instruments. All five landed:
 
 - [#1](backlog.md#1-the-e2e-playwright-phase-reports-pass-on-a-zero-assertion-run) the console phase
-  passes without asserting anything — 5 tests, 0 expected, 5 skipped, reported green
-- [#3](backlog.md#3-hephaistohumanfeedback-is-never-recorded) the false-positive rate is never
-  recorded, though it is one of the three numbers this milestone is defined by
+  passed without asserting anything — 5 tests, 0 expected, 5 skipped, reported green. It now reads
+  the JSON reporter's `stats` and fails on `expected == 0` or `skipped != 0`, and a lost exec bit no
+  longer turns the phase into a silent skip.
+- [#3](backlog.md#3-hephaistohumanfeedback-is-never-recorded) the false-positive rate is recorded.
+  The instrument had to change on the way in: it emitted `helpful`/`unhelpful`, which the
+  precision panel's `verdict=~"correct|incorrect|partial"` matches nothing of — so adding the
+  missing call alone would have produced a metric that was recorded and still unreadable.
 - [#4](backlog.md#4-hephaistoincidentsclosed-and-hephaistoincidentduration-are-never-recorded) MTTR
-  is never recorded
+  is recorded, on **every terminal transition including `Escalated`**. That is what makes it
+  measurable without [#11](backlog.md#11-there-is-no-production-path-to-resolved): in Observe mode
+  nothing is fixed, so scoring only `Resolved` would have left the histogram exactly as empty.
 - [#5](backlog.md#5-hephaistoincidentsopen-and-hephaistobudgetremaining-have-no-instrument-at-all)
-  two more metrics have no instrument at all — then the guard test, which must assert *is recorded*,
-  not *is created*, or it passes on #3 and #4
+  both instruments exist and are moved by production code. The guard test asserts *is recorded*,
+  not *is created* — it drives the real `IncidentTriage` and listens through a `MeterListener` —
+  and was itself verified by deleting a call site and watching it go red.
 - [#6](backlog.md#6-audit-immutability-is-not-enforced-in-the-deployed-database) audit immutability
-  is unenforced in the deployed database. "No audit, no action" is a standing constraint.
+  is enforced. The agent serves on a **separate, non-owner role**, which is the only form this fix
+  could ever have taken: Postgres cannot restrain a table's owner, so every version of this that
+  kept the agent connected as `hephaisto` was enforcing nothing. "No audit, no action" is a
+  standing constraint and now holds in the database as well as in the DbContext.
+
+One decision inside #4/#5 is worth stating, because it makes two numbers deliberately disagree.
+`hephaisto.incidents.open` decrements only when an incident leaves `OpenStates`, which does **not**
+include `Escalated` — so it tracks `/api/status.openIncidents`, the number an operator will
+cross-check it against. `hephaisto.incidents.closed` *does* count an escalation, because reaching a
+human is an outcome. So `opened - closed != open`, on purpose. The dashboard's own spec table
+claimed otherwise and was corrected rather than the code bent to match it.
 
 ### Exit criterion
 
@@ -165,8 +211,9 @@ diagnosis, and the false-positive rate from the thumbs-up/down.
 **Restated as n/8, and met.** Two of the ten fixtures cannot be recorded here and the reason is
 written down for each: c6 does not fire on `local-path`, and c9 is node-wide and would evict the
 observability stack along with the agent. Reporting n/10 while running eight would be the same
-dishonesty the harness was built to remove. **Widening the corpus back toward ten is the
-outstanding work on this criterion**, not raising the ratio.
+dishonesty the harness was built to remove. **Widening the corpus back toward ten is the one piece
+of this criterion carried into v0.1.1** — it is about the denominator, not the ratio, and the ratio
+is not in doubt.
 
 **Which instrument produced which number, always.** The 22/24 is cassette replay. The 7/8 is live
 against the dev cluster while recording. They were cross-checked on c4: recorded live, then
@@ -174,11 +221,15 @@ replayed, verdicts agreed with a **0% miss rate** — which is what makes the ch
 for the rest. The two instruments disagree on nothing except c10, where replay recovered a finding
 once in three attempts that the live run did not.
 
-**The other three numbers are still not instrumented.** Cost per investigation now has a baseline
-($0.080 mean). Time to diagnosis and the false-positive rate do not
-([#3](backlog.md#3-hephaistohumanfeedback-is-never-recorded),
-[#4](backlog.md#4-hephaistoincidentsclosed-and-hephaistoincidentduration-are-never-recorded)), and
-this criterion is defined by all four.
+**All four numbers are now instrumented.** Cost per investigation has a baseline ($0.080 mean);
+time to diagnosis is `hephaisto.incident.duration` and the false-positive rate is
+`hephaisto.human.feedback`, both recorded by production code as of rc2. This criterion is defined
+by all four, and until rc2 two of them had no value at all.
+
+A caveat that belongs next to the claim rather than buried: instrumented is not the same as
+populated. The false-positive rate needs a human to press the button — it is the one number in this
+milestone the agent cannot generate for itself, which is exactly why it is worth having — so the
+series exists and stays empty until someone reviews an incident.
 
 **The gate that was set — if it lands at 4/10, v0.2.0 does not start — is passed.** It stays
 written here because the executor being unbuilt until this held is the reason it can be trusted.

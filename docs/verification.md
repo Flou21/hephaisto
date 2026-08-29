@@ -235,6 +235,10 @@ Two things it deliberately does **not** cover, and neither does anything else:
   `infra/chaos/README.md` and reports a score, but never fails on it. The MVP bar — ≥ 7/10 over
   ≥ 10 scenarios — is still a judgement someone makes by reading.
 
+The default fixture set is four; `--fixtures c1,c2,c3,c4,c5,c7,c8,c10` runs every one that can be
+recorded on this hardware, which is the set the 22/24 replay number was measured on and therefore
+the set worth comparing a live run against.
+
 ---
 
 ## The five-hop correlation test
@@ -264,3 +268,13 @@ diagnosis citing a real PromQL or LogQL query whose result is stored as evidence
 Grafana, emit its own investigation trace to Tempo — and **change nothing in the cluster.**
 
 Measured over at least 10 seeded scenarios, the target is **≥ 7/10 correct root cause.**
+
+**On the annotation clause.** It was unimplemented from the MVP until `v0.1.0-rc2` — the test asked
+for something no code did, which is the failure `backlog #20` refused to resolve by quietly deleting
+the sentence. It is now built and checked: `chaos_assert_annotations` reads them back from Grafana
+using the agent's own token, so the credential that can see them is the credential that wrote them.
+
+**On the denominator.** Ten is still the target and eight is what runs. c6 does not fire on
+`local-path` and c9 would evict the observability stack, so both need replacement fixtures; until
+they exist the number is reported as n/8 and says which two are missing. Reporting n/10 while
+running eight is the dishonesty the eval harness was built to remove.

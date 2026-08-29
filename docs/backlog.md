@@ -28,6 +28,8 @@ the repo is only as good as they are.
 
 ### 1. The e2e Playwright phase reports `pass` on a zero-assertion run
 
+**Status: fixed 2026-08-29** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** The console phase of `scripts/e2e/run.sh` ticks green without running a single
 assertion.
 
@@ -59,6 +61,12 @@ note `[ -x "$E2E_DIR/ui/run.sh" ]` silently `skip`s if the file loses its exec b
 
 **Size.** S. **Blocks:** the v0.4.0 CSS refactor, and generated screenshots.
 
+**Fixed 2026-08-29.** `playwright.config.ts` now emits the JSON reporter, and `ui/run.sh` reads
+`.stats` out of it and exits non-zero when `expected == 0` or `skipped != 0` — so the exact report
+quoted above (`expected: 0, skipped: 5`) is now a failure rather than a green phase. `run.sh` also
+invokes the suite as `bash ui/run.sh` instead of executing it, so a lost exec bit is no longer a
+silent skip either.
+
 ### 2. Six of ten chaos fixtures never run in an automated gate
 
 **Symptom.** The MVP bar — ≥ 7/10 correct root cause over ≥ 10 seeded scenarios — cannot be
@@ -83,6 +91,8 @@ the tractable three (c1, c5, c8).
 
 ### 3. `hephaisto.human.feedback` is never recorded
 
+**Status: fixed 2026-08-29** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** The project's only externally-sourced quality signal is not measured. Two dashboard
 panels are permanently empty.
 
@@ -98,7 +108,15 @@ available. Built in from day one on purpose."* It is not built in.
 
 **Size.** S.
 
+**Fixed 2026-08-29.** `IncidentQueries.SubmitFeedbackAsync` records it after the row commits.
+The verdict vocabulary changed on the way in: the instrument emitted `helpful`/`unhelpful`, which
+the "Feedback precision" panel — `verdict=~"correct|incorrect|partial"` — matches nothing of, so
+simply adding the missing call would have produced a recorded metric that still drew a division by
+zero. It now emits `correct`/`incorrect`/`partial`/`unclear` plus `kind` and `false_positive`.
+
 ### 4. `hephaisto.incidents.closed` and `hephaisto.incident.duration` are never recorded
+
+**Status: fixed 2026-08-29** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
 
 **Symptom.** MTTR is undrawn. Three dashboard panels are permanently empty, plus the "closed"
 series on a fourth.
@@ -112,7 +130,15 @@ is fixed there is barely any closure to record. They are entangled.
 
 **Size.** S, after #11.
 
+**Fixed 2026-08-29.** Both fire from `RecordOutcome` in `IncidentTriage` and
+`InvestigationCoordinator`, on every terminal transition **including `Escalated`** — which is what
+makes them measurable without [#11](#11-there-is-no-production-path-to-resolved). Escalated is the
+dominant outcome in Observe mode, so scoring MTTR only on `Resolved` would have left the histogram
+as empty as it was. Both carry `kind` and `outcome`, which the MTTR panels filter on.
+
 ### 5. `hephaisto.incidents.open` and `hephaisto.budget.remaining` have no instrument at all
+
+**Status: fixed 2026-08-29** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
 
 **Symptom.** Declared, charted, never emitted — one step worse than #3 and #4, which at least have
 instruments.
@@ -131,6 +157,17 @@ passes on #3 and #4. It must assert **"something records it"**.
 **Size.** S each; M for the guard test.
 
 ---
+
+**Fixed 2026-08-29.** `hephaisto.incidents.open` is an UpDownCounter incremented in
+`IncidentOpened` and decremented in `IncidentClosed` — but only for states that actually leave
+`HephaistoDbContext.OpenStates`, which does **not** include `Escalated`, so it agrees with
+`/api/status.openIncidents`. The dashboard's spec table said otherwise and was corrected.
+`hephaisto.budget.remaining` joins `BudgetGaugePublisher`, derived from the utilizations it already
+polls, USD only.
+
+The guard test is `tests/Hephaisto.Tests/Pipeline/IncidentMetricsTests.cs`, and it asserts *is
+recorded*: it drives the real `IncidentTriage` and listens on the real meter through a
+`MeterListener`. Verified by deleting a call site and watching it go red.
 
 ### 31. grafana-mcp exposes no Tempo tools, so c10's whole reason for existing is untestable
 
@@ -208,6 +245,8 @@ memory limit is a genuine blind spot, and c1 is the only fixture that reveals it
 
 ### 32. `chaos.sh` maps c10 to `SloBurn`, which is not a `SignalKind`
 
+**Status: fixed 2026-08-29** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** The e2e harness's kind assertion for c10 can never match, whatever the agent does.
 
 **Evidence.** `scripts/e2e/lib/chaos.sh`'s `fixture_kind()` returns `SloBurn` for c10.
@@ -226,7 +265,16 @@ a test asserts every entry is a defined member. This item is about the shell har
 
 ## Correctness and safety
 
+**Fixed 2026-08-29.** `HighErrorRate`, which is what `slo-rules.yaml` actually attaches. Found
+while widening the e2e fixture set to all eight — and the same pass turned up something worse in
+the same file: nothing anywhere in `scripts/e2e/` built or `kind load`ed
+`hephaisto/faulty-service:dev`, despite a comment saying c10 needs exactly that. c10 would have
+come up `ImagePullBackOff` and opened a real incident of the wrong kind, grading the agent on the
+test rig. `chaos_build_images` now does it.
+
 ### 6. Audit immutability is not enforced in the deployed database
+
+**Status: fixed 2026-08-29** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
 
 **Symptom.** "No audit, no action" is a standing constraint, and in the deployed database nothing
 enforces it.
@@ -253,6 +301,17 @@ denied.
 the REVOKE applies. The chart should make the connecting role a value.
 
 **Size.** M.
+
+**Fixed 2026-08-29.** The agent now serves on a **separate, non-owner role**. Privileges cannot
+restrain a table's owner — it can always grant itself back — so this was never fixable while the
+agent connected as `hephaisto`. `ConnectionStrings:hephaisto` stays the owner and is what migrates;
+`ConnectionStrings:hephaisto_app` is what serves. `EnsureAuditImmutabilityAsync` creates the role
+and re-applies GRANT/REVOKE **on every boot**, rather than in a migration: the `InitialCreate` block
+was wrapped in `IF EXISTS (SELECT 1 FROM pg_roles ...)`, so it no-opped on every database that ever
+existed, and a migration also runs once, leaving any later table ungranted.
+
+Absent `POSTGRES_APP_PASSWORD` the agent serves as the owner and logs a warning — an upgrade
+degrades rather than wedging. `scripts/bootstrap-secrets.sh` adds the key to an existing Secret.
 
 ### 7. The planning prompt claims a verification-and-rollback mechanism that does not exist
 
@@ -621,6 +680,8 @@ They are not.
 
 ### 20. The MVP acceptance test requires Grafana annotations, which are unbuilt
 
+**Status: fixed 2026-08-29** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** `docs/verification.md:262-266` states that for each fixture Hephaisto must open one
 incident, write a diagnosis, **annotate Grafana**, emit its trace to Tempo, and change nothing.
 Grafana annotations are unbuilt — recorded elsewhere as "MVP item 10, deferred".
@@ -631,6 +692,17 @@ run to completion.
 **Fix.** Build the annotations (v0.1.0) or restate the test. Do not silently drop the clause.
 
 **Size.** S to reconcile.
+
+**Fixed 2026-08-29.** Built, rather than restated. `GrafanaAnnotator` posts to Grafana's
+`/api/annotations` on open and on outcome, the second as a region spanning the incident with the
+primary hypothesis in the text, tagged `hephaisto` plus kind, severity and namespace. It is wired
+only when `Grafana:Url` and `Grafana:AnnotationToken` are both set, and cannot fail an
+investigation — every transport and status failure is logged and swallowed, with the deliberate
+exception of the incident's own cancellation.
+
+The token is a **separate Editor service account**, not grafana-mcp's Admin one: this is the only
+Grafana credential in the system that may write. `chaos_assert_annotations` checks them in the e2e
+using that same token, so `docs/verification.md`'s clause is now asserted rather than assumed.
 
 ### 21. "The workflows have never run — there is no remote yet" is stale
 
@@ -693,6 +765,11 @@ events are collected), and scraped stdout logs carry no `trace_id` — only OTLP
 `Llm/LlmServiceCollectionExtensions.cs:78-92`. Its doc comment says it is *"for hosts with no
 Postgres — the AppHost smoke run and the eval harness"*. Neither calls it, and the eval harness is
 unbuilt. Either the v0.1.0 harness adopts it or it goes. **Size.** S.
+
+**Resolved 2026-08-29 by adoption.** `Hephaisto.Eval`'s `EvalHost.BuildForReplay` calls it — replay
+needs the model and nothing else, so a cassette can be scored on a machine with no Postgres at all.
+Left in the file rather than deleted because "it goes" was the other half of the choice and the
+record of which way it went is the useful part.
 
 ### 28. `list_alert_rules` returns empty here, and is worked around in the prompt
 
