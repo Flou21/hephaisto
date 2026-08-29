@@ -43,6 +43,10 @@ internal static class EvalHost
     /// </remarks>
     public static IConfigurationRoot BuildConfiguration(IReadOnlyList<string> overrides)
     {
+        // appsettings.Development.json is loaded unconditionally, which is only safe while it
+        // holds nothing the prompt or the budget reads - today it is RbacMode and a log level.
+        // Anything under Llm: or Investigation: added there would make a local arm and the same
+        // arm in the pod quietly different runs.
         var builder = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
             .AddJsonFile("appsettings.json", optional: true)
@@ -91,7 +95,7 @@ internal static class EvalHost
     {
         var services = new ServiceCollection();
 
-        AddLogging(services, configuration);
+        AddCommon(services, configuration);
 
         // Without persistence: there is no Postgres to count a rolling spend window in, so the
         // per-investigation ceilings are the only budget. That is a smaller cap, not no cap.
@@ -108,7 +112,7 @@ internal static class EvalHost
     {
         var services = new ServiceCollection();
 
-        AddLogging(services, configuration);
+        AddCommon(services, configuration);
 
         services.AddHephaistoPersistence(configuration);
         services.AddHephaistoKubernetes(configuration);
@@ -124,7 +128,19 @@ internal static class EvalHost
         return services.BuildServiceProvider();
     }
 
-    private static void AddLogging(IServiceCollection services, IConfiguration configuration) =>
+    /// <summary>
+    /// Logging, plus <see cref="IConfiguration"/> itself.
+    /// </summary>
+    /// <remarks>
+    /// A <c>WebApplicationBuilder</c> registers the configuration root in its own container and
+    /// the agent's composition root relies on that: <c>GeminiChatClientFactory</c> takes an
+    /// <see cref="IConfiguration"/> constructor parameter. A bare <see cref="ServiceCollection"/>
+    /// registers nothing, so without this line every command fails on the first model call.
+    /// </remarks>
+    private static void AddCommon(IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddSingleton(configuration);
+
         services.AddLogging(builder =>
         {
             builder.AddConfiguration(configuration.GetSection("Logging"));
@@ -143,4 +159,5 @@ internal static class EvalHost
             builder.SetMinimumLevel(LogLevel.Warning);
             builder.AddFilter("Hephaisto", LogLevel.Information);
         });
+    }
 }

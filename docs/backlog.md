@@ -12,6 +12,10 @@ a second ordering here would guarantee the two drift apart. Milestones link in b
 
 Sizes are honest guesses: **S** ≈ under an hour, **M** ≈ a day, **L** ≈ several days.
 
+Item numbers are **stable ids, not an ordering**. New items take the next free number and are
+filed under the area they belong to, so a number can appear out of sequence. Renumbering would
+break every anchor `roadmap.md` links by, which is a worse problem than a non-monotonic list.
+
 An item leaves this file by being fixed, or by being reclassified as a deliberate limitation and
 written down somewhere permanent. It does not leave by being ignored.
 
@@ -125,6 +129,57 @@ named in the shipped alert rules or dashboard corresponds to a real instrument.
 passes on #3 and #4. It must assert **"something records it"**.
 
 **Size.** S each; M for the guard test.
+
+---
+
+### 31. grafana-mcp exposes no Tempo tools, so c10's whole reason for existing is untestable
+
+**Symptom.** The fixture built to prove alert → exemplar → trace → log correlation cannot reach
+traces at all. The agent's own log says so on every startup:
+
+```
+grafana-mcp offers 44 tools; 4 allowlisted tools are absent:
+  query_tempo_traces, query_tempo_traceql, list_tempo_tag_names, list_tempo_tag_values
+```
+
+**Evidence.** `c10-faulty-service.yaml`'s header calls it "THE IMPORTANT ONE" and explains why:
+C1–C9 are single- or two-signal scenarios, and c10 "IS THE ONLY FIXTURE THAT PRODUCES A FULLY
+CORRELATED THREE-SIGNAL TRAIL". Hops 2, 3 and 4 of that trail — exemplar, trace, log-by-trace-id —
+all require Tempo.
+
+mcp-grafana reaches Tempo through its **proxied tools** mechanism, which discovers an external
+Tempo MCP server; the deployed `grafana-mcp` is started with `--disable-oncall --disable-incident
+--disable-asserts --disable-sift --disable-pyroscope` and no Tempo server configured, so those four
+tools are never registered. The allowlist naming them is aspirational.
+
+Measured on the dev cluster on 2026-08-29: recording c10 spent **13 steps and 16 tool calls and
+produced no primary finding** — the only fixture of the eight to produce none.
+
+**Why it is still open.** Not noticed, because nothing asserted it. The absence is logged at
+`Information` on a line that reads like a routine startup message, and no test or e2e phase checks
+that an allowlisted tool actually exists. The agent degrades silently to the two hops it can do.
+
+**Size.** M to wire a Tempo MCP server into grafana-mcp; S to make the absence loud — an
+allowlisted tool the server does not offer should be a startup warning that names the capability
+being lost, not an info line.
+
+---
+
+### 32. `chaos.sh` maps c10 to `SloBurn`, which is not a `SignalKind`
+
+**Symptom.** The e2e harness's kind assertion for c10 can never match, whatever the agent does.
+
+**Evidence.** `scripts/e2e/lib/chaos.sh`'s `fixture_kind()` returns `SloBurn` for c10.
+`SignalKind` has eighteen members and none of them is `SloBurn`. The kind the shipped rule
+actually attaches is `HighErrorRate` — confirmed against the dev cluster, where the incident
+opened by `ServiceHighErrorRate` carries `hephaisto_kind: HighErrorRate`.
+
+The eval harness cannot make the same mistake: `AnswerKey.ExpectedKind` is typed as the enum and
+a test asserts every entry is a defined member. This item is about the shell harness.
+
+**Why it is still open.** c10 is not in `DEFAULT_FIXTURES`, so the assertion has never run.
+
+**Size.** S.
 
 ---
 
@@ -323,6 +378,42 @@ nobody is told. The incident is left exactly as the caller found it.
 stack was never registered, which does not happen in any shipped configuration.
 
 **Size.** S.
+
+---
+
+### 33. Alertmanager signals lose their namespace when the alert labels it `k8s_namespace_name`
+
+**Symptom.** Every incident opened from a metric-derived alert has an empty namespace, so the
+incident card tells the model to investigate `Target: `//faulty-service``.
+
+**Evidence.** `src/Hephaisto.Agent/Web/AlertmanagerEndpoints.cs:276`:
+
+```csharp
+Namespace = Label(labels, "namespace") ?? Label(labels, "exported_namespace") ?? string.Empty,
+```
+
+The shipped OTel spanmetrics rules group by `k8s_namespace_name`, which is neither of those. From
+the dev cluster's `signals` row for `ServiceHighErrorRate`:
+
+```
+target_namespace | (empty)
+labels           | {"service": "faulty-service", "k8s_namespace_name": "hephaisto-chaos", ...}
+```
+
+The namespace is right there in the labels and is dropped on the way in. It also reaches the
+message text — "in namespace hephaisto-chaos" — so the model can sometimes recover it by reading
+prose, which is why this has looked like it works.
+
+**Why it matters more than it looks.** The namespace is not just prose. It is part of the signal
+fingerprint, it is what `Policy:AllowedNamespaces` is checked against, and it is what every tool
+call needs as an argument. An incident with no namespace is one the policy engine cannot admit and
+the model has to guess its way around.
+
+**Why it is still open.** Found on 2026-08-29 while recording the c10 cassette, which is the first
+time a metric-derived incident was investigated deliberately rather than incidentally.
+
+**Size.** S for the label fallback; M to add a test over the real rule labels, which is the part
+that stops it regressing.
 
 ---
 
