@@ -78,3 +78,45 @@ editing `namespace: hephaisto-chaos` to `kube-system`; after this, that is a ren
   {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Guard for extraEnv.
+
+`extraEnv` is appended LAST in the container spec, because that is what makes it useful: the
+agent binds far more configuration than this chart exposes, and an operator has to be able to
+set `Llm__Budget__MaxCostUsdPerHour` without the chart growing a value for every options
+property.
+
+Last position is also the hazard. Kubernetes takes the last value for a duplicated env name,
+so an entry colliding with a chart-managed name does not conflict - it silently WINS, and
+`kubectl get deploy -o yaml` shows both, in order, looking entirely reasonable.
+
+Three of these are safety properties rather than settings:
+
+  HEPHAISTO_MODE          shadowing it overrides the configured mode
+  HEPHAISTO_SWITCHES_DIR  pointing it elsewhere makes the ConfigMap arm of the kill switch
+                          read an empty directory - and an unreadable switch is a switch that
+                          is not there
+  GEMINI_API_KEY          a literal here is a plaintext credential in `helm get values`, in
+                          the release Secret and in the git repo holding your Application,
+                          forever. That is precisely what `secrets.llm` exists to avoid.
+
+Every reserved name already has a value that sets it properly, so refusing costs nothing.
+*/}}
+{{- define "hephaisto.validateExtraEnv" -}}
+{{- $reserved := list
+      "GEMINI_API_KEY" "HEPHAISTO_MODE" "HEPHAISTO_SWITCHES_DIR"
+      "ConnectionStrings__hephaisto" "ASPNETCORE_URLS"
+      "Grafana__McpUrl" "Grafana__ServiceAccountToken" -}}
+{{- range .Values.extraEnv -}}
+  {{- if has .name $reserved -}}
+    {{- fail (printf "extraEnv may not set %q: the chart manages it, and because extraEnv is appended last a duplicate would silently win rather than conflict. Use the corresponding value instead - mode, secrets.llm, secrets.grafanaMcp, grafanaMcp.url or postgres.*." .name) -}}
+  {{- end -}}
+  {{- if hasPrefix "OTEL_" .name -}}
+    {{- fail (printf "extraEnv may not set %q: the OTEL_* block is derived from otel.endpoint/protocol/environment, and a half-overridden set exports telemetry to two places or to none." .name) -}}
+  {{- end -}}
+  {{- if hasPrefix "Policy__AllowedNamespaces" .name -}}
+    {{- fail (printf "extraEnv may not set %q: the namespace allowlist is what the write Role is rendered from, so setting it here would let the agent believe it may act somewhere RBAC does not permit. Use policy.actionableNamespaces." .name) -}}
+  {{- end -}}
+{{- end -}}
+{{- end -}}

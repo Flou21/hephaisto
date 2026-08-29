@@ -165,6 +165,27 @@
     "nodeSelector": { "type": "object" },
     "tolerations": { "type": "array" },
     "affinity": { "type": "object" },
-    "podAnnotations": { "type": "object" }
+    "podAnnotations": { "type": "object" },
+
+    "extraEnv": {
+      "type": "array",
+      "description": "Extra env vars, appended last. Reserved names are refused in _helpers.tpl.",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "value": { "type": "string" },
+          "valueFrom": { "type": "object" }
+        },
+        "additionalProperties": false
+      }
+    },
+
+    "extraEnvFrom": {
+      "type": "array",
+      "description": "Extra envFrom sources (configMapRef / secretRef).",
+      "items": { "type": "object" }
+    }
   }
 }

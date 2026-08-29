@@ -79,3 +79,20 @@ tolerations:
   - key: example.com/dedicated
     operator: Exists
     effect: NoSchedule
+
+# The seam for configuration the chart does not expose as a value. Exercised here so
+# kubeconform validates the rendered env entries, and so the reserved-name guard in
+# _helpers.tpl is rendered against a values file that actually uses it.
+extraEnv:
+  - name: Llm__Budget__MaxCostUsdPerHour
+    value: "1.00"
+  - name: Llm__Investigation__MaxSteps
+    value: "8"
+  - name: Llm__Model
+    valueFrom:
+      configMapKeyRef:
+        name: hephaisto-model
+        key: model
+extraEnvFrom:
+  - configMapRef:
+      name: hephaisto-extra-config

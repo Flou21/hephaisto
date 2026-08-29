@@ -25,7 +25,7 @@ refuses() {
     local out
     if out=$(helm template t "$CHART" --namespace hephaisto "$@" 2>&1); then
         fail "$what -- rendered successfully, but must be refused"
-    elif grep -qi "may not contain\|is required\|don't meet the specifications of the schema" <<<"$out"; then
+    elif grep -qi "may not contain\|may not set\|is required\|don't meet the specifications of the schema" <<<"$out"; then
         # values.schema.json rejects some of these before a template runs, which is an
         # earlier and better refusal than a `fail` in a template. Both count.
         pass "$what"
@@ -154,6 +154,42 @@ if grep -E '^\s+image:' <<<"$FULL" | grep -q '+'; then
     fail "an image tag contains '+', which is not a legal OCI tag"
 else
     pass "no image tag contains '+'"
+fi
+
+# -------------------------------------------------------------------------------------------
+# extraEnv is appended LAST, which is what makes it useful and what makes it dangerous.
+# Kubernetes takes the last value for a duplicated env name, so a collision with a
+# chart-managed name does not conflict - it silently wins. Three of these are safety
+# properties, not preferences: shadowing HEPHAISTO_MODE or HEPHAISTO_SWITCHES_DIR disables an
+# arm of the kill switch, and a literal GEMINI_API_KEY is a plaintext credential in
+# `helm get values` forever.
+# -------------------------------------------------------------------------------------------
+refuses "extraEnv cannot shadow GEMINI_API_KEY" \
+    --set 'extraEnv[0].name=GEMINI_API_KEY' --set 'extraEnv[0].value=sk-plaintext'
+refuses "extraEnv cannot shadow HEPHAISTO_MODE" \
+    --set 'extraEnv[0].name=HEPHAISTO_MODE' --set 'extraEnv[0].value=Auto'
+refuses "extraEnv cannot redirect the kill switch's ConfigMap dir" \
+    --set 'extraEnv[0].name=HEPHAISTO_SWITCHES_DIR' --set 'extraEnv[0].value=/tmp/nowhere'
+refuses "extraEnv cannot half-override the OTEL_* block" \
+    --set 'extraEnv[0].name=OTEL_SERVICE_NAME' --set 'extraEnv[0].value=something-else'
+refuses "extraEnv cannot widen the namespace allowlist behind RBAC's back" \
+    --set 'extraEnv[0].name=Policy__AllowedNamespaces__0' --set 'extraEnv[0].value=kube-system'
+refuses "extraEnv entries must be named" \
+    --set 'extraEnv[0].value=orphan'
+
+# The whole point of the seam: configuration the chart does not expose must still be settable.
+renders "extraEnv can set an unexposed option" \
+    --set 'extraEnv[0].name=Llm__Budget__MaxCostUsdPerHour' --set 'extraEnv[0].value=1.00'
+
+# And it must land after the chart's own entries, or last-wins works against the operator
+# rather than for them.
+EXTRA=$(helm template t "$CHART" --namespace hephaisto \
+    --set 'extraEnv[0].name=Llm__Budget__MaxCostUsdPerHour' --set 'extraEnv[0].value=1.00' 2>/dev/null)
+if [ "$(grep -n 'Llm__Budget__MaxCostUsdPerHour' <<<"$EXTRA" | head -1 | cut -d: -f1)" -gt \
+     "$(grep -n 'name: GEMINI_API_KEY' <<<"$EXTRA" | head -1 | cut -d: -f1)" ]; then
+    pass "extraEnv is appended after the chart's own env"
+else
+    fail "extraEnv renders before the chart's env, so it cannot override anything"
 fi
 
 echo

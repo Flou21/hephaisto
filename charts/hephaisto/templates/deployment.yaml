@@ -1,4 +1,5 @@
 {{- include "hephaisto.validateActionableNamespaces" . -}}
+{{- include "hephaisto.validateExtraEnv" . -}}
 {{/*
 =========================================================================================
 WHY replicas: 1 AND strategy: Recreate - and why the chart exposes no replicaCount
@@ -247,6 +248,29 @@ spec:
               value: "http://0.0.0.0:8080"
             - name: DOTNET_gcServer
               value: "1"
+
+            # ---------------------------------------------------------------------------
+            # Escape hatch - LAST, so it can override anything above
+            # ---------------------------------------------------------------------------
+            # The agent binds far more configuration than this chart exposes as values:
+            # Llm:Budget:*, Llm:Investigation:*, Llm:Model, Kubernetes:*, all of it settable
+            # as `Section__Key` env vars. Surfacing each one as a first-class value would be
+            # a second, worse copy of the options classes that drifts the first time one is
+            # renamed. This is the seam instead.
+            #
+            # Position matters: Kubernetes takes the LAST value for a duplicated env name, so
+            # appending here means an operator can override a chart-set variable. That is the
+            # point, and it is also why negative-tests.sh asserts you cannot quietly displace
+            # GEMINI_API_KEY with a literal - a plaintext key in `helm get values` forever is
+            # exactly what `secrets.llm` exists to prevent.
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+
+          {{- with .Values.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
 
           volumeMounts:
             - name: switches

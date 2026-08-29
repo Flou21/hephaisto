@@ -227,6 +227,31 @@ tolerations: []
 affinity: {}
 podAnnotations: {}
 
+# -----------------------------------------------------------------------------------------
+# Extra environment - the seam for everything this chart does not expose as a value
+# -----------------------------------------------------------------------------------------
+# The agent binds far more configuration than lives above: `Llm:Budget:MaxCostUsdPerHour`,
+# `Llm:Investigation:MaxSteps`, `Llm:Model`, and so on - every one of them settable as a
+# `Section__Key` environment variable. Promoting each to a first-class value would duplicate
+# the options classes in YAML and drift the first time one is renamed.
+#
+# Appended LAST in the container spec, so these override anything the chart set. Standard
+# Kubernetes env entries - `value` or `valueFrom` both work:
+#
+#   extraEnv:
+#     - name: Llm__Budget__MaxCostUsdPerHour
+#       value: "1.00"
+#     - name: Llm__Model
+#       valueFrom:
+#         configMapKeyRef: { name: my-config, key: model }
+#
+# Do NOT put a secret in `value`. It lands in `helm get values`, in the release Secret, and in
+# whatever git repo holds your Argo Application, forever. Use `valueFrom.secretKeyRef`.
+extraEnv: []
+
+# Whole ConfigMaps or Secrets projected as environment. Same caveat, same ordering.
+extraEnvFrom: []
+
 # NOTE: there is deliberately no `replicaCount`.
 #
 # The budget check, cooldown check, kill-switch check and the action INSERT are one
