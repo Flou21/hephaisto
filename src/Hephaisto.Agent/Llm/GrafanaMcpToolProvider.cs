@@ -17,6 +17,34 @@ public sealed class GrafanaOptions
     public string? ServiceAccountToken { get; set; }
 
     /// <summary>
+    /// Grafana itself, e.g. <c>http://grafana.hephaisto-obs</c>. Only used for annotations.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="McpUrl"/> because they are different services: grafana-mcp
+    /// speaks MCP and is what the model queries through, while annotations go to Grafana's own
+    /// HTTP API. Unset disables annotation and the agent says so once, at startup.
+    /// </remarks>
+    public string? Url { get; set; }
+
+    /// <summary>
+    /// A Grafana token that may WRITE annotations. Deliberately not
+    /// <see cref="ServiceAccountToken"/>.
+    /// </summary>
+    /// <remarks>
+    /// Every other Grafana credential in this system is read-only on purpose, and reusing one
+    /// here would either fail with "Permission denied" on every transition or quietly push the
+    /// read-only convention into a role that can write. Keeping it a separate value makes the
+    /// one credential that needs write privileges visible as such.
+    /// </remarks>
+    public string? AnnotationToken { get; set; }
+
+    /// <summary>
+    /// Short on purpose: annotation happens on the ingest path, and a Grafana that accepts
+    /// connections but never replies must not hold an incident behind it.
+    /// </summary>
+    public TimeSpan AnnotationTimeout { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
     /// How long a tool list is trusted. Short enough that a grafana-mcp restart with a
     /// different tool set is picked up within an incident, long enough that a burst of
     /// incidents does not re-list on every one.

@@ -8,6 +8,8 @@ using Hephaisto.Agent.Persistence;
 using Hephaisto.Core.Abstractions;
 using Hephaisto.Core.Telemetry;
 
+using Hephaisto.Agent.Observability;
+
 namespace Hephaisto.Agent.Llm;
 
 /// <summary>
@@ -51,6 +53,22 @@ public static class LlmServiceCollectionExtensions
         // list and owns the MCP connection, so two registrations would mean two connections.
         services.AddSingleton<IGrafanaToolProvider>(sp => sp.GetRequiredService<GrafanaMcpToolProvider>());
         services.AddSingleton<PromptComposer>();
+
+        // Annotations are wired only when Grafana is genuinely reachable AND a token that may
+        // write has been supplied. Registering the real one regardless would put an HTTP call
+        // on the ingest path of every install, most of which have configured neither, and it
+        // would fail per incident instead of being absent once.
+        var grafana = configuration.GetSection(GrafanaOptions.SectionName).Get<GrafanaOptions>()
+            ?? new GrafanaOptions();
+
+        if (!string.IsNullOrWhiteSpace(grafana.Url) && !string.IsNullOrWhiteSpace(grafana.AnnotationToken))
+        {
+            services.AddHttpClient<IGrafanaAnnotator, GrafanaAnnotator>();
+        }
+        else
+        {
+            services.AddSingleton<IGrafanaAnnotator, NullGrafanaAnnotator>();
+        }
 
         // Gemini's own embedding generator, wrapped so its spans land on the same source as
         // the chat spans. Failure degrades - IncidentEmbedder saves a null embedding and
