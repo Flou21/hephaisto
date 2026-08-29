@@ -57,11 +57,23 @@ fi
 # Read by BOTH the postgres container (as POSTGRES_*) and the agent (which composes its
 # connection string from them), so there is exactly one place the password is defined.
 if have "$APP_NS" hephaisto-postgres; then
-  echo "hephaisto-postgres: already present, leaving alone"
+  # Left alone, with one exception: POSTGRES_APP_PASSWORD is newer than this Secret, and the
+  # agent falls back to serving as the database OWNER without it - which means audit_events is
+  # not append-only. Adding just the missing key is safe (the existing owner password is
+  # untouched) and is what turns an upgraded release into an enforcing one.
+  if kubectl -n "$APP_NS" get secret hephaisto-postgres \
+       -o jsonpath='{.data.POSTGRES_APP_PASSWORD}' 2>/dev/null | grep -q .; then
+    echo "hephaisto-postgres: already present, leaving alone"
+  else
+    kubectl -n "$APP_NS" patch secret hephaisto-postgres --type merge \
+      -p "{\"data\":{\"POSTGRES_APP_PASSWORD\":\"$(openssl rand -hex 24 | tr -d '\n' | base64)\"}}" >/dev/null
+    echo "hephaisto-postgres: present; added the missing POSTGRES_APP_PASSWORD"
+  fi
 else
   kubectl -n "$APP_NS" create secret generic hephaisto-postgres \
     --from-literal=POSTGRES_USER=hephaisto \
     --from-literal=POSTGRES_PASSWORD="$(openssl rand -hex 24)" \
+    --from-literal=POSTGRES_APP_PASSWORD="$(openssl rand -hex 24)" \
     --from-literal=POSTGRES_DB=hephaisto >/dev/null
   echo "hephaisto-postgres: created"
 fi
@@ -142,6 +154,57 @@ else
   # grafana-mcp is stuck in CreateContainerConfigError until this Secret exists; it does not
   # retry the mount on its own.
   kubectl -n "$OBS_NS" rollout restart deploy/grafana-mcp >/dev/null 2>&1 || true
+fi
+
+# ---------------------------------------------------------------------------------------
+# 5. Grafana service-account token the AGENT uses to write annotations
+# ---------------------------------------------------------------------------------------
+# A second, separate service account, and deliberately not the Admin one above.
+#
+# This is the only Grafana credential in the system that may WRITE. Editor is the least
+# privilege that can create an annotation, and keeping it apart from grafana-mcp's Admin token
+# means the credential the model's tools ride on stays read-shaped. It lives in the APP
+# namespace because it is the agent, not grafana-mcp, that presents it.
+if have "$APP_NS" hephaisto-grafana-annotation; then
+  echo "hephaisto-grafana-annotation: already present, leaving alone"
+else
+  echo "hephaisto-grafana-annotation: minting from Grafana..."
+  kubectl -n "$OBS_NS" rollout status deploy/hephaisto-grafana --timeout=180s >/dev/null
+
+  ann_id=$(kubectl -n "$OBS_NS" exec deploy/hephaisto-grafana -c grafana -- sh -c '
+      curl -s -u "admin:$GF_SECURITY_ADMIN_PASSWORD" \
+        -X POST http://localhost:3000/api/serviceaccounts \
+        -H "Content-Type: application/json" \
+        -d "{\"name\":\"hephaisto-annotations\",\"role\":\"Editor\",\"isDisabled\":false}"
+    ' | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))')
+
+  if [ -z "$ann_id" ]; then
+    ann_id=$(kubectl -n "$OBS_NS" exec deploy/hephaisto-grafana -c grafana -- sh -c '
+        curl -s -u "admin:$GF_SECURITY_ADMIN_PASSWORD" \
+          "http://localhost:3000/api/serviceaccounts/search?query=hephaisto-annotations"
+      ' | python3 -c 'import json,sys; r=json.load(sys.stdin).get("serviceAccounts",[]); print(r[0]["id"] if r else "")')
+  fi
+
+  if [ -z "$ann_id" ]; then
+    echo "could not create or find the hephaisto-annotations service account" >&2
+    exit 1
+  fi
+
+  ann_key=$(kubectl -n "$OBS_NS" exec deploy/hephaisto-grafana -c grafana -- sh -c "
+      curl -s -u \"admin:\$GF_SECURITY_ADMIN_PASSWORD\" \
+        -X POST http://localhost:3000/api/serviceaccounts/$ann_id/tokens \
+        -H 'Content-Type: application/json' \
+        -d '{\"name\":\"hephaisto-annotations-$(date +%s)\"}'
+    " | python3 -c 'import json,sys; print(json.load(sys.stdin).get("key",""))')
+
+  if [ -z "$ann_key" ]; then
+    echo "service account $ann_id created but token minting failed" >&2
+    exit 1
+  fi
+
+  kubectl -n "$APP_NS" create secret generic hephaisto-grafana-annotation \
+    --from-literal=token="$ann_key" >/dev/null
+  echo "hephaisto-grafana-annotation: created (service account id $ann_id)"
 fi
 
 echo

@@ -21,6 +21,24 @@ public sealed class PersistenceOptions
     public string ConnectionStringName { get; set; } = "hephaisto";
 
     /// <summary>
+    /// The connection the agent SERVES on, as a role that cannot rewrite <c>audit_events</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="ConnectionStringName"/> stays the owner: it is what migrations run as, and
+    /// what creates and grants this role. Postgres privileges cannot restrain a table's owner -
+    /// it can always grant itself back - so the only way "no audit, no action" survives a
+    /// compromised process is for the serving connection not to be the owner.
+    /// </para>
+    /// <para>
+    /// Absent, the agent serves as the owner and says so loudly at startup. That is the
+    /// pre-existing behaviour and it keeps an upgrade from failing closed on a Secret that does
+    /// not carry the new key yet - but it is not the supported configuration.
+    /// </para>
+    /// </remarks>
+    public string AppConnectionStringName { get; set; } = "hephaisto_app";
+
+    /// <summary>
     /// Deliberately off. Migrating from the agent pod means every replica races the same
     /// DDL on boot, and a failed migration takes the agent down with it; migration is a
     /// separate Job that runs to completion before the Deployment rolls.

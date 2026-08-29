@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -32,9 +33,17 @@ public static class PersistenceServiceCollectionExtensions
                 $"No connection string: set ConnectionStrings:{persistence.ConnectionStringName} "
                 + $"or {PersistenceOptions.SectionName}:{nameof(PersistenceOptions.ConnectionString)}.");
 
+        // The connection the agent SERVES on. Falls back to the owner when unset, which is the
+        // pre-existing behaviour and the reason an upgrade does not fail closed on a Secret
+        // that predates the key - EnsureAuditImmutabilityAsync then says so at WARN.
+        var appConnectionString =
+            UsableAppConnection(configuration.GetConnectionString(persistence.AppConnectionStringName));
+
+        services.AddSingleton(new DatabaseRoles(connectionString, appConnectionString));
+
         services.AddDbContext<HephaistoDbContext>(o =>
         {
-            o.UseNpgsql(connectionString, npgsql =>
+            o.UseNpgsql(appConnectionString ?? connectionString, npgsql =>
             {
                 npgsql.UseVector();
                 npgsql.CommandTimeout((int)persistence.CommandTimeout.TotalSeconds);
@@ -72,6 +81,32 @@ public static class PersistenceServiceCollectionExtensions
         services.AddHostedService<BudgetGaugePublisher>();
 
         return services;
+    }
+
+    /// <summary>
+    /// Null unless the app connection string is actually usable.
+    /// </summary>
+    /// <remarks>
+    /// The chart composes this string with <c>Password=$(POSTGRES_APP_PASSWORD)</c>, and the
+    /// kubelet leaves an unresolvable <c>$(VAR)</c> reference <b>literally in place</b> rather
+    /// than substituting an empty string. So a Secret that predates the key does not yield a
+    /// blank password - it yields the eight-character text "$(POSTGRES_APP_PASSWORD)", which
+    /// is a perfectly well-formed connection string that fails authentication at the first
+    /// query, long after startup has reported success. Catching it here turns that into the
+    /// documented fallback.
+    /// </remarks>
+    private static string? UsableAppConnection(string? connectionString)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            return null;
+        }
+
+        var password = new NpgsqlConnectionStringBuilder(connectionString).Password;
+
+        return string.IsNullOrWhiteSpace(password) || password.StartsWith("$(", StringComparison.Ordinal)
+            ? null
+            : connectionString;
     }
 }
 
@@ -129,4 +164,194 @@ public static class PersistenceHostExtensions
 
         logger.LogInformation("Database schema is now current.");
     }
+
+    /// <summary>
+    /// Creates the serving role and makes <c>audit_events</c> append-only for it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this runs at startup rather than living in a migration.</b> The GRANT in
+    /// <c>InitialCreate</c> is wrapped in <c>IF EXISTS (SELECT 1 FROM pg_roles ...)</c>, so on
+    /// every database where the role did not exist yet - which was all of them, including the
+    /// deployed one - it logged a NOTICE and did nothing. A migration also runs exactly once,
+    /// so any later migration that adds a table silently leaves it ungranted, and its own
+    /// comment says as much: "A later migration that adds a table has to repeat the grant."
+    /// Re-applying the whole block on every boot removes both failure modes.
+    /// </para>
+    /// <para>
+    /// It runs on the OWNER connection, after migrating, because only the owner may GRANT and
+    /// because the tables have to exist before they can be granted on.
+    /// </para>
+    /// <para>
+    /// <b>The REVOKE is the point.</b> A role that owns a table can always grant itself back,
+    /// so enforcement only means something for a role that is not the owner. This is the
+    /// database-side half of "no audit, no action"; <c>HephaistoDbContext.SaveChangesAsync</c>
+    /// throwing on a Modified or Deleted audit entry is the application-side half, and neither
+    /// is sufficient alone.
+    /// </para>
+    /// </remarks>
+    public static async Task EnsureAuditImmutabilityAsync(this IHost host, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(host);
+
+        await using var scope = host.Services.CreateAsyncScope();
+
+        var logger = scope.ServiceProvider
+            .GetRequiredService<ILoggerFactory>()
+            .CreateLogger("Hephaisto.Agent.Persistence.AuditImmutability");
+
+        var roles = scope.ServiceProvider.GetRequiredService<DatabaseRoles>();
+
+        if (roles.AppConnectionString is null)
+        {
+            // Deliberately loud, and deliberately not fatal. Refusing to boot would turn a
+            // missing Secret key into an outage on upgrade; saying nothing would let the
+            // headline guarantee of the audit trail quietly not hold.
+            logger.LogWarning(
+                "No {Name} connection string: the agent is serving as the database OWNER, so "
+                + "audit_events immutability rests entirely on HephaistoDbContext and NOT on "
+                + "Postgres privileges. Set it to the application role to enforce it.",
+                "ConnectionStrings:hephaisto_app");
+
+            return;
+        }
+
+        var app = new NpgsqlConnectionStringBuilder(roles.AppConnectionString);
+
+        if (string.IsNullOrWhiteSpace(app.Username) || string.IsNullOrWhiteSpace(app.Password))
+        {
+            throw new InvalidOperationException(
+                "The hephaisto_app connection string must carry a Username and a Password: the "
+                + "role is created from them, so an incomplete one would produce a role nobody "
+                + "can log in as.");
+        }
+
+        if (string.Equals(app.Username, new NpgsqlConnectionStringBuilder(roles.OwnerConnectionString).Username, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"The serving role and the owner are both '{app.Username}'. Postgres cannot "
+                + "restrain a table's owner - it may grant itself back - so this configuration "
+                + "would report success while enforcing nothing.");
+        }
+
+        // Identifiers and passwords cannot be bound as parameters in DDL, and a DO block is
+        // no help: its body is a dollar-quoted string literal, so a placeholder inside one is
+        // just text and never gets bound at all.
+        //
+        // So the statement is composed server-side by format(), whose %I and %L do Postgres's
+        // own identifier and literal quoting, with the values travelling as real parameters.
+        // Building the DDL by string concatenation in C# would put a password the caller
+        // supplied straight into a command, which is the one thing worth avoiding here.
+        await using var connection = new NpgsqlConnection(roles.OwnerConnectionString);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+
+        var exists = await Scalar<bool>(
+            connection,
+            "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = @role)",
+            ct,
+            ("role", app.Username));
+
+        // ALTER rather than skip, so rotating the password in the Secret takes effect on the
+        // next roll instead of leaving the role on a credential nothing knows any more.
+        var roleDdl = await Scalar<string>(
+            connection,
+            exists
+                ? "SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', @role, @password)"
+                : "SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', @role, @password)",
+            ct,
+            ("role", app.Username),
+            ("password", app.Password));
+
+        await Execute(connection, roleDdl, ct);
+
+        // WHICH SCHEMA the tables are in is looked up, never assumed - and "public" would have
+        // been wrong exactly where it matters.
+        //
+        // Nothing calls HasDefaultSchema, so EF emits unqualified DDL and Postgres puts the
+        // tables wherever search_path points. That is `"$user", public`. On a developer's
+        // throwaway container no schema is named after the role, so they land in `public`; in
+        // the cluster the Postgres init script creates a schema called `hephaisto` and the role
+        // is also called `hephaisto`, so `"$user"` resolves and they land in `hephaisto`
+        // instead. Granting on `public` by name therefore covers everything locally and
+        // NOTHING in the deployment - which is the same shape as the bug this method exists to
+        // fix, and it would have locked the agent out of its own database rather than merely
+        // failing to protect it.
+        var schema = await Scalar<string>(
+            connection,
+            """
+            SELECT table_schema FROM information_schema.tables
+            WHERE table_name = 'audit_events'
+            ORDER BY (table_schema = current_schema()) DESC
+            LIMIT 1
+            """,
+            ct);
+
+        // ORDER BY is load-bearing: the blanket grant hands out UPDATE and DELETE on every
+        // table including audit_events, and the REVOKE has to land after it.
+        //
+        // The search_path line is not optional either. The app role's own `"$user"` names a
+        // schema that does not exist, so without this it would resolve unqualified table names
+        // to `public`, find nothing, and fail every query with "relation does not exist".
+        var grantDdl = await Scalar<string>(
+            connection,
+            """
+            SELECT string_agg(stmt, '; ' ORDER BY ord)
+            FROM (VALUES
+                (1, format('GRANT USAGE ON SCHEMA %I TO %I', @schema, @role)),
+                (2, format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO %I', @schema, @role)),
+                (3, format('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %I TO %I', @schema, @role)),
+                (4, format('ALTER ROLE %I SET search_path = %I, public', @role, @schema)),
+                (5, format('REVOKE UPDATE, DELETE, TRUNCATE ON %I.audit_events FROM %I', @schema, @role))
+            ) AS t(ord, stmt)
+            """,
+            ct,
+            ("role", app.Username),
+            ("schema", schema));
+
+        await Execute(connection, grantDdl, ct);
+
+        logger.LogInformation(
+            "Serving as {Role} on schema {Schema}; audit_events is append-only for it "
+            + "(UPDATE, DELETE and TRUNCATE revoked).",
+            app.Username,
+            schema);
+    }
+
+    private static async Task<T> Scalar<T>(
+        NpgsqlConnection connection,
+        string sql,
+        CancellationToken ct,
+        params (string Name, object Value)[] parameters)
+    {
+        await using var command = new NpgsqlCommand(sql, connection);
+
+        foreach (var (name, value) in parameters)
+        {
+            command.Parameters.AddWithValue(name, value);
+        }
+
+        var result = await command.ExecuteScalarAsync(ct).ConfigureAwait(false);
+
+        return (T)result!;
+    }
+
+    private static async Task Execute(NpgsqlConnection connection, string sql, CancellationToken ct)
+    {
+        await using var command = new NpgsqlCommand(sql, connection);
+
+        await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
 }
+
+/// <summary>
+/// The two database identities: the owner that migrates, and the role the agent serves as.
+/// </summary>
+/// <remarks>
+/// Held as a singleton so <see cref="PersistenceServiceCollectionExtensions.EnsureAuditImmutabilityAsync"/>
+/// can reach the owner connection after the DbContext has been pointed at the other one.
+/// </remarks>
+/// <param name="OwnerConnectionString">Owns the schema and applies migrations.</param>
+/// <param name="AppConnectionString">
+/// What the agent serves as. Null means it serves as the owner, which enforces nothing.
+/// </param>
+public sealed record DatabaseRoles(string OwnerConnectionString, string? AppConnectionString);

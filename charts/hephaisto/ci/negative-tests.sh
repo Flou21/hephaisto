@@ -148,6 +148,25 @@ else
     fail "Chart.yaml has a hard-coded version; the git tag is meant to be the only source"
 fi
 
+# The serving role must be a DIFFERENT role from the owner, or audit_events is not append-only:
+# Postgres cannot restrain a table's owner, which may always grant itself back. This renders the
+# connection string, so a template edit that drops it fails the release rather than quietly
+# returning the agent to owner privileges.
+if grep -q 'ConnectionStrings__hephaisto_app' <<<"$FULL" \
+   && grep -q 'Username=hephaisto_app' <<<"$FULL"; then
+    pass "the agent serves on a non-owner role (audit_events stays append-only)"
+else
+    fail "no hephaisto_app connection string rendered; the agent would serve as the database owner"
+fi
+
+# The optional flag is what keeps an upgrade from wedging on a Secret that predates the key.
+# Without it the pod sits in CreateContainerConfigError instead of falling back and warning.
+if grep -A 4 'key: POSTGRES_APP_PASSWORD' <<<"$FULL" | grep -q 'optional: true'; then
+    pass "POSTGRES_APP_PASSWORD is optional, so an older Secret degrades rather than wedges"
+else
+    fail "POSTGRES_APP_PASSWORD is a hard secretKeyRef; upgrading an older release would not start"
+fi
+
 # OCI tags cannot contain '+'. Helm rewrites it to '_', so the chart would ask for a tag no
 # registry has ever heard of - and the error arrives at pull time, not at render time.
 if grep -E '^\s+image:' <<<"$FULL" | grep -q '+'; then

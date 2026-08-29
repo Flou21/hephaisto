@@ -177,8 +177,28 @@ spec:
                 secretKeyRef:
                   name: {{ required "secrets.postgres is required." .Values.secrets.postgres }}
                   key: POSTGRES_DB
+            # The password for the SERVING role. Optional so that upgrading a release whose
+            # Secret predates this key does not wedge the pod in CreateContainerConfigError -
+            # the agent falls back to serving as the owner and logs a warning saying that
+            # audit immutability is not enforced. Run scripts/bootstrap-secrets.sh to add it.
+            - name: POSTGRES_APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secrets.postgres is required." .Values.secrets.postgres }}
+                  key: POSTGRES_APP_PASSWORD
+                  optional: true
             - name: ConnectionStrings__hephaisto
               value: "Host={{ if .Values.postgres.embedded.enabled }}{{ include "hephaisto.fullname" . }}-postgres{{ else }}{{ .Values.postgres.host }}{{ end }}.{{ .Release.Namespace }};Port={{ .Values.postgres.port }};Database=$(POSTGRES_DB);Username=$(POSTGRES_USER);Password=$(POSTGRES_PASSWORD);Include Error Detail=true"
+
+            # The connection the agent SERVES on: the same database, as a role that holds
+            # INSERT but not UPDATE or DELETE on audit_events. ConnectionStrings__hephaisto
+            # above stays the owner and is what migrates and grants.
+            #
+            # When POSTGRES_APP_PASSWORD is absent the kubelet leaves "$(POSTGRES_APP_PASSWORD)"
+            # unexpanded rather than empty, so the agent checks for that literal and treats it
+            # as unset - see EnsureAuditImmutabilityAsync.
+            - name: ConnectionStrings__hephaisto_app
+              value: "Host={{ if .Values.postgres.embedded.enabled }}{{ include "hephaisto.fullname" . }}-postgres{{ else }}{{ .Values.postgres.host }}{{ end }}.{{ .Release.Namespace }};Port={{ .Values.postgres.port }};Database=$(POSTGRES_DB);Username={{ .Values.postgres.appUser }};Password=$(POSTGRES_APP_PASSWORD);Include Error Detail=true"
 
             # ---------------------------------------------------------------------------
             # Telemetry
@@ -224,6 +244,22 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ required "secrets.grafanaMcp is required when grafanaMcp.url is set. Only Grafana can mint this token, so it cannot exist before install - create it first." .Values.secrets.grafanaMcp }}
+                  key: token
+            {{- end }}
+
+            # ---------------------------------------------------------------------------
+            # Grafana annotations - the incident timeline, drawn on the dashboards
+            # ---------------------------------------------------------------------------
+            # Deliberately a different service and a different credential from grafana-mcp
+            # above. This is the one Grafana token in the system that may write, so it is
+            # named separately rather than quietly reusing the read-shaped one.
+            {{- if .Values.grafana.url }}
+            - name: Grafana__Url
+              value: {{ .Values.grafana.url | quote }}
+            - name: Grafana__AnnotationToken
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secrets.grafanaAnnotation is required when grafana.url is set. Only Grafana can mint this token, so it cannot exist before install." .Values.secrets.grafanaAnnotation }}
                   key: token
             {{- end }}
 

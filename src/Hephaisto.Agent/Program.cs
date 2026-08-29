@@ -58,6 +58,11 @@ var app = builder.Build();
 // MigrateHephaistoDatabaseAsync for why this fails fast rather than degrading.
 await app.MigrateHephaistoDatabaseAsync();
 
+// After the migration, because it grants on tables that migration may have just created, and
+// because only the owner may grant. See EnsureAuditImmutabilityAsync for why this is not a
+// migration: the one in InitialCreate was a no-op on every database that existed.
+await app.EnsureAuditImmutabilityAsync();
+
 // MapStaticAssets, not UseStaticFiles. It fingerprints app.css and app.js at build time and
 // serves them immutable, so a released fix to either actually reaches a browser that already
 // has the old one cached. With UseStaticFiles the URLs never change, and a console left open
