@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { open, status } from './helpers';
+import { open, settle, status } from './helpers';
 
 /**
  * The console's half of the acting story.
@@ -150,7 +150,13 @@ test.describe('acting', () => {
     // the audit row useless at exactly the moment it is read.
     await expect(page.getByTestId('approve')).toBeDisabled();
 
-    await page.getByTestId('approval-actor').fill('e2e');
-    await expect(page.getByTestId('approve')).toBeEnabled();
+    // The only interaction in this suite, and therefore the only assertion that can tell a live
+    // circuit from a page that merely looks finished. Retried as a unit: filling the box before
+    // the circuit is interactive drops the event silently, so re-asserting alone would wait
+    // forever on an input the server never saw.
+    await settle(async () => {
+      await page.getByTestId('approval-actor').fill('e2e');
+      await expect(page.getByTestId('approve')).toBeEnabled({ timeout: 2_000 });
+    });
   });
 });

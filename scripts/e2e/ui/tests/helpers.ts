@@ -1,44 +1,38 @@
 import { Page, expect } from '@playwright/test';
 
 /**
- * Navigate and wait until the Blazor circuit has actually taken the page over.
+ * Navigate and wait until the Blazor circuit has started coming up.
  *
- * This is a Blazor **Web App** with `<Routes @rendermode="InteractiveServer" />`, which means
- * every component renders TWICE: once as static server-rendered HTML delivered with the
- * document, and then again over the SignalR circuit, which replaces that DOM wholesale.
+ * This is a Blazor **Web App** with `<Routes @rendermode="InteractiveServer" />`, so every
+ * component renders TWICE: once as static server-rendered HTML delivered with the document, and
+ * then again over the circuit, which replaces that DOM wholesale.
  *
  * Between those two moments the page looks completely finished and is completely inert. The
  * elements are there, they are visible, their text is correct - and a click or an input event
- * dispatched into them is dropped on the floor, because the handlers belong to a render that
- * has not happened yet. Measured against this app: `h1` becomes visible at ~50ms and a click
- * does not take effect until ~600ms.
+ * dispatched into them is dropped, because the handlers belong to a render that has not happened
+ * yet. Measured against a live console: `h1` becomes visible at ~50ms and a click does not take
+ * effect until ~600ms. Waiting on `h1` alone was never enough; see docs/backlog.md #48.
  *
- * That is why waiting on `h1` was not enough, and why the gap stayed invisible for so long.
- * Reading static HTML is indistinguishable from reading the interactive DOM, so every
- * read-only assertion in this suite passed either way. Only the specs that actually interact
- * could ever have noticed, and there is exactly one of those - which failed on every run and
- * was read as a product bug in the approval control. It was not; see docs/backlog.md #48.
+ * WAIT ON THE NEGOTIATION, NOT ON A WEBSOCKET. The first version of this waited for a `_blazor`
+ * websocket, which is a TRANSPORT rather than a state: SignalR negotiates, and where a websocket
+ * cannot be established it falls back to server-sent events or long polling and the page is
+ * perfectly interactive with no websocket ever opening. That version passed against a
+ * development image and timed out against all nine specs on the published one - asserting how
+ * the circuit connected rather than that it had.
  *
- * So the gate is the circuit's first render batch. Waiting for the websocket to open is not
- * sufficient either - it opens at ~55ms, still before the takeover.
+ * `/_blazor/negotiate` happens under every transport, so it is the portable signal. It is also
+ * only the START of the handshake, which is why anything that INTERACTS must additionally be
+ * written to retry - see `settle` below.
  */
 export async function open(page: Page, path: string) {
-  // Registered before navigating, or the socket can open before anyone is listening.
-  const circuit = page.waitForEvent('websocket', ws => ws.url().includes('_blazor'));
+  // Registered before navigating, or the request can be made before anyone is listening.
+  const circuit = page.waitForRequest(r => r.url().includes('/_blazor'), { timeout: 30_000 });
 
   await page.goto(path, { waitUntil: 'domcontentloaded' });
+  await circuit;
 
-  const ws = await circuit;
-
-  // The frames are MessagePack, so this matches the method name inside the payload rather
-  // than parsing it. The first RenderBatch IS the interactive takeover.
-  await ws.waitForEvent('framereceived', {
-    predicate: frame => String(frame.payload).includes('RenderBatch'),
-    timeout: 30_000,
-  });
-
-  // Only now is an element that the spec finds part of the interactive tree. The nav is
-  // server-rendered, so it is not proof of anything; the h1 is rendered by the component.
+  // The nav is server-rendered, so it is not proof of anything; the h1 is rendered by the
+  // component itself.
   await expect(page.locator('h1')).toBeVisible();
 
   // And the circuit must not have failed on the way up. Both of these are in the layout at
@@ -46,6 +40,21 @@ export async function open(page: Page, path: string) {
   // check rather than a tautology.
   await expect(page.locator('#components-reconnect-modal')).toBeHidden();
   await expect(page.locator('#blazor-error-ui')).toBeHidden();
+}
+
+/**
+ * Perform an interaction, retrying it until the circuit actually processes it.
+ *
+ * The honest way to wait for hydration, and the only one that does not depend on knowing how
+ * Blazor connected or how long it took. An event dispatched into a not-yet-interactive page is
+ * dropped silently - no error, no console entry - so the only reliable signal that the circuit
+ * is live is that an interaction had an effect.
+ *
+ * `toPass` re-runs the whole block, so the action is repeated as well as the assertion. That
+ * matters: retrying only the assertion would wait forever on an event that was already lost.
+ */
+export async function settle(action: () => Promise<void>, timeout = 30_000) {
+  await expect(action).toPass({ timeout });
 }
 
 /** The status endpoint, so the UI can be checked against the API rather than against itself. */
