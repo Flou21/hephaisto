@@ -85,6 +85,16 @@ public static class NotificationServiceCollectionExtensions
             services.AddTransient<INotificationChannel>(sp => sp.GetRequiredService<HttpNotificationChannel>());
         }
 
+        if (!string.IsNullOrWhiteSpace(configured.Teams.WorkflowUrl))
+        {
+#pragma warning disable EXTEXP0001
+            services.AddHttpClient<TeamsNotificationChannel>()
+                .RemoveAllResilienceHandlers();
+#pragma warning restore EXTEXP0001
+
+            services.AddTransient<INotificationChannel>(sp => sp.GetRequiredService<TeamsNotificationChannel>());
+        }
+
         services.AddScoped<IAgentEventNotifier, AgentEventNotifier>();
 
         // Registered unconditionally, even with no routes configured. Its tick is two indexed

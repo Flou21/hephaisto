@@ -188,7 +188,7 @@ public sealed class NotificationDispatcher : BackgroundService
             Snapshot = delivery.Snapshot,
             DeliveryId = delivery.Id,
             IncidentUrl = NotificationLinks.Incident(o.BaseUrl, delivery.IncidentId),
-            GrafanaUrl = null,
+            GrafanaUrl = NotificationLinks.Grafana(o.GrafanaUrl, delivery.Snapshot),
             AlsoSuppressed = budget.SuppressedSinceLastDelivery,
         };
 
