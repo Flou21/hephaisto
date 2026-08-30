@@ -630,9 +630,59 @@ the test is the part that handled it.
 Each is a claim that was true when written, or never true, and nothing checked. That is the same
 failure the token guards, the SVG well-formedness test and the `theme-color` test now cover.
 
-### What it did not settle
+### And then the harness ran, and found the real one
 
-`scripts/e2e/run.sh` still has not been observed exiting 0 on a kind cluster. Every spec passes
-against a live console and no spec skips any more — which makes "the harness is green in its
-default mode" a statement about the specs rather than about the harness, and this project has been
-caught by that exact gap before. [#51](backlog.md#51-runsh-has-not-been-re-run-on-a-kind-cluster-since-the-suite-was-fixed).
+Everything outside the console phase passed on the first attempt. The console phase failed all
+nine specs, and three separate things were stacked behind that.
+
+The first was mine. #48's fix waited for a `_blazor` **websocket** before asserting anything —
+which is a transport, not a state. SignalR negotiates, and where a websocket cannot be established
+it falls back to server-sent events or long polling with the page perfectly interactive and no
+websocket ever opening. It passed against a development image and timed out against a published
+one. It now waits for the negotiation, which happens under every transport, and the one spec that
+actually interacts retries the action rather than the assertion — because an event dispatched into
+a not-yet-interactive page is dropped silently, so re-asserting alone waits forever on an input the
+server never saw.
+
+The second was also mine, and cost a whole run: a `kubectl port-forward` left running against the
+*development* cluster owned port 18100, so the browser reached the wrong agent. The giveaway was a
+console reporting `dryrun` and 106 incidents during an Observe run with five fixtures — the numbers
+were impossible for the cluster under test, which is the only reason it was caught rather than
+explained away.
+
+Underneath both was the thing worth the whole milestone.
+
+**`_framework/blazor.web.js` returned 404 in every image this project has ever published.** Blazor
+never started. No circuit was ever established. The console was a static page in every released
+build, and every interactive control on it was dead — approve, deny, re-arm, retry, the feedback
+form, the filters. v0.3.0's entire approval story is a Teams card that deep-links to a button that
+has never worked outside a development image.
+
+The cause is one flag:
+
+```
+dotnet publish --no-restore    42489 byte manifest, 0 entries matching blazor   -> 404
+dotnet publish                 56532 byte manifest, blazor.web.js present       -> 200
+```
+
+The Dockerfile restores in an earlier layer against the `.csproj` files alone, so a source-only
+change reuses it. At that moment the project contains no Razor components, the Blazor static web
+assets are never resolved, and `--no-restore` at publish reuses the incomplete result.
+`@Assets[...]` finds no entry, returns its input unchanged, and the browser asks for a path nothing
+serves.
+
+**Why four releases missed it is the part worth keeping.** Nothing fails: the static render is
+unaffected, so the console looks perfect and the pod logs nothing. Development never sees it,
+because `dotnet watch` builds rather than publishes and the build manifest is complete — so every
+manual check was done on the one image where it worked. And the console suite could not see it,
+because until this milestone it asserted only read-only content, and reading a static render is
+indistinguishable from reading a live one. Its single interacting spec was the one #46 caused to
+skip in the default mode.
+
+So the only assertion in the repository capable of catching this was also the only one that never
+ran. Fixing #46 is what made the suite able to see it, and running the harness end to end is what
+made it look.
+
+Final state: **9 passed, 0 failed, 0 skipped** against a live kind cluster in the default mode,
+verified by loading the fixed image into the running e2e cluster rather than by inspecting the
+Dockerfile.

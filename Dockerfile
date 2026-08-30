@@ -32,8 +32,26 @@ COPY src/Hephaisto.Agent/         src/Hephaisto.Agent/
 ARG VERSION=0.0.0-local
 ARG COMMIT=unknown
 
+# NO --no-restore HERE, AND IT MUST NOT COME BACK.
+#
+# The restore above runs when only the .csproj files exist - that is the whole point of the
+# layer split - and at that moment this project contains no Razor components. The Blazor
+# framework's static web assets are resolved from that restore, so they are simply absent, and
+# `--no-restore` at publish reuses the incomplete result. The manifest ships without
+# `_framework/blazor.web.js`, `@Assets[...]` falls through to the literal path, and the browser
+# gets a 404.
+#
+# Nothing about that fails the build or logs anything. The console renders perfectly, because
+# the static server-side render is unaffected - and then nothing on it works. Every button, the
+# approval controls included, is dead in every released image. Measured:
+#
+#     --no-restore   42489 byte manifest, 0 entries matching blazor   -> 404
+#     (restored)     56532 byte manifest, blazor.web.js present       -> 200
+#
+# The layer split still earns its keep: the packages are already in the image's NuGet cache, so
+# the restore this publish performs is near-instant and downloads nothing.
 RUN dotnet publish src/Hephaisto.Agent/Hephaisto.Agent.csproj \
-        -c Release -o /app --no-restore \
+        -c Release -o /app \
         -p:MinVerSkip=true \
         -p:Version=${VERSION} \
         -p:InformationalVersion=${VERSION}+${COMMIT}

@@ -1550,6 +1550,9 @@ the feedback submitter's name — and `tokens.css` would need its light block du
 
 ### 51. `run.sh` has not been re-run on a kind cluster since the suite was fixed
 
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because
+these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** v0.4.0 closed [#46](#46-the-console-suite-cannot-pass-in-observe-so-a-green-run-needs---mode-auto)
 and removed every `test.skip` from the console suite, and the milestone's exit criterion is that
 `scripts/e2e/run.sh` exits 0 in its default mode. That has not been observed.
@@ -1578,6 +1581,26 @@ only true once the agent has actually investigated something in the current hour
 
 **Size.** S to run, unknown to fix whatever it finds.
 
+**Fixed 2026-08-30, and "whatever it finds" was the point.** It was run, twice, and everything
+outside the console phase passed on the first attempt: five fixtures detected and classified, five
+diagnoses each citing evidence, cost reconciled against the ledger, no action executed in Observe,
+and a queued notification surviving an agent restart.
+
+The console phase failed all nine specs, and behind it were three separate things:
+
+- My own regression. #48's fix waited for a `_blazor` **websocket**, which is a transport rather
+  than a state; it passed against a development image and timed out against a published one. Now
+  it waits for the negotiation, which happens under every transport.
+- My own mistake. A `kubectl port-forward` left running against the *development* cluster owned
+  port 18100, so one run's browser reached the wrong agent entirely — the giveaway was a console
+  reporting `dryrun` and 106 incidents during an Observe run with five fixtures.
+- And underneath both, [#53](#53-the-console-was-never-interactive-in-any-released-image): the
+  console was never interactive in any released image, and this suite is the first thing in the
+  repository capable of noticing.
+
+Final state, against a live kind cluster in the default mode with the fixed image: **9 passed, 0
+failed, 0 skipped.**
+
 ### 52. Two components are implemented twice
 
 **Symptom.** The console has two unrelated implementations of a progress bar and two
@@ -1597,3 +1620,54 @@ stop exactly that. Both are now photographed by the visual baselines, so the con
 change somebody can actually verify.
 
 **Size.** S.
+
+### 53. The console was never interactive in any released image
+
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because
+these numbers and titles are the anchors `roadmap.md` links by.
+
+**Symptom.** In every image this project has published, `_framework/blazor.web.js` returned
+**404**. Blazor never started, no circuit was ever established, and the console was a static
+page. Every interactive control was dead: approve, deny, re-arm, the retry button, the feedback
+form, the incident filters.
+
+**Evidence.** Against the e2e cluster, on the published `0.4.0-main.0.21`:
+
+```
+<script src="_framework/blazor.web.js">          <- not fingerprinted, which is the tell
+_framework/blazor.web.js -> 404 (0 bytes)
+grep -c blazor /app/Hephaisto.Agent.staticwebassets.endpoints.json   -> 0
+```
+
+Reproduced by building the production image locally, then bisected to one flag in `Dockerfile`:
+
+| build | manifest | entries matching `blazor` | result |
+|---|---|---|---|
+| `dotnet publish --no-restore` | 42489 bytes | **0** | 404 |
+| `dotnet publish` | 56532 bytes | `blazor.web.js` present | 200 |
+
+**Cause.** The Dockerfile restores in a separate earlier layer, against the `.csproj` files alone,
+so a source-only change reuses it. At that moment the project contains no Razor components, so
+the Blazor framework's static web assets are not resolved — and `--no-restore` at publish reuses
+that incomplete result. The endpoint is never registered, `@Assets["_framework/blazor.web.js"]`
+finds no entry and returns its input unchanged, and the browser asks for a path nothing serves.
+
+**Why nothing caught it for four releases.** Three failures stacked:
+
+1. Nothing fails. The static server-side render is unaffected, so the console looks perfect and
+   the pod logs nothing.
+2. Development never sees it. `Dockerfile.dev` runs `dotnet watch`, which builds rather than
+   publishes, and the build manifest has the assets. Every manual check was done there.
+3. The console suite could not see it. Until v0.4.0 it asserted only read-only content, and
+   reading a static render is indistinguishable from reading a live one. Its single interacting
+   spec was the one [#46](#46-the-console-suite-cannot-pass-in-observe-so-a-green-run-needs---mode-auto)
+   caused to skip in the default mode — so the only assertion in the repository that could have
+   caught this was also the only one that never ran.
+
+**Fixed 2026-08-30.** `--no-restore` removed from the publish step, with the measurement in a
+comment beside it. The layer split still earns its keep: the packages are already in the image's
+NuGet cache, so the restore the publish now performs downloads nothing.
+
+Verified end to end rather than by inspection: the fixed image was loaded into the live e2e kind
+cluster, the deployment repointed at it, and the console suite run against it — **9 passed, 0
+failed, 0 skipped**, where the same suite against the published image failed all nine.

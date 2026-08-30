@@ -27,9 +27,11 @@ It also found that the safety net the milestone depended on could not see a styl
 that the console suite's one failing spec was not the product bug it looked like — see
 [#48](backlog.md#48-the-console-suite-interacts-with-a-page-the-circuit-has-not-taken-over-yet).
 
-**What is not yet observed** is `scripts/e2e/run.sh` exiting 0 on a kind cluster. Every spec passes
-against a live console and no spec skips any more, which makes that a statement about the specs
-rather than about the harness. [#51](backlog.md#51-runsh-has-not-been-re-run-on-a-kind-cluster-since-the-suite-was-fixed).
+**Running the harness end to end is what made the release worth it.** It found that
+`_framework/blazor.web.js` had returned 404 in every published image — the console was a static
+page in every released build, and every button on it was dead. One flag in the Dockerfile, four
+releases, and nothing had ever been able to see it.
+[#53](backlog.md#53-the-console-was-never-interactive-in-any-released-image).
 
 `v0.3.0` shipped on 2026-08-30. **The agent reaches people**: an escalation is written to a
 Postgres outbox in the same transaction as the state change that caused it, and delivered to a
@@ -590,13 +592,19 @@ the accent is about 0.2% of a section's pixels. It is `maxDiffPixels: 0` now.
 | `app.css` refactored onto it, UI unchanged except where the direction says | **done, and measured.** Zero-diff proven across the extraction; the Forge change is attributable shot by shot |
 | The app has a favicon | **done** — plus wordmark, social card, `theme-color` and a description |
 | Accessibility in acceptance | **done** — contrast asserted in both themes, focus ring baselined with real keyboard focus, reduced motion honoured |
-| `scripts/e2e/run.sh` exits 0 in its default mode | **unverified end to end.** The console suite has no skips left and passes against a live console; the full harness has not been re-run on a kind cluster since |
+| `scripts/e2e/run.sh` exits 0 in its default mode | **done, and it earned its keep.** 9 passed, 0 failed, 0 skipped against a live kind cluster — after the run exposed [#53](backlog.md#53-the-console-was-never-interactive-in-any-released-image) |
 
-The last row is the honest one, and it is **blocked rather than skipped**. Every spec was fixed and
-verified against a real console on the development cluster — nine specs, no skips — but the
-harness's build phase dispatches `nightly.yml` on the current branch and waits for the image, so it
-cannot run against a branch GitHub has not seen. Push, then run it. Until then, "the harness exits
-0 in its default mode" is a statement about the specs rather than about the harness.
+**The last row is why the distinction between "the specs pass" and "the harness passes" was worth
+insisting on.** Everything outside the console phase passed on the first run. The console phase
+failed all nine specs, and underneath a regression of my own and a stray port-forward was
+[#53](backlog.md#53-the-console-was-never-interactive-in-any-released-image): **`blazor.web.js`
+returned 404 in every image this project has ever published.** The console was a static page in
+every released build — approve, deny, re-arm, retry and the feedback form all dead — and nothing
+had ever noticed, because until this milestone the suite asserted only read-only content and a
+static render reads identically to a live one.
+
+One flag in the Dockerfile. `--no-restore` on the publish, reusing a restore performed before any
+Razor component existed, so the Blazor static web assets were never resolved.
 
 ---
 
