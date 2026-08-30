@@ -23,6 +23,46 @@
  * about the network, not about the file count.
  */
 
+/* ---- the faces ---------------------------------------------------------------------------
+ * SELF-HOSTED, and that is the whole constraint. The pod may run in a cluster with no egress,
+ * so a webfont from a CDN is a stylesheet that silently falls back to a system stack on exactly
+ * the installs that are hardest to debug. These two files are in this repository, served by
+ * this pod, and reachable by a browser that can reach nothing else.
+ *
+ * Latin subsets only - 66KB for both, against roughly 300KB for the full set. This console
+ * renders Kubernetes object names, log excerpts and timestamps; the Cyrillic and Greek ranges
+ * would be bytes shipped to every operator forever on the chance that one workload is named in
+ * them, and the browser falls back per-glyph if that ever happens.
+ *
+ * Both are variable across 400-700, which is why there is one file per family rather than four.
+ * Both are OFL-1.1; the licences ship beside them in fonts/, because shipping a font without
+ * its licence is a compliance bug in an AGPL repository and not a tidiness one.
+ *
+ * font-display: swap - the files are local so the swap window is short, but a console that
+ * renders nothing while a font loads is worse than one that reflows once.
+ */
+@font-face {
+    font-family: "Archivo";
+    src: url("fonts/archivo-latin.woff2") format("woff2");
+    font-weight: 400 700;
+    font-style: normal;
+    font-display: swap;
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+                   U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+                   U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+    font-family: "JetBrains Mono";
+    src: url("fonts/jetbrains-mono-latin.woff2") format("woff2");
+    font-weight: 400 700;
+    font-style: normal;
+    font-display: swap;
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+                   U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+                   U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 :root {
     --bg: #131519;
     --bg-raised: #1b1e24;
@@ -45,8 +85,8 @@
     --purple: #b998e8;
     --cyan: #45bfbf;
 
-    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
-    --sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    --sans: "Archivo", ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
 
     --row: 1.55rem;
 

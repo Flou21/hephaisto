@@ -20,6 +20,18 @@ test.describe('the design language', () => {
     const styled = await page.evaluate(() =>
       getComputedStyle(document.body).backgroundColor !== 'rgba(0, 0, 0, 0)');
     expect(styled, 'app.css did not load; the baseline would be of an unstyled page').toBe(true);
+
+    // The faces are self-hosted because the pod may have no egress, and a webfont that fails to
+    // load fails SILENTLY - the browser falls back to a system stack and renders a page that
+    // looks entirely fine. A baseline taken then is a stable picture of the wrong thing, and it
+    // would keep passing forever afterwards.
+    await page.evaluate(() => document.fonts.ready);
+    const loaded = await page.evaluate(() => ({
+      archivo: document.fonts.check('16px Archivo'),
+      jetbrains: document.fonts.check('16px "JetBrains Mono"'),
+    }));
+    expect(loaded.archivo, 'Archivo did not load; this shot would be of the fallback stack').toBe(true);
+    expect(loaded.jetbrains, 'JetBrains Mono did not load; this shot would be of the fallback stack').toBe(true);
   });
 
   test('the whole gallery', async ({ page }) => {
