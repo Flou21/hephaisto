@@ -1558,9 +1558,16 @@ and removed every `test.skip` from the console suite, and the milestone's exit c
 0 skipped. But `run.sh` in Observe boots its own kind cluster, applies chaos fixtures and runs
 nine phases before the `ui` one, and that has not been run since the fixes landed.
 
-**Why it is still open.** The claim is currently about the specs rather than about the harness,
-and this repo has been caught by exactly that gap before — three of the four v0.1.0 release
-candidates failed on the harness rather than on the thing being measured.
+**Why it is still open.** It is *blocked on the branch being pushed*, not merely un-run.
+`scripts/e2e/lib/build.sh` dispatches `nightly.yml` with
+`gh workflow run --ref $(git rev-parse --abbrev-ref HEAD)` and waits for the resulting image and
+version artifact, so the harness cannot build anything from a branch GitHub has never seen. The
+only other channels are `--rc`, which pushes a tag, and `--tag`, which tests something already
+published. There is no local-build path.
+
+So the sequence is: push the branch, then run it. Until then the claim is about the specs rather
+than about the harness, and this repo has been caught by exactly that gap before — five of the six
+v0.1.0 release candidates failed on the harness rather than on the thing being measured.
 
 Two known failures are also waiting there and are *not* regressions from this milestone:
 [#49](#49-the-console-spec-compares-a-capped-api-call-against-an-uncapped-page) trips on any

@@ -592,10 +592,11 @@ the accent is about 0.2% of a section's pixels. It is `maxDiffPixels: 0` now.
 | Accessibility in acceptance | **done** — contrast asserted in both themes, focus ring baselined with real keyboard focus, reduced motion honoured |
 | `scripts/e2e/run.sh` exits 0 in its default mode | **unverified end to end.** The console suite has no skips left and passes against a live console; the full harness has not been re-run on a kind cluster since |
 
-The last row is the honest one. Every spec was fixed and verified against a real console on the
-development cluster, but `run.sh` in Observe spins its own kind cluster and that has not been run.
-Until it is, "the harness exits 0 in its default mode" is a statement about the specs rather than
-about the harness.
+The last row is the honest one, and it is **blocked rather than skipped**. Every spec was fixed and
+verified against a real console on the development cluster — nine specs, no skips — but the
+harness's build phase dispatches `nightly.yml` on the current branch and waits for the image, so it
+cannot run against a branch GitHub has not seen. Push, then run it. Until then, "the harness exits
+0 in its default mode" is a statement about the specs rather than about the harness.
 
 ---
 
