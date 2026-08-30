@@ -47,7 +47,14 @@
 
 Phase 1 gives it read-only tools. Phase 2 is a separate model call with *zero* tools and a
 JSON response schema. Phase 3 is pure C# over the typed result, against a closed `ActionType`
-enum.
+enum — `ActionExecutor`, a `switch` whose every arm is a typed API call written in this repo.
+
+Two places where that could have leaked, and does not. The executor covers only the verbs the
+write `Role` grants and refuses everything else **before** a call is made, so a plan naming
+`CordonNode` produces `outcome=unsupported` rather than a 403. And the rollback spec is
+free-form JSON the model wrote: it is read for typed values and never executed as written,
+because doing so would hand back the mutating handle on the one path nobody watches — minutes
+after the incident, with budgets deliberately bypassed.
 
 A prompt injection in a log line can therefore at most produce a *plan* that the
 deterministic policy engine then rejects. It can never reach the Kubernetes API. The split
@@ -139,9 +146,17 @@ The outermost layer is the one that survives a compromised process.
    rollout, on pods younger than 120 s, in a maintenance window, or when the cluster-wide
    unhealthy fraction is high.
 9. **Oscillation detection** — the same action three times in two hours with the incident
-   reopening ⇒ 24-hour quarantine. This is the concrete answer to "it restarts a pod that
-   crashes again forever".
-10. **Verification and auto-rollback** at T+60 s, T+5 m, T+15 m.
+   reopening ⇒ 24-hour quarantine, recorded against the **workload** on the row admission
+   already locks. This is the concrete answer to "it restarts a pod that crashes again
+   forever", and it is the only control that notices the agent is not helping: every other one
+   caps a rate, and a workload failing every fifteen minutes sits comfortably inside all of
+   them. Not on the incident, because a recurrence arrives as a *new* incident — so a
+   quarantine held there would lapse exactly when the loop would otherwise continue.
+10. **Verification and auto-rollback** at T+60 s, T+5 m, T+15 m — deterministic predicates,
+    never a model, and only the last attempt may conclude a failure. The three answer different
+    questions rather than retrying one: at 60 s "did anything obviously break", at 5 m "has it
+    converged", at 15 m "did it come back". A check that cannot run is Inconclusive, never
+    Failed, so an API timeout does not revert a healthy cluster.
 11. **Immutable audit trail**, append-only in Postgres and mirrored to Kubernetes Events on
     the target object — so `kubectl describe pod` shows *"hephaisto restarted this pod
     because …"*, which is where an on-call engineer actually looks.

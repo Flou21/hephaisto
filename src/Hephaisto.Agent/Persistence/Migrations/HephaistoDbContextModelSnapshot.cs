@@ -46,11 +46,6 @@ namespace Hephaisto.Agent.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("latched_at");
 
-                    b.Property<string>("Mode")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("mode");
-
                     b.Property<bool>("RunawayLatched")
                         .HasColumnType("boolean")
                         .HasColumnName("runaway_latched");
@@ -66,7 +61,6 @@ namespace Hephaisto.Agent.Persistence.Migrations
                             Id = "singleton",
                             ChangedAt = new DateTimeOffset(new DateTime(1970, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             ChangedBy = "hephaisto/system",
-                            Mode = "Observe",
                             RunawayLatched = false
                         });
                 });
@@ -158,6 +152,14 @@ namespace Hephaisto.Agent.Persistence.Migrations
                     b.Property<string>("WorkloadKey")
                         .HasColumnType("text")
                         .HasColumnName("workload_key");
+
+                    b.Property<string>("QuarantineReason")
+                        .HasColumnType("text")
+                        .HasColumnName("quarantine_reason");
+
+                    b.Property<DateTimeOffset?>("QuarantinedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("quarantined_until");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")

@@ -21,7 +21,17 @@ policy:
   actionableNamespaces:
     - hephaisto-chaos
 
-mode: Observe
+  # Pre-approved here so that `mode` is the ONLY thing left to change. Flipping DryRun -> Auto
+  # in this file is then a single, reviewable, revertible line - which is the whole operating
+  # model: the dials live in git, and the database arm can lower the mode but never raise it.
+  autoEnabledActionTypes:
+    - RestartPod
+
+# DryRun: the entire flow runs, every Kubernetes call is made with dryRun=All, the API server
+# validates it and discards it. That produces the would-have-acted log - real admission rows,
+# real budget accounting, real audit trail, and nothing changed in the cluster - which is the
+# evidence worth reading before turning autonomy on. Raise to Auto when you have read it.
+mode: DryRun
 
 otel:
   endpoint: http://otel-collector.hephaisto-obs:4318

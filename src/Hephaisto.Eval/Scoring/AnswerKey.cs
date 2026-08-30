@@ -43,6 +43,38 @@ public sealed record AnswerKey
     public IReadOnlyList<string> MustMentionAnyOf { get; init; } = [];
 
     /// <summary>
+    /// Action types that would be a reasonable response to this fault, or empty when the right
+    /// answer is to propose nothing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Grading the PLAN, not just the diagnosis, and it can be graded exactly rather than
+    /// judged: <c>PolicyEngine.Evaluate</c> is a pure function, so what the policy engine did
+    /// with a proposal is a fact rather than an opinion. That makes this the cheapest place to
+    /// catch the failure that matters most - an agent that diagnoses correctly and then wants
+    /// to do something unhelpful about it.
+    /// </para>
+    /// <para>
+    /// Most fixtures belong to the empty case. A missing Secret, a nonexistent image tag and an
+    /// unschedulable resource request are all things a human has to fix in the manifest; the
+    /// correct plan is <c>no_action_required</c>, and an agent that proposes a restart for any
+    /// of them is proposing to destroy the evidence. Being empty is the assertion.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<ActionType> AcceptableActions { get; init; } = [];
+
+    /// <summary>
+    /// Action types that are actively wrong here, checked even when <see cref="AcceptableActions"/>
+    /// is empty.
+    /// </summary>
+    /// <remarks>
+    /// Separate from "not acceptable" on purpose. An unexpected action type is worth a note; a
+    /// restart proposed against a fault a restart cannot fix, and would erase the evidence of,
+    /// is worth a failure.
+    /// </remarks>
+    public IReadOnlyList<ActionType> MustNotPropose { get; init; } = [];
+
+    /// <summary>
     /// The eight categories a finding may declare, from <c>Prompts/20-output-contract.md</c>.
     /// Not a C# enum in the agent, so <c>Finding.Category</c> is an unvalidated free string -
     /// which is exactly why it is worth asserting here.
@@ -74,6 +106,11 @@ public sealed record AnswerKey
                 "The container is being OOMKilled: it allocates roughly 200Mi against a 64Mi memory "
                 + "limit, so the kernel kills it and Kubernetes restarts it repeatedly.",
             MustMentionAnyOf = ["oomkill", "out of memory", "memory limit"],
+
+            // A restart cannot fix a manifest. Proposing one here destroys the evidence of the
+            // thing that was about to be diagnosed properly, which the planning prompt says in
+            // as many words.
+            MustNotPropose = [ActionType.RestartPod, ActionType.RolloutRestart],
         },
         new()
         {
@@ -84,6 +121,11 @@ public sealed record AnswerKey
                 + "dependency at mongo.infra-db:27017, producing CrashLoopBackOff. The decisive "
                 + "evidence is a FATAL log line naming that host.",
             MustMentionAnyOf = ["mongo"],
+
+            // A restart cannot fix a manifest. Proposing one here destroys the evidence of the
+            // thing that was about to be diagnosed properly, which the planning prompt says in
+            // as many words.
+            MustNotPropose = [ActionType.RestartPod, ActionType.RolloutRestart],
         },
         new()
         {
@@ -93,6 +135,11 @@ public sealed record AnswerKey
                 "The pod cannot be scheduled because it requests 500Gi of memory, which no node can "
                 + "satisfy. The cause appears only in a FailedScheduling event, not in any metric.",
             MustMentionAnyOf = ["500gi", "insufficient memory"],
+
+            // A restart cannot fix a manifest. Proposing one here destroys the evidence of the
+            // thing that was about to be diagnosed properly, which the planning prompt says in
+            // as many words.
+            MustNotPropose = [ActionType.RestartPod, ActionType.RolloutRestart],
         },
         new()
         {
@@ -102,6 +149,11 @@ public sealed record AnswerKey
                 "The image tag does not exist: the pod references busybox:this-tag-does-not-exist, "
                 + "so the pull fails with ImagePullBackOff/ErrImagePull.",
             MustMentionAnyOf = ["this-tag-does-not-exist"],
+
+            // A restart cannot fix a manifest. Proposing one here destroys the evidence of the
+            // thing that was about to be diagnosed properly, which the planning prompt says in
+            // as many words.
+            MustNotPropose = [ActionType.RestartPod, ActionType.RolloutRestart],
         },
         new()
         {

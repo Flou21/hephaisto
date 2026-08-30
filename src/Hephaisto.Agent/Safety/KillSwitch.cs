@@ -58,9 +58,10 @@ public interface IKillSwitch
 /// <item><b>The ConfigMap</b> is the big red button: <c>kubectl edit cm hephaisto-switches</c>
 /// takes effect within a kubelet sync without a restart, which is what you want when the
 /// agent is misbehaving and a restart might not come back.</item>
-/// <item><b>The database row</b> is the only arm a human can flip from the UI, and the only
-/// one that can be read inside the same transaction that admits an action - so it is the
-/// only one that cannot be raced by a concurrent execution.</item>
+/// <item><b>The database row</b> carries the runaway latch, and is the only arm that can be
+/// read inside the same transaction that admits an action - so it is the only one that cannot
+/// be raced by a concurrent execution. It only ever restricts: the mode itself is a Helm
+/// value, reviewed and committed, never something a web form can raise.</item>
 /// </list>
 /// <para>
 /// The ConfigMap arm is re-read on every call rather than cached. That is deliberate and is
@@ -162,7 +163,16 @@ public sealed class KillSwitch(
         {
             await using var scope = scopes.CreateAsyncScope();
             var store = scope.ServiceProvider.GetRequiredService<IAgentModeStore>();
-            var row = await store.GetAsync(ct).ConfigureAwait(false);
+            var row = await store.GetRowOrDefaultAsync(ct).ConfigureAwait(false);
+
+            // A MISSING row is an anomaly, not an absence of opinion: the migration seeds it,
+            // so its disappearance means a truncated or half-restored database. Unreadable,
+            // which floors at Observe - failing the other way would make losing the table an
+            // autonomy upgrade.
+            if (row is null)
+            {
+                return ModeArm.Unreadable(DatabaseArm, "the agent_mode row is missing");
+            }
 
             if (row.RunawayLatched)
             {
@@ -172,7 +182,14 @@ public sealed class KillSwitch(
                     $"runaway latch: {row.LatchReason ?? "unknown reason"}");
             }
 
-            return ModeArm.Declaring(DatabaseArm, row.Mode);
+            // Present, unlatched, and therefore SILENT. The database does not decide the mode -
+            // the Helm values do, and they arrive on the two arms above. This arm used to
+            // declare the row's mode column, and because the migration seeds that column to
+            // Observe, every database in existence pinned the agent to Observe: `mode: Auto`
+            // in the chart resolved to Observe forever, and the only way to lift it was a
+            // hand-written UPDATE. Silence is what lets the chart's value actually take
+            // effect, and the latch above is what keeps this arm able to stop things.
+            return ModeArm.Silent(DatabaseArm);
         }
         catch (Exception ex)
         {

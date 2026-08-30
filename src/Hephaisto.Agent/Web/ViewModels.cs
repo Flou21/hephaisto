@@ -463,7 +463,15 @@ public sealed record AgentStatusView
     /// <summary>Incidents waiting for a worker slot. Worker concurrency is 2.</summary>
     public int QueuedInvestigations { get; init; }
 
-    /// <summary>The mode CONFIGURED in the database row - what a human last asked for.</summary>
+    /// <summary>
+    /// The mode CONFIGURED by the deployment - the Helm value, as it reaches the pod on the
+    /// environment variable and the projected ConfigMap.
+    /// </summary>
+    /// <remarks>
+    /// Changing this is a git commit and a rollout, not a click: the database arm can lower
+    /// the mode via the runaway latch but can never raise it, so this value is the ceiling
+    /// everything else operates under.
+    /// </remarks>
     public AgentMode Mode { get; init; }
 
     /// <summary>

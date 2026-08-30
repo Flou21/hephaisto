@@ -67,6 +67,7 @@ MVP-critical: they carry information that exists in **no metric at all**.
 | C8 | Readiness flap, 60s on / 60s off | `ChaosEndpointFlapping` *(Sev3 — never page)* | `changes(kube_pod_status_ready{namespace="hephaisto-chaos",pod=~"c8-readiness-flap-.*",condition="true"}[30m]) >= 4` | `{k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c8-readiness-flap"} \|= "entering unhealthy window"` | `Warning Unhealthy — Readiness probe failed: HTTP probe failed with statuscode: 404` |
 | C9 | Unbounded 4Gi memhog — **node-wide** | `ChaosNodeMemoryPressure` | `kube_node_status_condition{condition="MemoryPressure",status="true"} == 1` | `{k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c9-memhog"} \|= "allocated"` | `Warning NodeHasInsufficientMemory`; `Warning Evicted — The node was low on resource: memory.` |
 | C10 | faulty-service — 15% 500s, 750ms p95, 503 window | `ChaosServiceErrorBudgetBurn` | `sum(rate(traces_spanmetrics_calls_total{service_name="faulty-service",status_code="STATUS_CODE_ERROR"}[5m])) / sum(rate(traces_spanmetrics_calls_total{service_name="faulty-service"}[5m])) > 0.05` | `{k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c10-faulty-service", k8s_container_name="app"} \|= "FAULT"` | *(none — deliberately event-silent; the pod stays Ready)* |
+| C11 | Transient - first pod wedged, any later pod healthy | `ChaosPodCrashLooping` | `kube_pod_container_status_waiting_reason{namespace="hephaisto-chaos",container="app",reason="CrashLoopBackOff"} == 1` (and `kube_deployment_status_replicas_available{deployment="c11-transient"} == 1` once restarted) | `{k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c11-transient"} \|= "FATAL"` | `Warning BackOff` until the pod is replaced |
 
 ### Secondary expressions worth asserting
 
@@ -277,6 +278,7 @@ infra/chaos/
 ├── c8-readiness-flap.yaml       Deployment + Service — readiness alternates 60s on / 60s off
 ├── c9-memhog.yaml               Deployment — NO memory limit, 4Gi, ships at replicas: 0
 ├── c10-faulty-service.yaml      Deployment + Service — OTel API + wget load sidecar
+├── c11-transient.yaml           PVC + Deployment — first pod wedges, a replacement is healthy
 └── faulty-service/
     ├── Program.cs               ~60-line ASP.NET Core minimal API, OTLP traces+metrics+logs
     ├── faulty-service.csproj    net10.0, inherits repo-root CPM, NOT in Hephaisto.slnx

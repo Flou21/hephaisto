@@ -24,6 +24,12 @@ public static class IncidentEndpoints
         group.MapPost("/{id:guid}/feedback", SubmitFeedbackAsync).WithName("SubmitIncidentFeedback");
         group.MapPost("/{id:guid}/reinvestigate", ReinvestigateAsync).WithName("ReinvestigateIncident");
 
+        // Approval. Two routes rather than one with a boolean, so a truncated or mistyped body
+        // cannot turn a denial into an approval - the verb is in the path, where it is visible
+        // in an access log and cannot be defaulted.
+        group.MapPost("/{id:guid}/actions/{actionId:guid}/approve", ApproveAsync).WithName("ApproveAction");
+        group.MapPost("/{id:guid}/actions/{actionId:guid}/deny", DenyAsync).WithName("DenyAction");
+
         // Outside the incident group: a blob is addressed by its own id, and the step that
         // points at it may well have outlived it.
         app.MapGet("/api/evidence-blobs/{id:guid}", GetBlobAsync).WithName("GetEvidenceBlob");
@@ -236,7 +242,68 @@ public static class IncidentEndpoints
         };
     }
 
+    private static Task<Results<Ok<ApprovalResult>, NotFound, Conflict<ApprovalResult>, ValidationProblem>>
+        ApproveAsync(Guid id, Guid actionId, ApprovalRequest request, IncidentQueries queries, CancellationToken ct) =>
+        DecideAsync(id, actionId, approve: true, request, queries, ct);
+
+    private static Task<Results<Ok<ApprovalResult>, NotFound, Conflict<ApprovalResult>, ValidationProblem>>
+        DenyAsync(Guid id, Guid actionId, ApprovalRequest request, IncidentQueries queries, CancellationToken ct) =>
+        DecideAsync(id, actionId, approve: false, request, queries, ct);
+
+    private static async Task<Results<Ok<ApprovalResult>, NotFound, Conflict<ApprovalResult>, ValidationProblem>>
+        DecideAsync(
+            Guid id,
+            Guid actionId,
+            bool approve,
+            ApprovalRequest request,
+            IncidentQueries queries,
+            CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (string.IsNullOrWhiteSpace(request.DecidedBy))
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["decidedBy"] =
+                [
+                    "Say who is approving this. It is written to approved_by verbatim and is the "
+                    + "only record of who authorised a change to the cluster.",
+                ],
+            });
+        }
+
+        // Api, not Ui, and set here rather than taken from the body: a caller must not be able
+        // to describe its own approval as having come from somewhere else.
+        var result = await queries.DecideActionAsync(
+            id, actionId, approve, request.DecidedBy, ApprovalSource.Api, ct);
+
+        return result.Outcome switch
+        {
+            ApprovalOutcome.Executed => TypedResults.Ok(result),
+            ApprovalOutcome.Denied => TypedResults.Ok(result),
+            ApprovalOutcome.NotFound => TypedResults.NotFound(),
+            ApprovalOutcome.NotAwaitingApproval => TypedResults.Conflict(result),
+            ApprovalOutcome.ForbiddenActor => TypedResults.Conflict(result),
+
+            // Approved by a human, then refused by admission or failed against the API. A 200
+            // would report a change that did not happen; a 404 would lose the approval that
+            // did. Conflict, with the reason.
+            _ => TypedResults.Conflict(result),
+        };
+    }
+
     private static string Names<T>() where T : struct, Enum => string.Join(", ", Enum.GetNames<T>());
+}
+
+/// <summary>A human approving or denying one proposed action.</summary>
+public sealed record ApprovalRequest
+{
+    /// <summary>
+    /// Required and non-empty. Attribution, not authentication, until OIDC lands - and the
+    /// risk to watch is habituation rather than impersonation.
+    /// </summary>
+    public required string DecidedBy { get; init; }
 }
 
 /// <summary>A human's verdict on an incident.</summary>

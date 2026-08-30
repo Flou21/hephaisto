@@ -17,85 +17,39 @@ against the code rather than believed — see [backlog #9](backlog.md#9-semantic
 
 ## Where it stands
 
-`v0.0.1` shipped on 2026-08-29: multi-arch image and Helm chart on GHCR, build provenance attested,
-both verified pulling anonymously.
+`v0.2.0` is the current release. **The agent can act**: it executes a narrow allowlist of
+reversible actions, verifies them at T+60s / T+5m / T+15m with deterministic predicates,
+reverts or escalates when they do not hold, and closes the incident when they do. It ships
+configured to act nowhere — an empty namespace list, an empty autonomy list and `mode:
+Observe`, three independent things to change.
 
-`v0.1.0-rc1` followed the same day, carrying the eval harness and the hybrid-search fix. It was a
-release candidate with most of the milestone still open: Grafana annotations, four unrecorded
-metrics, audit immutability in the deployed database, and the corpus at 8 fixtures rather than 10.
+The v0.2.0 acceptance test **has been run once, and it found three bugs.** Detection,
+investigation and diagnosis are verified against a real cluster - 5 fixtures, 5 incidents, all
+classified correctly, 2/2 graded correct for $0.56. **Acting is not yet demonstrated end to
+end**, because the run stopped at the point it exists to test:
 
-`v0.1.0-rc2` closes all of that except the corpus. Grafana annotations are built and asserted in
-the e2e; the four metrics are recorded by production code and guarded by a test that asserts *is
-recorded* rather than *is created*; and the agent now serves on a non-owner Postgres role, which is
-the only way audit immutability was ever going to hold — privileges cannot restrain a table's
-owner. **Widening the corpus from 8 back toward 10 is deferred to v0.1.1**, deliberately and with
-the reason written down: c6 does not fire on `local-path` and c9 would evict the observability
-stack, so both need replacement fixtures that do not exist yet, and inventing them is open-ended
-work against a gate that is already met at 22/24.
+- Gate 9 refused every restart the feature exists for. It fired at `ReadyReplicas <= 1`, which
+  includes zero, so it protected a replica that was not there - and a crash-looping pod is by
+  definition not Ready. `RestartPod`, the one type promoted to auto, could never have fired.
+- Verification passed on a still-crash-looping workload, which fails toward *yes*: no readiness
+  probe means Ready the instant the container is Running, so a pod that runs two seconds per
+  cycle reports one available replica for part of it.
+- The harness made the identical mistake and reported "c11 is available after the restart"
+  while the pod sat in CrashLoopBackOff with six restarts.
 
-**`v0.1.0-rc6` is green: 68 assertions passed, 0 failed, 2 skipped, in 9m19s for $1.41.** All
-eight fixtures detected, 11 investigations all terminating `Concluded` and all citing evidence,
-6/6 graded correct, 41 Grafana annotations written and read back with the agent's own token,
-Observe mode held with zero actions executed, and the console suite reporting
-`expected=5 skipped=0`. The two skips are the documented case where a fixture is detected by a
-different shipped rule than the README names, which is a fact about rule `for:` durations racing,
-not a detection failure.
+All three are fixed and unit-tested. **None of the fixes has been re-run against a cluster**,
+which is deliberate: end-to-end re-verification is deferred to before v0.4.0, and until it
+happens "the agent restarts a pod and closes the incident" remains built rather than observed.
+See [backlog #41](backlog.md#41-c11-has-never-been-run-against-a-cluster).
 
-**It took six release candidates, and the agent was not the cause of any of them.** rc2 could not
-install; rc3, rc4 and rc5 each failed on the *harness's own instrumentation* rather than on the
-thing being measured. That is worth stating plainly rather than rounding off, because a milestone
-whose product is a trustworthy number spent five attempts discovering that its instruments lied:
+`v0.1.0` shipped on 2026-08-29 after six release candidates, meeting its gate at **22/24
+correct root cause** over cassette replay and 7/8 live. It took six candidates and the agent
+was not the cause of any of them — five failed on the harness's own instrumentation rather than
+on the thing being measured, which is worth remembering now that a second harness mode exists.
 
-- the incident wait counted incidents instead of requiring one per fixture, so the slowest fixture
-  was failed while still on schedule;
-- c10's incident was there the whole time under a target the harness never looked for, and was
-  reported as undetected across two candidates;
-- the `approvedBy` assertion covered actions the policy engine had **Denied**, which have no
-  approver by construction;
-- the console phase had no timeout, and its one hanging step was the one step with its output
-  suppressed;
-- the rule-selection check sampled once, 20 seconds before the operator finished reconciling.
+`v0.0.1` shipped the same week: multi-arch image and Helm chart on GHCR, build provenance
+attested, both verified pulling anonymously.
 
-Every one of those produced a red run about a healthy agent. None would have been found by the
-four-fixture default set.
-
-**`v0.1.0-rc2` does not install, and rc3 is the fix.** The e2e caught it at the phase it exists to
-cover: `helm install` timed out with `Deployment/hephaisto not ready`. Making the agent serve on a
-non-owner role had repointed the registered `DbContext` at that role, and migrations run through
-that same `DbContext` — so on a database being migrated for the first time the agent tried to
-authenticate as a role nothing had created yet, and never started. It passed every local check
-because every developer and dev-cluster database already had the role; only a genuinely fresh
-install could show it. The startup sequence is now one method whose ordering cannot be got wrong —
-create the role, migrate as the owner, then grant — and two integration tests fail without it.
-
-A release candidate still selects by no version range; the rc exists to exercise the publish path
-for real, and this is exactly what it caught.
-
-**Built, and verified by running it:**
-
-| Area | State |
-|---|---|
-| `Hephaisto.Core` — domain, state machine, policy engine, digester, oscillation, fingerprinting | Complete, zero I/O, ~500 unit tests |
-| Persistence — Postgres 17 + pgvector, migrations, hybrid search, LLM budget, audit trail | Complete; admission is one `Serializable` transaction |
-| Kubernetes — watchers, 17 read-only tools, RBAC self-check, signal mapping | Complete, read-only by construction |
-| LLM — Gemini client, grafana-mcp, three-phase loop, grounding verifier, budget guard | Complete |
-| Ingest — dedup, flap suppression, correlation, storm breaker | Complete |
-| Blazor UI + HTTP API + webhooks | Complete |
-| Kill switch — three independent arms, most restrictive wins | Complete |
-| Observability stack, alert rules, 10 chaos fixtures, RBAC manifests, Tiltfile | Complete |
-| Release — three channels (release / rc / nightly), and `scripts/e2e/run.sh` | Complete |
-
-**What it does not do yet:** act on anything, tell anyone, or look like a project rather than a
-repository. That is what the milestones below are.
-
-### The order, and why
-
-Diagnosis quality → acting → notifications → design language → open source.
-
-Each stage is a precondition for the next being worth doing. Acting on diagnoses that are wrong is
-worse than not acting. Paging a team with diagnoses nobody trusts teaches them to ignore the
-channel. Building three surfaces before there is a design language means building them twice. And
-marketing any of it before the rest is true is the one ordering that cannot be undone.
 
 ---
 
@@ -280,63 +234,108 @@ written here because the executor being unbuilt until this held is the reason it
 
 ---
 
-## v0.2.0 — It acts, carefully
+## v0.2.0 — It acts, carefully — **done**
 
-Gated on v0.1.0's number.
+**The executor exists, and the loop closes.** Investigating → Acting → Verifying → Resolved,
+or → rollback → Escalated. Every edge in that sentence was implemented in
+`IncidentStateMachine` a release early and called only from its own unit tests.
 
-**This is much less greenfield than it looks.** Almost everything except the executor already
-exists, built and tested, waiting for a caller:
+The roadmap's reading of this milestone — "almost everything except the executor already
+exists, waiting for a caller" — was right about the inventory and wrong about the work. Four
+things in that waiting machinery were **silently inert**, each failing in the direction that
+looks fine, and none of them were in this file or the backlog:
 
-| Component | State |
+| Found | Consequence |
 |---|---|
-| `ActionRepository.TryAdmitActionAsync` | Complete `Serializable` admission — workload row lock, kill switch re-resolved inside the transaction, quarantine, five budget and cooldown gates, INSERT plus audit row in one commit. **Zero callers.** This is the seam. |
-| `PolicyEngine` | Complete, default-deny, 14 numbered gates. Already runs for real on every investigation, even in Observe. |
-| `AgentAction.DryRun` / `PreState` / `PostState` / `RollbackSpec` / `Outcome` / `IsRollbackOf` | Schema, migrations, indices. **Written by nothing.** |
-| `Verification` entity | Table, DbSet, indices. **Never constructed.** |
-| `OscillationDetector` | Pure, fully tested. **Never called.** |
-| `AwaitApproval` / `BeginActing` / `BeginVerifying` / `Resolve` / `Reopen` | Implemented; **called only from tests**. |
-| Write RBAC Role — delete pods, patch workloads and `*/scale`, delete jobs, create events | Rendered per `policy.actionableNamespaces`, empty by default. **Entirely unused.** |
-| `ActionExecuted` / `ActionRolledBack` / `VerificationResult` metrics | Instrumented, zero callers |
+| `PolicyOptions` was bound to configuration **nowhere** | The engine ran on a default-constructed instance, so `AllowedNamespaces` was empty and gate 2 denied everything — the right-looking answer for the wrong reason. The chart had been setting `Policy__AllowedNamespaces__N` since the write Role existed and nothing read it. |
+| `ClusterFacts` was built with the clock, the mode and the quarantine stamp | Gates 3, 7, 8-fractional, 9, 10 and 13's budget downgrade were **all dead**, while passing their unit tests — the tests supply the facts the caller did not. |
+| The database mode arm declared the seeded `agent_mode.mode` column | `mode: Auto` in the chart resolved to `Observe` on **every database that had ever been migrated**. The only way to lift it was a hand-written UPDATE. |
+| `appsettings.json` — which ships in the image — named `hephaisto-chaos` | Binding `PolicyOptions` alone would have made the published default permit acting somewhere, with the chart's `actionableNamespaces` empty. |
 
-### Order
+None of these were visible from either side alone, which is the same shape as most of what
+this project has already found. The first two would have been discovered by whoever first
+turned autonomy on and watched the safety gates fail to fire.
 
-1. **Fix the false claim in the prompt first**
-   ([#7](backlog.md#7-the-planning-prompt-claims-a-verification-and-rollback-mechanism-that-does-not-exist)).
-   The model is currently told that actions are checked at 60s / 5m / 15m and that a failed check
-   triggers a rollback. Nothing of the sort exists. Correct the text immediately — see
-   [Housekeeping](#housekeeping--small-and-now) — and build the mechanism at step 4.
-2. **Wire the mode writer** ([#8](backlog.md#8-nothing-writes-the-database-mode-arm)). The arm
-   documented as "the one a human flips from the UI" has no UI, no API, and no way to clear a
-   tripped runaway latch without opening Postgres. A prerequisite for operating Act mode, not a
-   nicety.
-3. **`ActionExecutor`**, calling `TryAdmitActionAsync`, with `dryRun=All` and `PreState` snapshots.
-   **Run in `dryrun` for two weeks.** The would-have-acted log is the evidence for enabling
-   anything.
-4. **`VerificationScheduler`** at T+60s / T+5m / T+15m, plus auto-rollback — making (1) true.
-5. **Oscillation detector wired to quarantine.** The pure logic is built and tested; nothing calls
-   it, and only flap suppression writes `QuarantinedUntil` today.
-6. **Approval workflow and UI**, writing `ApprovedBy` and `ApprovalSource`.
-7. **Wire the destructive-actions label into the policy engine**
-   ([#10](backlog.md#10-hephaistoiodestructive-actions-allowed-is-read-by-no-code)). It is applied
-   by manifests, documented as "a second independent confirmation", and asserted by the e2e
-   harness — and read by no code. `TargetLabels` is passed empty, so no label check of any kind is
-   live.
-8. **Bind the write `RoleBinding` — into `hephaisto-chaos` only.**
-9. **Enable `auto` for exactly one action type: `restart_pod`.**
-10. **Mirror actions to Kubernetes Events** on the target object, so `kubectl describe pod` shows
-    why something was restarted. That is where an on-call engineer actually looks, and the RBAC
-    already grants `create` on events for it.
-11. **Give incidents a path to `Resolved`**
-    ([#11](backlog.md#11-there-is-no-production-path-to-resolved)). Today the only production
-    terminal states are `Suppressed` and `Escalated`. An agent that fixes something and cannot close
-    the incident is not finished — and MTTR has nothing to measure until this exists.
-12. **Start `Spans.ActionExecute` and `Spans.Verification`** and record the three action metrics.
-    All are declared and drawn already.
+**Gate 14 needed a decision, not an implementation.** It downgrades any action without a
+rollback spec, and a pod delete has no inverse — the controller recreates the pod, which *is*
+the restart. So `RestartPod`, the action this milestone exists to automate, could only reach
+`Allow` if the model invented a fictional rollback spec, or stayed at `RequireApproval` forever
+if it followed the prompt's own instruction to say plainly that an action cannot be undone.
+Whether autonomy worked would have depended on how a model worded a JSON field. There is now a
+named `SelfHealing` exemption, two types wide and pinned by a test, with the reasoning in the
+code: **the recourse on a failed verification for these types is escalation, not rollback.**
 
-**Done when** a transiently-failing pod in `hephaisto-chaos` is auto-restarted, verification passes,
-the incident reaches `Resolved`, and the audit trail reconstructs the whole decision **without
-reading a log file** — and a seeded oscillating workload is quarantined after 3 attempts instead of
-looping forever.
+### What shipped
+
+| | |
+|---|---|
+| `ActionExecutor` | Snapshot → admit → mutate → record, over a closed enum. Five action types: `RestartPod`, `RolloutRestart`, `ScaleWorkload`, `DeleteStuckJob`, `DeleteFailedJobPods`. |
+| `TryAdmitActionAsync` | Has a caller. It also had a latent duplicate-key bug — it always `Add`ed, and the coordinator already persists proposed actions — so it now transitions the row a proposal created. |
+| `VerificationScheduler` | T+60s / T+5m / T+15m, deterministic C# predicates, only the last may conclude a failure. |
+| `ActionRollback` | Typed reverts only; the model's rollback spec is read for values and never executed as written. |
+| Approval | `POST .../approve` and `/deny`, UI buttons, `ApprovalSource.NotApplicable`. |
+| Oscillation → quarantine | Against the **workload**, on the row admission already locks. |
+| Path to `Resolved` | Granted by `hephaisto/verifier` once every executed action is verified. |
+| Kubernetes Events | The action, on the object, for `kubectl describe`. |
+| `c11-transient` | The only fixture a restart fixes. See [#41](backlog.md#41-c11-has-never-been-run-against-a-cluster). |
+| Chart | `policy.autoEnabledActionTypes` as a first-class value, and the RBAC self-check's first positive assertion about writes. |
+
+Closed: backlog [#7](backlog.md#7-the-planning-prompt-claims-a-verification-and-rollback-mechanism-that-does-not-exist),
+[#8](backlog.md#8-nothing-writes-the-database-mode-arm) (by reclassification),
+[#10](backlog.md#10-hephaistoiodestructive-actions-allowed-is-read-by-no-code),
+[#11](backlog.md#11-there-is-no-production-path-to-resolved),
+[#12](backlog.md#12-unbounded-label-cardinality-on-hephaistogroundingrejected),
+[#16](backlog.md#16-four-declared-spans-are-never-started),
+[#18](backlog.md#18-two-audit-event-types-are-named-and-never-written) (half), and
+[#38](backlog.md#38-approval_source-reads-ui-on-actions-nobody-approved).
+
+Also fixed because they stopped being harmless once the gates could fire: the maintenance
+window had a gate and no producer, and `PolicyOptions` hot-reloads with nothing recording that
+it moved.
+
+### Mode is GitOps, and the database can only ever say no
+
+The decision that shaped most of this milestone. The mode is a Helm value; it reaches the pod
+on the env var and the projected ConfigMap, so raising autonomy is a reviewed commit. There is
+deliberately **no endpoint and no UI control that sets it** — `SetModeAsync` is deleted, not
+wired, and backlog #8 is resolved by reclassification rather than by building what it asked
+for. The database arm restrains only: it carries the runaway latch and is otherwise silent.
+
+The one write the switch exposes is **re-arm**, which clears a tripped latch and cannot name a
+mode or exceed the deployment's ceiling. It writes `mode.changed` — the first thing ever to.
+
+### What did not ship, and why
+
+- **`PatchResources` and `RollbackDeployment`** — [#39](backlog.md#39-the-executor-covers-five-action-types-three-are-refused).
+  `PatchResources` is the real remediation for c4 and c7, and doing it safely means a typed,
+  restricted vocabulary rather than applying a model-authored merge patch verbatim. That is
+  design work, not typing, and rushing it would hand the model the mutating handle the
+  three-phase split exists to deny it. Refused before any call is made, so an approved one
+  fails visibly rather than doing something unintended.
+- **`SilenceAlert`** — needs an outbound HTTP client, which does not exist in `src/`. It
+  arrives naturally with v0.3.0.
+- **A closed policy reason code** — [#40](backlog.md#40-policyresult-has-no-closed-reason-code-so-the-metric-cannot-say-why).
+  Taking the free text out of the metric labels was urgent and is done; putting a safe
+  breakdown back touches every gate in the safety argument and wants its own pass.
+- **A cluster run of c11** — [#41](backlog.md#41-c11-has-never-been-run-against-a-cluster).
+  The fixture is verified by simulating its container logic, not by running it. Until
+  `--mode Auto` has been run once, the acceptance test below is written and unexecuted.
+
+### Done when — status
+
+A transiently-failing pod is auto-restarted, verification passes, the incident reaches
+`Resolved`, and the audit trail reconstructs the decision **without reading a log file**; and a
+seeded oscillating workload is quarantined after 3 attempts instead of looping forever.
+
+**Half measured, half still a claim.** The run on 2026-08-30 proved the first half against a
+real cluster: c11 applies, classifies as `CrashLoopBackOff`, and the agent proposes exactly the
+right action for it. It then found three bugs that stood between the proposal and the restart -
+see [Where it stands](#where-it-stands) - and those are fixed, unit-tested at 855 plus 28, and
+**not re-run**.
+
+So the honest state of the criterion is: everything up to and including "the agent decides to
+restart the pod" is observed; everything after it is built and untested. Re-verification is
+deferred to before v0.4.0 by decision, not by oversight.
 
 ---
 
@@ -565,18 +564,19 @@ Settled by v0.4.0 and consumed here, not decided here.
 
 ---
 
-## Housekeeping — small, and now
+## Housekeeping — three of four done in v0.2.0
 
-Four things are cheap and currently wrong, and should not wait behind four milestones:
-
-1. **The false verification claim in `Prompts/30-planning.md`** — a prompt telling the model a
-   rollback safety net exists when it does not is a correctness bug, not a documentation task.
-2. **`README.md`'s "Nothing is published yet — no image on a registry, no chart in an OCI repo."**
-   `v0.0.1` is on GHCR.
-3. **The GitHub description, topics and homepage.** Ten minutes; the repo is already public.
-4. **The `grounding.rejected` cardinality bug**
-   ([#12](backlog.md#12-unbounded-label-cardinality-on-hephaistogroundingrejected)) — one line, and
-   it is currently writing GUIDs into a Prometheus label.
+1. ~~**The false verification claim in `Prompts/30-planning.md`.**~~ Corrected, in its own
+   commit, *before* the mechanism was built — doing it the other way round would have meant a
+   window in which the fix justified the lie.
+2. ~~**`README.md`'s "Nothing is published yet".**~~ Replaced with the `helm install` line and,
+   more usefully, with what it takes to make the agent able to act at all: four deliberate
+   changes, in git.
+3. **The GitHub description, topics and homepage.** Still empty. Ten minutes; the repo is
+   already public. The one item here nobody can do from inside the repository.
+4. ~~**The `grounding.rejected` cardinality bug.**~~ Fixed — and it turned up a worse instance
+   of the same class on `hephaisto.policy.decisions`, which was writing timestamps into a label
+   on a counter that fires for every proposed action.
 
 ---
 

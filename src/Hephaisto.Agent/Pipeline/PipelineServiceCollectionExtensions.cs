@@ -3,6 +3,7 @@ using Hephaisto.Agent.Options;
 using Hephaisto.Agent.Web;
 using Hephaisto.Core;
 using Hephaisto.Core.Abstractions;
+using Hephaisto.Core.Policy;
 
 namespace Hephaisto.Agent.Pipeline;
 
@@ -13,6 +14,17 @@ public static class PipelineServiceCollectionExtensions
         IConfiguration configuration)
     {
         services.Configure<IngestOptions>(configuration.GetSection(IngestOptions.SectionName));
+
+        // The policy engine's configuration. This binding was missing until v0.2.0, and its
+        // absence was invisible: IOptionsMonitor<PolicyOptions> resolves happily to a
+        // default-constructed instance, whose AllowedNamespaces is empty, so gate 2 denied
+        // every action for the right-looking reason. The chart has been setting
+        // Policy__AllowedNamespaces__N since the write Role existed and nothing read it.
+        services.Configure<PolicyOptions>(configuration.GetSection(PolicyOptions.SectionName));
+
+        // Because it hot-reloads. The rules the agent enforces can change with no restart and
+        // no deploy event, and a silent policy change is indistinguishable from an attack.
+        services.AddHostedService<PolicyChangeAuditor>();
 
         services.TryAddSingleton<IClock>(SystemClock.Instance);
         services.AddSingleton<HephaistoMetrics>();
@@ -27,6 +39,10 @@ public static class PipelineServiceCollectionExtensions
         // process last stopped stays Investigating in Postgres forever.
         services.AddHostedService<StrandedIncidentRequeue>();
 
+        // Scoped: it reads the action budget through the scoped repository, and those counts
+        // must come from the same DbContext as the decision they inform.
+        services.AddScoped<ClusterFactsGatherer>();
+
         services.AddScoped<IncidentStateMachine>();
         services.AddScoped<IncidentTriage>();
 
@@ -39,9 +55,24 @@ public static class PipelineServiceCollectionExtensions
 
         services.AddHostedService<InvestigationWorker>();
 
+        // Closes the Acting -> Verifying -> Resolved loop. Deterministic predicates, never a
+        // model: the state machine refuses a model identity as a granter, and this is what
+        // passes hephaisto/verifier after actually looking at the cluster.
+        services.AddScoped<VerificationChecks>();
+        services.AddScoped<ActionRollback>();
+        services.AddScoped<OscillationGuard>();
+        services.AddHostedService<VerificationScheduler>();
+
         // Replaced by the real runner when the LLM stack is registered. TryAdd so registration
         // order cannot silently downgrade a working investigator to the escalate-only stub.
         services.TryAddScoped<IIncidentInvestigator, EscalateOnlyInvestigator>();
+
+        // Same shape, opposite risk. The investigator stub exists so a misordered registration
+        // still diagnoses; this one exists so a misordered registration still cannot ACT. The
+        // real executor is registered by AddHephaistoKubernetes, which owns the API handle -
+        // so a host with no Kubernetes client gets an executor that refuses rather than one
+        // that half works.
+        services.TryAddScoped<IActionExecutor, RefusingActionExecutor>();
 
         return services;
     }

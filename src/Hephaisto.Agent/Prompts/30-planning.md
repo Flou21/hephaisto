@@ -21,10 +21,10 @@ Choose from the fixed list of action types you were given — no others exist, a
 one produces a rejected plan. For each action supply:
 
 - `type` and its typed arguments,
-- `predicted_effect`: what specifically should become true afterwards. This is checked
-  automatically at 60 seconds, 5 minutes and 15 minutes, and a failed check triggers a
-  rollback. Make it concrete and falsifiable: "restart count stops increasing and the pod
-  stays Ready for 5 minutes", not "the pod should be healthier".
+- `predicted_effect`: what specifically should become true afterwards. It is recorded
+  alongside the plan and is what a human reads to judge whether the action was the right one.
+  Make it concrete and falsifiable: "restart count stops increasing and the pod stays Ready
+  for 5 minutes", not "the pod should be healthier".
 - `evidence_finding_ids`: which findings justify it. An action citing no grounded finding is
   rejected outright.
 - `rollback`: how to undo it. **An action with no rollback can never be executed

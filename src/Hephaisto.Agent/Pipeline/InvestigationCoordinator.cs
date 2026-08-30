@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Hephaisto.Agent.Investigations;
@@ -10,6 +11,7 @@ using Hephaisto.Core;
 using Hephaisto.Core.Abstractions;
 using Hephaisto.Core.Domain;
 using Hephaisto.Core.Policy;
+using Hephaisto.Core.Telemetry;
 
 namespace Hephaisto.Agent.Pipeline;
 
@@ -45,6 +47,8 @@ public sealed class InvestigationCoordinator(
     IncidentEmbedder embedder,
     IIncidentNotifier notifier,
     IOptionsMonitor<PolicyOptions> policyOptions,
+    ClusterFactsGatherer facts,
+    IActionExecutor executor,
     IClock clock,
     HephaistoMetrics metrics,
     Observability.IGrafanaAnnotator annotator,
@@ -153,15 +157,32 @@ public sealed class InvestigationCoordinator(
             investigation.StepsUsed,
             investigation.TerminationReason);
 
+        // rejection.Reason, not rejection. The record's compiler-generated ToString() emits all
+        // four members - including a Detail string and two Guids - so this was writing a label
+        // value unique per rejection. backlog #12; the correct form was already three files
+        // away in InvestigationRunner.
         foreach (var rejection in outcome.Rejections)
-            metrics.GroundingRejected(rejection.ToString() ?? "unknown");
+            metrics.GroundingRejected(rejection.Reason.ToString());
 
-        var escalation = DecideOutcome(incident, outcome, mode);
+        var disposition = await DecideOutcomeAsync(incident, outcome, mode, ct).ConfigureAwait(false);
 
         // Snapshot before the transition so the event it appends can be Added explicitly.
         var eventsBefore = incident.Events.Count;
 
-        stateMachine.Escalate(incident, escalation.Reason, escalation.Detail);
+        switch (disposition.Kind)
+        {
+            case DispositionKind.Act:
+                stateMachine.BeginActing(incident, disposition.Detail ?? "policy allowed the plan");
+                break;
+
+            case DispositionKind.AwaitApproval:
+                stateMachine.AwaitApproval(incident, disposition.Detail ?? "a human must confirm the plan");
+                break;
+
+            default:
+                stateMachine.Escalate(incident, disposition.Reason, disposition.Detail);
+                break;
+        }
 
         // The investigation and the transition event are both new children of an incident
         // that already exists, which is the case EF Core states wrongly - it sees their
@@ -176,10 +197,18 @@ public sealed class InvestigationCoordinator(
         // AddInvestigationGraph and the save below may call SaveChangesAsync.
         incidents.TrackNewIncidentChildren(incident, eventsBefore);
 
-        await RecordOutcomeAsync(incident, PrimaryHypothesis(investigation), ct).ConfigureAwait(false);
+        // Only for an incident that has actually reached its outcome. Escalated is one;
+        // Acting and AwaitingApproval are not, and recording them here would book a closure
+        // and an MTTR for an incident that is still very much open - then book a second one
+        // when it really does end. Until v0.2.0 both paths out of here were escalations, so
+        // this call was unconditional and correct.
+        if (disposition.Kind == DispositionKind.Escalate)
+        {
+            await RecordOutcomeAsync(incident, PrimaryHypothesis(investigation), ct).ConfigureAwait(false);
+        }
 
         EnlistAudit(incident, investigation.Id, "investigation.completed",
-            $"{investigation.TerminationReason}; {escalation.Reason}");
+            $"{investigation.TerminationReason}; {disposition.Describe()}");
 
         // What this investigation actually spent, staged into the same commit as the steps
         // that spent it. Nothing called this before, so llm_usage was empty, every rolling
@@ -226,8 +255,20 @@ public sealed class InvestigationCoordinator(
             IncidentId = incident.Id,
             Kind = outcome.Plan is null ? IncidentLiveEventKind.InvestigationCompleted : IncidentLiveEventKind.PlanReady,
             State = incident.State,
-            Detail = escalation.Detail,
+            Detail = disposition.Detail,
         });
+
+        // EXECUTION HAPPENS HERE, after everything above has committed, and never earlier.
+        //
+        // The executor saves - three times on the happy path - and the block above is a
+        // carefully ordered single save over a graph EF states wrongly. A save in the middle
+        // of it discards the investigation, which is the failure the ordering comments
+        // upstream exist to prevent. Acting after the commit also means an action can only
+        // ever follow a durable record of the decision to take it.
+        if (disposition.Kind == DispositionKind.Act)
+        {
+            await ActAsync(incident, disposition.Actions, ct).ConfigureAwait(false);
+        }
     }
 
     /// <summary>
@@ -263,31 +304,64 @@ public sealed class InvestigationCoordinator(
     /// Runs every proposed action past the policy engine, records the verdict on the action,
     /// and decides why the incident is going to a human.
     /// </summary>
-    private (EscalationReason Reason, string? Detail) DecideOutcome(
+    private async Task<Disposition> DecideOutcomeAsync(
         Incident incident,
         InvestigationOutcome outcome,
-        AgentMode mode)
+        AgentMode mode,
+        CancellationToken ct)
     {
         if (outcome.Escalation is { } forced)
-            return (forced, outcome.Investigation.TerminationReason.ToString());
+            return Disposition.Escalate(forced, outcome.Investigation.TerminationReason.ToString());
 
         if (outcome.Plan is null || outcome.Plan.NoActionRequired || outcome.Plan.Actions.Count == 0)
         {
             // Not a failure. Most incidents want a diagnosis, and a model that declines to
             // act when it cannot justify acting is behaving correctly.
-            return (EscalationReason.NoPlanProduced, "diagnosis only; no action proposed");
+            return Disposition.Escalate(EscalationReason.NoPlanProduced, "diagnosis only; no action proposed");
         }
 
         var options = policyOptions.CurrentValue;
-        var now = clock.UtcNow;
 
-        var facts = new ClusterFacts
+        // Read the world once, immediately before judging, and refuse to judge without it.
+        //
+        // This used to be an inline record carrying the clock, the mode and the quarantine
+        // stamp - nothing else. An unread fact is not a neutral fact: a null Workload skips
+        // the stability, blast-radius and last-replica gates rather than failing them, and an
+        // empty label set satisfies every label check. So the engine ran in full and could
+        // not fail most of itself, and would have started saying Allow the moment autonomy
+        // was switched on.
+        ClusterFacts world;
+
+        try
         {
-            Now = now,
-            Mode = mode,
-            TargetLabels = new Dictionary<string, string>(),
-            QuarantinedUntil = incident.QuarantinedUntil,
-        };
+            world = await facts.GatherAsync(incident, mode, ct).ConfigureAwait(false);
+        }
+        catch (ClusterFactsUnavailableException ex)
+        {
+            // Default-deny includes the case where the question cannot be asked. An action
+            // nobody could judge is not an action anybody approved.
+            logger.LogWarning(ex, "Could not gather cluster facts for incident {IncidentId}.", incident.Id);
+
+            foreach (var action in outcome.Plan.Actions)
+            {
+                action.IncidentId = incident.Id;
+                action.Decision = PolicyDecision.Deny;
+                action.DecisionReasons = ["cluster facts could not be read, so no action can be judged"];
+                action.State = ActionState.Denied;
+            }
+
+            return Disposition.Escalate(
+                EscalationReason.PolicyDenied, "cluster facts unavailable; nothing could be judged");
+        }
+
+        // The policy engine runs on every investigation, and its declared span has never been
+        // started - the one genuinely missing span of the four, since the other three were
+        // waiting on an executor that did not exist. backlog #16.
+        using var policySpan = HephaistoMetrics.ActivitySource.StartActivity(
+            HephaistoTelemetry.Spans.PolicyEvaluate);
+
+        policySpan?.SetTag("plan.action_count", outcome.Plan.Actions.Count);
+        policySpan?.SetTag("k8s.namespace.name", incident.Target.Namespace);
 
         foreach (var action in outcome.Plan.Actions)
         {
@@ -304,7 +378,7 @@ public sealed class InvestigationCoordinator(
                 GroundedFindingIds = action.EvidenceFindingIds,
             };
 
-            var verdict = PolicyEngine.Evaluate(request, facts, options);
+            var verdict = PolicyEngine.Evaluate(request, world, options);
 
             action.Decision = verdict.Decision;
             action.DecisionReasons = [.. verdict.Reasons];
@@ -315,13 +389,177 @@ public sealed class InvestigationCoordinator(
                 _ => ActionState.Denied,
             };
 
-            metrics.PolicyDecision(verdict.Decision, action.Type, verdict.Reasons.FirstOrDefault() ?? "none");
+            metrics.PolicyDecision(verdict.Decision, action.Type, verdict.DowngradedFrom is not null);
+
+            // The prose belongs here, where cardinality is not a concern and a human reading
+            // one investigation gets the whole verdict rather than its first line.
+            policySpan?.AddEvent(new ActivityEvent(
+                $"{action.Type} -> {verdict.Decision}",
+                tags: new ActivityTagsCollection
+                {
+                    ["action.id"] = action.Id,
+                    ["policy.decision"] = verdict.Decision.ToString(),
+                    ["policy.downgraded_from"] = verdict.DowngradedFrom?.ToString(),
+                    ["policy.reasons"] = string.Join("; ", verdict.Reasons),
+                }));
         }
 
         var top = outcome.Plan.Actions[0];
-        return (EscalationReason.PolicyDenied,
-            $"{outcome.Plan.Actions.Count} action(s) proposed; {top.Type} -> {top.Decision}: "
-            + string.Join("; ", top.DecisionReasons.Take(2)));
+        var summary = $"{outcome.Plan.Actions.Count} action(s) proposed; {top.Type} -> {top.Decision}: "
+            + string.Join("; ", top.DecisionReasons.Take(2));
+
+        // The plan as a whole goes wherever its STRONGEST verdict points, and the actions that
+        // travel with it are only the ones that earned it. An Allow beside a Deny does not
+        // make the Deny executable - Approved is the filter, and DecideOutcome above set it
+        // from the policy verdict.
+        var approved = outcome.Plan.Actions
+            .Where(a => a.State == ActionState.Approved)
+            .ToList();
+
+        if (approved.Count > 0)
+        {
+            return Disposition.Act(approved, summary);
+        }
+
+        if (outcome.Plan.Actions.Any(a => a.State == ActionState.AwaitingApproval))
+        {
+            // Not an escalation. The agent has a plan it believes in and is asking, which is
+            // a different thing to tell a human than "I could not work this out" - and it is
+            // the normal outcome for every allow-eligible action until an operator opts its
+            // type into AutoEnabledActionTypes.
+            return Disposition.AwaitApproval(summary);
+        }
+
+        return Disposition.Escalate(EscalationReason.PolicyDenied, summary);
+    }
+
+    /// <summary>
+    /// Runs the approved actions, then hands the incident to verification.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Runs after the investigation has committed, in its own saves. Sequential on purpose:
+    /// the actions in one plan are usually about the same workload, and the cooldown and
+    /// per-workload budget that admission enforces are written to be evaluated one at a time.
+    /// Firing them concurrently would have every one of them read the same pre-action counts.
+    /// </para>
+    /// <para>
+    /// An action that is refused or fails does not stop the ones behind it - each is admitted
+    /// on its own merits and its own budget - but if NOTHING was applied the incident
+    /// escalates rather than pretending it is being verified.
+    /// </para>
+    /// </remarks>
+    private async Task ActAsync(Incident incident, IReadOnlyList<AgentAction> approved, CancellationToken ct)
+    {
+        var applied = 0;
+        var changed = 0;
+        var attempted = 0;
+
+        foreach (var action in approved)
+        {
+            attempted++;
+
+            var result = await executor.ExecuteAsync(action, ct).ConfigureAwait(false);
+
+            if (result.Outcome == ActionExecutionOutcome.Executed)
+            {
+                applied++;
+            }
+
+            if (result.Changed)
+            {
+                changed++;
+            }
+
+            notifier.Publish(new IncidentLiveEvent
+            {
+                IncidentId = incident.Id,
+                Kind = IncidentLiveEventKind.StateChanged,
+                State = incident.State,
+                Detail = $"{action.Type}: {result.Outcome}{(result.DryRun ? " (dry run)" : string.Empty)}",
+                At = clock.UtcNow,
+            });
+        }
+
+        var eventsBefore = incident.Events.Count;
+
+        if (changed == 0)
+        {
+            // Nothing in the cluster is different, so there is nothing to verify - and this
+            // covers two situations worth keeping apart in the reason text.
+            //
+            // A DRY RUN is the interesting one. Every call was made and the API server
+            // validated and discarded it, which is a successful outcome and still leaves the
+            // fault in place. Sending it to Verifying would schedule three checks that must
+            // fail, and a failed check triggers a rollback - of an action that never happened.
+            // The would-have-acted log is for a human, so it goes to a human.
+            var detail = applied > 0
+                ? $"dry run: {applied} of {attempted} action(s) validated against the API server; "
+                  + "nothing was changed"
+                : $"none of {attempted} approved action(s) could be executed";
+
+            stateMachine.Escalate(incident, EscalationReason.PolicyDenied, detail);
+
+            incidents.TrackNewIncidentChildren(incident, eventsBefore);
+            await RecordOutcomeAsync(incident, PrimaryHypothesis(incident), ct).ConfigureAwait(false);
+            await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
+
+            logger.LogInformation("Incident {IncidentId}: {Detail}", incident.Id, detail);
+
+            return;
+        }
+
+        stateMachine.BeginVerifying(incident, $"{changed} of {attempted} action(s) applied");
+
+        incidents.TrackNewIncidentChildren(incident, eventsBefore);
+        await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
+
+        logger.LogInformation(
+            "Incident {IncidentId} is verifying after {Changed}/{Attempted} action(s).",
+            incident.Id, changed, attempted);
+    }
+
+    private static string? PrimaryHypothesis(Incident incident) =>
+        incident.Investigations
+            .SelectMany(i => i.Findings)
+            .FirstOrDefault(f => f.IsPrimary)?.Hypothesis;
+
+    private enum DispositionKind
+    {
+        Escalate = 0,
+        AwaitApproval = 1,
+        Act = 2,
+    }
+
+    /// <summary>
+    /// What becomes of the incident once its plan has been judged.
+    /// </summary>
+    /// <remarks>
+    /// This used to be an <see cref="EscalationReason"/> and nothing else, because there was
+    /// only ever one answer: the method evaluated every action, recorded the verdicts, and
+    /// escalated regardless - a policy Allow escalated exactly like a Deny.
+    /// </remarks>
+    private sealed record Disposition
+    {
+        public required DispositionKind Kind { get; init; }
+
+        public EscalationReason Reason { get; init; }
+
+        public string? Detail { get; init; }
+
+        public IReadOnlyList<AgentAction> Actions { get; init; } = [];
+
+        public static Disposition Escalate(EscalationReason reason, string? detail) =>
+            new() { Kind = DispositionKind.Escalate, Reason = reason, Detail = detail };
+
+        public static Disposition AwaitApproval(string? detail) =>
+            new() { Kind = DispositionKind.AwaitApproval, Detail = detail };
+
+        public static Disposition Act(IReadOnlyList<AgentAction> actions, string? detail) =>
+            new() { Kind = DispositionKind.Act, Detail = detail, Actions = actions };
+
+        public string Describe() =>
+            Kind == DispositionKind.Escalate ? Reason.ToString() : Kind.ToString();
     }
 
     /// <summary>

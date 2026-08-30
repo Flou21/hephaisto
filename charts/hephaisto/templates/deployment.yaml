@@ -157,6 +157,14 @@ spec:
               value: {{ $ns | quote }}
             {{- end }}
 
+            # The autonomy gate. Read only when the resolved mode is Auto, so this list and
+            # `mode` are two independent things that both have to be true - which is what
+            # makes "promote one action type at a time" a real control rather than a habit.
+            {{- range $i, $type := .Values.policy.autoEnabledActionTypes }}
+            - name: Policy__AutoEnabledActionTypes__{{ $i }}
+              value: {{ $type | quote }}
+            {{- end }}
+
             # ---------------------------------------------------------------------------
             # Database
             # ---------------------------------------------------------------------------

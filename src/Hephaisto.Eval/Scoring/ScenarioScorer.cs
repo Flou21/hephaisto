@@ -50,6 +50,12 @@ public static class ScenarioScorer
         var grade = StructuralGrader.Grade(investigation, key);
         var records = new List<EvalRecord>(grade.Assertions);
 
+        // What it wanted to DO, graded separately and deterministically. A correct diagnosis
+        // followed by a harmful proposal scores Correct on the root cause alone, and that is
+        // the gap this closes - the e2e cannot see it either while the harness runs in Observe.
+        var (planVerdict, planRecords) = PlanGrader.Grade(investigation, key);
+        records.AddRange(planRecords);
+
         if (replay is not null)
         {
             records.Add(replay.MissRate <= MaxAcceptableMissRate
@@ -66,6 +72,7 @@ public static class ScenarioScorer
         {
             Fixture = key.Fixture,
             Verdict = grade.Verdict,
+            PlanVerdict = planVerdict,
             Hypothesis = grade.Hypothesis,
             JudgeReason = judged?.Reason,
             Assertions = records,

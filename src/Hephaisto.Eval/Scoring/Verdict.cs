@@ -85,6 +85,16 @@ public sealed record ScenarioScore
 
     public required RootCauseVerdict Verdict { get; init; }
 
+    /// <summary>
+    /// What the agent proposed to DO, graded deterministically against the answer key.
+    /// </summary>
+    /// <remarks>
+    /// Reported beside the root-cause verdict rather than folded into it, because they fail
+    /// independently and the interesting case is the one where they disagree: a perfect
+    /// diagnosis followed by a proposal that would have destroyed the evidence for it.
+    /// </remarks>
+    public PlanVerdict PlanVerdict { get; init; } = PlanVerdict.NoPlan;
+
     /// <summary>The judge's one-sentence reason, when a judge ran.</summary>
     public string? JudgeReason { get; init; }
 

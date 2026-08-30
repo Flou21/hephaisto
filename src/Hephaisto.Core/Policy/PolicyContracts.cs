@@ -48,6 +48,19 @@ public sealed record ClusterFacts
         new Dictionary<string, string>();
 
     /// <summary>
+    /// Labels on the target's <b>namespace</b>, which is a different question from
+    /// <see cref="TargetLabels"/> and needs its own field rather than being merged into it.
+    /// </summary>
+    /// <remarks>
+    /// The allowlist is set by whoever installs the chart; the namespace label is set by
+    /// whoever owns the namespace. Requiring both means neither party can opt a namespace in
+    /// alone. Merging the two label sets would let a workload label satisfy a namespace
+    /// requirement, which is precisely the confusion the second confirmation exists to avoid.
+    /// </remarks>
+    public IReadOnlyDictionary<string, string> NamespaceLabels { get; init; } =
+        new Dictionary<string, string>();
+
+    /// <summary>
     /// Actions taken on this workload in the last hour, counted against
     /// <see cref="PolicyOptions.MaxActionsPerWorkloadPerHour"/>.
     /// </summary>

@@ -44,6 +44,37 @@ public static class PolicyEngine
         ActionType.SilenceAlert,
     ];
 
+    /// <summary>
+    /// Action types with no inverse operation, because the controller already restores the
+    /// state they disturb. Exempt from the rollback-spec requirement at gate 14.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deleting a pod cannot be undone; it is <i>reconciled</i>. The ReplicaSet notices the
+    /// missing replica and creates one, which is the entire mechanism by which "restart a pod"
+    /// works - there is no RESTART verb in the Kubernetes API. So there is no prior state to
+    /// return to, and demanding a rollback spec here asks the model for a fiction.
+    /// </para>
+    /// <para>
+    /// That matters because gate 14 would otherwise make <see cref="ActionType.RestartPod"/> -
+    /// the most common and most often correct remediation there is - permanently
+    /// <see cref="PolicyDecision.RequireApproval"/>, and whether autonomy worked at all would
+    /// depend on how the model happened to word a JSON field. Either it invents a plausible
+    /// rollback and satisfies a safety gate with nothing behind it, or it follows the prompt's
+    /// own instruction to say plainly that an action cannot be undone and is downgraded
+    /// forever. Both are worse than saying this out loud.
+    /// </para>
+    /// <para>
+    /// <b>The recourse on a failed verification is escalation, not rollback.</b> Gate 14 exists
+    /// so a failed check never leaves the cluster in a state nobody chose; for these types the
+    /// state after a failure is the state the controller chose, which is the same state it
+    /// would have converged on without us. Keep this set to actions where that is literally
+    /// true - if an action leaves anything behind that a controller will not reconcile, it
+    /// needs a rollback spec and does not belong here.
+    /// </para>
+    /// </remarks>
+    private static readonly ActionType[] SelfHealing = [ActionType.RestartPod, ActionType.DeleteFailedJobPods];
+
     /// <summary>A rollout restart above this many pods stops being a nudge and becomes a deploy.</summary>
     private const int MaxUnattendedRolloutRestartPods = 10;
 
@@ -77,6 +108,17 @@ public static class PolicyEngine
         if (!options.AllowedNamespaces.Contains(ns))
         {
             denials.Add($"namespace '{ns}' is not in the allowed namespaces");
+        }
+
+        //    ...and the namespace must say so itself. Two authorities, deliberately: the
+        //    allowlist above is the operator's, this label is the namespace owner's. Both
+        //    have to agree. The manifests have called this "a second, independent
+        //    confirmation" since before any code read it - it is read now.
+        if (options.RequiredNamespaceLabel is { Length: > 0 } required &&
+            !(facts.NamespaceLabels.TryGetValue(required, out var optIn) &&
+              string.Equals(optIn, "true", StringComparison.OrdinalIgnoreCase)))
+        {
+            denials.Add($"namespace '{ns}' does not carry {required}=true");
         }
 
         // 3. Per-object opt-out. A team that labels its workload has said no, and that beats
@@ -166,8 +208,20 @@ public static class PolicyEngine
         // 9. Not the last one standing. Restarting the sole Ready replica converts a degraded
         //    service into a down one, which is strictly worse than the symptom being treated.
         //    The label is the opt-in for workloads whose owners have decided otherwise.
+        //
+        //    THERE HAS TO BE A READY REPLICA TO LOSE. This gate used to fire at zero ready as
+        //    well, and the denial it produced said so in as many words - "this would restart
+        //    the last Ready replica (0 ready of 3 desired)" - which is not a sentence that can
+        //    be true. A workload with nothing Ready is already down: a restart cannot degrade
+        //    it, and is the only thing that might help.
+        //
+        //    Not a corner case. A crash-looping pod is BY DEFINITION not Ready, so at zero the
+        //    gate refused every restart the action exists for, and RestartPod - the one type
+        //    v0.2.0 promotes to auto - could never fire on the fault it is meant for. Found by
+        //    running the acceptance test: the agent proposed exactly the right action for
+        //    c11-transient and was refused for protecting a replica that was not there.
         if (request.Type is ActionType.RestartPod &&
-            workload is { } only &&
+            workload is { ReadyReplicas: >= 1 } only &&
             (only.DesiredReplicas == 1 || only.ReadyReplicas <= 1) &&
             !HasSingleReplicaEscapeHatch(facts, options))
         {
@@ -245,7 +299,12 @@ public static class PolicyEngine
 
         // 14. No rollback spec, no automatic execution. Verification runs minutes after the fact;
         //     a failed verification with no way back leaves the cluster in a state nobody chose.
-        if (!request.HasRollbackSpec)
+        //
+        //     Except where there is nothing to go back TO. A deleted pod is not undone, it is
+        //     reconciled - the controller recreates it, which is the whole mechanism of a
+        //     restart. See SelfHealing for why that exemption is named rather than left to
+        //     whether the model wrote something in the rollback field.
+        if (!request.HasRollbackSpec && !SelfHealing.Contains(request.Type))
         {
             downgrades.Add("action has no rollback spec, so a failed verification would have no recourse");
         }

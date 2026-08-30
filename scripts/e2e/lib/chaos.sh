@@ -47,6 +47,9 @@ fixture_kind() {
         c7)  echo ConfigError ;;
         c8)  echo ReadinessFlapping ;;
         c10) echo HighErrorRate ;;
+        # Fires the same shipped rule as c2 - it IS a crash loop, it just stops
+        # being one when the pod is replaced. That is the whole fixture.
+        c11) echo CrashLoopBackOff ;;
         *)   echo "" ;;
     esac
 }
@@ -477,15 +480,25 @@ chaos_assert_annotations() {
 chaos_assert_no_mutation() {
     local details="$WORKDIR/details.jsonl"
 
-    # The mode is Observe, so any executed action is a containment failure rather than a bug
-    # in a feature. This is only a meaningful assertion because the agent HOLDS delete on the
-    # chaos namespace - it could have acted and did not.
+    # Containment, and it is now conditional on the mode the harness installed with.
+    #
+    # This used to assert unconditionally that nothing had executed, which was right for every
+    # release in which nothing COULD - and would have made v0.2.0's own e2e fail the moment the
+    # agent did the thing it was built to do. What has to stay true is the pairing: in Observe
+    # nothing may execute, and in Auto something must. An assertion that passes in both
+    # directions is not an assertion.
     local executed
     executed=$(jq -r 'select(.actions | length > 0)
                       | .actions[] | select(.dryRun == false and .executedAt != null) | .id' "$details" | wc -l | tr -d ' ')
-    [ "${executed:-0}" -eq 0 ] \
-        && pass "no action was executed (Observe mode held)" \
-        || fail "$executed action(s) were executed in Observe mode" "this is a containment failure"
+
+    if [ "${E2E_MODE:-Observe}" = "Observe" ]; then
+        # Only meaningful because the agent HOLDS delete on the chaos namespace - it could
+        # have acted and did not.
+        [ "${executed:-0}" -eq 0 ] \
+            && pass "no action was executed (Observe mode held)" \
+            || fail "$executed action(s) were executed in Observe mode" "this is a containment failure"
+    else
+        say "$executed action(s) executed in ${E2E_MODE} mode; containment assertion does not apply"
 
     # No audit, no action: every action that was APPROVED must name who approved it.
     #
@@ -495,6 +508,8 @@ chaos_assert_no_mutation() {
     # refused, correctly carrying a null approvedBy, reported as a failure of the audit trail.
     # Requiring a name there would mean inventing one, which is worse than the gap it claims to
     # close. Proposed, AwaitingApproval, Denied and Expired are all legitimately unapproved.
+    fi
+
     local anonymous
     anonymous=$(jq -r 'select(.actions | length > 0)
                        | .actions[]
@@ -511,6 +526,101 @@ chaos_assert_no_mutation() {
     local survivors
     survivors=$(kc -n "$CHAOS_NS" get deploy -o name 2>/dev/null | wc -l | tr -d ' ')
     say "$survivors chaos workload(s) still present in $CHAOS_NS"
+}
+
+# ---------------------------------------------------------------------------------------
+# The acting half. Only runs when the harness installed in a mode that can act.
+# ---------------------------------------------------------------------------------------
+
+# True once anything has actually been applied to the cluster. Re-collects on every poll,
+# because the answer lives in the incident detail and that snapshot is what goes stale.
+_something_executed() {
+    chaos_collect_details >/dev/null 2>&1 || return 1
+
+    local n
+    n=$(jq -r '[.actions[]? | select(.executedAt != null and .dryRun == false)] | length' \
+        "$WORKDIR/details.jsonl" 2>/dev/null | awk '{t += $1} END {print t + 0}')
+
+    [ "${n:-0}" -ge 1 ]
+}
+
+# An action was admitted, executed and recorded against the fixture that needed it.
+chaos_assert_action_executed() {
+    local details="$WORKDIR/details.jsonl"
+    local target; target=$(fixture_target c11)
+
+    # details.jsonl was collected during `validate`, BEFORE anything acted - the action
+    # happens once the investigation concludes, which is after that snapshot was taken. So
+    # asserting against it here reads a file written before the thing it is asserting about.
+    # Wait for an execution and re-collect; _something_executed re-collects on every poll.
+    wait_for "an action to be executed" 180 _something_executed \
+        || say "no execution seen within 180s; asserting on what was collected"
+
+    chaos_collect_details
+
+    local executed
+    executed=$(jq -r --arg t "$target" \
+        'select(.target.name != null and (.target.name | contains($t)))
+         | .actions[]? | select(.executedAt != null and .dryRun == false) | .type' \
+        "$details" 2>/dev/null | wc -l | tr -d ' ')
+
+    [ "${executed:-0}" -ge 1 ] \
+        && pass "c11 was acted on ($executed action(s) executed)" \
+        || fail "c11 was not acted on" "expected at least one executed, non-dry-run action"
+
+    # Every executed action must name an approver. In Auto that is hephaisto/auto; the point
+    # is that "no audit, no action" holds on the path that actually writes to the cluster.
+    local anonymous
+    anonymous=$(jq -r '.actions[]? | select(.executedAt != null) | select((.approvedBy // "") == "") | .id' \
+        "$details" 2>/dev/null | wc -l | tr -d ' ')
+
+    [ "${anonymous:-0}" -eq 0 ] \
+        && pass "every executed action names an approver" \
+        || fail "$anonymous executed action(s) have no approvedBy"
+}
+
+# True once c11's incident has been closed by the verifier.
+_c11_resolved() {
+    [ "$(api_array "/api/incidents?state=Resolved&limit=100" \
+        | jq -r '[.[] | select(.target.name != null and (.target.name | contains("c11")))] | length' \
+        2>/dev/null || echo 0)" -ge 1 ]
+}
+
+# Available AND settled. availableReplicas alone is not enough: the fixture's container has no
+# readiness probe, so while wedged it is Ready for the two seconds it runs before exiting, and
+# the Deployment duly reports one available replica for part of every crash cycle. The fixture
+# now carries minReadySeconds to close that, and this asserts the pod is genuinely Ready too -
+# belt and braces, because a false pass here would report a broken workload as fixed.
+_c11_available() {
+    [ "$(kc -n "$CHAOS_NS" get deploy c11-transient \
+        -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo 0)" -ge 1 ] \
+        && [ "$(kc -n "$CHAOS_NS" get pods -l app.kubernetes.io/name=c11-transient \
+            -o jsonpath='{.items[*].status.containerStatuses[*].ready}' 2>/dev/null)" = "true" ]
+}
+
+# The fixture is actually healthy afterwards. This is the half that distinguishes "the agent
+# did something" from "the agent fixed it", and it is why c11 exists rather than reusing c8:
+# a fixture that recovers on its own would pass this whatever the agent did.
+chaos_assert_verification() {
+    # WAIT, do not sample. The first verification is not due until T+60s and the scheduler
+    # polls every 10s, so an assertion made the moment the action returns is asking a question
+    # the system has not been given time to answer - and it would report a healthy agent as a
+    # failure. Five of v0.1.0's six release candidates went that way: the harness's own
+    # instrumentation, not the thing being measured.
+    #
+    # 4 minutes covers the T+60s check plus scheduler poll, pod recreation and image pull, and
+    # stops short of the T+5m second attempt - if the first check did not settle it, waiting
+    # for the second would be measuring something else.
+    wait_for "c11 to become available again" 240 _c11_available \
+        && pass "c11 is available after the restart" \
+        || fail "c11 is still not available" "the action ran but the workload did not recover"
+
+    # And the incident says so. Resolved is granted only by hephaisto/verifier, after a
+    # deterministic predicate looked at the cluster - a model may never grant it.
+    wait_for "c11's incident to reach Resolved" 240 _c11_resolved \
+        && pass "c11's incident reached Resolved" \
+        || fail "c11's incident did not reach Resolved" \
+               "the workload recovered but verification never closed the incident"
 }
 
 chaos_cleanup() {

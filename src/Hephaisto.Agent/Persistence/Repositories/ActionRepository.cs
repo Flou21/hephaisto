@@ -40,6 +40,20 @@ public sealed class ActionRepository(
         ActionState.RolledBack,
     ];
 
+    public async Task<DateTimeOffset?> GetWorkloadQuarantineAsync(TargetRef target, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        return await db.WorkloadActionLocks
+            .AsNoTracking()
+            .Where(w => w.WorkloadKey == target.WorkloadKey)
+            .Select(w => w.QuarantinedUntil)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    public void AddVerifications(IEnumerable<Verification> verifications) =>
+        db.Verifications.AddRange(verifications);
+
     public Task<AgentAction?> GetAsync(Guid id, CancellationToken ct) =>
         db.AgentActions.FirstOrDefaultAsync(a => a.Id == id, ct);
 
@@ -151,9 +165,20 @@ public sealed class ActionRepository(
 
         // A missing row is an unreadable kill switch, and an unreadable kill switch reads
         // as Observe. Failing the other way makes a truncated database an autonomy upgrade.
-        var databaseArm = modeRow is null
-            ? ModeArm.Unreadable(KillSwitch.DatabaseArm, "the agent_mode row is missing")
-            : ModeArm.Declaring(KillSwitch.DatabaseArm, modeRow.Mode);
+        //
+        // A row that is present and unlatched is SILENT rather than declaring its mode column.
+        // The mode is a Helm value; this arm exists to restrain, and its restraint is the
+        // latch checked immediately below. Declaring the column here would clamp every
+        // admission to Observe forever, because the migration seeds that column to Observe.
+        var databaseArm = modeRow switch
+        {
+            null => ModeArm.Unreadable(KillSwitch.DatabaseArm, "the agent_mode row is missing"),
+            { RunawayLatched: true } => ModeArm.Declaring(
+                KillSwitch.DatabaseArm,
+                AgentMode.Observe,
+                $"runaway latch: {modeRow.LatchReason ?? "unknown reason"}"),
+            _ => ModeArm.Silent(KillSwitch.DatabaseArm),
+        };
 
         // The row is read inside the transaction because that is the only arm that can be
         // raced by a concurrent admission. The env and ConfigMap arms are in-memory and a
@@ -193,7 +218,24 @@ public sealed class ActionRepository(
         {
             return await RefuseAsync(
                 tx, action, AdmissionRefusal.Quarantined, null, ct,
-                $"workload quarantined until {until:O} by the oscillation detector");
+                $"incident quarantined until {until:O}");
+        }
+
+        // The WORKLOAD quarantine, which is the oscillation detector's. Separate from the
+        // incident's because incidents keep being opened afresh - a recurrence is a new
+        // fingerprint and a new row - so a quarantine recorded against one of them lapses at
+        // exactly the moment the loop would otherwise continue. It lives on the lock row this
+        // transaction has already taken, so this costs no extra query and cannot be raced.
+        var workloadLock = await db.WorkloadActionLocks
+            .AsNoTracking()
+            .FirstOrDefaultAsync(w => w.WorkloadKey == action.Target.WorkloadKey, ct);
+
+        if (workloadLock?.QuarantinedUntil is { } workloadUntil && workloadUntil > now)
+        {
+            return await RefuseAsync(
+                tx, action, AdmissionRefusal.Quarantined, null, ct,
+                $"workload quarantined until {workloadUntil:O}: "
+                + $"{workloadLock.QuarantineReason ?? "oscillation detected"}");
         }
 
         var budget = await ReadBudgetAsync(action, mode, now, ct);
@@ -245,7 +287,32 @@ public sealed class ActionRepository(
         action.ModeAtExecution = mode;
         action.DryRun = action.DryRun || mode == AgentMode.DryRun;
 
-        db.AgentActions.Add(action);
+        // Insert only if this action is genuinely new. Usually it is NOT: DecideOutcome writes
+        // every proposed action to agent_actions during the investigation, and AdmittedStates
+        // deliberately counts Proposed and AwaitingApproval - a proposal reserves its own
+        // budget slot, so refusing an action costs the same as taking one. Admission therefore
+        // TRANSITIONS the row the proposal already created. Adding here unconditionally would
+        // insert a second row with the same key and take the whole transaction down with it.
+        //
+        // The genuinely-new case is a rollback: the executor builds that action fresh, with
+        // IsRollbackOf set, and it has never been near the database.
+        var entry = db.Entry(action);
+
+        if (entry.State == EntityState.Detached)
+        {
+            var alreadyPersisted = await db.AgentActions
+                .AsNoTracking()
+                .AnyAsync(a => a.Id == action.Id, ct);
+
+            if (alreadyPersisted)
+            {
+                db.AgentActions.Attach(action).State = EntityState.Modified;
+            }
+            else
+            {
+                db.AgentActions.Add(action);
+            }
+        }
 
         string[] reasons = isRollback
             ? ["rollback: budget and cooldown bypassed by design", $"mode {mode}"]
@@ -268,8 +335,27 @@ public sealed class ActionRepository(
         return ActionAdmission.Admit(budget, reasons);
     }
 
-    private async Task<ActionBudgetSnapshot> ReadBudgetAsync(
+    /// <inheritdoc />
+    public Task<ActionBudgetSnapshot> ReadBudgetAsync(
+        Guid incidentId, TargetRef target, AgentMode mode, CancellationToken ct) =>
+        ReadBudgetAsync(incidentId, target, mode, clock.UtcNow, ct);
+
+    private Task<ActionBudgetSnapshot> ReadBudgetAsync(
         AgentAction action,
+        AgentMode mode,
+        DateTimeOffset now,
+        CancellationToken ct) =>
+        ReadBudgetAsync(action.IncidentId, action.Target, mode, now, ct);
+
+    /// <remarks>
+    /// One query set, two callers: admission runs it inside the serializable transaction and
+    /// the policy pre-check runs it outside. Keeping them on one method is the point - two
+    /// copies of "what counts against the budget" would drift, and the copy that drifted would
+    /// be the one nobody was watching.
+    /// </remarks>
+    private async Task<ActionBudgetSnapshot> ReadBudgetAsync(
+        Guid incidentId,
+        TargetRef target,
         AgentMode mode,
         DateTimeOffset now,
         CancellationToken ct)
@@ -283,12 +369,12 @@ public sealed class ActionRepository(
         // gates: undoing damage must not be rationed by the damage.
         var counted = admitted.Where(a => a.IsRollbackOf == null);
 
-        var workload = WorkloadQuery.ForWorkload(counted, action.Target);
+        var workload = WorkloadQuery.ForWorkload(counted, target);
 
         return new ActionBudgetSnapshot
         {
             Mode = mode,
-            ActionsOnIncident = await counted.CountAsync(a => a.IncidentId == action.IncidentId, ct),
+            ActionsOnIncident = await counted.CountAsync(a => a.IncidentId == incidentId, ct),
             ActionsOnWorkloadLastHour = await workload.CountAsync(a => a.ApprovedAt >= hourAgo, ct),
             ActionsClusterWideLastHour = await counted.CountAsync(a => a.ApprovedAt >= hourAgo, ct),
             ActionsClusterWideLastDay = await counted.CountAsync(a => a.ApprovedAt >= dayAgo, ct),

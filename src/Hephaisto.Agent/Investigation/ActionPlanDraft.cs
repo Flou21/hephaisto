@@ -62,8 +62,8 @@ public sealed class ActionDraft
 
     [JsonPropertyName("predicted_effect")]
     [Description(
-        "What specifically becomes true afterwards. Checked automatically at 60s, 5m and 15m; "
-        + "a failed check triggers rollback. Make it concrete and falsifiable.")]
+        "What specifically becomes true afterwards. Recorded with the plan for a human to "
+        + "judge the action against. Make it concrete and falsifiable.")]
     public string PredictedEffect { get; set; } = string.Empty;
 
     [JsonPropertyName("rollback_json")]
