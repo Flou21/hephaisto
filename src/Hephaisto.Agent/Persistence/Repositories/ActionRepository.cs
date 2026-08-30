@@ -40,6 +40,9 @@ public sealed class ActionRepository(
         ActionState.RolledBack,
     ];
 
+    public void AddVerifications(IEnumerable<Verification> verifications) =>
+        db.Verifications.AddRange(verifications);
+
     public Task<AgentAction?> GetAsync(Guid id, CancellationToken ct) =>
         db.AgentActions.FirstOrDefaultAsync(a => a.Id == id, ct);
 

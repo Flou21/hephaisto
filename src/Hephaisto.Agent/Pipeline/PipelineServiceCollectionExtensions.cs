@@ -51,6 +51,13 @@ public static class PipelineServiceCollectionExtensions
 
         services.AddHostedService<InvestigationWorker>();
 
+        // Closes the Acting -> Verifying -> Resolved loop. Deterministic predicates, never a
+        // model: the state machine refuses a model identity as a granter, and this is what
+        // passes hephaisto/verifier after actually looking at the cluster.
+        services.AddScoped<VerificationChecks>();
+        services.AddScoped<ActionRollback>();
+        services.AddHostedService<VerificationScheduler>();
+
         // Replaced by the real runner when the LLM stack is registered. TryAdd so registration
         // order cannot silently downgrade a working investigator to the escalate-only stub.
         services.TryAddScoped<IIncidentInvestigator, EscalateOnlyInvestigator>();

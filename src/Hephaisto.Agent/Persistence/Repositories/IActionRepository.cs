@@ -99,5 +99,11 @@ public interface IActionRepository
     Task<ActionBudgetSnapshot> ReadBudgetAsync(
         Guid incidentId, TargetRef target, AgentMode mode, CancellationToken ct);
 
+    /// <summary>
+    /// Stages the scheduled checks for an action that changed something. Committed by the
+    /// caller's next save, so an executed action and its verifications land together.
+    /// </summary>
+    void AddVerifications(IEnumerable<Verification> verifications);
+
     Task<int> SaveChangesAsync(CancellationToken ct);
 }

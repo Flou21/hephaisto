@@ -144,6 +144,15 @@ public sealed class ActionExecutor(
         action.Outcome = dryRun ? Outcomes.DryRun : Outcomes.Applied;
         action.State = ActionState.Executed;
 
+        // Scheduled only for a real change, and staged into the same save as the outcome, so
+        // an action can never be recorded as executed without the checks that will judge it.
+        // A dry run gets none: nothing is different, so all three would fail and the last one
+        // would revert an action that never happened.
+        if (!dryRun)
+        {
+            actions.AddVerifications(VerificationSchedule.For(action, action.ExecutedAt.Value));
+        }
+
         await actions.SaveChangesAsync(ct).ConfigureAwait(false);
 
         metrics.ActionExecuted(action.Type, mode, action.Outcome);
