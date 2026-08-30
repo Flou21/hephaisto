@@ -1,0 +1,75 @@
+# The e2e harness's outbound notification receiver.
+#
+# Applied only by scripts/e2e/lib/deps.sh, never by Tilt and never by the chart. It is test
+# equipment: the agent posts notifications here and the harness reads back exactly what
+# arrived, so the delivery path can be asserted end to end without a third-party account.
+#
+# It lives in hephaisto-obs rather than hephaisto-chaos because it is not a fault - nothing
+# here is meant to break, and a chaos fixture that must stay healthy is a confusing thing to
+# leave lying next to ten that must not.
+#
+# Single replica, in-memory, no PVC. Two replicas would split the recorded deliveries across
+# two sets of memory and make every count assertion flaky for a reason unrelated to the agent.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-receiver
+  namespace: hephaisto-obs
+  labels:
+    app.kubernetes.io/name: notification-receiver
+    app.kubernetes.io/part-of: hephaisto-e2e
+spec:
+  replicas: 1
+  strategy:
+    # Recreate, not RollingUpdate: a rollout that briefly ran two pods would let a delivery
+    # land in the one about to disappear.
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: notification-receiver
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: notification-receiver
+    spec:
+      containers:
+        - name: receiver
+          image: hephaisto/notification-receiver:dev
+          # Built locally and `kind load`ed by chaos_build_images. Never pulls.
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification-receiver
+  namespace: hephaisto-obs
+  labels:
+    app.kubernetes.io/name: notification-receiver
+spec:
+  selector:
+    app.kubernetes.io/name: notification-receiver
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

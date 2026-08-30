@@ -47,6 +47,7 @@ source "$E2E_DIR/lib/deps.sh"
 source "$E2E_DIR/lib/deploy.sh"
 source "$E2E_DIR/lib/chaos.sh"
 source "$E2E_DIR/lib/judge.sh"
+source "$E2E_DIR/lib/notify.sh"
 source "$E2E_DIR/lib/report.sh"
 
 # ---------------------------------------------------------------------------------------
@@ -86,7 +87,7 @@ Options:
   --yes                do not prompt before pushing an rc tag
   -h, --help           this
 
-Phases: build, cluster, deps, deploy, chaos, validate, ui, report
+Phases: build, cluster, deps, deploy, chaos, validate, act, notify, ui, report
 EOF
 }
 
@@ -143,13 +144,14 @@ PF_PORT_APP=18100
 PF_PORT_PROM=19090
 PF_PORT_ALERT=19093
 PF_PORT_GRAFANA=13030
+PF_PORT_RECEIVER=18099
 
 trap teardown EXIT INT TERM
 
 # ---------------------------------------------------------------------------------------
 # Phase sequencing
 # ---------------------------------------------------------------------------------------
-PHASES=(build cluster deps deploy chaos validate act ui report)
+PHASES=(build cluster deps deploy chaos validate act notify ui report)
 
 should_run() {
     local p="$1"
@@ -212,7 +214,13 @@ port_forward grafana      "$OBS_NS" svc/hephaisto-grafana                      "
 if should_run deps; then
     deps_secrets
     deps_verify
+
+    # Test equipment rather than a dependency of the product: the agent posts notifications
+    # here so the delivery path can be asserted without a third-party account.
+    notify_install || true
 fi
+
+port_forward receiver "$OBS_NS" svc/notification-receiver "$PF_PORT_RECEIVER" 8080 || true
 
 # --- deploy -------------------------------------------------------------------------------
 CURRENT_PHASE=deploy
@@ -283,10 +291,27 @@ if should_run act; then
     fi
 fi
 
+# --- notify -------------------------------------------------------------------------------
+# Outbound delivery. The first assertions show a message can be sent; the last is the only one
+# that could not have been a unit test - a delivery surviving the process that queued it, which
+# is the claim v0.3.0 actually makes.
+CURRENT_PHASE=notify
+if should_run notify; then
+    if ! kc -n "$OBS_NS" get deploy/notification-receiver >/dev/null 2>&1; then
+        phase "7b. outbound notifications (skipped)"
+        skip "outbound notifications" "the notification receiver is not installed"
+    else
+        phase "7b. outbound notifications"
+        notify_assert_configured
+        notify_assert_delivered
+        notify_assert_outage_survived
+    fi
+fi
+
 # --- ui -----------------------------------------------------------------------------------
 CURRENT_PHASE=ui
 if should_run ui && [ "$RUN_UI" = "1" ]; then
-    phase "7b. the console"
+    phase "7c. the console"
     # `bash <script>` rather than executing it directly: a lost exec bit used to turn this
     # phase into a silent skip, which reads on the report as "the console is fine". The file
     # missing entirely is still a skip - that is a real "not present" - but a file that exists
