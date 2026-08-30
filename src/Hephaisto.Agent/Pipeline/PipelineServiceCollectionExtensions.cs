@@ -56,6 +56,7 @@ public static class PipelineServiceCollectionExtensions
         // passes hephaisto/verifier after actually looking at the cluster.
         services.AddScoped<VerificationChecks>();
         services.AddScoped<ActionRollback>();
+        services.AddScoped<OscillationGuard>();
         services.AddHostedService<VerificationScheduler>();
 
         // Replaced by the real runner when the LLM stack is registered. TryAdd so registration

@@ -100,6 +100,15 @@ public interface IActionRepository
         Guid incidentId, TargetRef target, AgentMode mode, CancellationToken ct);
 
     /// <summary>
+    /// When the oscillation detector's quarantine on this workload expires, if there is one.
+    /// </summary>
+    /// <remarks>
+    /// Advisory here, exactly like the budget counts: the authoritative check happens inside
+    /// the admission transaction, against the lock row it has already taken.
+    /// </remarks>
+    Task<DateTimeOffset?> GetWorkloadQuarantineAsync(TargetRef target, CancellationToken ct);
+
+    /// <summary>
     /// Stages the scheduled checks for an action that changed something. Committed by the
     /// caller's next save, so an executed action and its verifications land together.
     /// </summary>

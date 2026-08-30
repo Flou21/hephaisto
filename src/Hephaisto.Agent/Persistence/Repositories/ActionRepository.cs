@@ -40,6 +40,17 @@ public sealed class ActionRepository(
         ActionState.RolledBack,
     ];
 
+    public async Task<DateTimeOffset?> GetWorkloadQuarantineAsync(TargetRef target, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        return await db.WorkloadActionLocks
+            .AsNoTracking()
+            .Where(w => w.WorkloadKey == target.WorkloadKey)
+            .Select(w => w.QuarantinedUntil)
+            .FirstOrDefaultAsync(ct);
+    }
+
     public void AddVerifications(IEnumerable<Verification> verifications) =>
         db.Verifications.AddRange(verifications);
 
@@ -207,7 +218,24 @@ public sealed class ActionRepository(
         {
             return await RefuseAsync(
                 tx, action, AdmissionRefusal.Quarantined, null, ct,
-                $"workload quarantined until {until:O} by the oscillation detector");
+                $"incident quarantined until {until:O}");
+        }
+
+        // The WORKLOAD quarantine, which is the oscillation detector's. Separate from the
+        // incident's because incidents keep being opened afresh - a recurrence is a new
+        // fingerprint and a new row - so a quarantine recorded against one of them lapses at
+        // exactly the moment the loop would otherwise continue. It lives on the lock row this
+        // transaction has already taken, so this costs no extra query and cannot be raced.
+        var workloadLock = await db.WorkloadActionLocks
+            .AsNoTracking()
+            .FirstOrDefaultAsync(w => w.WorkloadKey == action.Target.WorkloadKey, ct);
+
+        if (workloadLock?.QuarantinedUntil is { } workloadUntil && workloadUntil > now)
+        {
+            return await RefuseAsync(
+                tx, action, AdmissionRefusal.Quarantined, null, ct,
+                $"workload quarantined until {workloadUntil:O}: "
+                + $"{workloadLock.QuarantineReason ?? "oscillation detected"}");
         }
 
         var budget = await ReadBudgetAsync(action, mode, now, ct);

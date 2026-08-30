@@ -69,6 +69,7 @@ public sealed class ClusterFactsGatherer(
             var (workload, workloadLabels) = await ReadWorkloadAsync(target, now, ct).ConfigureAwait(false);
             var targetLabels = await ReadTargetLabelsAsync(target, workloadLabels, ct).ConfigureAwait(false);
             var node = await ReadNodeAsync(target.NodeName, ct).ConfigureAwait(false);
+            var workloadQuarantine = await actions.GetWorkloadQuarantineAsync(target, ct).ConfigureAwait(false);
             var unhealthy = await ClusterUnhealthyFractionAsync(ct).ConfigureAwait(false);
 
             return new ClusterFacts
@@ -84,7 +85,10 @@ public sealed class ClusterFactsGatherer(
                 ActionsOnIncident = budget.ActionsOnIncident,
                 ActionsClusterWideLastHour = budget.ActionsClusterWideLastHour,
                 ActionsClusterWideLastDay = budget.ActionsClusterWideLastDay,
-                QuarantinedUntil = incident.QuarantinedUntil,
+                // The later of the two. The incident's is set by flap suppression; the
+                // workload's by the oscillation detector, and that one outlives the incident
+                // it was learned from - which is the whole point of recording it per workload.
+                QuarantinedUntil = Later(incident.QuarantinedUntil, workloadQuarantine),
                 ClusterUnhealthyFraction = unhealthy,
 
                 // Deliberately false, and deliberately not quietly defaulted: nothing in this
@@ -101,6 +105,9 @@ public sealed class ClusterFactsGatherer(
                 $"Could not read the facts needed to judge an action on {target.WorkloadKey}.", ex);
         }
     }
+
+    private static DateTimeOffset? Later(DateTimeOffset? a, DateTimeOffset? b) =>
+        a is null ? b : b is null ? a : a > b ? a : b;
 
     /// <summary>
     /// The namespace's own opt-in label. A namespace that cannot be read is not an opt-in.

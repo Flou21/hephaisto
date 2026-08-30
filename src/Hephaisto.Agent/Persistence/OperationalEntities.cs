@@ -61,6 +61,26 @@ public sealed class WorkloadActionLock
     public string WorkloadKey { get; set; } = string.Empty;
 
     public DateTimeOffset UpdatedAt { get; set; }
+
+    /// <summary>
+    /// While in the future, nothing may be done to this workload by anyone.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Set by the oscillation detector, and deliberately here rather than on the incident.
+    /// The detector's finding is about a WORKLOAD - "restarting this has not helped three
+    /// times" - and incidents are per-fingerprint and keep being opened afresh, so a
+    /// quarantine recorded on one of them expires the moment the next one appears, which is
+    /// exactly when the loop would otherwise continue.
+    /// </para>
+    /// <para>
+    /// This row is already taken with a lock at the top of every admission transaction, so
+    /// the check costs nothing extra and cannot be raced by a concurrent admission.
+    /// </para>
+    /// </remarks>
+    public DateTimeOffset? QuarantinedUntil { get; set; }
+
+    public string? QuarantineReason { get; set; }
 }
 
 /// <summary>

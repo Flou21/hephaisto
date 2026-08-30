@@ -257,6 +257,14 @@ public sealed class VerificationScheduler(
         action.State = ActionState.Failed;
         action.Error = $"verification failed at attempt {VerificationSchedule.FinalAttempt}: {result.Detail}";
 
+        // The moment the evidence arrives that the agent is not helping. Every other control
+        // caps a rate - the cooldown spaces actions out, the budgets cap how many - and a
+        // workload that fails every fifteen minutes stays inside all of them while achieving
+        // nothing. This is the only check that notices that.
+        var oscillation = await sp.GetRequiredService<OscillationGuard>()
+            .EvaluateAsync(action.Target, ct)
+            .ConfigureAwait(false);
+
         var rollback = await sp.GetRequiredService<ActionRollback>()
             .TryRevertAsync(action, ct)
             .ConfigureAwait(false);
@@ -273,10 +281,16 @@ public sealed class VerificationScheduler(
 
         var eventsBefore = incident.Events.Count;
 
+        var quarantined = oscillation is { Quarantine: true };
+
         sp.GetRequiredService<IncidentStateMachine>().Escalate(
             incident,
-            rollback.Reverted ? EscalationReason.RollbackPerformed : EscalationReason.VerificationFailed,
-            $"{result.Detail}; {rollback.Detail}");
+            quarantined ? EscalationReason.Quarantined
+                : rollback.Reverted ? EscalationReason.RollbackPerformed
+                : EscalationReason.VerificationFailed,
+            quarantined
+                ? $"{result.Detail}; {rollback.Detail}; {oscillation!.Reason}"
+                : $"{result.Detail}; {rollback.Detail}");
 
         db.TrackNewIncidentChildren(incident, eventsBefore);
 
