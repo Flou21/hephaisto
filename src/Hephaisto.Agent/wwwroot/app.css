@@ -400,6 +400,21 @@ textarea {
    They fell back to the user agent's own outline, which on a dark ground is frequently a thin
    black ring that is effectively invisible. Accessibility is part of acceptance for v0.4.0
    rather than a follow-up, and this is the cheapest half of it. */
+/* Routes.razor's <FocusOnNavigate Selector="h1" /> sends focus to the page heading on every
+   navigation, which is right for a screen reader and drew a full-width focus ring around the
+   heading for everyone else, on every page load.
+   Suppressed outright rather than restyled. The heading carries tabindex="-1", so it is never
+   reachable by Tab and the router is the ONLY thing that ever focuses it - which means a ring
+   there is not telling a keyboard user where they are, it is drawing a box around a heading
+   somebody just navigated to on purpose. Verified against the live console rather than assumed:
+   tabindex="-1", and document.activeElement is the h1 on load.
+   The first attempt at this styled h1:focus-visible instead, and Chrome matched it - so the ring
+   stayed and merely changed colour. */
+h1:focus,
+h1:focus-visible {
+    outline: none;
+}
+
 a:focus-visible,
 select:focus-visible,
 input:focus-visible,
