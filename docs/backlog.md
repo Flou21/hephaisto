@@ -1216,7 +1216,40 @@ was stopped by gate 9 refusing the restart, and while that is fixed, nothing has
 an execution, a passing verification and a `Resolved` incident in sequence. Deferred to before
 v0.4.0 by decision.
 
-**Size.** S. **Blocks:** claiming the v0.2.0 acceptance criterion is met.
+**Run against a cluster on 2026-08-30 in `--mode Auto`, and the acting path still did not
+complete — for a third, different reason.** The record now reads: the first attempt was stopped
+by gate 9 refusing to restart "the last Ready replica"; that was fixed; this attempt got past
+policy entirely and stopped one step earlier.
+
+```
+state:            Escalated
+escalationReason: NoPlanProduced
+investigation:    terminationReason=Concluded, steps=22, findings=1, actions=0
+```
+
+**The agent diagnosed c11 correctly and then proposed nothing.** Its primary finding, verbatim:
+
+> The pod entrypoint script detects a stale state lock in /data/generation (value 1 < 2) on its
+> mounted persistent volume and immediately aborts with exit code 1, causing
+> Deployment/c11-transient to enter CrashLoopBackOff.
+
+That is exactly right. The policy engine never saw an action, so nothing was denied — this is a
+planning gap, not a safety gate.
+
+**And the reason is arguably good reasoning about a fixture designed to defeat it.** The
+diagnosis correctly identifies the cause as *persistent state on a volume*, and the general rule
+"restarting does not fix state that survives restarts" is one you would want an SRE agent to
+hold. c11 is the specific case where it is wrong: pod *replacement* advances the generation
+counter, so a restart is the fix. Nothing in the cluster says so — the agent would have to infer
+it from the entrypoint's write of the next value.
+
+So this is no longer "the acting path is unverified". It is: **the one fixture in the corpus that
+a restart fixes is one the agent reasons its way out of restarting.** Which of the two is wrong -
+the fixture, for being counter-intuitive, or the planner, for not reading the entrypoint's write
+- is the open question, and it is worth answering before widening autonomy rather than after.
+
+**Size.** S to run; M now that there is something to fix. **Blocks:** claiming the v0.2.0
+acceptance criterion is met.
 
 ### 42. Verification predicates are workload-shaped, and two action types are not
 
