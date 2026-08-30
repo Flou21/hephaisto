@@ -532,10 +532,31 @@ chaos_assert_no_mutation() {
 # The acting half. Only runs when the harness installed in a mode that can act.
 # ---------------------------------------------------------------------------------------
 
+# True once anything has actually been applied to the cluster. Re-collects on every poll,
+# because the answer lives in the incident detail and that snapshot is what goes stale.
+_something_executed() {
+    chaos_collect_details >/dev/null 2>&1 || return 1
+
+    local n
+    n=$(jq -r '[.actions[]? | select(.executedAt != null and .dryRun == false)] | length' \
+        "$WORKDIR/details.jsonl" 2>/dev/null | awk '{t += $1} END {print t + 0}')
+
+    [ "${n:-0}" -ge 1 ]
+}
+
 # An action was admitted, executed and recorded against the fixture that needed it.
 chaos_assert_action_executed() {
     local details="$WORKDIR/details.jsonl"
     local target; target=$(fixture_target c11)
+
+    # details.jsonl was collected during `validate`, BEFORE anything acted - the action
+    # happens once the investigation concludes, which is after that snapshot was taken. So
+    # asserting against it here reads a file written before the thing it is asserting about.
+    # Wait for an execution and re-collect; _something_executed re-collects on every poll.
+    wait_for "an action to be executed" 180 _something_executed \
+        || say "no execution seen within 180s; asserting on what was collected"
+
+    chaos_collect_details
 
     local executed
     executed=$(jq -r --arg t "$target" \
@@ -558,28 +579,41 @@ chaos_assert_action_executed() {
         || fail "$anonymous executed action(s) have no approvedBy"
 }
 
+# True once c11's incident has been closed by the verifier.
+_c11_resolved() {
+    [ "$(api_array "/api/incidents?state=Resolved&limit=100" \
+        | jq -r '[.[] | select(.target.name != null and (.target.name | contains("c11")))] | length' \
+        2>/dev/null || echo 0)" -ge 1 ]
+}
+
+_c11_available() {
+    [ "$(kc -n "$CHAOS_NS" get deploy c11-transient \
+        -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo 0)" -ge 1 ]
+}
+
 # The fixture is actually healthy afterwards. This is the half that distinguishes "the agent
 # did something" from "the agent fixed it", and it is why c11 exists rather than reusing c8:
 # a fixture that recovers on its own would pass this whatever the agent did.
 chaos_assert_verification() {
-    local ok
-    ok=$(kc -n "$CHAOS_NS" get deploy c11-transient \
-        -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo 0)
-
-    [ "${ok:-0}" -ge 1 ] \
+    # WAIT, do not sample. The first verification is not due until T+60s and the scheduler
+    # polls every 10s, so an assertion made the moment the action returns is asking a question
+    # the system has not been given time to answer - and it would report a healthy agent as a
+    # failure. Five of v0.1.0's six release candidates went that way: the harness's own
+    # instrumentation, not the thing being measured.
+    #
+    # 4 minutes covers the T+60s check plus scheduler poll, pod recreation and image pull, and
+    # stops short of the T+5m second attempt - if the first check did not settle it, waiting
+    # for the second would be measuring something else.
+    wait_for "c11 to become available again" 240 _c11_available \
         && pass "c11 is available after the restart" \
         || fail "c11 is still not available" "the action ran but the workload did not recover"
 
     # And the incident says so. Resolved is granted only by hephaisto/verifier, after a
     # deterministic predicate looked at the cluster - a model may never grant it.
-    local resolved
-    resolved=$(api_array "/api/incidents?state=Resolved&limit=100" \
-        | jq -r '.[] | select(.target.name != null and (.target.name | contains("c11"))) | .id' \
-        2>/dev/null | wc -l | tr -d ' ')
-
-    [ "${resolved:-0}" -ge 1 ] \
+    wait_for "c11's incident to reach Resolved" 240 _c11_resolved \
         && pass "c11's incident reached Resolved" \
-        || fail "c11's incident did not reach Resolved" "verification never granted it"
+        || fail "c11's incident did not reach Resolved" \
+               "the workload recovered but verification never closed the incident"
 }
 
 chaos_cleanup() {
