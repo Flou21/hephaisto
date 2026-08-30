@@ -213,6 +213,29 @@ The dev image reports `0.0.0-dev` on purpose: there is no `.git` inside the buil
 and a dev image reporting a release-shaped number is how a dev build gets mistaken for a
 release in a screenshot.
 
+## The agent can act, as of v0.2.0
+
+It ships unable to: `policy.actionableNamespaces` empty, `policy.autoEnabledActionTypes` empty,
+`mode: Observe`. On **this** cluster `values-dev.yaml` sets `hephaisto-chaos`, pre-approves
+`RestartPod`, and leaves `mode: DryRun` — so the whole flow runs, every Kubernetes call carries
+`dryRun=All`, and nothing changes. Flipping `mode` to `Auto` in that file is the single line
+that turns autonomy on, and it is deliberately the only thing left to change.
+
+**The mode is a Helm value and nothing else can raise it.** There is no API and no UI control
+that sets it; the database arm carries the runaway latch and is otherwise silent. If you find
+yourself writing an UPDATE against `agent_mode` to make the agent act, the thing to change is
+`values-dev.yaml`.
+
+Two traps worth knowing before you test acting:
+
+- **Every actionable namespace must also carry
+  `hephaisto.io/destructive-actions-allowed: "true"`.** `infra/namespaces.yaml` sets it on
+  `hephaisto-chaos`. Without it the policy engine denies, and the reason says so — but only on
+  the action row, so it reads as a mysterious refusal if you are watching the pod logs.
+- **`c11-transient` remembers.** Its generation counter lives on a PVC, so deleting only the
+  Deployment leaves it at 2 and the fixture comes back healthy — which looks exactly like the
+  agent fixing something it never touched. Delete the PVC to reset it.
+
 ## The cluster is a single shared resource
 
 There is one k3s node, shared with the whole stack in the `~/dev` workspace. Parallel agents

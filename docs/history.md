@@ -279,6 +279,100 @@ documented, alerted on twice and charted twice with no instrument behind it.
 
 ---
 
+## v0.2.0 — it acts — **done, 2026-08-30**
+
+The executor, verification, rollback, approval, oscillation quarantine and a path to
+`Resolved`. What is worth recording is not the feature list — `roadmap.md` has that — but what
+building it revealed about the machinery that had been sitting there, tested, for a release.
+
+### Four controls that were inert, and all of them looked fine
+
+The roadmap's reading was that "almost everything except the executor already exists, built and
+tested, waiting for a caller". True of the inventory. What it could not see was that four of
+those waiting pieces did not work, and every one failed in the direction that produces no
+symptom:
+
+- **`PolicyOptions` was bound to configuration nowhere.** Every other options class in the repo
+  has `services.Configure<T>(GetSection(T.SectionName))`; this one had none, and
+  `IOptionsMonitor<T>` resolves perfectly happily to a default-constructed instance. So the
+  allowlist was empty and gate 2 denied everything — which is the *correct-looking* answer. A
+  smoke test would not have caught it either: "denies everything" is exactly what a properly
+  configured agent does before anyone opts a namespace in.
+
+- **`ClusterFacts` was three fields.** The clock, the mode, the quarantine stamp. Gates 3, 7,
+  8-fractional, 9, 10 and 13's budget downgrade were all dead — and all of them have unit
+  tests, all of which passed, because the tests supply the facts the caller did not. The policy
+  engine ran in full and could not contradict itself.
+
+- **The database mode arm pinned every cluster to Observe.** It declared the `agent_mode.mode`
+  column, `InitialCreate` seeds that column to `Observe`, and the resolver takes the minimum
+  over every arm that speaks. `mode: Auto` in the chart had never worked on any database that
+  had ever been migrated, and the only way to lift it was a hand-written UPDATE.
+
+- **`appsettings.json` — which ships inside the image — named `hephaisto-chaos`.** Binding
+  `PolicyOptions` without noticing would have made the published default permit acting
+  somewhere while the chart's `actionableNamespaces` was empty.
+
+The common thread is worth naming, because it is the third time this project has hit it.
+**Absence is not neutral.** An unbound options class, an unread fact and an unwritten metric
+all present as "working, quietly". The v0.1.0 lesson was that a guard asserting *an instrument
+exists* passes on the bug it exists to catch; this is the same shape one layer out.
+
+### The gate that would have decided autonomy by wording
+
+Gate 14 downgrades any action with no rollback spec, and a pod delete has no inverse — the
+controller recreates the pod, which *is* the restart. So `RestartPod`, the one action this
+milestone exists to automate, could reach `Allow` only if the model invented a fictional
+rollback spec, and would sit at `RequireApproval` forever if it followed the planning prompt's
+own instruction to say plainly when something cannot be undone.
+
+Both outcomes are bad and neither is a bug in any single place. Whether autonomy worked at all
+would have depended on how a model happened to word a JSON field. The fix is a named
+`SelfHealing` exemption, two types wide, pinned by a test, with the reasoning in the code: for
+these types the recourse on a failed verification is **escalation, not rollback**, because the
+state after a failure is the state the controller chose anyway.
+
+### A duplicate-key bug in the seam nobody had called
+
+`TryAdmitActionAsync` ended with an unconditional `db.AgentActions.Add(action)`, and
+`DecideOutcome` already writes every proposed action to `agent_actions` during the
+investigation. The first real execution would have thrown a duplicate key inside the one
+`Serializable` transaction the whole safety model rests on.
+
+The intent was legible once looked for: `AdmittedStates` counts `Proposed` and
+`AwaitingApproval`, so a proposal is meant to reserve its own budget slot and later *become*
+the executed row. One row, created by the proposal, transitioned by admission. `Add` is now
+reached only for a genuinely new action, which is the rollback case.
+
+### Two decisions that shaped the rest
+
+**Mode is GitOps.** There is no endpoint and no UI control that sets it; `SetModeAsync` is
+deleted rather than wired, and backlog #8 is resolved by reclassification instead of by
+building the writer it asked for. An operator who could raise autonomy from a web form would be
+a second, unreviewed source of truth for the most consequential setting in the system. The
+database arm restrains only — it carries the runaway latch and is otherwise silent — and the
+one write exposed is re-arm, which cannot name a mode or exceed the deployment's ceiling.
+
+**The model never gets the handle back.** The rollback spec is free-form JSON the planning
+phase produced, and executing it as written would hand over exactly what the three-phase split
+denies — on the one code path nobody watches, minutes after the incident, with budgets bypassed
+by design. It is read for typed values, and the revert is built as an ordinary action over the
+same closed enum. Only `ScaleWorkload` has an expressible inverse today, and the rest say so.
+
+### What is not claimed
+
+The acceptance test is written and **has not been run**. `c11-transient` — the only fixture a
+restart actually fixes, because every other one is a permanent fault and c8 self-heals on a
+60-second cycle — was verified by simulating its container logic locally, not by applying it.
+853 unit and 28 integration tests pass, the migration is verified against a real Postgres, and
+none of that is the same as having watched the agent restart a pod and close the incident.
+
+One `scripts/e2e/run.sh --mode Auto` turns the claim into a measurement. Until then the honest
+statement is "built and unit-tested", and it is written that way in `roadmap.md`,
+`verification.md` and [backlog #41](backlog.md#41-c11-has-never-been-run-against-a-cluster).
+
+---
+
 ## Resolved open items
 
 Items that spent time on the open list and are now closed. Kept with their original reasoning,

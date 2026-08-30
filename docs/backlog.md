@@ -322,6 +322,8 @@ degrades rather than wedging. `scripts/bootstrap-secrets.sh` adds the key to an 
 
 ### 7. The planning prompt claims a verification-and-rollback mechanism that does not exist
 
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** The model is told a safety net exists that does not.
 
 **Evidence.** `src/Hephaisto.Agent/Prompts/30-planning.md:25-26`, verbatim: *"…automatically at 60
@@ -338,7 +340,23 @@ model's plans today.
 
 **Size.** S to correct, L to build.
 
+**Fixed 2026-08-30, in two halves and in that order.** The text was corrected first, in its
+own commit, before any mechanism existed - the instruction this entry carried was "correct the
+text now; build the mechanism in v0.2.0", and doing it the other way round would have meant a
+window in which the fix justified the lie. `VerificationScheduler` then made it true: T+60s,
+T+5m and T+15m, deterministic C# predicates, rollback where an inverse exists and escalation
+where one does not.
+
+Two things the original claim got wrong that the mechanism does not. Only the LAST check may
+conclude a failure - the three answer different questions rather than retrying one, and a pod
+still pulling its image at T+60s is not a fault. And "a failed check triggers a rollback" is
+only true where a rollback exists: a pod delete has no inverse, so the recourse there is
+escalation, which is also why gate 14 now exempts self-healing types rather than accepting a
+fictional rollback spec.
+
 ### 8. Nothing writes the database mode arm
+
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
 
 **Symptom.** The kill-switch arm documented as "the one a human flips from the UI" has no UI and no
 API, and a tripped runaway latch cannot be cleared from inside the product.
@@ -354,6 +372,29 @@ writes it.
 **Consequence.** Clearing a runaway latch today means connecting to Postgres by hand.
 
 **Size.** M. **Blocks:** operating v0.2.0.
+
+**Resolved 2026-08-30 by reclassification**, which this file permits as a way out - and the
+reason is worth more than the fix would have been.
+
+The entry asks for a writer for "the one a human flips from the UI". That was investigated and
+rejected: the mode is a Helm value, it reaches the pod on the env var and the projected
+ConfigMap, and an operator who could raise autonomy from a web form would be a second,
+unreviewed source of truth for the most consequential setting in the system. `SetModeAsync`
+and `GetModeAsync` are **deleted** rather than wired.
+
+Investigating it turned up something worse than the missing writer. The arm DECLARED the
+`agent_mode` row's mode column, `InitialCreate` seeds that column to `Observe`, and the
+resolver takes the minimum over every arm that speaks - so `mode: Auto` in the chart resolved
+to Observe on every database that had ever been migrated, and the only way to lift it was a
+hand-written UPDATE. The arm is now Silent unless the runaway latch is set, and the column is
+dropped.
+
+The real complaint underneath this entry - a tripped latch could only be cleared with psql -
+is fixed: `POST /api/mode/re-arm` and a button that appears only while latched. Re-arming is
+different in kind from setting the mode. It cannot name one and cannot lift the agent above
+the ceiling the deployment already grants, so the worst it can do is return the agent to the
+state its own configuration says it should be in. It writes `mode.changed`, which is the first
+thing ever to write that audit type.
 
 ### 9. Semantic search returns nothing, and the recorded cause was wrong
 
@@ -430,6 +471,8 @@ beside the index, matching how `vector` is handled.
 
 ### 10. `hephaisto.io/destructive-actions-allowed` is read by no code
 
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** A safety control that exists in manifests, in documentation and in test assertions,
 and nowhere in the program.
 
@@ -447,7 +490,26 @@ load-bearing. The e2e assertion checks that the *label* is present, which it is.
 
 **Size.** M. **Blocks:** v0.2.0.
 
+**Fixed 2026-08-30**, and the entry understates the problem it belongs to.
+
+The label is read now, as `ClusterFacts.NamespaceLabels` - a separate field from
+`TargetLabels`, because it is a NAMESPACE label and merging the two would let a workload label
+opt its own namespace in, which is exactly the confusion a second independent confirmation
+exists to avoid. Folded into gate 2 rather than renumbered, since the manifests already
+describe it as part of that decision.
+
+The wider problem this entry names in passing - `TargetLabels` is passed empty - was the
+larger half. `ClusterFacts` was built with the clock, the mode and the quarantine stamp and
+nothing else, so gates 3, 7, 8-fractional, 9, 10 and 13's budget downgrade were ALL inert
+while passing their unit tests, because the tests supply the facts the caller did not.
+`ClusterFactsGatherer` populates the record, and refuses to return a partial one: a null
+Workload skips the stability and blast-radius gates rather than failing them, so a read
+failure would quietly remove safety checks and the resulting verdict would be
+indistinguishable from a considered one.
+
 ### 11. There is no production path to `Resolved`
+
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
 
 **Symptom.** An incident can only end `Suppressed` or `Escalated`. Nothing ever closes normally.
 
@@ -462,7 +524,21 @@ has almost nothing to measure, and an operator has no way to close an incident a
 
 **Size.** M. **Related:** v0.2.0.
 
+**Fixed 2026-08-30.** A passing verification grants it, and only `hephaisto/verifier` may -
+the state machine refuses model identities by construction, and the predicate that decides is
+deterministic C# rather than a model marking its own work complete.
+
+`Resolve` is granted once EVERY executed action on the incident has been verified, not on the
+first to pass: a plan may carry several, and closing on the first would call an incident
+resolved while another action on it was still being judged.
+
+This is also what unblocks the second half of #4. `hephaisto.incident.duration` was recorded
+only on escalations, so MTTR measured how long the agent took to give up. It now has closures
+to measure.
+
 ### 12. Unbounded label cardinality on `hephaisto.grounding.rejected`
+
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
 
 **Symptom.** GUIDs and free text are written into a Prometheus label value.
 
@@ -485,6 +561,20 @@ per-incident ids, or pod names in labels will blow up cardinality — keep them 
 Prometheus has never been under pressure.
 
 **Size.** S — a one-line fix.
+
+**Fixed 2026-08-30** - one line, `rejection.Reason` instead of `rejection`, the correct form
+having been three files away in `InvestigationRunner` the whole time.
+
+Fixing it turned up a worse instance of the same class, live and unrecorded.
+`hephaisto.policy.decisions` carried the verdict's first reason as a label value, and those
+reasons are prose written for a human on the action row: "workload is quarantined until
+2026-08-30T12:34:56.789Z", "pod is 45s old, younger than the 120s minimum". Timestamps and ages
+in a label are unbounded series, and unlike grounding rejections - which are rare - that
+counter fires for every proposed action. The label is gone; the prose lives on the action row,
+the audit trail and the `policy.evaluate` span, and a bounded `downgraded` flag replaces it.
+
+What is lost is the per-gate breakdown, and getting it back safely needs a closed reason code
+on `PolicyResult` - filed as its own item rather than bodged with string matching.
 
 ### 13. The retry path has never been observed firing in production
 
@@ -583,6 +673,8 @@ visible in the exported series.
 
 ### 16. Four declared spans are never started
 
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** `Spans.Incident`, `Spans.PolicyEvaluate`, `Spans.ActionExecute` and
 `Spans.Verification` are declared in `Core/Telemetry/HephaistoTelemetry.cs` and drawn in the
 self-observability tree in `docs/architecture.md`. Only three of the seven declared spans are ever
@@ -593,6 +685,18 @@ investigation, so that span is a genuine gap rather than a Phase 2 placeholder. 
 wait on the executor.
 
 **Size.** S for `PolicyEvaluate`.
+
+**Fixed 2026-08-30.** `PolicyEvaluate`, `ActionExecute` and `Verification` are all started.
+
+The entry is right that `PolicyEvaluate` was the notable one: the other two were placeholders
+for code that did not exist, while the policy engine has run on every investigation since the
+MVP and its span was simply never opened. It now carries an event per action with the whole
+verdict - which is also where the reasons went when they were taken out of the metric labels,
+because a span is the right place for text a human reads once.
+
+`Spans.Incident` is still unstarted and is left that way deliberately: an incident outlives any
+one process, so a span covering it would either be a lie about duration or a trace held open
+across restarts.
 
 ### 17. `hephaisto.kubernetes.watch_reconnects` bypasses the constants file
 
@@ -608,6 +712,8 @@ dashboard, an alert rule and the code that emits the metric cannot drift apart."
 
 ### 18. Two audit event types are named and never written
 
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** `Core/Domain/Audit.cs` names `mode.changed` and `policy.decided` as examples of what
 the audit trail records. Neither is ever written.
 
@@ -622,6 +728,15 @@ mode in-product, so there is no event to record.
 ---
 
 ## Config that behaves like a comment
+
+**Half fixed 2026-08-30.** `mode.changed` is written, by the re-arm path - the moment
+autonomy comes back is the single most important event in the system to be able to attribute,
+and it was the one going unrecorded.
+
+`policy.decided` is still not written, and now has a closer relative that is: `policy.changed`,
+written whenever the hot-reloaded `PolicyOptions` moves. That one was the more urgent of the
+two - a silent policy change is indistinguishable from an attack - and a per-decision audit row
+remains open, since every policy verdict is already persisted on the action row it judged.
 
 ### 19. `MaxAutoScaleReplicas` and `MaxAutoScaleStep` have no readers
 
@@ -720,6 +835,8 @@ the detection assertion already matched.
 
 ### 38. `approval_source` reads `Ui` on actions nobody approved
 
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** Two `PatchResources` actions the policy engine **Denied** carry
 `approval_source = Ui`, which reads as "a human typed a name into the console" for actions no
 human ever saw. `approved_by` on the same rows is correctly null.
@@ -737,6 +854,16 @@ trail is exactly the place where misleading beats absent by the smallest margin.
 changes, which is why this is written down rather than done inside the v0.1.0 fix pass.
 
 **Size.** S for the enum, M with the migration and the UI that reads it.
+
+**Fixed 2026-08-30.** `ApprovalSource.NotApplicable = 0` takes the zero value, `Ui` and the
+rest shift up, and the `ActingSchema` migration moves the existing rows onto it - scoped by
+`approved_by IS NULL` rather than by state, so an action a human really did approve keeps
+saying `Ui` even if it has since failed.
+
+Safe to renumber because the column is `text` and enums are stored by name, so no stored
+value's meaning shifts underneath the rows. The entry sized this as "S for the enum, M with the
+migration", which was right; it landed with the approval workflow because that is the commit
+that made the field mean something.
 
 ### 20. The MVP acceptance test requires Grafana annotations, which are unbuilt
 
@@ -855,3 +982,75 @@ successor. **Size.** n/a until upstream moves.
 audited before teardown, and that the tarball exists only in `~` on that machine. It carries
 credentials, and `backup/` was deliberately purged from git history. It should be deleted or moved
 to real secret storage rather than left in a home directory indefinitely. **Size.** S.
+
+---
+
+## Opened by v0.2.0
+
+Written down at the moment they were deferred, rather than discovered later by somebody
+reading the code and wondering.
+
+### 39. The executor covers five action types; three are refused
+
+`ActionExecutor.CanPerform` implements `RestartPod`, `RolloutRestart`, `ScaleWorkload`,
+`DeleteStuckJob` and `DeleteFailedJobPods` - the verbs the write `Role` actually grants.
+Everything else fails closed with `outcome=unsupported` and nothing attempted.
+
+For `CordonNode` and `DrainNode` that is the correct permanent answer until someone binds
+their `ClusterRole`, which ships unbound on purpose. `SilenceAlert` needs an outbound HTTP
+client, and there is none anywhere in `src/`; it belongs with v0.3.0's notification stack,
+which introduces one.
+
+The two that matter are **`PatchResources` and `RollbackDeployment`**. `PatchResources` is the
+actual remediation for c4 (a bad image tag) and c7 (a missing secret ref) - the two fixtures
+where the agent diagnoses correctly and then has nothing useful to propose. Both always
+require approval, so an operator can approve one today and watch it fail at execution, which
+is a poor experience even if it is a safe one.
+
+`PatchResources` needs care rather than effort: applying a model-authored JSON patch verbatim
+would hand the model the mutating handle the three-phase split exists to deny it. It wants a
+restricted, typed vocabulary - container image and resource limits - rather than an arbitrary
+merge patch. **Size.** M each.
+
+### 40. `PolicyResult` has no closed reason code, so the metric cannot say why
+
+`hephaisto.policy.decisions` used to label on the verdict's first reason and now labels on
+`decision`, `action_type` and `downgraded` - see [#12](#12-unbounded-label-cardinality-on-hephaistogroundingrejected)
+for why the prose had to go.
+
+What went with it is the per-gate breakdown: "how often does the cooldown bite versus the
+namespace allowlist" is a genuinely useful question for tuning, and it is now unanswerable from
+metrics. Getting it back means each of the ~20 `denials.Add` / `downgrades.Add` sites in
+`PolicyEngine` carrying a closed `PolicyReasonCode` beside its human text. Deriving the code
+from the string instead would be brittle in the one place brittleness is least acceptable.
+
+A change to every gate in the safety argument, so it wants its own commit and its own pass over
+`PolicyEngineTests`. **Size.** M.
+
+### 41. c11 has never been run against a cluster
+
+`infra/chaos/c11-transient.yaml` is the fixture v0.2.0's acceptance test is written against,
+and it has been verified only by simulating its container logic locally - the generation
+counter on a PVC, the marker on an emptyDir, and the assertion that container restarts do not
+advance the generation while pod replacement does.
+
+What is unverified is everything Kubernetes contributes: that `local-path` binds the claim
+under `WaitForFirstConsumer` in time, that `strategy: Recreate` releases the ReadWriteOnce
+volume before the replacement pod wants it, and that the first pod reaches
+`CrashLoopBackOff` rather than some other waiting reason. Any of those would make the fixture
+wrong in a way the acceptance test would report as an agent failure.
+
+**Fix.** `scripts/e2e/run.sh --mode Auto`, once, and read the result. **Size.** S, and it
+gates trusting the v0.2.0 acceptance test at all.
+
+### 42. Verification predicates are workload-shaped, and two action types are not
+
+`VerificationChecks` answers "is the owning workload settled and Ready" for everything except
+the Job actions. That is right for `RestartPod`, `RolloutRestart` and `ScaleWorkload`, and it
+is the honest general answer - the object an action named is often gone by the time the check
+runs, which is the normal outcome of a pod delete.
+
+It is thin for `ScaleWorkload`, where the interesting question is whether the replica count is
+what was asked for rather than merely whether the workload is happy, and it has nothing
+specific for a future `PatchResources`, where it should assert the patched field actually
+changed. Neither is wrong today; both would be better. **Size.** S each.

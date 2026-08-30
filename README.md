@@ -7,11 +7,16 @@ and writes up a diagnosis with the evidence it used.
 It is also a first-class *producer* of telemetry: every investigation is a trace you can
 open in Grafana, step through, and then ask the agent about.
 
-> **Status: pre-0.0.1, not yet released.** The detection and investigation half is
-> deployed and exercised against a chaos-fixture suite. The *acting* half — see
-> [What exists today](#what-exists-today) — is designed, policy-checked and unit-tested,
-> but the executor itself is not written yet. Do not point this at anything you care
-> about.
+> **Status: v0.2.0.** Images and charts are published to GHCR with build provenance
+> attested. `v0.1.0` met its gate — 22/24 correct root cause over cassette replay — and
+> `v0.2.0` is the release in which the agent can **act**: execute a narrow allowlist of
+> reversible actions, verify them, revert or escalate when they do not hold, and close the
+> incident when they do.
+>
+> It ships configured to act **nowhere**. `policy.actionableNamespaces` is empty,
+> `policy.autoEnabledActionTypes` is empty, and `mode` is `Observe` — three independent
+> things you have to change before anything can happen. Do not point it at anything you
+> care about.
 
 ## What it does
 
@@ -25,10 +30,22 @@ Alertmanager ──▶ ingest ──▶ dedup + correlate ──▶ incident
                                                     ▼
                                   diagnosis + evidence + proposed plan
                                                     │
-                                             ┌──────┴──────┐
-                                             ▼             ▼
-                                        escalate      policy engine
-                                        to a human    (default-deny)
+                                                    ▼
+                                            policy engine
+                                            (default-deny)
+                                                    │
+                              ┌─────────────────────┼─────────────────────┐
+                              ▼                     ▼                     ▼
+                          escalate            await a human            execute
+                         to a human            (approve)         (closed action enum)
+                                                    │                     │
+                                                    └──────────┬──────────┘
+                                                               ▼
+                                              verify at T+60s / T+5m / T+15m
+                                                               │
+                                                    ┌──────────┴──────────┐
+                                                    ▼                     ▼
+                                                resolved          revert / escalate
 ```
 
 An investigation is a bounded agentic loop. The model gets read-only tools — Kubernetes
@@ -49,14 +66,24 @@ Being precise about this matters, because the difference is the whole safety arg
 | Kill switch — three independent arms, most restrictive wins | **works** |
 | Audit log, budgets, cooldowns, oscillation detection | **works** |
 | Plan generation (schema-constrained, no tools) | **works** |
-| **Executing a plan against the cluster** | **not built** |
-| **Automatic verification and rollback** | **not built** |
-| Approval workflow, runbook memory | not built |
+| Executing a plan against the cluster | **works** — five action types, see below |
+| Verification at T+60s / T+5m / T+15m, and rollback | **works** |
+| Approval workflow — UI and API | **works** |
+| Oscillation detection wired to a workload quarantine | **works** |
+| `RollbackDeployment`, `PatchResources`, `SilenceAlert` | not built — refused, not attempted |
+| Notifications: anything leaving the process | not built — v0.3.0 |
+| Runbook memory, OIDC approval identity | not built |
 
-So today Hephaisto runs at `Observe`: it detects, investigates, diagnoses and annotates,
-and it never mutates anything. The machinery that would *gate* an action is built and
-tested ahead of the action itself, deliberately — the policy engine is the argument that
-auto-remediation would be safe, and it should exist and be trusted before anything can act.
+The executor covers exactly the verbs the write `Role` grants: `RestartPod`,
+`RolloutRestart`, `ScaleWorkload`, `DeleteStuckJob` and `DeleteFailedJobPods`. Anything
+else is **refused before a call is made**, with `outcome=unsupported` and nothing
+attempted — which for `CordonNode` and `DrainNode` is the honest answer, because their
+`ClusterRole` ships deliberately unbound. `SilenceAlert` needs an outbound HTTP client,
+which does not exist anywhere in `src/` yet and arrives with v0.3.0's notification stack.
+
+The machinery that *gates* an action was built and tested a full release ahead of the
+action itself, deliberately — the policy engine is the argument that auto-remediation would
+be safe, and it should exist and be trusted before anything can act.
 
 ## The safety model
 
@@ -83,8 +110,20 @@ engine then rejects. It cannot reach an API call directly.
 the caller — no I/O — which is exactly what makes it exhaustively unit-testable. An empty
 namespace allowlist means *act nowhere*, and that is the default.
 
-**4. Every auto action must be reversible**, and gets verified and reverted on failure at
-T+60s / T+5m / T+15m. *(Design; the verification scheduler is not built yet.)*
+**4. Every auto action is verified** at T+60s / T+5m / T+15m by deterministic C# predicates —
+never by a model, and the state machine refuses a model identity as the granter of a
+`Resolved`. The three checks answer different questions rather than retrying one, so only the
+last may conclude a failure: a pod still pulling its image at T+60s is not a fault, and
+reverting on it would make the agent the cause of the next incident.
+
+On a final failure the action is reverted where a revert exists, and escalated where one
+does not. Two honest limits there. The rollback spec is written by the model, so it is read
+for typed values and never executed as written — the revert is built as an ordinary action
+over the same closed enum, and today only `ScaleWorkload` has an inverse that can be
+expressed. And a pod delete has no inverse at all: the controller recreates the pod, which
+*is* the restart, so the recourse on a failed verification is escalation rather than undo.
+That is why the policy engine exempts self-healing actions from needing a rollback spec
+instead of accepting a fictional one.
 
 **5. Budgets, cooldowns and oscillation detection** cap the worst sustained case at roughly
 ten pod restarts an hour — indistinguishable from a badly tuned HPA.
@@ -127,8 +166,20 @@ blocker.
 
 ## Running it
 
-Nothing is published yet — no image on a registry, no chart in an OCI repo. That is what
-0.0.1 is for. Today you build from source.
+Multi-arch images and the Helm chart are published to GHCR on every release tag, with build
+provenance attested, and both are pullable anonymously:
+
+```sh
+helm install hephaisto oci://ghcr.io/flou21/charts/hephaisto --version 0.2.0
+```
+
+Installed as it ships, the agent acts nowhere: `policy.actionableNamespaces` is empty, so no
+write `Role` is rendered at all, and `mode` is `Observe`. Enabling anything means naming a
+namespace, labelling that namespace
+`hephaisto.io/destructive-actions-allowed: "true"`, promoting an action type into
+`policy.autoEnabledActionTypes`, and raising `mode` — four deliberate acts, in git.
+
+You can also build from source.
 
 **On a laptop:**
 
