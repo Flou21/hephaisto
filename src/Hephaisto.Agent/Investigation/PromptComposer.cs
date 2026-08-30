@@ -311,6 +311,93 @@ public sealed class PromptComposer
     }
 
     /// <summary>
+    /// What each action actually does, addressed to the model.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Every action carries a description, and that is not decoration.</b> This vocabulary
+    /// used to render bare enum names - ten lines of <c>- `RestartPod`</c> and nothing else -
+    /// while the seventeen read tools in <c>KubernetesReadTools</c> each carry a paragraph
+    /// written for the model, on that file's own stated reasoning: "a tool it does not
+    /// understand is a tool it calls at the wrong moment and then reasons from". The standard
+    /// was applied rigorously to reading and not at all to acting.
+    /// </para>
+    /// <para>
+    /// The clearest cost was <see cref="ActionType.RestartPod"/>. Nothing anywhere told the
+    /// model that it DELETES the pod - which is the fact that decides whether it fixes anything,
+    /// because it is what makes pod-scoped state go away. A model that reads "restart" as
+    /// "restart the container in place" is reasoning correctly from the wrong vocabulary. See
+    /// <c>docs/backlog.md</c> #41.
+    /// </para>
+    /// <para>
+    /// Availability is not stated here but derived from <see cref="ActionCapability"/>, which
+    /// the executor reads too, so the prompt cannot claim this build does something it refuses.
+    /// </para>
+    /// </remarks>
+    private static readonly Dictionary<ActionType, string> ActionDescriptions = new()
+    {
+        [ActionType.RestartPod] =
+            "Deletes one pod. There is no restart verb in the Kubernetes API - deleting a managed "
+            + "pod IS the restart, and its controller immediately creates a replacement. The "
+            + "replacement is a NEW pod, so everything scoped to the old one is discarded with it: "
+            + "process memory, a held lock, an in-process cache, and the contents of any emptyDir "
+            + "volume. Everything that outlives a pod is reproduced exactly: the image, the "
+            + "command, ConfigMap and Secret values, and the contents of any PersistentVolumeClaim. "
+            + "That distinction is the question to answer before proposing this - not whether the "
+            + "workload is unhealthy, but whether the unhealthy thing lives in the pod.",
+
+        [ActionType.RolloutRestart] =
+            "Replaces every pod of a Deployment, StatefulSet or DaemonSet by stamping its pod "
+            + "template, so the controller rolls them under its own update strategy rather than "
+            + "leaving a gap. Same effect on pod-scoped state as RestartPod, applied to the whole "
+            + "workload. Prefer RestartPod when one pod is bad and its siblings are healthy.",
+
+        [ActionType.RollbackDeployment] =
+            "Returns a Deployment to an earlier revision. The answer when get_rollout_history "
+            + "shows a revision created shortly before the symptoms began, which is the case where "
+            + "a rollback is a reasoned response rather than a guess.",
+
+        [ActionType.ScaleWorkload] =
+            "Sets a Deployment or StatefulSet to a specific replica count. For under-capacity, or "
+            + "for taking a workload to zero to stop it. It does not repair a broken pod: N copies "
+            + "of a container that crashes on startup crash N times.",
+
+        [ActionType.DeleteStuckJob] =
+            "Deletes a Job together with its pods. For a Job wedged past its deadline or backoff "
+            + "limit whose pods will never complete. A CronJob creates the next one on schedule; a "
+            + "bare Job does not come back, and its record of what happened goes with it.",
+
+        [ActionType.DeleteFailedJobPods] =
+            "Deletes only the Failed pods belonging to a Job and leaves the Job itself. Clears the "
+            + "debris a repeatedly failing Job accumulates without discarding the Job's own record.",
+
+        [ActionType.SilenceAlert] =
+            "Silences an Alertmanager alert for a bounded window. It changes nothing in the "
+            + "cluster and repairs nothing - it stops a page. Correct only when the cause is "
+            + "understood and a human is already dealing with it; silencing something you have not "
+            + "explained is how an incident becomes invisible.",
+
+        [ActionType.PatchResources] =
+            "Changes a container's resource requests or limits. The answer for a container "
+            + "OOMKilled against a limit that is genuinely too low, or one the scheduler cannot "
+            + "place because its request is too large.",
+
+        [ActionType.CordonNode] =
+            "Marks a node unschedulable. Pods already on it stay where they are; only new "
+            + "placement is affected.",
+
+        [ActionType.DrainNode] =
+            "Evicts every pod from a node and marks it unschedulable. The most disruptive action "
+            + "in this vocabulary: it moves work belonging to people who did not ask you.",
+
+        [ActionType.DeletePvc] =
+            "Deletes a PersistentVolumeClaim, and with it the data on the volume.",
+
+        [ActionType.DeleteWorkload] =
+            "Deletes a Deployment, StatefulSet or DaemonSet outright.",
+    };
+
+    /// <summary>
     /// The closed action vocabulary, rendered from the enum itself so the prompt cannot drift
     /// from the type the JSON schema is generated against.
     /// </summary>
@@ -330,17 +417,40 @@ public sealed class PromptComposer
 
             sb.Append("- `").Append(type).Append('`');
 
-            if (type is ActionType.DeletePvc or ActionType.DeleteWorkload)
+            if (ActionDescriptions.TryGetValue(type, out var description))
+            {
+                sb.Append(" — ").Append(description);
+            }
+
+            if (ActionCapability.IsPermanentlyDenied(type))
             {
                 // Listed rather than hidden so a plan that names one is recorded and refused
                 // with a reason, instead of failing to deserialise into an unknown value and
                 // producing "no plan" with no explanation.
-                sb.Append(" — **permanently denied.** Listed so that naming it is recorded and refused, "
+                sb.Append(" **Permanently denied.** Listed so that naming it is recorded and refused, "
                     + "not so that it can be proposed.");
             }
+            else if (!ActionCapability.IsImplemented(type))
+            {
+                // Marked here, explained once below. Said out loud for the first time at all:
+                // without it a model can propose one of these, policy can admit it, a human can
+                // be paged to approve it, and the executor then refuses it with
+                // outcome=unsupported - spending the scarcest thing in an incident on an action
+                // that was never going to run.
+                sb.Append(" **Not available in this build.**");
+            }
 
-            sb.Append('\n');
+            sb.Append("\n\n");
         }
+
+        // Once, rather than repeated under every entry. Step budget is the binding constraint on
+        // accuracy in this system, and four copies of the same paragraph is four copies of the
+        // same tokens on every planning call.
+        sb.Append("An action marked **Not available in this build** is recorded and then refused at "
+            + "execution, after a human has spent attention approving it. If one of them is "
+            + "genuinely the right answer, say so plainly in your reasoning and set "
+            + "`no_action_required`: a person has to make that change either way, and telling them "
+            + "which change is the useful thing you can do.\n");
 
         return sb.ToString();
     }

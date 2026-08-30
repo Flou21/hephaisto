@@ -99,6 +99,31 @@ public sealed class ActionExecutorTests : IDisposable
     }
 
     [Fact]
+    public void The_actions_this_build_performs_are_stated_once_and_read_by_both_sides()
+    {
+        // ActionCapability is what CanPerform is written in terms of AND what the planning
+        // vocabulary marks availability from, so the prompt cannot offer the model something
+        // the executor refuses. Pinning the set here makes widening it a deliberate act with a
+        // test to update, rather than a case arm somebody added.
+        Enum.GetValues<ActionType>()
+            .Where(ActionCapability.IsImplemented)
+            .Should().BeEquivalentTo([
+                ActionType.RestartPod,
+                ActionType.RolloutRestart,
+                ActionType.ScaleWorkload,
+                ActionType.DeleteStuckJob,
+                ActionType.DeleteFailedJobPods,
+                ActionType.SilenceAlert,
+            ]);
+
+        // Separate question, separate answer: these two are about the action, not the build,
+        // and no amount of implementing will move them.
+        Enum.GetValues<ActionType>()
+            .Where(ActionCapability.IsPermanentlyDenied)
+            .Should().BeEquivalentTo([ActionType.DeletePvc, ActionType.DeleteWorkload]);
+    }
+
+    [Fact]
     public async Task A_target_that_cannot_be_read_stops_the_action_before_admission()
     {
         // Order is the safety property. Without a PreState there is nothing to verify against

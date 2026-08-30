@@ -207,18 +207,14 @@ public sealed class ActionExecutor(
     /// <see cref="ActionType.SilenceAlert"/> needs Alertmanager, and an install without it must
     /// refuse the action before making a call rather than after failing one.
     /// </summary>
-    private bool CanPerform(ActionType type) => type switch
-    {
-        ActionType.RestartPod
-            or ActionType.RolloutRestart
-            or ActionType.ScaleWorkload
-            or ActionType.DeleteStuckJob
-            or ActionType.DeleteFailedJobPods => true,
-
-        ActionType.SilenceAlert => silencer.IsConfigured,
-
-        _ => false,
-    };
+    /// <remarks>
+    /// The build-time half is <see cref="ActionCapability.IsImplemented"/>, shared with the
+    /// planning prompt so the model is not offered an action this executor would refuse after a
+    /// human approved it. Only the runtime half lives here.
+    /// </remarks>
+    private bool CanPerform(ActionType type) =>
+        ActionCapability.IsImplemented(type)
+        && (type != ActionType.SilenceAlert || silencer.IsConfigured);
 
     /// <returns>
     /// The action's own after-state, when it knows it better than a snapshot of the target
