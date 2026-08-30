@@ -71,14 +71,23 @@ notify_reset() {
 # notifications were misconfigured would report "0 delivered" identically to one in which the
 # agent tried and failed - which is the ambiguity backlog #43 was about.
 notify_assert_configured() {
+    # --tail=-1, i.e. everything. This was --tail=400 and it failed on the first cluster run
+    # while the agent was working perfectly: OutboundStartupReport logs once at startup, and by
+    # the time this phase runs the agent has completed four investigations of a dozen steps
+    # each, so the startup lines are hundreds of lines back. A window sized for a quiet agent
+    # is not a window at all once the agent has been busy - and the symptom, "no such line in
+    # the log", reads exactly like the product failing to emit it.
+    #
+    # OutboundStartupReportTests asserts the product side, so if this ever fails again the
+    # answer is genuinely in the agent rather than here.
     local logs
-    logs=$(kc -n "$APP_NS" logs deploy/hephaisto --tail=400 2>/dev/null || true)
+    logs=$(kc -n "$APP_NS" logs deploy/hephaisto --tail=-1 2>/dev/null || true)
 
     if printf '%s' "$logs" | grep -q "Outbound webhook channel is ON"; then
         pass "the agent reports the outbound channel is on"
     else
         fail "the agent reports the outbound channel is on" \
-             "no 'Outbound webhook channel is ON' line in the startup log"
+             "no 'Outbound webhook channel is ON' in $(printf '%s' "$logs" | wc -l | tr -d ' ') log lines"
     fi
 
     if printf '%s' "$logs" | grep -q "Notifications are ON"; then
