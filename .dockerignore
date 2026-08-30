@@ -36,3 +36,18 @@ infra/
 # therefore broke that build: `COPY infra/chaos/faulty-service/...` cannot find a path the
 # context excluded. Negations must come after the rule they carve out of.
 !infra/chaos/faulty-service/
+
+# ...and this one, for the same reason and by the same mistake. infra/e2e/notification-receiver
+# is the outbound receiver the e2e harness posts notifications at, built with the repo root as
+# its context for the identical NU1008 reason.
+#
+# It was added in v0.3.0 WITHOUT this line, and the failure is worth recording because the
+# comment above already described it exactly: `docker build` reported
+#
+#     failed to compute cache key: "/infra/e2e/notification-receiver": not found
+#
+# which reads like a missing directory rather than an excluded one. notify_install then warned
+# and returned non-zero, the notify phase skipped with a reason, and the run went green having
+# tested nothing about notifications at all. A skip that says why is much better than a silent
+# pass - but the phase most worth running is the one that quietly did not.
+!infra/e2e/notification-receiver/
