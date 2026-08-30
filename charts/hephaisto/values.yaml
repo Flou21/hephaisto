@@ -293,6 +293,47 @@ networkPolicy:
   # node CIDR over 0.0.0.0/0.
   extraIngressCIDRs: []
 
+  # ---------------------------------------------------------------------------------------
+  # Egress - OFF by default, and the default is load-bearing
+  # ---------------------------------------------------------------------------------------
+  # Adding Egress to a NetworkPolicy denies EVERYTHING not explicitly listed. For this pod
+  # that means DNS, the Kubernetes API server, Postgres, the observability stack, grafana-mcp
+  # and the LLM API - all of which it needs. Turning this on with an incomplete allow list
+  # produces an agent that starts cleanly, reports healthy, and does nothing, which is one of
+  # the harder failures to diagnose because every symptom points somewhere else.
+  #
+  # So it is opt-in, and switching it on is a deliberate act with a checklist. Work through
+  # every entry below before enabling it, and expect to need apiServerCIDRs.
+  egress:
+    enabled: false
+
+    # DNS. Almost nothing works without it, so it is allowed to the whole cluster rather than
+    # to a namespace: CoreDNS lives in kube-system on most clusters and somewhere else on
+    # enough of them that pinning it is how this breaks on the cluster you did not test.
+    dns: true
+
+    # The Kubernetes API server. THIS IS THE ONE THAT CATCHES PEOPLE. The API server is not a
+    # pod in a namespace you can select - it is an endpoint, typically the control-plane node
+    # address on 6443, or a load balancer outside the cluster entirely. There is no portable
+    # selector for it, so you must supply the CIDR:
+    #
+    #   kubectl get endpoints kubernetes -o jsonpath='{.subsets[*].addresses[*].ip}'
+    #
+    # Left empty the agent cannot watch pods, cannot read events and cannot act - which is to
+    # say it cannot do anything at all.
+    apiServerCIDRs: []
+    apiServerPorts: [443, 6443]
+
+    # Everything outside the cluster the agent talks to: the LLM API, and whatever your
+    # notification channels point at. Ships empty, which means investigations fail and
+    # notifications never arrive - both loudly, at least.
+    #
+    # `0.0.0.0/0` on 443 is the honest starting point for most people, and is still a
+    # meaningful restriction: it stops the agent reaching anything in-cluster it was not
+    # granted above.
+    extraEgressCIDRs: []
+    extraEgressPorts: [443]
+
 # -----------------------------------------------------------------------------------------
 # RBAC
 # -----------------------------------------------------------------------------------------

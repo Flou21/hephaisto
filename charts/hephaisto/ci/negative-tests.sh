@@ -160,6 +160,34 @@ else
     fail "the Teams trigger URL rendered as a plain value; it is a credential"
 fi
 
+# Egress is off by default, and that default is load-bearing: adding Egress to a policy denies
+# everything not listed, which for this pod means DNS, the API server, Postgres and the LLM.
+# An accidental default here is an agent that starts, reports healthy, and does nothing.
+if awk '/name: t-hephaisto-ingress/,/^---$/' <<<"$FULL" | grep -q '^\s*- Egress$'; then
+    fail "egress must be off by default"
+else
+    pass "egress is off by default"
+fi
+
+EGRESS=$(helm template t "$CHART" --namespace hephaisto --values "$CHART/ci/full-values.yaml" \
+    --set networkPolicy.egress.enabled=true \
+    --set 'networkPolicy.egress.apiServerCIDRs[0]=10.0.0.1/32' 2>/dev/null)
+
+# Postgres talks to nothing, so its policy must stay Ingress-only even when the agent's grows
+# an egress section. Restricting the wrong pod is how this lands as a database outage.
+if awk '/name: t-hephaisto-postgres-ingress/,0' <<<"$EGRESS" | grep -q '^\s*- Egress$'; then
+    fail "the Postgres policy must never gain an Egress section"
+else
+    pass "enabling egress does not restrict Postgres"
+fi
+
+# Losing DNS or the API server is not a weakened control, it is an outage - and a silent one.
+if grep -q 'port: 53' <<<"$EGRESS" && grep -q '10.0.0.1/32' <<<"$EGRESS"; then
+    pass "egress allows DNS and the API server when enabled"
+else
+    fail "egress must allow DNS and the configured API server CIDRs"
+fi
+
 # The cordon/drain role ships unbound. Binding it is a separate, hand-written human act.
 if grep -q 'hephaisto-node' <<<"$FULL" && ! awk '/^kind: ClusterRoleBinding$/,/^---$/' <<<"$FULL" | grep -q 'hephaisto-node'; then
     pass "the node ClusterRole exists and is not bound"

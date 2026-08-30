@@ -30,6 +30,9 @@ spec:
       {{- include "hephaisto.selectorLabels" . | nindent 6 }}
   policyTypes:
     - Ingress
+    {{- if .Values.networkPolicy.egress.enabled }}
+    - Egress
+    {{- end }}
   ingress:
     # Alertmanager's webhooks and Prometheus's scrape. Selecting the NAMESPACE rather than
     # specific pods is deliberate: Alertmanager and Prometheus pod labels are chart-managed
@@ -68,6 +71,75 @@ spec:
         - protocol: TCP
           port: 8080
     {{- end }}
+{{- if .Values.networkPolicy.egress.enabled }}
+  {{/*
+  =======================================================================================
+  Egress - every line here is something the agent stops being able to do if it is wrong
+  =======================================================================================
+  The ingress rules above restrain what can reach the agent. These restrain what the agent
+  can reach, so a missing entry is not a weakened control - it is an outage. And it is a
+  quiet one: the pod starts, passes its probes, reports healthy, and silently cannot watch
+  pods or call a model.
+
+  Ordered by how badly its absence breaks things.
+  =======================================================================================
+  */}}
+  egress:
+    {{- if .Values.networkPolicy.egress.dns }}
+    # DNS, to anywhere. CoreDNS is in kube-system on most clusters and somewhere else on
+    # enough of them that a namespaceSelector here is how this breaks on the cluster nobody
+    # tested. Port 53 to the world is not a meaningful widening.
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- end }}
+
+    {{- with .Values.networkPolicy.egress.apiServerCIDRs }}
+    # The Kubernetes API server. Not selectable - it is an endpoint, usually the
+    # control-plane address or a load balancer outside the cluster - so it has to be a CIDR.
+    # Without this the agent cannot watch, cannot read events and cannot act.
+    - to:
+        {{- range . }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        {{- range $.Values.networkPolicy.egress.apiServerPorts }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
+
+    # Its own namespace: Postgres, and anything else alongside. "No audit, no action" means
+    # losing this does not degrade the agent, it stops the executor outright.
+    - to:
+        - podSelector: {}
+
+    # The observability stack: OTLP, grafana-mcp, Grafana's annotation API, Prometheus.
+    # Selecting the namespace rather than pods, for the reason the ingress rules give -
+    # chart-managed pod labels change across upgrades.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.observabilityNamespace }}
+
+    {{- with .Values.networkPolicy.egress.extraEgressCIDRs }}
+    # Outside the cluster: the LLM API, and wherever the notification channels point. This is
+    # the one that has to be widened before an escalation can reach a person.
+    - to:
+        {{- range . }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        {{- range $.Values.networkPolicy.egress.extraEgressPorts }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
+{{- end }}
 {{- if .Values.postgres.embedded.enabled }}
 ---
 # Postgres accepts connections only from inside this namespace. It is deliberately not exposed

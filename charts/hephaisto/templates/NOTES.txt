@@ -64,6 +64,22 @@ WHAT IT CAN DO TO YOUR CLUSTER
    record of what the agent WOULD have done and whether it was right, which is what makes
    promoting it a decision based on evidence rather than on hope.
 {{- end }}
+{{- if .Values.networkPolicy.egress.enabled }}
+{{- if not .Values.networkPolicy.egress.apiServerCIDRs }}
+
+!! networkPolicy.egress is ON and apiServerCIDRs is EMPTY.
+   The agent cannot reach the Kubernetes API server, so it cannot watch pods, read events or
+   act. It will start, pass its probes and report healthy while doing nothing. Find the CIDR:
+
+     kubectl get endpoints kubernetes -o jsonpath='{.subsets[*].addresses[*].ip}'
+{{- end }}
+{{- if not .Values.networkPolicy.egress.extraEgressCIDRs }}
+
+!! networkPolicy.egress is ON and extraEgressCIDRs is EMPTY.
+   Nothing outside the cluster is reachable: no LLM calls, and no notification will ever be
+   delivered. Investigations will fail and escalations will reach nobody.
+{{- end }}
+{{- end }}
 {{- if and (gt (len .Values.notifications.routes) 0) (not .Values.notifications.baseUrl) }}
 
 !! notifications.routes is set but notifications.baseUrl is empty.

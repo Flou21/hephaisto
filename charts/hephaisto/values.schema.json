@@ -220,6 +220,32 @@
           "description": "Every entry here can forge an alert to an unauthenticated, incident-creating endpoint.",
           "type": "array",
           "items": { "type": "string", "pattern": "^[0-9.]+/[0-9]{1,2}$|^[0-9a-fA-F:]+/[0-9]{1,3}$" }
+        },
+        "egress": {
+          "type": "object",
+          "description": "OFF by default. Enabling this denies everything not listed, including DNS and the API server.",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "dns": { "type": "boolean" },
+            "apiServerCIDRs": {
+              "description": "The API server is an endpoint, not a selectable pod. Without this the agent cannot watch, read events or act.",
+              "type": "array",
+              "items": { "type": "string", "pattern": "^[0-9.]+/[0-9]{1,2}$|^[0-9a-fA-F:]+/[0-9]{1,3}$" }
+            },
+            "apiServerPorts": {
+              "type": "array",
+              "items": { "type": "integer", "minimum": 1, "maximum": 65535 }
+            },
+            "extraEgressCIDRs": {
+              "description": "The LLM API and the notification endpoints. Empty means no escalation can reach a person.",
+              "type": "array",
+              "items": { "type": "string", "pattern": "^[0-9.]+/[0-9]{1,2}$|^[0-9a-fA-F:]+/[0-9]{1,3}$" }
+            },
+            "extraEgressPorts": {
+              "type": "array",
+              "items": { "type": "integer", "minimum": 1, "maximum": 65535 }
+            }
+          }
         }
       }
     },
