@@ -1,4 +1,6 @@
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Logging.Abstractions;
+using Hephaisto.Agent;
 using Hephaisto.Agent.Pipeline;
 using Hephaisto.Core;
 using Hephaisto.Core.Domain;
@@ -10,8 +12,12 @@ namespace Hephaisto.Tests.Pipeline;
 /// <summary>
 /// The schedule an executed action is judged on, and what "undo" is allowed to mean.
 /// </summary>
-public sealed class VerificationTests
+public sealed class VerificationTests : IDisposable
 {
+    private readonly Meters meters = new();
+
+    public void Dispose() => meters.Dispose();
+
     private static AgentAction Executed(ActionType type, string? preState = null, string? rollbackSpec = null) => new()
     {
         IncidentId = Given.IncidentId,
@@ -62,7 +68,7 @@ public sealed class VerificationTests
 
     // --- what can be undone -------------------------------------------------------------------
 
-    private static (ActionRollback Sut, IActionExecutor Executor) Build()
+    private (ActionRollback Sut, IActionExecutor Executor) Build()
     {
         var executor = Substitute.For<IActionExecutor>();
 
@@ -70,7 +76,9 @@ public sealed class VerificationTests
             .ExecuteAsync(Arg.Any<AgentAction>(), Arg.Any<CancellationToken>())
             .Returns(new ActionExecutionResult { Outcome = ActionExecutionOutcome.Executed });
 
-        return (new ActionRollback(executor, Given.Clock(), NullLogger<ActionRollback>.Instance), executor);
+        return (
+            new ActionRollback(executor, meters.Metrics, Given.Clock(), NullLogger<ActionRollback>.Instance),
+            executor);
     }
 
     [Theory]
@@ -161,7 +169,7 @@ public sealed class VerificationTests
                 Detail = "workload cooldown",
             });
 
-        var sut = new ActionRollback(executor, Given.Clock(), NullLogger<ActionRollback>.Instance);
+        var sut = new ActionRollback(executor, meters.Metrics, Given.Clock(), NullLogger<ActionRollback>.Instance);
         var action = Executed(ActionType.ScaleWorkload, preState: """{"replicas":3}""");
 
         var result = await sut.TryRevertAsync(action, TestContext.Current.CancellationToken);
@@ -169,5 +177,43 @@ public sealed class VerificationTests
         result.Reverted.Should().BeFalse();
         result.Detail.Should().Contain("could not run");
         action.State.Should().NotBe(ActionState.RolledBack);
+    }
+
+    /// <summary>A real HephaistoMetrics over a throwaway meter, since it is a sealed class.</summary>
+    private sealed class Meters : IDisposable
+    {
+        private readonly Factory factory = new();
+
+        public HephaistoMetrics Metrics { get; }
+
+        public Meters() => Metrics = new HephaistoMetrics(factory);
+
+        public void Dispose()
+        {
+            Metrics.Dispose();
+            factory.Dispose();
+        }
+
+        private sealed class Factory : IMeterFactory
+        {
+            private readonly List<Meter> meters = [];
+
+            public Meter Create(MeterOptions options)
+            {
+                var meter = new Meter(options);
+                meters.Add(meter);
+                return meter;
+            }
+
+            public void Dispose()
+            {
+                foreach (var meter in meters)
+                {
+                    meter.Dispose();
+                }
+
+                meters.Clear();
+            }
+        }
     }
 }

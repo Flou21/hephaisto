@@ -35,6 +35,7 @@ public sealed record RollbackResult
 /// </remarks>
 public sealed class ActionRollback(
     IActionExecutor executor,
+    HephaistoMetrics metrics,
     IClock clock,
     ILogger<ActionRollback> logger)
 {
@@ -67,6 +68,7 @@ public sealed class ActionRollback(
         }
 
         action.State = ActionState.RolledBack;
+        metrics.ActionRolledBack(action.Type);
 
         return new RollbackResult
         {

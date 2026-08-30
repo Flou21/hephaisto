@@ -145,11 +145,28 @@ public sealed class HephaistoMetrics : IDisposable
         investigationTerminations.Add(1, new KeyValuePair<string, object?>("reason", reason.ToString()));
     }
 
-    public void PolicyDecision(PolicyDecision decision, ActionType type, string reason) =>
+    /// <summary>
+    /// A policy verdict. Labels are closed vocabularies only.
+    /// </summary>
+    /// <remarks>
+    /// This used to carry the verdict's first reason as a label, and those reasons are prose
+    /// built for a human on the action row - "workload is quarantined until 2026-08-30T...",
+    /// "pod is 45s old, younger than the 120s minimum". Timestamps and ages in a label value
+    /// are unbounded cardinality on a counter that fires for every proposed action, which is
+    /// the failure backlog #12 records against grounding.rejected and a worse instance of it:
+    /// that one fires rarely, this one fires constantly. The dashboard's own spec says it -
+    /// "free-text label values ... will blow up cardinality - keep them on spans".
+    ///
+    /// So the reason stays where it is useful and safe: on the action row, in the audit
+    /// trail, and on the policy.evaluate span. <c>downgraded</c> replaces it here because it
+    /// is the one thing the verdict alone cannot tell you - whether this was refused outright
+    /// or was allow-eligible until a budget or a missing rollback spec pulled it back.
+    /// </remarks>
+    public void PolicyDecision(PolicyDecision decision, ActionType type, bool downgraded) =>
         policyDecisions.Add(1,
             new("decision", decision.ToString()),
             new("action_type", type.ToString()),
-            new("reason", reason));
+            new("downgraded", downgraded ? "true" : "false"));
 
     public void ActionExecuted(ActionType type, AgentMode mode, string outcome) =>
         actionsExecuted.Add(1,

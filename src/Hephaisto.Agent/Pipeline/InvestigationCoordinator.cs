@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Hephaisto.Agent.Investigations;
@@ -10,6 +11,7 @@ using Hephaisto.Core;
 using Hephaisto.Core.Abstractions;
 using Hephaisto.Core.Domain;
 using Hephaisto.Core.Policy;
+using Hephaisto.Core.Telemetry;
 
 namespace Hephaisto.Agent.Pipeline;
 
@@ -155,8 +157,12 @@ public sealed class InvestigationCoordinator(
             investigation.StepsUsed,
             investigation.TerminationReason);
 
+        // rejection.Reason, not rejection. The record's compiler-generated ToString() emits all
+        // four members - including a Detail string and two Guids - so this was writing a label
+        // value unique per rejection. backlog #12; the correct form was already three files
+        // away in InvestigationRunner.
         foreach (var rejection in outcome.Rejections)
-            metrics.GroundingRejected(rejection.ToString() ?? "unknown");
+            metrics.GroundingRejected(rejection.Reason.ToString());
 
         var disposition = await DecideOutcomeAsync(incident, outcome, mode, ct).ConfigureAwait(false);
 
@@ -348,6 +354,15 @@ public sealed class InvestigationCoordinator(
                 EscalationReason.PolicyDenied, "cluster facts unavailable; nothing could be judged");
         }
 
+        // The policy engine runs on every investigation, and its declared span has never been
+        // started - the one genuinely missing span of the four, since the other three were
+        // waiting on an executor that did not exist. backlog #16.
+        using var policySpan = HephaistoMetrics.ActivitySource.StartActivity(
+            HephaistoTelemetry.Spans.PolicyEvaluate);
+
+        policySpan?.SetTag("plan.action_count", outcome.Plan.Actions.Count);
+        policySpan?.SetTag("k8s.namespace.name", incident.Target.Namespace);
+
         foreach (var action in outcome.Plan.Actions)
         {
             action.IncidentId = incident.Id;
@@ -374,7 +389,19 @@ public sealed class InvestigationCoordinator(
                 _ => ActionState.Denied,
             };
 
-            metrics.PolicyDecision(verdict.Decision, action.Type, verdict.Reasons.FirstOrDefault() ?? "none");
+            metrics.PolicyDecision(verdict.Decision, action.Type, verdict.DowngradedFrom is not null);
+
+            // The prose belongs here, where cardinality is not a concern and a human reading
+            // one investigation gets the whole verdict rather than its first line.
+            policySpan?.AddEvent(new ActivityEvent(
+                $"{action.Type} -> {verdict.Decision}",
+                tags: new ActivityTagsCollection
+                {
+                    ["action.id"] = action.Id,
+                    ["policy.decision"] = verdict.Decision.ToString(),
+                    ["policy.downgraded_from"] = verdict.DowngradedFrom?.ToString(),
+                    ["policy.reasons"] = string.Join("; ", verdict.Reasons),
+                }));
         }
 
         var top = outcome.Plan.Actions[0];
