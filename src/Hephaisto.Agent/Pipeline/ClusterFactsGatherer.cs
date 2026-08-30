@@ -49,6 +49,7 @@ public sealed class ClusterFactsUnavailableException(string message, Exception? 
 public sealed class ClusterFactsGatherer(
     KubernetesApi api,
     IActionRepository actions,
+    Microsoft.Extensions.Options.IOptionsMonitor<PolicyOptions> policyOptions,
     IClock clock,
     ILogger<ClusterFactsGatherer> logger)
 {
@@ -91,12 +92,7 @@ public sealed class ClusterFactsGatherer(
                 QuarantinedUntil = Later(incident.QuarantinedUntil, workloadQuarantine),
                 ClusterUnhealthyFraction = unhealthy,
 
-                // Deliberately false, and deliberately not quietly defaulted: nothing in this
-                // repo defines a maintenance window. There is a SuppressionReason for it and a
-                // policy gate reading it, and no schedule, no chart value and no producer. A
-                // window invented here would be a control that looks configured and is not -
-                // the failure mode PolicyOptions.MaxAutoScaleReplicas is already an example of.
-                InMaintenanceWindow = false,
+                InMaintenanceWindow = InMaintenanceWindow(now),
             };
         }
         catch (Exception ex) when (ex is not OperationCanceledException and not ClusterFactsUnavailableException)
@@ -104,6 +100,42 @@ public sealed class ClusterFactsGatherer(
             throw new ClusterFactsUnavailableException(
                 $"Could not read the facts needed to judge an action on {target.WorkloadKey}.", ex);
         }
+    }
+
+    /// <summary>
+    /// Whether any configured freeze covers this moment.
+    /// </summary>
+    /// <remarks>
+    /// The gate this feeds has existed since the MVP with nothing on the other end of it.
+    /// Empty stays the default - no window is a real answer, and inventing one would be a
+    /// control nobody asked for - but the difference now is that a configured window works.
+    /// </remarks>
+    private bool InMaintenanceWindow(DateTimeOffset now)
+    {
+        var windows = policyOptions.CurrentValue.MaintenanceWindows;
+
+        foreach (var window in windows)
+        {
+            if (!window.IsValid)
+            {
+                // Loud, and not treated as a freeze. A typo that silently froze the agent
+                // would look exactly like a healthy quiet cluster.
+                logger.LogError(
+                    "Maintenance window '{Window}' does not parse (expected HH:mm) and is being ignored.",
+                    window.Describe());
+
+                continue;
+            }
+
+            if (window.Contains(now))
+            {
+                logger.LogInformation("In maintenance window {Window}; nothing will be acted on.", window.Describe());
+
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static DateTimeOffset? Later(DateTimeOffset? a, DateTimeOffset? b) =>

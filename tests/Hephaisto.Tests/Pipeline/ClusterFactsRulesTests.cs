@@ -183,11 +183,22 @@ public sealed class ClusterFactsRulesTests
         var gatherer = new ClusterFactsGatherer(
             new KubernetesApi(client),
             actions,
+            new PolicyStub(Given.Options()),
             Given.Clock(),
             NullLogger<ClusterFactsGatherer>.Instance);
 
         var act = async () => await gatherer.GatherAsync(Given.Incident(), AgentMode.Auto, CancellationToken.None);
 
         await act.Should().ThrowAsync<ClusterFactsUnavailableException>();
+    }
+
+    private sealed class PolicyStub(Hephaisto.Core.Policy.PolicyOptions value)
+        : Microsoft.Extensions.Options.IOptionsMonitor<Hephaisto.Core.Policy.PolicyOptions>
+    {
+        public Hephaisto.Core.Policy.PolicyOptions CurrentValue => value;
+
+        public Hephaisto.Core.Policy.PolicyOptions Get(string? name) => value;
+
+        public IDisposable? OnChange(Action<Hephaisto.Core.Policy.PolicyOptions, string?> listener) => null;
     }
 }

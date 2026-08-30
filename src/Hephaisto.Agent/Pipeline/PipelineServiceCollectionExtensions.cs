@@ -22,6 +22,10 @@ public static class PipelineServiceCollectionExtensions
         // Policy__AllowedNamespaces__N since the write Role existed and nothing read it.
         services.Configure<PolicyOptions>(configuration.GetSection(PolicyOptions.SectionName));
 
+        // Because it hot-reloads. The rules the agent enforces can change with no restart and
+        // no deploy event, and a silent policy change is indistinguishable from an attack.
+        services.AddHostedService<PolicyChangeAuditor>();
+
         services.TryAddSingleton<IClock>(SystemClock.Instance);
         services.AddSingleton<HephaistoMetrics>();
         services.AddSingleton<InvestigationQueue>();

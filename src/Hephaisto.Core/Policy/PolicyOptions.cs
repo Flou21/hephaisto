@@ -7,10 +7,9 @@ namespace Hephaisto.Core.Policy;
 /// </summary>
 /// <remarks>
 /// This type is the policy engine's entire configuration surface, so treat a change to it as
-/// a change to the safety model. Note what is NOT yet true: a reload is currently silent, and
-/// a silent policy change is indistinguishable from an attack. Auditing reloads is tracked
-/// separately rather than asserted here - a comment describing behaviour nobody wrote is how
-/// the next person plans against a control that does not exist.
+/// a change to the safety model. Every reload writes a <c>policy.changed</c> audit row naming
+/// what moved - see <c>PolicyChangeAuditor</c> - because a silent policy change is
+/// indistinguishable from an attack.
 /// </remarks>
 public sealed class PolicyOptions
 {
@@ -85,6 +84,12 @@ public sealed class PolicyOptions
     public TimeSpan RollbackPreviousHealthyMinimum { get; set; } = TimeSpan.FromHours(1);
 
     /// <summary>Ceiling for an unattended scale-up, and the maximum step size.</summary>
+    /// <summary>
+    /// Windows during which nothing may be acted on. Empty means no freeze, which is the
+    /// default: an invented window is a control nobody asked for.
+    /// </summary>
+    public List<MaintenanceWindow> MaintenanceWindows { get; set; } = [];
+
     public int MaxAutoScaleReplicas { get; set; } = 10;
 
     public int MaxAutoScaleStep { get; set; } = 2;
