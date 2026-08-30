@@ -138,6 +138,29 @@ secrets:
   notificationTeams: hephaisto-notification-teams
 
 # -----------------------------------------------------------------------------------------
+# Alertmanager - for the SilenceAlert action, and nothing else
+# -----------------------------------------------------------------------------------------
+# Empty means SilenceAlert is refused by the executor before any call is made, which is the
+# honest answer for an install with no Alertmanager rather than a 404 that reads like a bug.
+#
+# Note what this is NOT: the agent does not read alerts from here - they arrive by webhook.
+# This is write-only, and the only thing it writes is a silence.
+#
+# SilenceAlert ALWAYS requires approval, whatever policy.autoEnabledActionTypes says. It is
+# the one action whose failure mode is that everything looks fine.
+alertmanager:
+  url: ""
+  # Hard ceiling on a silence, whatever the model asks for. The dangerous silence is not the
+  # wrong one, it is the LONG one: a silence nobody remembers is a monitoring gap that looks
+  # like a quiet system.
+  #
+  # .NET TimeSpan format - "hh:mm:ss", NOT Go/Prometheus duration. "2h" is what everything
+  # else in a Kubernetes values file looks like and it does NOT parse here: the agent would
+  # fail to start with a binding error naming a key most people would not connect to this
+  # line. values.schema.json enforces the shape so `helm template` catches it first.
+  maxDuration: "02:00:00"
+
+# -----------------------------------------------------------------------------------------
 # Outbound notifications
 # -----------------------------------------------------------------------------------------
 # Nothing here is on by default, and `routes` being empty is what makes that true: with no

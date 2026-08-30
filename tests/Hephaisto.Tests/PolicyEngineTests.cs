@@ -516,13 +516,15 @@ public sealed class PolicyEngineTests
     [Fact]
     public void LastReplicaRule_AppliesOnlyToRestartPod()
     {
-        // Silencing an alert on a single-replica workload takes nothing down.
+        // Deleting a Job's failed pods on a single-replica workload takes nothing down. This
+        // used to be asserted with SilenceAlert, which is no longer allow-eligible at all -
+        // see NeverAutoEnabled below - so it would now pass for the wrong reason.
         var facts = Given.Facts() with
         {
             Workload = Given.Workload() with { DesiredReplicas = 1, ReadyReplicas = 1, UpdatedReplicas = 1 },
         };
 
-        PolicyEngine.Evaluate(Given.Request(ActionType.SilenceAlert), facts, Given.Options())
+        PolicyEngine.Evaluate(Given.Request(ActionType.DeleteFailedJobPods), facts, Given.Options())
             .Decision.Should().Be(PolicyDecision.Allow);
     }
 
@@ -566,7 +568,6 @@ public sealed class PolicyEngineTests
     [InlineData(ActionType.RestartPod)]
     [InlineData(ActionType.DeleteStuckJob)]
     [InlineData(ActionType.DeleteFailedJobPods)]
-    [InlineData(ActionType.SilenceAlert)]
     public void LowRiskActionTypes_AreAllowEligible(ActionType type)
     {
         var facts = Given.Facts() with
@@ -577,6 +578,39 @@ public sealed class PolicyEngineTests
 
         PolicyEngine.Evaluate(Given.Request(type), facts, Given.Options())
             .Decision.Should().Be(PolicyDecision.Allow);
+    }
+
+    /// <summary>
+    /// <see cref="ActionType.SilenceAlert"/> can never be executed unattended, whatever the
+    /// operator configures.
+    /// </summary>
+    /// <remarks>
+    /// It was in the low-risk set until v0.3.0, and it satisfies every word of that set's
+    /// description - cheap, reversible, single-object. The reason it does not belong there is
+    /// not about risk of damage, it is about what failure looks like: every other action fails
+    /// VISIBLY when it is wrong, and a wrong silence fails by making the cluster look quiet.
+    ///
+    /// This asserts the promotion path cannot reach it. An operator who puts SilenceAlert in
+    /// autoEnabledActionTypes - which the chart's schema happily permits, because the list is
+    /// the full ActionType enum - still gets RequireApproval, because eligibility is decided
+    /// before the autonomy gate is consulted.
+    /// </remarks>
+    [Fact]
+    public void SilenceAlert_AlwaysRequiresApproval_EvenWhenAutoEnabled()
+    {
+        var options = Given.Options();
+        options.AutoEnabledActionTypes.Add(ActionType.SilenceAlert);
+
+        var facts = Given.Facts() with
+        {
+            Mode = AgentMode.Auto,
+            Workload = Given.Workload() with { DesiredReplicas = 3, ReadyReplicas = 3 },
+        };
+
+        var result = PolicyEngine.Evaluate(Given.Request(ActionType.SilenceAlert), facts, options);
+
+        result.Decision.Should().Be(PolicyDecision.RequireApproval);
+        result.Reasons.Should().Contain(r => r.Contains("stops a human being told", StringComparison.Ordinal));
     }
 
     [Theory]

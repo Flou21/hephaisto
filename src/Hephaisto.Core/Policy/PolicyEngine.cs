@@ -36,12 +36,19 @@ public static class PolicyEngine
     private static readonly ActionType[] NeverApprovable = [ActionType.DeletePvc, ActionType.DeleteWorkload];
 
     /// <summary>Cheap, reversible, single-object actions. Everything else needs a human by default.</summary>
+    /// <remarks>
+    /// <b><see cref="ActionType.SilenceAlert"/> was here and has been removed.</b> It is cheap,
+    /// reversible and single-object - it satisfies every word of the description - and it is
+    /// still the wrong thing to let an agent do unattended, because its entire effect is to
+    /// stop a human being told. Every other action on this list fails visibly when it is wrong;
+    /// this one fails by making the cluster look quiet. It now has its own case below, which
+    /// always requires approval.
+    /// </remarks>
     private static readonly ActionType[] LowRisk =
     [
         ActionType.RestartPod,
         ActionType.DeleteStuckJob,
         ActionType.DeleteFailedJobPods,
-        ActionType.SilenceAlert,
     ];
 
     /// <summary>
@@ -371,6 +378,14 @@ public static class PolicyEngine
 
             case ActionType.PatchResources:
                 return (false, "patching resources mutates the workload spec, so it requires approval");
+
+            case ActionType.SilenceAlert:
+                // Never allow-eligible, whatever AutoEnabledActionTypes says. Silencing is the
+                // one action whose failure mode is that everything looks fine: a wrong restart
+                // shows up as a pod still crash-looping, and a wrong silence shows up as
+                // nothing at all, for as long as it lasts. The agent may propose one - it is
+                // often the right call during a known-noisy deploy - and a person decides.
+                return (false, "silencing an alert stops a human being told, so it always requires approval");
 
             case ActionType.CordonNode:
                 return (false, "cordoning a node affects scheduling cluster-wide, so it requires approval");

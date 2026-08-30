@@ -271,6 +271,14 @@ spec:
                   key: token
             {{- end }}
 
+            {{- if .Values.alertmanager.url }}
+            # Write-only, and the only thing written is a silence. Alerts arrive by webhook.
+            - name: Alertmanager__Url
+              value: {{ .Values.alertmanager.url | quote }}
+            - name: Alertmanager__MaxDuration
+              value: {{ .Values.alertmanager.maxDuration | quote }}
+            {{- end }}
+
             # ---------------------------------------------------------------------------
             # Outbound notifications - the only thing here that leaves the cluster on the
             # agent's own initiative

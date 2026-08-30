@@ -1,3 +1,4 @@
+using Hephaisto.Agent.Observability;
 using Hephaisto.Core.Notifications;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -96,6 +97,32 @@ public static class NotificationServiceCollectionExtensions
         }
 
         services.AddScoped<IAgentEventNotifier, AgentEventNotifier>();
+
+        // Alertmanager silences. Registered here rather than with the pipeline because it is
+        // outbound HTTP, which is this stream's subject - and because SilenceAlert existed as a
+        // refused action type for a whole release for want of exactly this.
+        //
+        // Conditional with a Null* fallback, the shape IGrafanaAnnotator established: an
+        // install without Alertmanager refuses the action BEFORE making a call, rather than
+        // after failing one, which is the difference between "cannot" and "forbidden".
+        services.AddOptions<AlertmanagerOptions>()
+            .Bind(configuration.GetSection(AlertmanagerOptions.SectionName))
+            .Validate(
+                o => o.MaxDuration > TimeSpan.Zero,
+                "Alertmanager:MaxDuration must be positive, or every silence is refused.")
+            .ValidateOnStart();
+
+        var alertmanager = configuration.GetSection(AlertmanagerOptions.SectionName).Get<AlertmanagerOptions>()
+            ?? new AlertmanagerOptions();
+
+        if (!string.IsNullOrWhiteSpace(alertmanager.Url))
+        {
+            services.AddHttpClient<IAlertSilencer, AlertSilencer>();
+        }
+        else
+        {
+            services.AddSingleton<IAlertSilencer, NullAlertSilencer>();
+        }
 
         // Registered unconditionally, even with no routes configured. Its tick is two indexed
         // reads that find nothing, which is cheap enough to be worth the property it buys: a

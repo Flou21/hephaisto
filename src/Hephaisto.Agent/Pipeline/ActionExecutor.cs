@@ -8,6 +8,7 @@ using Hephaisto.Agent.Kubernetes;
 using Hephaisto.Agent.Persistence.Repositories;
 using Hephaisto.Agent.Telemetry;
 using Hephaisto.Core.Abstractions;
+using Hephaisto.Agent.Observability;
 using Hephaisto.Core.Domain;
 using Hephaisto.Core.Policy;
 using Hephaisto.Core.Telemetry;
@@ -37,6 +38,7 @@ public sealed class ActionExecutor(
     KubernetesApi api,
     IActionRepository actions,
     ActionEventMirror events,
+    IAlertSilencer silencer,
     IOptionsMonitor<PolicyOptions> policyOptions,
     HephaistoMetrics metrics,
     IClock clock,
@@ -122,9 +124,15 @@ public sealed class ActionExecutor(
         action.State = ActionState.Executing;
         await actions.SaveChangesAsync(ct).ConfigureAwait(false);
 
+        // An action type that knows its own after-state supplies it; everything else has the
+        // target object snapshotted below. SilenceAlert is the first of the former, and it has
+        // to be: its "target" is an alert rule, so there is no Kubernetes object to read back,
+        // and the silence id it returns is what a rollback needs.
+        string? effect;
+
         try
         {
-            await PerformAsync(action, dryRun, ct).ConfigureAwait(false);
+            effect = await PerformAsync(action, dryRun, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -140,7 +148,7 @@ public sealed class ActionExecutor(
 
         // 4. Record what the world looks like now. Best-effort: the action HAS happened, and
         //    losing the after-picture must not turn a successful action into a failed one.
-        action.PostState = await TrySnapshotAsync(action.Target, ct).ConfigureAwait(false);
+        action.PostState = effect ?? await TrySnapshotAsync(action.Target, ct).ConfigureAwait(false);
         action.ExecutedAt = clock.UtcNow;
         action.Outcome = dryRun ? Outcomes.DryRun : Outcomes.Applied;
         action.State = ActionState.Executed;
@@ -194,14 +202,29 @@ public sealed class ActionExecutor(
     /// does not exist anywhere in <c>src/</c> yet; <c>CordonNode</c> and <c>DrainNode</c> have
     /// a ClusterRole that ships unbound on purpose.
     /// </remarks>
-    private static bool CanPerform(ActionType type) => type is
-        ActionType.RestartPod or
-        ActionType.RolloutRestart or
-        ActionType.ScaleWorkload or
-        ActionType.DeleteStuckJob or
-        ActionType.DeleteFailedJobPods;
+    /// <summary>
+    /// Instance rather than static, because one action type's availability is a runtime fact:
+    /// <see cref="ActionType.SilenceAlert"/> needs Alertmanager, and an install without it must
+    /// refuse the action before making a call rather than after failing one.
+    /// </summary>
+    private bool CanPerform(ActionType type) => type switch
+    {
+        ActionType.RestartPod
+            or ActionType.RolloutRestart
+            or ActionType.ScaleWorkload
+            or ActionType.DeleteStuckJob
+            or ActionType.DeleteFailedJobPods => true,
 
-    private async Task PerformAsync(AgentAction action, bool dryRun, CancellationToken ct)
+        ActionType.SilenceAlert => silencer.IsConfigured,
+
+        _ => false,
+    };
+
+    /// <returns>
+    /// The action's own after-state, when it knows it better than a snapshot of the target
+    /// would; null to fall back to snapshotting the object.
+    /// </returns>
+    private async Task<string?> PerformAsync(AgentAction action, bool dryRun, CancellationToken ct)
     {
         // "All" is the only value the API server accepts, and passing null is what makes a
         // call real. Everything below routes its dry-run through this one variable so a new
@@ -241,12 +264,102 @@ public sealed class ActionExecutor(
                 await DeleteFailedJobPodsAsync(target, dr, ct).ConfigureAwait(false);
                 break;
 
+            case ActionType.SilenceAlert:
+                return await SilenceAsync(action, dryRun, ct).ConfigureAwait(false);
+
             default:
                 // Unreachable: CanPerform gates this switch. Throwing rather than silently
                 // doing nothing, because "reported success and did nothing" is the worst
                 // outcome available to an executor.
                 throw new InvalidOperationException(
                     $"{action.Type} passed CanPerform but has no implementation. This is a bug.");
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Creates an Alertmanager silence, and returns its id as the action's after-state.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>A dry run makes no call at all.</b> Every other action routes its dry run through the
+    /// API server's own <c>dryRun=All</c>, which validates without mutating. Alertmanager has
+    /// no such parameter, so the only honest dry run is not to ask - a "validated" silence that
+    /// actually silenced something would make DryRun mode a liar about the one action type
+    /// whose whole effect is to hide things.
+    /// </para>
+    /// <para>
+    /// The silence id goes into <c>PostState</c> because that is what the rollback expires, and
+    /// unlike a pod delete this action genuinely has an inverse.
+    /// </para>
+    /// </remarks>
+    private async Task<string?> SilenceAsync(AgentAction action, bool dryRun, CancellationToken ct)
+    {
+        var args = ParseSilenceArguments(action.Arguments);
+
+        if (dryRun)
+        {
+            logger.LogInformation(
+                "Dry run: would silence {Alert} in {Namespace}. Alertmanager has no dryRun "
+                    + "parameter, so nothing was sent.",
+                args.AlertName,
+                action.Target.Namespace);
+
+            return JsonSerializer.Serialize(
+                new { dryRun = true, alertname = args.AlertName, namespaceName = action.Target.Namespace },
+                Json);
+        }
+
+        var result = await silencer
+            .SilenceAsync(
+                new SilenceRequest(
+                    args.AlertName,
+                    action.Target.Namespace,
+                    args.Duration,
+                    action.ApprovedBy ?? "hephaisto/auto",
+                    $"Hephaisto incident {action.IncidentId}: {action.PredictedEffect ?? "silencing a known-noisy alert"}"),
+                ct)
+            .ConfigureAwait(false);
+
+        if (!result.Succeeded)
+        {
+            // Thrown rather than returned, so it lands on the executor's own failure path and
+            // is recorded as Failed. A silence that did not happen must never read as applied.
+            throw new InvalidOperationException($"Alertmanager refused the silence: {result.Error}");
+        }
+
+        return JsonSerializer.Serialize(new { silenceId = result.SilenceId }, Json);
+    }
+
+    /// <summary>
+    /// <c>{"alertname": "...", "durationMinutes": 30}</c>. Missing or unparseable arguments
+    /// yield an EMPTY alertname, which <see cref="IAlertSilencer"/> then refuses - a silence
+    /// with no matchers matches every alert in the cluster, so defaulting to something
+    /// permissive here would be the worst possible fallback.
+    /// </summary>
+    private static (string AlertName, TimeSpan Duration) ParseSilenceArguments(string? arguments)
+    {
+        if (string.IsNullOrWhiteSpace(arguments))
+        {
+            return (string.Empty, TimeSpan.Zero);
+        }
+
+        try
+        {
+            var root = JsonDocument.Parse(arguments).RootElement;
+
+            var name = root.TryGetProperty("alertname", out var n) ? n.GetString() ?? string.Empty : string.Empty;
+
+            var minutes = root.TryGetProperty("durationMinutes", out var d) && d.TryGetInt32(out var m)
+                ? m
+                : 0;
+
+            return (name, minutes > 0 ? TimeSpan.FromMinutes(minutes) : TimeSpan.Zero);
+        }
+        catch (JsonException)
+        {
+            return (string.Empty, TimeSpan.Zero);
         }
     }
 

@@ -28,11 +28,16 @@ public sealed class OutboundStartupReport(
     IServiceScopeFactory scopes,
     IOptionsMonitor<NotificationOptions> notifications,
     IOptionsMonitor<GrafanaOptions> grafana,
+    IAlertSilencer silencer,
     ILogger<OutboundStartupReport> logger) : IHostedService
 {
     public Task StartAsync(CancellationToken cancellationToken)
     {
         logger.LogInformation("{Status}", GrafanaAnnotator.Describe(grafana.CurrentValue));
+
+        // Says whether SilenceAlert can work at all. Without it the action is refused with
+        // "unsupported", which reads like a missing capability rather than a missing setting.
+        logger.LogInformation("{Status}", silencer.Describe());
 
         using var scope = scopes.CreateScope();
 
