@@ -21,6 +21,20 @@ deploy_assert() {
     pod=$(kc -n "$APP_NS" get pod -l app.kubernetes.io/name=hephaisto -o name | head -1)
     [ -n "$pod" ] || { fail "agent pod exists" "no pod matched the name label"; return 1; }
 
+    # Snapshot the log while the pod is FRESH and the log is short.
+    #
+    # Anything that only appears at startup - what this process can and cannot send outward,
+    # which arms the kill switch resolved to - cannot be reliably grepped out of `kubectl logs`
+    # later. The kubelet rotates a container log at 10Mi by default and `kubectl logs` reads the
+    # current file, and a pod replaced for any reason takes its predecessor's log with it. An
+    # agent that has run five investigations emits lines of up to ~11 KB, so the startup lines
+    # are the first thing to go.
+    #
+    # That is not hypothetical: the notify phase asserted on those lines and failed across a
+    # 1674-line log while the agent had emitted them perfectly - the product was right and the
+    # assertion was reading a window they were no longer in.
+    kc -n "$APP_NS" logs "$pod" --tail=-1 > "$WORKDIR/agent-startup.log" 2>/dev/null || true
+
     # --- RESTARTS 0 -----------------------------------------------------------------------
     # Every fresh install used to show RESTARTS: 1 - the agent starts, awaits the EF migration,
     # Postgres is not accepting connections yet, the process exits, Kubernetes restarts it and

@@ -71,17 +71,24 @@ notify_reset() {
 # notifications were misconfigured would report "0 delivered" identically to one in which the
 # agent tried and failed - which is the ambiguity backlog #43 was about.
 notify_assert_configured() {
-    # --tail=-1, i.e. everything. This was --tail=400 and it failed on the first cluster run
-    # while the agent was working perfectly: OutboundStartupReport logs once at startup, and by
-    # the time this phase runs the agent has completed four investigations of a dozen steps
-    # each, so the startup lines are hundreds of lines back. A window sized for a quiet agent
-    # is not a window at all once the agent has been busy - and the symptom, "no such line in
-    # the log", reads exactly like the product failing to emit it.
+    # Read the snapshot deploy_assert took while the pod was fresh, NOT the live log.
     #
-    # OutboundStartupReportTests asserts the product side, so if this ever fails again the
-    # answer is genuinely in the agent rather than here.
+    # Two attempts at reading it live both failed while the agent was emitting the lines
+    # perfectly. --tail=400 was too small once the agent got busy; --tail=-1 then searched all
+    # 1674 lines and still missed them, because a container log is not a durable record: the
+    # kubelet rotates it at 10Mi and `kubectl logs` reads the current file, so on a chatty pod
+    # the startup lines are simply gone. Both times the symptom - "no such line in the log" -
+    # read exactly like the product failing to emit it, which is the expensive kind of wrong.
+    #
+    # OutboundStartupReportTests asserts the product side. If this fails now, the answer is
+    # genuinely in the agent.
     local logs
-    logs=$(kc -n "$APP_NS" logs deploy/hephaisto --tail=-1 2>/dev/null || true)
+    if [ -s "$WORKDIR/agent-startup.log" ]; then
+        logs=$(cat "$WORKDIR/agent-startup.log")
+    else
+        warn "no startup snapshot from the deploy phase; falling back to the live log"
+        logs=$(kc -n "$APP_NS" logs deploy/hephaisto --tail=-1 2>/dev/null || true)
+    fi
 
     if printf '%s' "$logs" | grep -q "Outbound webhook channel is ON"; then
         pass "the agent reports the outbound channel is on"
