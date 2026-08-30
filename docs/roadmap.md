@@ -17,15 +17,20 @@ against the code rather than believed — see [backlog #9](backlog.md#9-semantic
 
 ## Where it stands
 
-`v0.3.0` is built and untagged. **The agent reaches people**: an escalation is written to a
+`v0.3.0` is the current release. **The agent reaches people**: an escalation is written to a
 Postgres outbox in the same transaction as the state change that caused it, and delivered to a
 generic HTTP endpoint or a Teams card with retry, rate limiting and a link back to the incident.
-It ships delivering nowhere — an empty routing table and no channel configured.
+It ships delivering nowhere — an empty routing table and no channel configured, two independent
+things to change.
 
-**Nothing in it has been run against a cluster.** 989 unit tests and 53 integration tests pass,
-including the transactional guarantee against a real Postgres; the `notify` e2e phase exists and
-has not been executed. That debt now compounds with v0.2.0's, and the two are **one run** — see
-the v0.3.0 section.
+**The delivery path is measured, not claimed.** It ran against a real cluster and every assertion
+passed, including the one the design exists for: the receiver taken down, the agent restarted
+mid-flight, the receiver brought back, and the delivery arriving anyway.
+
+**v0.2.0's acting criterion is still unmet**, and the three attempts at it are worth reading as a
+sequence: gate 9 refused the restart; that was fixed; then the planner proposed no action at all.
+[#41](backlog.md#41-c11-has-never-been-run-against-a-cluster) has the detail. It is not a safety
+gate problem and never was after the first attempt.
 
 `v0.2.0` shipped on 2026-08-30. **The agent can act**: it executes a narrow allowlist of
 reversible actions, verifies them at T+60s / T+5m / T+15m with deterministic predicates,
@@ -439,16 +444,42 @@ carrying a working link; the receiver is taken down, the agent restarted, the re
 back, and the delivery arrives anyway; a burst is rate-limited rather than repeated; and a stock
 install delivers nowhere.
 
-**Written, and unexecuted against a cluster.** 989 unit tests and 53 integration tests pass,
-including the transactional guarantee against a real Postgres and the falsifiability check on the
-guard test. The `notify` e2e phase exists and **has not been run** — it needs a kind cluster and
-a Gemini key, and this milestone did not spend one.
+**Measured, against a real cluster, on 2026-08-30.** Every delivery assertion passed on two
+independent runs:
 
-That is the same honesty v0.2.0 ended on and it is the same debt. The two now compound: v0.2.0's
-acting path has never completed against a cluster ([#41](backlog.md#41-c11-has-never-been-run-against-a-cluster)),
-and v0.3.0's delivery path has never been observed leaving one. **Both are owed before v0.4.0,
-and they are one run** — `run.sh --mode Auto` exercises the executor, and every notification this
-release built fires on the outcomes that run produces.
+```
+pass  a notification reaches the receiver
+pass  deliveries carry a stable delivery id
+pass  deliveries carry a link back to the incident
+pass  the delivered incident exists in the API
+pass  a delivery survives an agent restart
+```
+
+The last one is the criterion. The receiver was taken to 503, an escalation queued against it,
+the agent pod restarted **mid-flight**, the receiver brought back — and the delivery arrived. An
+outbox that has never survived a restart is an outbox in name only.
+
+Alongside it: 5/5 fixtures classified correctly, root cause **3/3 correct**, cost and token
+ledgers reconciling with their per-step sums, 27 Grafana annotations, RBAC bounded, read-only and
+non-root. 993 unit and 53 integration tests, and 45 chart checks.
+
+**Three of the four clauses are met; two are not tested here and say so.** Teams needs a tenant
+the harness does not have, and a signed delivery needs a Secret the chart deliberately will not
+create — both are covered by unit tests, and neither is on the critical path.
+See [#45](backlog.md#45-nothing-has-been-delivered-from-a-cluster).
+
+**Three runs were needed to test one thing, and only one of the three failures was in the
+product.** The first tested nothing, because the receiver image could not build against a
+`.dockerignore` rule whose own comment describes that exact trap. The next two failed the
+startup-line assertions while the agent emitted them perfectly — a container log is not a durable
+record, and neither `--tail=400` nor `--tail=-1` can grep a startup line out of a rotated one.
+That ratio is this harness's oldest pattern and it has not improved since v0.1.0's six release
+candidates.
+
+**v0.2.0's acting criterion is still not met**, and now for a third distinct reason: the planner
+proposes no action for c11 at all. See
+[#41](backlog.md#41-c11-has-never-been-run-against-a-cluster), which is a much sharper entry than
+it was this morning.
 
 
 ---
@@ -548,6 +579,65 @@ states, `prefers-reduced-motion` honoured.
 **Done when** `docs/design.md` exists, one token source feeds all three surfaces, `app.css` is
 refactored onto it with the UI unchanged except where the chosen direction says otherwise, and the
 app has a favicon.
+
+---
+
+## v0.5.0 — Paying the debt down
+
+**A release whose feature is that the list gets shorter.** Deliberately scheduled rather than
+hoped for: every milestone so far has closed backlog items *alongside* a feature, which works
+until the ones left are the ones no feature happens to touch. Three releases in, those are
+accumulating.
+
+The number is provisional — if v0.4.0 splits, this follows it regardless of what it ends up
+called. What is not provisional is that it comes **after** v0.4.0 and before any new capability.
+
+**Its contents are [`backlog.md`](backlog.md), not a list copied here.** A second ordering in this
+file would drift from the first within a release, which is the reason priority lives in one place
+and evidence in the other. What belongs here is the shape:
+
+### The three that block a claim someone has already made
+
+These are not the biggest, they are the ones that make an existing statement untrue:
+
+- **[#41](backlog.md#41-c11-has-never-been-run-against-a-cluster)** — the planner proposes no
+  action for c11, so v0.2.0's acceptance criterion remains unmet across three attempts and three
+  distinct causes. Until it is settled, "the agent can act" is a statement about code rather than
+  about behaviour. It is also the one item here that is genuinely open-ended: it asks whether the
+  fixture is unfair or the planner is under-reading, and those want different fixes.
+- **[#46](backlog.md#46-the-console-suite-cannot-pass-in-observe-so-a-green-run-needs---mode-auto)**
+  — `run.sh` cannot exit 0 in its default mode. A harness that always fails is one people learn
+  to read past, which is how #1 survived as long as it did.
+- **[#2](backlog.md#2-six-of-ten-chaos-fixtures-never-run-in-an-automated-gate)** — the corpus is
+  still n/8 against a bar written as n/10, carried since v0.1.0 and honestly labelled every time.
+
+### The cheap ones that keep costing
+
+**[#47](backlog.md#47-the-act-phase-reports-two-failures-that-are-consequences-of-the-first)**
+(a report that is confidently wrong about why), **[#44](backlog.md#44-nothing-sweeps-awaitingapproval-so-approvaltimedout-has-no-producer)**
+(nothing sweeps `AwaitingApproval`, which v0.3.0 made worse by putting an "approve this" card in
+front of people), **[#13](backlog.md#13-the-retry-path-has-never-been-observed-firing-in-production)**,
+**[#15](backlog.md#15-duplicate-instrument-registrations-with-conflicting-types-and-units)**,
+**[#22](backlog.md#22-the-charts-budget-values-are-write-only)**,
+**[#28](backlog.md#28-list_alert_rules-returns-empty-here-and-is-worked-around-in-the-prompt)**,
+**[#31](backlog.md#31-grafana-mcp-exposes-no-tempo-tools-so-c10s-whole-reason-for-existing-is-untestable)**,
+**[#34](backlog.md#34-c1-oomkill-never-produces-an-oomkill-on-this-node)**,
+**[#37](backlog.md#37-the-judge-grades-a-different-incident-than-the-one-the-run-asserted-on)**.
+
+### The rule this release exists to enforce
+
+**An item leaves `backlog.md` by being fixed, or by being reclassified as a deliberate limitation
+and written down somewhere permanent. It does not leave by being ignored.** That sentence has
+been at the top of the file since it was written, and a scheduled release is what makes it
+enforceable rather than aspirational.
+
+### Done when
+
+The blocking three are closed or reclassified with the reasoning recorded, `scripts/e2e/run.sh`
+exits 0 in its default mode, and every remaining entry has been looked at once and either fixed
+or given a fresh sentence saying why it is still there. **No new capability ships in it** — the
+moment it grows a feature it becomes a release that also did some tidying, which is what every
+release so far has been.
 
 ---
 

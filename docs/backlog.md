@@ -1301,6 +1301,8 @@ decision rather than being appended to a release that was already about delivery
 
 ### 45. Nothing has been delivered from a cluster
 
+**Status: answered 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** Every claim v0.3.0 makes is supported by unit and integration tests. None of it has
 been observed leaving a running agent.
 
@@ -1326,4 +1328,83 @@ up the same cluster twice.
 once found three bugs.
 
 **Blocks:** claiming the v0.3.0 acceptance criterion is met.
+
+**Answered 2026-08-30, over three cluster runs.** The delivery path passed every assertion on two
+independent runs against a real kind cluster:
+
+```
+pass  a notification reaches the receiver
+pass  deliveries carry a stable delivery id
+pass  deliveries carry a link back to the incident
+pass  the delivered incident exists in the API
+pass  a delivery survives an agent restart
+```
+
+The last is the one that could not have been a unit test: the receiver was taken to 503, an
+escalation queued against it, the agent pod restarted **mid-flight**, the receiver brought back,
+and the delivery arrived. An outbox that has never survived a restart is an outbox in name only,
+and this one has.
+
+**What it cost to find out** is the part worth keeping. The first run tested nothing — the
+receiver image could not build, because `.dockerignore` excludes `infra/` wholesale and the
+negation for the new directory was missing, in a file whose existing comment describes that exact
+failure. The second and third runs then failed the two startup-line assertions while the agent
+was emitting those lines perfectly, twice, for two different wrong reasons — see #46's sibling
+note in `notify.sh`. Three runs to test one thing, and only one of the three failures was in the
+product.
+
+**What is still not delivered from a cluster:** the Teams channel, which needs a tenant the
+harness does not have, and a signed delivery, which needs a Secret the chart deliberately will
+not create. Both are covered by unit tests and neither is on the critical path.
+
+### 46. The console suite cannot pass in Observe, so a green run needs `--mode Auto`
+
+**Symptom.** `scripts/e2e/run.sh` in its default mode always fails the `ui` phase, on every run,
+regardless of the code under test.
+
+**Evidence.** `ui/run.sh` exits non-zero when `skipped != 0` — correctly, and deliberately, as the
+fix for [#1](#1-the-e2e-playwright-phase-reports-pass-on-a-zero-assertion-run). But
+`acting.spec.ts:79` (*"approve is disabled until someone says who they are"*) calls
+`test.skip(target === null)` when no action is in `AwaitingApproval`, and in Observe mode **no
+action ever can be**: the kill-switch gate denies every action before the risk routing that would
+produce an approval. So the spec skips, and the phase fails.
+
+Observed on 2026-08-30 in both modes. In Observe: 8 passed, 1 skipped, 0 unexpected — a failing
+phase in which nothing was actually wrong.
+
+**Why it is still open.** It was masked. Before v0.3.0 the last recorded green run was
+`v0.1.0-rc6`, from before the acting specs existed, and every run since has had a louder failure
+in front of it.
+
+**Fix.** Either seed an `AwaitingApproval` action the suite can rely on regardless of mode, or let
+that one spec be conditional in a way the phase does not count as a skip. **Do not** relax the
+`skipped != 0` rule - that rule is #1's whole fix, and it is worth more than this spec.
+
+**Size.** S. **Blocks:** `run.sh` ever exiting 0 in its default mode.
+
+### 47. The act phase reports two failures that are consequences of the first
+
+**Symptom.** When nothing is acted on, the run reports three failures, and two of them describe
+something that did not happen:
+
+```
+FAIL  c11 was not acted on -- expected at least one executed, non-dry-run action
+FAIL  c11 is still not available -- the action ran but the workload did not recover
+FAIL  c11's incident did not reach Resolved -- the workload recovered but verification never closed it
+```
+
+The second says *"the action ran"* and the third says *"the workload recovered"*. Neither is true:
+no action ran and nothing recovered. Both are the first failure, restated as its downstream
+symptoms with confident and incorrect explanations attached.
+
+**Why it matters more than tidiness.** It costs eight minutes of wall clock burning two 240s
+timeouts, and it sends the reader looking for a broken restart and a broken verifier when the
+actual finding is that the planner proposed nothing. A report that is wrong about *why* is worse
+than one that is merely incomplete.
+
+**Fix.** Short-circuit: if nothing executed, skip the recovery and Resolved assertions with a
+reason naming the first failure rather than asserting and failing them.
+
+**Size.** S.
+
 
