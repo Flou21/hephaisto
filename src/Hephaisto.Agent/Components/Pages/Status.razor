@@ -98,6 +98,30 @@ else
                     kept happening anyway. A human must re-arm; an agent that could reset this
                     itself would have a delay, not a backstop.
                 </div>
+
+                @* Clearing the latch restores the mode the DEPLOYMENT already grants. It
+                   cannot name a mode and cannot raise the ceiling, which is why it is a
+                   button at all — setting the mode is a Helm value and a rollout. *@
+                <div class="hp-retry-controls">
+                    <input class="hp-retry-name" placeholder="your name" aria-label="your name"
+                           data-testid="re-arm-actor"
+                           @bind="_actor" @bind:event="oninput" />
+                    <button type="button" class="hp-submit"
+                            data-testid="re-arm"
+                            disabled="@(_reArming || string.IsNullOrWhiteSpace(_actor))"
+                            @onclick="ReArmAsync">
+                        @(_reArming ? "clearing…" : "re-arm")
+                    </button>
+                </div>
+
+                @if (_reArmError is { Length: > 0 })
+                {
+                    <span class="hp-error"><span class="glyph">!!</span> @_reArmError</span>
+                }
+                else if (_reArmMessage is { Length: > 0 })
+                {
+                    <span class="hp-yes"><span class="glyph">+</span> @_reArmMessage</span>
+                }
             </div>
         }
 
@@ -199,6 +223,11 @@ else
     private string? _error;
     private CancellationTokenSource? _cts;
 
+    private string? _actor;
+    private bool _reArming;
+    private string? _reArmError;
+    private string? _reArmMessage;
+
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(10);
 
     protected override async Task OnInitializedAsync()
@@ -295,5 +324,46 @@ else
     {
         _cts?.Cancel();
         _cts?.Dispose();
+    }
+
+    /// <summary>
+    /// Clears the runaway latch. Goes through the query layer, which writes the
+    /// <c>mode.changed</c> audit row in the same commit - a component must never write this
+    /// directly, because the audit row is the whole point of the button.
+    /// </summary>
+    private async Task ReArmAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_actor) || _reArming)
+        {
+            return;
+        }
+
+        _reArming = true;
+        _reArmError = null;
+        _reArmMessage = null;
+
+        try
+        {
+            var result = await Queries.ReArmAsync(_actor, _cts?.Token ?? CancellationToken.None);
+
+            if (result.Accepted)
+            {
+                _reArmMessage = result.Detail;
+            }
+            else
+            {
+                _reArmError = result.Detail;
+            }
+
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _reArmError = ex.Message;
+        }
+        finally
+        {
+            _reArming = false;
+        }
     }
 }

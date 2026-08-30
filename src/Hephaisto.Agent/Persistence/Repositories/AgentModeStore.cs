@@ -5,20 +5,32 @@ using Hephaisto.Core.Domain;
 namespace Hephaisto.Agent.Persistence.Repositories;
 
 /// <summary>
-/// The database arm of the kill switch. The env var and ConfigMap arms live elsewhere and
-/// the most restrictive of the three wins; this one exists because it is the only arm a
-/// human can flip without a deploy, and the only one that can be read inside the same
-/// transaction that admits an action.
+/// The runaway latch, and the database arm of the kill switch built from it.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <b>This arm restrains; it does not configure.</b> The mode itself is set by the Helm
+/// values and reaches the pod as the env var and the projected ConfigMap, so it moves through
+/// review and lands in git like every other deployment decision. There is deliberately no
+/// method here that sets the mode: an operator who could raise autonomy from a web form would
+/// be a second, unreviewed source of truth for the most consequential setting in the system.
+/// </para>
+/// <para>
+/// What the row still holds is the runaway latch, which only ever restricts, plus the actor
+/// and timestamp of the last re-arm. It is the only arm readable inside the same transaction
+/// that admits an action, which is why the latch lives here rather than in a file.
+/// </para>
+/// </remarks>
 public interface IAgentModeStore
 {
-    /// <summary>Returns <see cref="AgentMode.Observe"/> when the row is missing - an
-    /// unreadable kill switch reads as the restrictive value, never the permissive one.</summary>
-    Task<AgentMode> GetModeAsync(CancellationToken ct);
-
+    /// <summary>The row, or a default instance when it is missing. For display.</summary>
     Task<AgentModeRow> GetAsync(CancellationToken ct);
 
-    Task SetModeAsync(AgentMode mode, string actor, CancellationToken ct);
+    /// <summary>
+    /// The row, or null when it does not exist - which is a different fact from a row that
+    /// happens to be unlatched, and the kill switch treats it differently.
+    /// </summary>
+    Task<AgentModeRow?> GetRowOrDefaultAsync(CancellationToken ct);
 
     /// <summary>Trips the runaway latch. Idempotent: latching an already-latched agent
     /// keeps the original reason, because the first trip is the interesting one.</summary>
@@ -33,34 +45,12 @@ public interface IAgentModeStore
 
 public sealed class AgentModeStore(HephaistoDbContext db, IClock clock) : IAgentModeStore
 {
-    public async Task<AgentMode> GetModeAsync(CancellationToken ct)
-    {
-        var row = await db.AgentModeRows
-            .AsNoTracking()
-            .FirstOrDefaultAsync(m => m.Id == AgentModeRow.SingletonId, ct);
-
-        if (row is null || row.RunawayLatched)
-        {
-            return AgentMode.Observe;
-        }
-
-        return row.Mode;
-    }
-
     public async Task<AgentModeRow> GetAsync(CancellationToken ct) =>
-        await db.AgentModeRows.FirstOrDefaultAsync(m => m.Id == AgentModeRow.SingletonId, ct)
-        ?? new AgentModeRow { Mode = AgentMode.Observe, ChangedAt = clock.UtcNow };
+        await GetRowOrDefaultAsync(ct).ConfigureAwait(false)
+        ?? new AgentModeRow { ChangedAt = clock.UtcNow };
 
-    public async Task SetModeAsync(AgentMode mode, string actor, CancellationToken ct)
-    {
-        var row = await EnsureRowAsync(ct);
-
-        row.Mode = mode;
-        row.ChangedBy = actor;
-        row.ChangedAt = clock.UtcNow;
-
-        await db.SaveChangesAsync(ct);
-    }
+    public Task<AgentModeRow?> GetRowOrDefaultAsync(CancellationToken ct) =>
+        db.AgentModeRows.FirstOrDefaultAsync(m => m.Id == AgentModeRow.SingletonId, ct);
 
     public async Task LatchAsync(string reason, CancellationToken ct)
     {
@@ -105,7 +95,6 @@ public sealed class AgentModeStore(HephaistoDbContext db, IClock clock) : IAgent
         row = new AgentModeRow
         {
             Id = AgentModeRow.SingletonId,
-            Mode = AgentMode.Observe,
             ChangedAt = clock.UtcNow,
             ChangedBy = "hephaisto/system",
         };

@@ -151,9 +151,20 @@ public sealed class ActionRepository(
 
         // A missing row is an unreadable kill switch, and an unreadable kill switch reads
         // as Observe. Failing the other way makes a truncated database an autonomy upgrade.
-        var databaseArm = modeRow is null
-            ? ModeArm.Unreadable(KillSwitch.DatabaseArm, "the agent_mode row is missing")
-            : ModeArm.Declaring(KillSwitch.DatabaseArm, modeRow.Mode);
+        //
+        // A row that is present and unlatched is SILENT rather than declaring its mode column.
+        // The mode is a Helm value; this arm exists to restrain, and its restraint is the
+        // latch checked immediately below. Declaring the column here would clamp every
+        // admission to Observe forever, because the migration seeds that column to Observe.
+        var databaseArm = modeRow switch
+        {
+            null => ModeArm.Unreadable(KillSwitch.DatabaseArm, "the agent_mode row is missing"),
+            { RunawayLatched: true } => ModeArm.Declaring(
+                KillSwitch.DatabaseArm,
+                AgentMode.Observe,
+                $"runaway latch: {modeRow.LatchReason ?? "unknown reason"}"),
+            _ => ModeArm.Silent(KillSwitch.DatabaseArm),
+        };
 
         // The row is read inside the transaction because that is the only arm that can be
         // raced by a concurrent admission. The env and ConfigMap arms are in-memory and a

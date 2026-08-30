@@ -79,6 +79,16 @@ public sealed class AgentModeRow
 
     public string Id { get; set; } = SingletonId;
 
+    /// <summary>
+    /// Vestigial. Nothing writes it and no arm reads it.
+    /// </summary>
+    /// <remarks>
+    /// The mode is decided by the Helm values and arrives as the env var and the ConfigMap.
+    /// This column outlived that decision: the migration seeds it to <c>Observe</c>, so while
+    /// it WAS read as an arm every database in existence silently pinned the agent to Observe
+    /// and no chart value could lift it. It is left in place only so dropping it can happen in
+    /// one migration alongside the other v0.2.0 schema changes.
+    /// </remarks>
     public AgentMode Mode { get; set; } = AgentMode.Observe;
 
     /// <summary>

@@ -59,7 +59,8 @@ public sealed class IncidentQueries(
     Pipeline.InvestigationTracker tracker,
     Pipeline.InvestigationQueue queue,
     IOptionsMonitor<LlmBudgetOptions> budgetOptions,
-    IClock clock)
+    IClock clock,
+    ILogger<IncidentQueries> logger)
 {
     private static readonly JsonSerializerOptions AuditJson = new(JsonSerializerDefaults.Web);
 
@@ -351,11 +352,16 @@ public sealed class IncidentQueries(
             })],
             QueuedInvestigations = queue.Depth,
 
-            // The row's Mode, not GetModeAsync: that method collapses a latched agent to
-            // Observe, which is right for a caller asking "may I act" and wrong for a status
-            // page, where "configured auto but latched" and "configured observe" are two
-            // very different things to be looking at during an incident.
-            Mode = mode.Mode,
+            // The CONFIGURED ceiling - the Helm value, as it arrives on the env and ConfigMap
+            // arms - and deliberately not the resolved mode, because the gap between the two
+            // is the interesting part. "Configured Auto, running Observe" is the state an
+            // operator most needs to see during an incident, and it is exactly what a single
+            // mode field hides.
+            //
+            // Not the agent_mode row's mode column: nothing writes it, no arm reads it, and
+            // it is seeded to Observe - so showing it would have told an operator the agent
+            // was configured Observe while the chart said Auto.
+            Mode = killSwitch.External.Effective,
             EffectiveMode = resolved.Effective,
             ModeDecidedBy = resolved.DecidedBy,
             ModeArms = [.. resolved.Arms.Select(a => a.Describe())],
@@ -596,6 +602,81 @@ public sealed class IncidentQueries(
         return new ReinvestigateResult { Outcome = ReinvestigateOutcome.Queued };
     }
 
+    /// <summary>
+    /// Clears the runaway latch, restoring whatever mode the deployment already grants.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the only write in the product that touches the kill switch, and it is
+    /// deliberately the weakest one possible: it cannot name a mode, and it cannot raise the
+    /// agent above the ceiling the Helm values set. Clearing the latch is an acknowledgement -
+    /// "I have looked at why this tripped" - not a configuration change, which is why it can
+    /// live behind a button while setting the mode cannot.
+    /// </para>
+    /// <para>
+    /// It writes <c>mode.changed</c>. That audit type has been named in
+    /// <c>Core/Domain/Audit.cs</c> as something the trail records since before anything wrote
+    /// one; this is the first thing that does. An unaudited re-arm would be the single most
+    /// important unattributed event in the system - the moment autonomy came back.
+    /// </para>
+    /// </remarks>
+    public async Task<ReArmResult> ReArmAsync(string requestedBy, CancellationToken ct)
+    {
+        var actor = requestedBy?.Trim() ?? string.Empty;
+        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+
+        await using var scope = scopes.CreateAsyncScope();
+        var sp = scope.ServiceProvider;
+
+        var modes = sp.GetRequiredService<IAgentModeStore>();
+        var audit = sp.GetRequiredService<IAuditRepository>();
+
+        var row = await modes.GetRowOrDefaultAsync(ct);
+
+        if (row is null or { RunawayLatched: false })
+        {
+            // Not an error, and not silently a success either. A button that reports "done"
+            // when it did nothing teaches an operator that pressing it is meaningless.
+            return new ReArmResult
+            {
+                Outcome = ReArmOutcome.NotLatched,
+                Detail = "The runaway latch is not set; there is nothing to clear.",
+            };
+        }
+
+        var reason = row.LatchReason;
+        var latchedAt = row.LatchedAt;
+
+        // Enlisted BEFORE the re-arm, because ReArmAsync is what saves. Both land in one
+        // commit on the scope's shared DbContext, so there is no window in which the latch is
+        // cleared and no row says who cleared it.
+        audit.Enlist(new AuditEvent
+        {
+            At = clock.UtcNow,
+            Type = "mode.changed",
+            Actor = actor,
+            Summary = "runaway latch cleared",
+            Detail = JsonSerializer.Serialize(
+                new { latchReason = reason, latchedAt, clearedBy = actor },
+                AuditJson),
+        });
+
+        await modes.ReArmAsync(actor, ct);
+
+        var resolved = await killSwitch.ResolveAsync(ct);
+
+        logger.LogWarning(
+            "Runaway latch cleared by {Actor}; the agent is now {Mode}. It was latched for: {Reason}",
+            actor, resolved.Effective, reason ?? "unknown reason");
+
+        return new ReArmResult
+        {
+            Outcome = ReArmOutcome.ReArmed,
+            Detail = $"Latch cleared. The agent is now {resolved.Effective}, bound by {resolved.DecidedBy}.",
+            EffectiveMode = resolved.Effective,
+        };
+    }
+
     // ------------------------------------------------------------------
     // Mapping
     // ------------------------------------------------------------------
@@ -762,6 +843,26 @@ public enum ReinvestigateOutcome
 
     /// <summary>The kill switch is Off.</summary>
     Disabled = 5,
+}
+
+/// <summary>Whether clearing the runaway latch did anything.</summary>
+public enum ReArmOutcome
+{
+    ReArmed = 0,
+
+    /// <summary>Nothing was latched. Reported rather than treated as success.</summary>
+    NotLatched = 1,
+}
+
+public sealed record ReArmResult
+{
+    public required ReArmOutcome Outcome { get; init; }
+
+    public string? Detail { get; init; }
+
+    public AgentMode? EffectiveMode { get; init; }
+
+    public bool Accepted => Outcome == ReArmOutcome.ReArmed;
 }
 
 public sealed record ReinvestigateResult
