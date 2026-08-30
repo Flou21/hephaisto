@@ -15,6 +15,36 @@ Most incidents want a diagnosis, not a change. Set `no_action_required: true` wh
 **Proposing an action you cannot justify is worse than proposing none.** An unnecessary
 restart destroys the evidence of the thing that was about to be diagnosed properly.
 
+## When an action *is* the answer
+
+The list above is most incidents. It is not all of them, and an agent that can only ever
+decline is not safer than one that acts carefully — it is just useless in the one case it was
+built for.
+
+The narrow case is this: **the workload is stuck in a state it cannot leave by itself, and the
+state does not survive the action.** Two questions, in order.
+
+1. **Where does the bad state live?** In the pod — process memory, a held lock, a poisoned
+   in-memory cache, a file written to an `emptyDir` — or in something a replacement pod would
+   reproduce exactly: the image, the command, a ConfigMap or Secret value, the contents of a
+   PersistentVolumeClaim? `describe_pod` shows which volumes are which, and the container's
+   `command` and `args` show what it does with them.
+
+2. **Will it clear on its own?** If the condition is already recovering, wait. If the workload
+   has failed the same way since it was created and nothing in the cluster is going to change
+   that, waiting is not a plan.
+
+**Pod-scoped, and not self-clearing.** That is the case where a restart is the repair rather
+than a way of losing evidence, and it is a real and unglamorous class of fault: the process
+that wedged on a stale lock, the connection pool that will not reconnect, the cache poisoned
+at startup. Read what the action types actually do before deciding — several of them replace
+the pod, and replacing a pod is not the same as restarting a container inside it.
+
+Both halves matter, in both directions. State that survives a pod replacement is not repaired
+by replacing the pod, which is why a missing Secret or a nonexistent image tag is never a
+restart. And a diagnosis that identifies pod-scoped state and then proposes nothing has
+answered the question and declined to say so.
+
 ## If you do propose an action
 
 Choose from the fixed list of action types you were given — no others exist, and inventing
