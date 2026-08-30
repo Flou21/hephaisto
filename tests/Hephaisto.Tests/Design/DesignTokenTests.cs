@@ -387,17 +387,68 @@ public class DesignTokenTests
         || value.TrimStart().StartsWith("hsl", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// The dark block is <c>:root</c>; the light block is the one inside the
-    /// <c>prefers-color-scheme: light</c> query. Split on the query rather than parsing CSS.
+    /// The dark block is <c>:root</c>. Light is declared twice - once for an operating system
+    /// that asked for it, once for a reader who did - and the two must be identical.
     /// </summary>
+    /// <remarks>
+    /// This used to split the file at the first <c>prefers-color-scheme: light</c> and parse
+    /// everything after it as one block. That stopped working the moment light gained a second
+    /// declaration, and it stopped working by <i>throwing on a duplicate key</i> rather than by
+    /// quietly averaging the two, which is the failure mode worth having. The duplicate is
+    /// unavoidable in CSS - one of the declarations lives inside a media query and the other
+    /// cannot - so the guarantee is moved here instead: they are equal by assertion.
+    /// </remarks>
     private static (Dictionary<string, string> Dark, Dictionary<string, string> Light) Themes()
     {
         var css = File.ReadAllText(TokenFile());
 
-        var split = css.IndexOf("prefers-color-scheme: light", StringComparison.Ordinal);
-        Assert.True(split > 0, "tokens.css no longer has a light-mode block");
+        var dark = Parse(Block(css, "\n:root {"));
+        var systemLight = Parse(Block(css, ":root:not([data-theme=\"dark\"])"));
+        var explicitLight = Parse(Block(css, ":root[data-theme=\"light\"]"));
 
-        return (Parse(css[..split]), Parse(css[split..]));
+        // The whole reason a duplicate is tolerable. Without this the two drift, and the reader
+        // who picked light explicitly gets last release's palette.
+        explicitLight.Should().BeEquivalentTo(
+            systemLight,
+            "the two light declarations in tokens.css must stay identical - one is for an OS "
+            + "that asked for light, the other for a reader who did, and they are the same theme");
+
+        return (dark, systemLight);
+    }
+
+    /// <summary>
+    /// The declaration body following <paramref name="marker"/>, from its <c>{</c> to the
+    /// matching <c>}</c>. Brace-matched rather than regexed, because a media query nests.
+    /// </summary>
+    private static string Block(string css, string marker)
+    {
+        var at = css.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(at >= 0, $"tokens.css no longer contains a `{marker.Trim()}` rule");
+
+        // From `at`, not past the marker: one of the markers ends in its own `{`, and skipping
+        // over it finds the NEXT rule's brace instead - which brace-matches cleanly and returns
+        // the wrong theme, so the mistake shows up as a palette that is merely wrong rather
+        // than as a crash.
+        var open = css.IndexOf('{', at);
+        Assert.True(open > 0, $"`{marker.Trim()}` in tokens.css opens no block");
+
+        var depth = 0;
+
+        for (var i = open; i < css.Length; i++)
+        {
+            if (css[i] == '{')
+            {
+                depth++;
+            }
+            else if (css[i] == '}' && --depth == 0)
+            {
+                return css[(open + 1)..i];
+            }
+        }
+
+        Assert.Fail($"`{marker.Trim()}` in tokens.css is not closed");
+
+        return string.Empty;
     }
 
     /// <summary>Light inherits from dark, so the effective light theme is dark overridden by it.</summary>
