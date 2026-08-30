@@ -146,6 +146,25 @@
     --text-2xl: 1.05rem;
     --text-3xl: 1.25rem;
     --text-4xl: 1.35rem;
+
+    /* ---- density -----------------------------------------------------------------------
+       The root size is the density lever for the whole console, and it is a one-line lever
+       because every length in app.css is already expressed in rem. Forge runs a half-step
+       looser than the 13px this shipped with for three releases: more legible at 3am on
+       whatever monitor is in the room, at a cost of roughly one incident row per screen.
+
+       THERE IS NO SPACING SCALE, and that is a finding rather than an omission. The paddings
+       in app.css are hand-tuned per component - 0.5/0.7, 0.5/0.8, 0.25/0.5, 0.7/0.9, 0.6/0.8 -
+       and no ratio joins them. Extracting a scale here would mean INVENTING one and renumbering
+       about thirty declarations, which changes the rendering of every surface in the console.
+       That is a real improvement and a real decision, and it is not one to make silently while
+       moving tokens around. Left for the milestone that can measure it.
+
+       The table cell is the exception, because it IS the density of the product's main screen
+       and Forge sets it deliberately rather than inheriting it from the root change. */
+    --root-size: 13.5px;
+    --cell-y: 0.44rem;
+    --cell-x: 0.5rem;
 }
 
 /* Light mode was "a courtesy, not the design target" for three releases. It is not any more:

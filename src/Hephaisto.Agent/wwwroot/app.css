@@ -34,7 +34,7 @@ body {
     background: var(--bg);
     color: var(--fg);
     font-family: var(--sans);
-    font-size: 13px;
+    font-size: var(--root-size);
     line-height: 1.45;
 }
 
@@ -226,7 +226,7 @@ h4 {
 }
 
 .hp-table td {
-    padding: 0.28rem 0.5rem;
+    padding: var(--cell-y) var(--cell-x);
     border-bottom: 1px solid var(--border);
     vertical-align: top;
 }
