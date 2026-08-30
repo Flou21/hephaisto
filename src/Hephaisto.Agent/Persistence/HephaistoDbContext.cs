@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Pgvector;
 using Hephaisto.Core.Domain;
+using Hephaisto.Core.Notifications;
 
 namespace Hephaisto.Agent.Persistence;
 
@@ -71,6 +72,8 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
     public DbSet<WorkloadActionLock> WorkloadActionLocks => Set<WorkloadActionLock>();
 
     public DbSet<AgentModeRow> AgentModeRows => Set<AgentModeRow>();
+
+    public DbSet<NotificationDelivery> NotificationDeliveries => Set<NotificationDelivery>();
 
     /// <summary>
     /// Marks children created since <paramref name="fromEventIndex"/> / for a new
@@ -607,6 +610,38 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
                 ChangedAt = DateTimeOffset.UnixEpoch,
             });
         });
+
+        b.Entity<NotificationDelivery>(e =>
+        {
+            e.ToTable("notification_deliveries");
+            e.HasKey(d => d.Id);
+
+            // The dispatcher's only query: due rows, oldest first. Exactly the shape of the
+            // (DueAt, Outcome) index that VerificationScheduler runs on, for the same reason -
+            // a poll every ten seconds must not become a sequential scan over every delivery
+            // the system has ever made.
+            e.HasIndex(d => new { d.Status, d.NextAttemptAt });
+
+            // The per-channel hourly cap.
+            e.HasIndex(d => new { d.Channel, d.DeliveredAt });
+
+            // The per-workload cooldown, and the "N more suppressed" count that rides on the
+            // next message out.
+            e.HasIndex(d => new { d.Channel, d.CorrelationKey, d.DeliveredAt });
+
+            // "What was sent about this incident", which is the question an operator asks when
+            // they were told and want to know what else was.
+            e.HasIndex(d => d.IncidentId);
+
+            // Deliberately no foreign key to incidents, matching audit_events: a delivery is a
+            // record of what was said, and cascading it away with the incident would delete the
+            // evidence that somebody was - or was not - told.
+            e.Property(d => d.Snapshot)
+                .HasColumnType("jsonb")
+                .HasConversion(SnapshotConverter, SnapshotComparer);
+
+            e.Property(d => d.LastError).HasMaxLength(MaxErrorLength);
+        });
     }
 
     // ------------------------------------------------------------------
@@ -756,6 +791,23 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
     /// names like <c>app.kubernetes.io/name</c> - and a camelCase policy would rewrite them.
     /// </summary>
     private static readonly JsonSerializerOptions JsonOptions = new();
+
+    /// <summary>
+    /// Errors from an endpoint are somebody else's output - an HTML error page, a stack trace,
+    /// a proxy's opinion - and a UI that renders one untruncated is a UI an operator scrolls
+    /// past the useful part of.
+    /// </summary>
+    public const int MaxErrorLength = 500;
+
+    // The frozen facts of one notification. A record with init-only members, so value equality
+    // is the right comparison and there is no mutable state for a snapshot comparer to miss.
+    private static readonly ValueConverter<NotificationSnapshot, string> SnapshotConverter =
+        new(v => JsonSerializer.Serialize(v, JsonOptions),
+            v => JsonSerializer.Deserialize<NotificationSnapshot>(v, JsonOptions)
+                 ?? new NotificationSnapshot { Event = NotificationEvent.Unspecified });
+
+    private static readonly ValueComparer<NotificationSnapshot> SnapshotComparer =
+        new((a, b) => a == b, v => v.GetHashCode(), v => v);
 
     private static readonly ValueConverter<Dictionary<string, string>, string> StringMapConverter =
         new(v => JsonSerializer.Serialize(v, JsonOptions),

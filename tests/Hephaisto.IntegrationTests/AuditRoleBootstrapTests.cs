@@ -53,6 +53,33 @@ public sealed class AuditRoleBootstrapTests(PostgresFixture pg)
     }
 
     /// <summary>
+    /// A table added by a <b>later</b> migration is granted too.
+    /// </summary>
+    /// <remarks>
+    /// backlog #6's trap in its general form, and the reason the grant is re-applied on every
+    /// boot rather than written into a migration. <c>InitialCreate</c>'s GRANT block is wrapped
+    /// in <c>IF EXISTS (SELECT 1 FROM pg_roles ...)</c> and its own comment notes that a later
+    /// migration adding a table has to repeat it - so every table added after that point would
+    /// be ungranted, and the symptom would be the agent unable to write a feature that had just
+    /// shipped, on a deployment that started up reporting success.
+    /// <c>notification_deliveries</c> arrives in v0.3.0, long after <c>InitialCreate</c>, so it
+    /// is live proof rather than an assertion about intent.
+    /// </remarks>
+    [Fact]
+    public async Task A_table_added_by_a_later_migration_is_granted_too()
+    {
+        await RunBootstrapAsync();
+
+        (await PrivilegeAsync("INSERT", "notification_deliveries")).Should().BeTrue();
+        (await PrivilegeAsync("SELECT", "notification_deliveries")).Should().BeTrue();
+
+        // Unlike an audit row, a delivery is meant to be rewritten - the attempt count and the
+        // backoff move on every retry. The REVOKE is deliberately narrow to audit_events, and
+        // this is what says so.
+        (await PrivilegeAsync("UPDATE", "notification_deliveries")).Should().BeTrue();
+    }
+
+    /// <summary>
     /// The grants land on the schema the tables are actually in.
     /// </summary>
     /// <remarks>

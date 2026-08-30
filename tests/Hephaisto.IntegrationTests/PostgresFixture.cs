@@ -104,6 +104,7 @@ public sealed class PostgresFixture : IAsyncLifetime
               {schema}.incident_digests, {schema}.incident_events,
               {schema}.human_feedback, {schema}.audit_events, {schema}.signals,
               {schema}.workload_action_locks, {schema}.llm_usage,
+              {schema}.notification_deliveries,
               {schema}.incidents
             RESTART IDENTITY CASCADE;
             """);

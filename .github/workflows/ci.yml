@@ -96,7 +96,7 @@ jobs:
       # runner - it prints `unknown option` and still exits 0, which is the same trap wearing
       # a different hat.)
       - name: Run tests
-        run: scripts/ci-test.sh tests/Hephaisto.Tests/Hephaisto.Tests.csproj 600 Release
+        run: scripts/ci-test.sh tests/Hephaisto.Tests/Hephaisto.Tests.csproj 880 Release
 
   integration-postgres:
     runs-on: ubuntu-latest
@@ -159,7 +159,7 @@ jobs:
           # The fixture THROWS rather than skipping when this is unset. A silently skipped
           # database suite is indistinguishable from a passing one.
           ConnectionStrings__hephaisto: Host=localhost;Port=5432;Database=hephaisto;Username=hephaisto;Password=hephaisto
-        run: scripts/ci-test.sh tests/Hephaisto.IntegrationTests/Hephaisto.IntegrationTests.csproj 6 Release
+        run: scripts/ci-test.sh tests/Hephaisto.IntegrationTests/Hephaisto.IntegrationTests.csproj 30 Release
 
   chart:
     runs-on: ubuntu-latest

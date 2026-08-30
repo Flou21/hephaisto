@@ -65,6 +65,7 @@ public static class PersistenceServiceCollectionExtensions
         services.AddScoped<IAuditRepository, AuditRepository>();
         services.AddScoped<IActionRepository, ActionRepository>();
         services.AddScoped<IAgentModeStore, AgentModeStore>();
+        services.AddScoped<INotificationOutbox, NotificationOutbox>();
 
         services.AddScoped<LlmBudgetService>();
         services.AddScoped<IncidentSearch>();
