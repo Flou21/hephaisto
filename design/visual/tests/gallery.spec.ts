@@ -36,6 +36,34 @@ test.describe('the design language', () => {
     ['callouts', 'Callouts'],
   ] as const;
 
+  /**
+   * Accessibility is part of v0.4.0's acceptance rather than a follow-up, and a focus ring is
+   * the one accessibility property that a screenshot can actually hold. Links were missing from
+   * the focus-visible rule entirely until this milestone - and links are most of what a keyboard
+   * user moves between in this console.
+   *
+   * Keyboard focus specifically, not `.focus()`: :focus-visible does not match a
+   * programmatically focused element in every engine, so asserting on it would have been a test
+   * that passes without the rule it exists to check.
+   */
+  test('focus-ring', async ({ page }) => {
+    const row = page.locator('.g-sec').filter({ has: page.getByRole('heading', { name: 'Hard component 1' }) });
+    await row.getByRole('link').first().focus();
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Shift+Tab');
+
+    const focused = await page.evaluate(() => {
+      const el = document.activeElement as HTMLElement | null;
+      return el ? { tag: el.tagName, outline: getComputedStyle(el).outlineWidth } : null;
+    });
+    expect(focused, 'nothing is focused; the shot below would prove nothing').not.toBeNull();
+    expect(focused!.tag, 'expected a link to hold focus').toBe('A');
+    expect(focused!.outline, 'the focus ring has no width, so it is not visible')
+      .not.toBe('0px');
+
+    await expect(row).toHaveScreenshot('focus-ring.png');
+  });
+
   for (const [slug, heading] of sections) {
     test(slug, async ({ page }) => {
       const section = page.locator('.g-sec').filter({ has: page.getByRole('heading', { name: heading }) });

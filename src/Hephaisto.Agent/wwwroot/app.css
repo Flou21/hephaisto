@@ -118,8 +118,15 @@ h4 {
 }
 
 .hp-main {
-    /* 1200px is the floor the tables are laid out for; wider is better and the trace does
-       not benefit from being narrower than its content. */
+    /* min-width: 0 is the flex-child override, and it does the OPPOSITE of what the comment
+       here used to claim. It read "1200px is the floor the tables are laid out for", which
+       described an intention no rule implemented - there is no min-width: 1200px anywhere, and
+       never was. What this line actually does is let a flex child shrink below its content
+       width, which is what allows the nine-column table to scroll inside itself instead of
+       pushing the whole page sideways.
+       The tables ARE laid out expecting roughly 1200px of room. That is a fact about the
+       design, and it belongs in docs/design.md where it is true, rather than here attached to
+       a declaration that says something else. */
     min-width: 0;
     padding: 1rem 1.25rem 4rem;
 }
@@ -388,6 +395,12 @@ textarea {
     font-size: 0.82rem;
 }
 
+/* Links were missing from this list, and links are most of what a keyboard user moves
+   between here: every incident title in the table, every nav item, every evidence citation.
+   They fell back to the user agent's own outline, which on a dark ground is frequently a thin
+   black ring that is effectively invisible. Accessibility is part of acceptance for v0.4.0
+   rather than a follow-up, and this is the cheapest half of it. */
+a:focus-visible,
 select:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
