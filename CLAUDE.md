@@ -182,18 +182,37 @@ any alert declares a kind that does not parse, or classifies as `Unknown`. If yo
 whose failure mode has no matching `SignalKind`, add the member **and its runbook** rather
 than inventing a label value.
 
-## Versioning: never call `minver` without `-p main.0`
+## Versioning: `minver-cli` reads no props file, so pass `-p` AND `-m`
 
-`Directory.Build.props` sets `MinVerDefaultPreReleaseIdentifiers=main.0`, but `minver-cli`
-does not read it - it has its own default of `alpha.0`. So:
+`minver-cli` does not read `Directory.Build.props` at all. Every setting in there is invisible
+to it, and it substitutes its own defaults silently. Two of them matter:
 
 ```sh
-dotnet minver -t v            # 0.0.0-alpha.0.47   <- WRONG, and looks fine
-dotnet minver -t v -p main.0  # 0.0.0-main.0.47    <- what MSBuild stamps
+dotnet minver -t v                       # 0.0.0-alpha.0.47   <- WRONG twice, and looks fine
+dotnet minver -t v -p main.0             # 0.2.1-main.0.20    <- right phase, wrong floor
+dotnet minver -t v -p main.0 -m 0.3      # 0.3.0-main.0.20    <- what MSBuild stamps
 ```
 
-Get this wrong in a build script and the image tag disagrees with the assembly inside it,
-which surfaces as `/api/version` reporting something the registry has never heard of.
+`-p` matches `MinVerDefaultPreReleaseIdentifiers`; `-m` matches `MinVerMinimumMajorMinor`,
+which is the floor a human raises when a milestone starts. Without `-m` the CLI keeps
+auto-incrementing the patch from the last tag, so after `v0.2.0` it insists on `0.2.1` however
+much the release actually contains.
+
+Get this wrong in a build script and the image tag disagrees with the assembly inside it, which
+surfaces as `/api/version` reporting something the registry has never heard of. **The `-m` form
+is worse than that**, and it was live until 2026-08-30: `scripts/e2e/lib/build.sh` derives an rc
+tag from this command, so it would have PUSHED `v0.2.1-rc1` for the v0.3.0 release - and
+`release.yml`'s own guard would then refuse to publish, because MinVer under MSBuild disagrees
+with the tag. A permanent public tag with nothing behind it.
+
+**Do not hardcode the floor.** All four call sites - `ci.yml`, `release.yml`, `nightly.yml` and
+`build.sh` - read it out of `Directory.Build.props`:
+
+```sh
+M=$(sed -n 's:.*<MinVerMinimumMajorMinor>\(.*\)</MinVerMinimumMajorMinor>.*:\1:p' \
+      Directory.Build.props | head -1)
+V=$(dotnet minver -t v -p main.0 ${M:+-m "$M"})
+```
 
 **Release candidates need no special handling.** `v0.0.1-rc1` is just a tag; MinVer resolves it
 to `0.0.1-rc1` and the release workflow branches on `case "$V" in *-*)` to withhold the moving

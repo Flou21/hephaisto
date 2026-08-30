@@ -36,6 +36,18 @@
   <PropertyGroup>
     <MinVerTagPrefix>v</MinVerTagPrefix>
     <MinVerAutoIncrement>patch</MinVerAutoIncrement>
+
+    <!-- The floor for the version being worked towards, and the ONE thing here that a human
+         moves. MinVer auto-increments the PATCH, so after v0.2.0 it heads to 0.2.1 and every
+         untagged build - and every rc that scripts/e2e/lib/build.sh derives from it - would be
+         numbered 0.2.1 no matter what the release actually contains. v0.3.0 adds outbound
+         notifications; calling that a patch would put the roadmap, the history and the tag in
+         three different versions of the same release.
+
+         Raise this when a milestone starts, not when it ships. It only sets a floor: once
+         v0.3.0 is tagged MinVer reads the tag and this line stops mattering, until the next
+         minor. -->
+    <MinVerMinimumMajorMinor>0.3</MinVerMinimumMajorMinor>
     <MinVerDefaultPreReleaseIdentifiers>main.0</MinVerDefaultPreReleaseIdentifiers>
     <AssemblyVersion>0.0.0.0</AssemblyVersion>
     <RepositoryUrl>https://github.com/Flou21/hephaisto</RepositoryUrl>

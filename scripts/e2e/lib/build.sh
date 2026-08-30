@@ -69,8 +69,20 @@ build_rc() {
     [ "$behind" -eq 0 ] || die "HEAD is $behind commit(s) behind origin/main; push or rebase first"
 
     # The next free -rcN for the version MinVer says this commit is heading towards.
-    local base next=1
-    base=$(cd "$REPO" && dotnet minver -t v -p main.0 2>/dev/null | sed 's/-.*//')
+    #
+    # BOTH flags are load-bearing, and for one reason: minver-cli does not read
+    # Directory.Build.props. Without -p it defaults to alpha.0; without -m it cannot see
+    # MinVerMinimumMajorMinor, so after v0.2.0 it says 0.2.1 no matter what milestone the repo
+    # is actually working towards. That failure is expensive rather than cosmetic - the tag
+    # gets PUSHED, and then release.yml's own guard refuses to publish because MinVer under
+    # MSBuild disagrees with it, leaving a permanent public tag with nothing behind it.
+    #
+    # The floor is read out of the props file rather than hardcoded here, so the two cannot
+    # drift the way the -p default already did once.
+    local base next=1 minimum
+    minimum=$(sed -n 's:.*<MinVerMinimumMajorMinor>\(.*\)</MinVerMinimumMajorMinor>.*:\1:p' \
+                "$REPO/Directory.Build.props" | head -1)
+    base=$(cd "$REPO" && dotnet minver -t v -p main.0 ${minimum:+-m "$minimum"} 2>/dev/null | sed 's/-.*//')
     while git -C "$REPO" rev-parse -q --verify "refs/tags/v${base}-rc${next}" >/dev/null; do
         next=$(( next + 1 ))
     done

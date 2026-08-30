@@ -79,7 +79,13 @@ jobs:
           # release, and skipped by every default version range - so no consumer can land on
           # a nightly by accident. Nothing downstream may assume the `main.0` spelling; the
           # prune job below deliberately does not.
-          V=$(dotnet minver -t v -p main.0)
+          # ...and `-m` is not optional either, for the identical reason: the CLI does not read
+          # Directory.Build.props, so MinVerMinimumMajorMinor is invisible to it. Read out of
+          # the props file rather than hardcoded, so bumping the floor for a milestone cannot
+          # leave this line behind.
+          M=$(sed -n 's:.*<MinVerMinimumMajorMinor>\(.*\)</MinVerMinimumMajorMinor>.*:\1:p' \
+                Directory.Build.props | head -1)
+          V=$(dotnet minver -t v -p main.0 ${M:+-m "$M"})
           SEMVER="${V%%+*}"
 
           # A tagged commit resolves to the tag itself, with no prerelease part. Publishing

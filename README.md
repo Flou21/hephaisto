@@ -350,10 +350,13 @@ chart-only fix is `git tag v0.0.2`; patch tags are free.
 
 Two things worth knowing:
 
-- **`dotnet minver -t v -p main.0`** — the `-p` is not optional. `minver-cli` defaults to
-  `alpha.0` while this repo's MSBuild properties say `main.0`, so without it the CLI and the
-  compiler disagree about what the same commit is called, and the image tag stops matching
-  the assembly inside it.
+- **`dotnet minver -t v -p main.0 -m <floor>`** — neither flag is optional. `minver-cli` does
+  not read `Directory.Build.props`, so it silently substitutes its own defaults: without `-p`
+  it says `alpha.0` where MSBuild says `main.0`, and without `-m` it cannot see
+  `MinVerMinimumMajorMinor` and keeps incrementing the patch from the last tag. Either way the
+  CLI and the compiler disagree about what the same commit is called, and the image tag stops
+  matching the assembly inside it. Every script here reads the floor out of the props file
+  rather than repeating it.
 - **`.dockerignore` excludes `.git/`**, correctly, so MinVer cannot run inside a docker
   build. The version is computed once outside and passed in as `--build-arg VERSION=`; the
   Dockerfile then publishes with `-p:MinVerSkip=true`.
