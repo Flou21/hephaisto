@@ -50,7 +50,6 @@ on the thing being measured, which is worth remembering now that a second harnes
 `v0.0.1` shipped the same week: multi-arch image and Helm chart on GHCR, build provenance
 attested, both verified pulling anonymously.
 
-
 ---
 
 ## v0.1.0 — Diagnosis you can trust
@@ -128,7 +127,7 @@ nothing downstream waits on them.
 
 ### Still open here
 
-4. **Widen the corpus from 8 back toward 10 — deferred to v0.1.1.** c6 does not fire on
+1. **Widen the corpus from 8 back toward 10 — deferred to v0.1.1.** c6 does not fire on
    `local-path` and c9 would evict the observability stack, so both need replacement fixtures that
    do not exist yet. That is open-ended design work against a gate already met at 22/24, so it is
    the one v0.1.0 item deliberately carried forward rather than finished. **The number stays n/8
@@ -601,6 +600,8 @@ Roughly in order of value:
 - **`--enforce-netpol`** tier in the e2e harness — Calico under kind, closing
   [backlog #23](backlog.md#23-networkpolicy-enforcement-is-unproven).
 - Chaos self-testing, natural-language history queries, Pyroscope, multi-cluster.
+- **Cheaper LLM providers**, Gemini Flash is a bit too expensive for rapid development and testing so a cheaper LLM solution should be searched
+- **More expensive LLM providers**, Gemini Flash is pretty solid, but for real production usage a model like Opus or Fable are more appropriate
 
 ---
 
