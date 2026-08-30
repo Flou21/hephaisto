@@ -586,9 +586,16 @@ _c11_resolved() {
         2>/dev/null || echo 0)" -ge 1 ]
 }
 
+# Available AND settled. availableReplicas alone is not enough: the fixture's container has no
+# readiness probe, so while wedged it is Ready for the two seconds it runs before exiting, and
+# the Deployment duly reports one available replica for part of every crash cycle. The fixture
+# now carries minReadySeconds to close that, and this asserts the pod is genuinely Ready too -
+# belt and braces, because a false pass here would report a broken workload as fixed.
 _c11_available() {
     [ "$(kc -n "$CHAOS_NS" get deploy c11-transient \
-        -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo 0)" -ge 1 ]
+        -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo 0)" -ge 1 ] \
+        && [ "$(kc -n "$CHAOS_NS" get pods -l app.kubernetes.io/name=c11-transient \
+            -o jsonpath='{.items[*].status.containerStatuses[*].ready}' 2>/dev/null)" = "true" ]
 }
 
 # The fixture is actually healthy afterwards. This is the half that distinguishes "the agent

@@ -208,8 +208,20 @@ public static class PolicyEngine
         // 9. Not the last one standing. Restarting the sole Ready replica converts a degraded
         //    service into a down one, which is strictly worse than the symptom being treated.
         //    The label is the opt-in for workloads whose owners have decided otherwise.
+        //
+        //    THERE HAS TO BE A READY REPLICA TO LOSE. This gate used to fire at zero ready as
+        //    well, and the denial it produced said so in as many words - "this would restart
+        //    the last Ready replica (0 ready of 3 desired)" - which is not a sentence that can
+        //    be true. A workload with nothing Ready is already down: a restart cannot degrade
+        //    it, and is the only thing that might help.
+        //
+        //    Not a corner case. A crash-looping pod is BY DEFINITION not Ready, so at zero the
+        //    gate refused every restart the action exists for, and RestartPod - the one type
+        //    v0.2.0 promotes to auto - could never fire on the fault it is meant for. Found by
+        //    running the acceptance test: the agent proposed exactly the right action for
+        //    c11-transient and was refused for protecting a replica that was not there.
         if (request.Type is ActionType.RestartPod &&
-            workload is { } only &&
+            workload is { ReadyReplicas: >= 1 } only &&
             (only.DesiredReplicas == 1 || only.ReadyReplicas <= 1) &&
             !HasSingleReplicaEscapeHatch(facts, options))
         {

@@ -417,7 +417,6 @@ public sealed class PolicyEngineTests
     [Theory]
     [InlineData(1, 1)]
     [InlineData(3, 1)]
-    [InlineData(3, 0)]
     public void RestartingTheLastReadyReplica_Denies(int desired, int ready)
     {
         var facts = Given.Facts() with
@@ -427,6 +426,56 @@ public sealed class PolicyEngineTests
                 DesiredReplicas = desired,
                 ReadyReplicas = ready,
                 UpdatedReplicas = desired,
+            },
+        };
+
+        var result = PolicyEngine.Evaluate(Given.Request(ActionType.RestartPod), facts, Given.Options());
+
+        result.Decision.Should().Be(PolicyDecision.Deny);
+        result.Reasons.Should().ContainMatch("*last Ready replica*");
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public void AWorkloadWithNothingReady_CanBeRestarted(int desired)
+    {
+        // This case used to deny, and the denial said "this would restart the last Ready
+        // replica (0 ready of N desired)" - a sentence that cannot be true. Nothing is Ready,
+        // so there is no last one to protect: the workload is already down, a restart cannot
+        // degrade it, and it is the only thing that might help.
+        //
+        // Not a corner case, which is why it is a theory over both shapes. A crash-looping pod
+        // is BY DEFINITION not Ready, so while this denied, RestartPod - the single action type
+        // v0.2.0 promotes to auto - could never fire on the fault it exists for. It was found
+        // by running the acceptance test and watching the agent propose exactly the right thing
+        // and be refused.
+        var facts = Given.Facts() with
+        {
+            Workload = Given.Workload() with
+            {
+                DesiredReplicas = desired,
+                ReadyReplicas = 0,
+                UpdatedReplicas = desired,
+            },
+        };
+
+        PolicyEngine.Evaluate(Given.Request(ActionType.RestartPod), facts, Given.Options())
+            .Decision.Should().Be(PolicyDecision.Allow);
+    }
+
+    [Fact]
+    public void TheLastReadyReplicaRule_StillProtectsAServiceThatIsStillServing()
+    {
+        // The other side of the same change, and the one that must not regress: one Ready
+        // replica out of three is a degraded service, and restarting it makes it a down one.
+        var facts = Given.Facts() with
+        {
+            Workload = Given.Workload() with
+            {
+                DesiredReplicas = 3,
+                ReadyReplicas = 1,
+                UpdatedReplicas = 3,
             },
         };
 

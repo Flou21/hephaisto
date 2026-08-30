@@ -97,6 +97,17 @@ metadata:
     hephaisto.chaos/fault: transient
 spec:
   replicas: 1
+
+  # A pod must stay up this long before the Deployment calls it Available.
+  #
+  # Load-bearing, and the reason is the thing this fixture is for. The container has no
+  # readiness probe, so it is Ready the instant it is Running - and while wedged it runs for
+  # two seconds before exiting. Without minReadySeconds the Deployment reports
+  # availableReplicas: 1 for two seconds of every crash cycle, so anything sampling
+  # availability catches a broken workload looking healthy. That is exactly the false pass
+  # the acceptance test exists to prevent, and it fooled the harness on the first real run.
+  minReadySeconds: 20
+
   # Recreate, not RollingUpdate. local-path is ReadWriteOnce and single-node, so
   # a rolling replacement would have the new pod waiting on a volume the old one
   # still holds - the fixture would look stuck rather than fixed.

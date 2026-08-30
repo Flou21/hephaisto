@@ -34,8 +34,20 @@ public sealed record CheckResult
 /// action was for is that the workload stops crash-looping.
 /// </para>
 /// </remarks>
-public sealed class VerificationChecks(KubernetesApi api, ILogger<VerificationChecks> logger)
+public sealed class VerificationChecks(
+    KubernetesApi api,
+    TimeProvider time,
+    ILogger<VerificationChecks> logger)
 {
+    /// <summary>
+    /// How long a restarted container must have been up before it counts as recovered.
+    /// </summary>
+    /// <remarks>
+    /// Comfortably longer than a crash loop's Running window, and comfortably shorter than the
+    /// 60 seconds before the first check runs, so it never rejects a genuine recovery.
+    /// </remarks>
+    private static readonly TimeSpan MinimumStableUptime = TimeSpan.FromSeconds(30);
+
     public async Task<CheckResult> RunAsync(AgentAction action, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(action);
@@ -122,6 +134,7 @@ public sealed class VerificationChecks(KubernetesApi api, ILogger<VerificationCh
 
         var restarts = 0;
         var waiting = new List<string>();
+        var flapping = false;
 
         if (ClusterFactsRules.LabelSelector(selector) is { } labelSelector)
         {
@@ -137,11 +150,27 @@ public sealed class VerificationChecks(KubernetesApi api, ILogger<VerificationCh
                 {
                     waiting.Add(reason);
                 }
+
+                // A container that has restarted and has only just come up again has not
+                // recovered - it is between crashes, and this is the moment it looks healthiest.
+                //
+                // Without this the check has a hole a crash loop fits through exactly. A
+                // container with no readiness probe is Ready the instant it is Running, so a pod
+                // that runs for two seconds and exits is Ready for two seconds of every cycle,
+                // the Deployment reports availableReplicas: 1, and nothing is Waiting. Sample
+                // in that window and a workload that is still failing passes verification, the
+                // incident is Resolved, and the agent reports success for a fault it did not fix.
+                if (status.RestartCount > 0 &&
+                    status.State?.Running?.StartedAt is { } startedAt &&
+                    time.GetUtcNow() - startedAt < MinimumStableUptime)
+                {
+                    flapping = true;
+                }
             }
         }
 
         var settled = observed >= generation && updated == desired;
-        var healthy = settled && ready == desired && desired > 0 && waiting.Count == 0;
+        var healthy = settled && ready == desired && desired > 0 && waiting.Count == 0 && !flapping;
 
         var checks = new
         {
@@ -154,6 +183,7 @@ public sealed class VerificationChecks(KubernetesApi api, ILogger<VerificationCh
             observedGeneration = observed,
             restarts,
             waiting = waiting.Distinct().ToArray(),
+            flapping,
         };
 
         if (healthy)
@@ -181,9 +211,12 @@ public sealed class VerificationChecks(KubernetesApi api, ILogger<VerificationCh
         return new CheckResult
         {
             Outcome = VerificationOutcome.Failed,
-            Detail = waiting.Count > 0
-                ? $"{kind}/{name} has containers waiting: {string.Join(", ", waiting.Distinct())}"
-                : $"{kind}/{name} has {ready}/{desired} ready",
+            Detail = flapping
+                ? $"{kind}/{name} is still restarting: a container has {restarts} restart(s) and came "
+                  + $"up less than {MinimumStableUptime.TotalSeconds:F0}s ago"
+                : waiting.Count > 0
+                    ? $"{kind}/{name} has containers waiting: {string.Join(", ", waiting.Distinct())}"
+                    : $"{kind}/{name} has {ready}/{desired} ready",
             Checks = checks,
         };
     }
