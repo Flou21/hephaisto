@@ -891,6 +891,44 @@ The token is a **separate Editor service account**, not grafana-mcp's Admin one:
 Grafana credential in the system that may write. `chaos_assert_annotations` checks them in the e2e
 using that same token, so `docs/verification.md`'s clause is now asserted rather than assumed.
 
+### 43. `GrafanaAnnotator.Describe` is documented as a startup line and has no caller
+
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
+**Symptom.** An operator who has not configured Grafana annotations is told nothing about it,
+by a mechanism whose own documentation says they are.
+
+**Evidence.** `Observability/GrafanaAnnotator.cs:42-46`, on `NullGrafanaAnnotator`, verbatim:
+
+> The absence is reported once at startup by `GrafanaAnnotator.Describe` rather than per
+> incident: a warning on every transition would train people to ignore the log on exactly the
+> installs that have chosen not to wire Grafana up.
+
+The reasoning is right and the method exists — `:109-121`, returning one of three sentences
+naming the missing key. `grep -rn "GrafanaAnnotator.Describe" src/ tests/` returns **nothing but
+that doc comment**. Nothing has ever called it.
+
+**Why it is still open.** It fails in the direction that looks fine, and it is invisible from
+both sides: the method is written, documented and correct, and the `Null*` fallback works
+exactly as intended. The only observable difference is a log line nobody knew to miss.
+
+**Why it matters more than a missing log line.** Every outbound integration in this codebase
+degrades silently when unconfigured, which is the right behaviour per call and a bad one
+overall — the failure mode of the whole feature is that nothing happens, and "nothing happened"
+looks identical whether it was never switched on or is broken. That is precisely the confusion
+v0.3.0 exists to remove, so shipping notifications on top of it would have been building the
+same trap one storey higher.
+
+**Size.** S.
+
+**Fixed 2026-08-30.** `OutboundStartupReport` is the caller, and it covers the notification
+channels too: `INotificationChannel.Describe()` is part of the interface rather than a
+convention, so a channel cannot be added without answering "what does this say at startup".
+It also reports when no routes are configured — at `Information`, not `Warning`, because
+shipping unable to notify is the deliberate default and warning about it every start would
+train people to ignore the line on exactly the installs that chose it — and at `Error` when a
+route names a channel that is not registered.
+
 ### 21. "The workflows have never run — there is no remote yet" is stale
 
 `5d4217b` is a merged Dependabot PR and `v0.0.1` was published by `release.yml`. The line was true

@@ -3,6 +3,16 @@ using Hephaisto.Core.Domain;
 namespace Hephaisto.Core.Notifications;
 
 /// <summary>
+/// The channel names, shared so a routing rule and a registration cannot drift apart - the same
+/// argument <c>HephaistoTelemetry</c> makes about metric names.
+/// </summary>
+public static class NotificationChannelNames
+{
+    public const string Webhook = "webhook";
+    public const string Teams = "teams";
+}
+
+/// <summary>
 /// One rule: which events, at which severity, in which namespaces, go to which channel.
 /// </summary>
 /// <remarks>
@@ -39,6 +49,39 @@ public sealed class NotificationRoute
 }
 
 /// <summary>
+/// The generic outbound HTTP channel: a URL, and optionally a secret to sign with.
+/// </summary>
+/// <remarks>
+/// Called the <b>generic outbound HTTP channel</b> rather than "the webhook channel", because in
+/// this repository a webhook is something Alertmanager posts INTO Hephaisto - the
+/// <c>/webhooks</c> route group, the NetworkPolicy that is its only authentication. Reusing the
+/// word for the opposite direction is how a security discussion ends up about the wrong thing.
+/// </remarks>
+public sealed class HttpChannelOptions
+{
+    /// <summary>Where to POST. Absent means the channel is not registered at all.</summary>
+    public string? Url { get; set; }
+
+    /// <summary>
+    /// Shared secret for the <c>X-Hephaisto-Signature</c> HMAC. Optional, and worth setting:
+    /// Hephaisto's own inbound webhook cannot be authenticated at all - Alertmanager has no
+    /// field for a header - and is protected only by a NetworkPolicy. A receiver of ours does
+    /// not have to accept that trade.
+    /// </summary>
+    public string? SigningSecret { get; set; }
+}
+
+/// <summary>Microsoft Teams, through a Power Automate Workflows trigger.</summary>
+public sealed class TeamsChannelOptions
+{
+    /// <summary>
+    /// The Workflows trigger URL. <b>A bearer credential in a query string</b>, so it comes from
+    /// a Secret, is never a Helm value, and is never logged.
+    /// </summary>
+    public string? WorkflowUrl { get; set; }
+}
+
+/// <summary>
 /// Outbound delivery configuration. Bound via <c>IOptionsMonitor</c> so it hot-reloads from the
 /// ConfigMap, like <c>PolicyOptions</c>.
 /// </summary>
@@ -61,6 +104,34 @@ public sealed class NotificationOptions
 
     /// <summary>Empty by default. See the remarks on this class.</summary>
     public List<NotificationRoute> Routes { get; set; } = [];
+
+    public HttpChannelOptions Webhook { get; set; } = new();
+
+    public TeamsChannelOptions Teams { get; set; } = new();
+
+    /// <summary>
+    /// Grafana's external base URL, used to put a "look at the graphs" link beside the
+    /// diagnosis. Optional - a message without it is thinner, not broken.
+    /// </summary>
+    public string? GrafanaUrl { get; set; }
+
+    /// <summary>The channels that are actually configured, and therefore routable.</summary>
+    /// <remarks>
+    /// Used by startup validation, so a route naming a channel nobody configured is refused
+    /// rather than discovered the first time something escalates and reaches nobody.
+    /// </remarks>
+    public IEnumerable<string> ConfiguredChannels()
+    {
+        if (!string.IsNullOrWhiteSpace(Webhook.Url))
+        {
+            yield return NotificationChannelNames.Webhook;
+        }
+
+        if (!string.IsNullOrWhiteSpace(Teams.WorkflowUrl))
+        {
+            yield return NotificationChannelNames.Teams;
+        }
+    }
 
     /// <summary>
     /// Ceiling on deliveries per channel per hour. A notifier inherits none of ingest's dedup,

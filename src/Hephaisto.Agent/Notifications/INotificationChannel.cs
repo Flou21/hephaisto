@@ -92,5 +92,15 @@ public interface INotificationChannel
     /// </summary>
     string Name { get; }
 
+    /// <summary>
+    /// One line at startup saying this channel is on, and where it points.
+    /// </summary>
+    /// <remarks>
+    /// <b>Must never include the credential.</b> A Teams Workflows URL carries its bearer token
+    /// in the query string, so the obvious implementation - printing the configured URL - writes
+    /// a live credential into the pod log.
+    /// </remarks>
+    string Describe();
+
     Task<DeliveryResult> SendAsync(NotificationMessage message, CancellationToken ct);
 }
