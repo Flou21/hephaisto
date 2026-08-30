@@ -204,6 +204,16 @@ chaos_assert_detection() {
     incidents=$(api_array "/api/incidents?limit=100")
     printf '%s' "$incidents" > "$WORKDIR/incidents.json"
 
+    # Fixture -> incident, resolved ONCE and written down for every later reader.
+    #
+    # judge.sh used to redo this mapping itself, and did it differently: it matched the raw
+    # fixture id against target.name, while this function matches fixture_target. For c10
+    # those are not the same string - its incident opens on `faulty-service` with no namespace
+    # (#33) - so the judge matched nothing and reported "no primary finding" for an incident
+    # that had one. Two resolutions of one question is how a run asserts on one incident and
+    # grades another, which makes the denominator quietly smaller than the corpus.
+    : > "$WORKDIR/fixture-incidents.tsv"
+
     local f kind found
     for f in $APPLIED; do
         kind=$(fixture_kind "$f")
@@ -215,6 +225,14 @@ chaos_assert_detection() {
 
         found=$(jq --arg t "$target" '[.[] | select(.targetName // "" | startswith($t))] | length' \
                 <<<"$incidents")
+
+        # Every match, in the order the API returned them - not just the one whose kind is
+        # checked below. One fixture routinely opens two incidents, and a reader that takes
+        # only the first has no way to tell "this fixture produced no diagnosis" from "the
+        # row I happened to pick did not carry it".
+        jq -r --arg f "$f" --arg t "$target" \
+            '.[] | select(.targetName // "" | startswith($t)) | "\($f)\t\(.id)"' \
+            <<<"$incidents" >> "$WORKDIR/fixture-incidents.tsv"
 
         if [ "${found:-0}" -ge 1 ]; then
             local got_kind

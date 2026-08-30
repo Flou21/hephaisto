@@ -47,22 +47,59 @@ judge_run() {
 
     : > "$WORKDIR/judgements.jsonl"
 
-    local f truth diagnosis result verdict reason
+    local f truth diagnosis result verdict reason ids id passed_over
     for f in $APPLIED; do
         truth=$(fixture_truth "$f")
         [ -n "$truth" ] || continue
 
+        # The incidents chaos_assert_detection matched for this fixture, in the order it
+        # matched them. This function used to resolve the fixture itself, against
+        # target.name and the raw fixture id - which is not the string detection matches on
+        # (fixture_target), so c10 never matched here at all and was reported ungraded while
+        # its diagnosis existed. Grading a row this file resolved independently is #37.
+        # `|| true` is load-bearing: run.sh is `set -Eeuo pipefail`, and awk on a file that
+        # does not exist (an --only run that skipped detection) exits 2, which would take the
+        # whole suite down in the reporter rather than skipping one grade.
+        ids=$(awk -F'\t' -v f="$f" '$1 == f {print $2}' \
+              "$WORKDIR/fixture-incidents.tsv" 2>/dev/null || true)
+
         # The primary hypothesis plus its evidence excerpts - what a human would read.
-        diagnosis=$(jq -r --arg f "$f" '
-            select(.target.name // "" | startswith($f))
-            | [.investigations[]?.findings[]? | select(.isPrimary)]
-            | .[0] // empty
-            | "HYPOTHESIS: \(.hypothesis)\nEVIDENCE: " +
-              ([.evidence[]? | .excerpt] | join(" | "))' "$details" | head -c 4000)
+        #
+        # First incident that carries one, rather than first incident: a fixture routinely
+        # opens two, and only one of them holds the diagnosis. Passing over an empty row is
+        # not the same as the fixture having produced nothing, and the old code could not
+        # tell the two apart - which is the other half of how the denominator shrank.
+        diagnosis=""
+        passed_over=0
+        for id in $ids; do
+            diagnosis=$(jq -r --arg id "$id" '
+                select((.id // "") == $id)
+                | [.investigations[]?.findings[]? | select(.isPrimary)]
+                | .[0] // empty
+                | "HYPOTHESIS: \(.hypothesis)\nEVIDENCE: " +
+                  ([.evidence[]? | .excerpt] | join(" | "))' "$details" | head -c 4000)
+
+            [ -n "$diagnosis" ] && break
+            passed_over=$(( passed_over + 1 ))
+        done
 
         if [ -z "$diagnosis" ]; then
-            printf '  %sskip%s  grade %s -- no primary finding\n' "$C_YELLOW" "$C_RESET" "$f"
+            # Now an honest statement about the fixture rather than about the row that was
+            # picked. The two cases are different and were previously the same sentence:
+            # nothing matched at all, versus every incident it opened was checked and none
+            # carried a primary finding.
+            if [ "$passed_over" -eq 0 ]; then
+                printf '  %sskip%s  grade %s -- detection matched no incident for it\n' \
+                    "$C_YELLOW" "$C_RESET" "$f"
+            else
+                printf '  %sskip%s  grade %s -- no primary finding in any of its %s incident(s)\n' \
+                    "$C_YELLOW" "$C_RESET" "$f" "$passed_over"
+            fi
             continue
+        fi
+
+        if [ "$passed_over" -gt 0 ]; then
+            say "graded $f on incident $id (passed over $passed_over with no primary finding)"
         fi
 
         result=$(judge_ask "$truth" "$diagnosis") || {
