@@ -255,6 +255,65 @@ Two traps worth knowing before you test acting:
   Deployment leaves it at 2 and the fixture comes back healthy — which looks exactly like the
   agent fixing something it never touched. Delete the PVC to reset it.
 
+## The console has a design language, as of v0.4.0
+
+**Read [`docs/design.md`](docs/design.md) before changing any CSS.** Four rules there are enforced
+by tests rather than by goodwill, and the first two will fail your build:
+
+- **Colours live in `src/Hephaisto.Agent/wwwroot/tokens.css` and nowhere else.** A hex, `rgb()` or
+  `hsl()` literal in `app.css` or `website/site.css` fails `./scripts/test.sh`. Two colours escaped
+  before the rule existed and rendered near-black on dark red in light mode for three releases.
+- **A token needs a consumer in the same commit** - the design form of the config rule above.
+- Both themes are held to the same contrast bar, asserted in tests.
+- State is never colour alone: glyph, word, then colour.
+
+Half the system is in C#. `Components/Display.cs` owns the glyph vocabulary, the enum-to-class
+mapping and every number format; changing what a state looks like usually means touching both files.
+
+### There is a visual safety net, and it is not the console suite
+
+```sh
+scripts/visual-test.sh            # compare against the committed baselines
+scripts/visual-test.sh --update   # regenerate them, then LOOK at the diff
+```
+
+`scripts/e2e/ui` asserts BEHAVIOUR against a live agent and every one of its assertions passes
+against a console whose layout has collapsed. The visual baselines are separate, need no cluster,
+and photograph [`design/gallery.html`](design/gallery.html) - every component the language has to
+keep working, rendered from the shipping stylesheet with frozen data.
+
+**If you change a component, change it in the gallery too**, or the net stops covering it.
+
+Always runs in the pinned Playwright container, including on this machine. Font rasterisation is
+not portable, and baselines that fail in CI on antialiasing are baselines people learn to
+re-baseline past. Requires docker.
+
+### `website/` is the second consumer
+
+`website/tokens.css` and the two font binaries are byte-identical copies of the console's, and a
+test fails if they ever differ. Update them with `cp`, never by editing:
+
+```sh
+cp src/Hephaisto.Agent/wwwroot/tokens.css website/tokens.css
+```
+
+## Commit messages
+
+Undocumented for three releases and derived from the log, so it is written down now: a conventional
+type with an optional scope, then **a lowercase clause that makes a claim** rather than naming a
+file. Frequently two clauses joined by a comma, where the second is the surprising half.
+
+```
+fix(policy): a workload with nothing Ready has no last replica to protect
+fix(e2e): the receiver image could not build, so the notify phase tested nothing
+build: v0.3.0 is a minor bump, and four scripts would have called it a patch
+```
+
+Bodies are long and hard-wrapped near 76 columns: the symptom, the wrong hypotheses, the evidence,
+and what was actually verified. **A fix and its `docs/backlog.md` entry land in the same commit**,
+not in a documentation sweep afterwards. Scopes in use: `pipeline`, `policy`, `safety`, `chart`,
+`telemetry`, `persistence`, `web`, `e2e`, `notify`, `design`, `website`, `prompts`, `docs`.
+
 ## The cluster is a single shared resource
 
 There is one k3s node, shared with the whole stack in the `~/dev` workspace. Parallel agents

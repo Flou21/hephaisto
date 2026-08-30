@@ -3,7 +3,12 @@
  *
  * Plain CSS, no framework, no CDN. This pod can run in a cluster with no egress, and an
  * incident console whose stylesheet fails to load is unreadable at exactly the moment
- * somebody needs it. Everything here is in this one file for the same reason.
+ * somebody needs it.
+ *
+ * That rule is about the NETWORK, not about the file count, and it used to be written here as
+ * "everything here is in this one file for the same reason". Since v0.4.0 there are two, both
+ * served from this pod's own wwwroot: tokens.css holds the canonical token set and this file
+ * holds everything that consumes it. No colour may be written below - a test enforces it.
  *
  * Dark first, dense, monospace for anything a human might compare character by character -
  * ids, workload keys, log excerpts, timestamps. Target reader: on call at 3am, on whatever
@@ -13,58 +18,10 @@
  * a word next to it. Colour is the third channel, never the only one.
  */
 
-:root {
-    --bg: #0e1116;
-    --bg-raised: #151a21;
-    --bg-sunken: #0a0d11;
-    --bg-hover: #1c232c;
-    --border: #262d38;
-    --border-strong: #384252;
-
-    --fg: #dbe1e8;
-    --fg-dim: #8d99a8;
-    --fg-faint: #5f6b7a;
-
-    --accent: #58a6ff;
-
-    --red: #f7768e;
-    --orange: #ff9e64;
-    --yellow: #e0af68;
-    --green: #73daca;
-    --blue: #7aa2f7;
-    --purple: #bb9af7;
-    --cyan: #2ac3de;
-
-    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
-    --sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-
-    --row: 1.55rem;
-}
-
-/* Light mode is a courtesy, not the design target: this thing is read in a dark room. */
-@media (prefers-color-scheme: light) {
-    :root {
-        --bg: #fbfcfd;
-        --bg-raised: #ffffff;
-        --bg-sunken: #f1f3f6;
-        --bg-hover: #eef1f5;
-        --border: #d7dde5;
-        --border-strong: #b6c0cd;
-
-        --fg: #1a1f26;
-        --fg-dim: #56616f;
-        --fg-faint: #7d8896;
-
-        --accent: #0b60d0;
-        --red: #b32d3f;
-        --orange: #a85a10;
-        --yellow: #8a6100;
-        --green: #10756a;
-        --blue: #2a5db0;
-        --purple: #6b3fb5;
-        --cyan: #0d6f85;
-    }
-}
+/*
+ * Tokens live in tokens.css, which is linked before this file and is the canonical set. A
+ * colour written below this line will fail the build - see that file for why.
+ */
 
 * {
     box-sizing: border-box;
@@ -77,7 +34,7 @@ body {
     background: var(--bg);
     color: var(--fg);
     font-family: var(--sans);
-    font-size: 13px;
+    font-size: var(--root-size);
     line-height: 1.45;
 }
 
@@ -91,14 +48,14 @@ a:hover {
 }
 
 h1 {
-    font-size: 1.35rem;
+    font-size: var(--text-4xl);
     font-weight: 600;
     margin: 0 0 0.75rem;
     letter-spacing: -0.01em;
 }
 
 h2 {
-    font-size: 1rem;
+    font-size: var(--text-root);
     font-weight: 600;
     margin: 0 0 0.5rem;
     padding-bottom: 0.3rem;
@@ -106,7 +63,7 @@ h2 {
 }
 
 h3 {
-    font-size: 0.85rem;
+    font-size: var(--text-xl);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -115,7 +72,7 @@ h3 {
 }
 
 h4 {
-    font-size: 0.78rem;
+    font-size: var(--text-md);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -161,8 +118,15 @@ h4 {
 }
 
 .hp-main {
-    /* 1200px is the floor the tables are laid out for; wider is better and the trace does
-       not benefit from being narrower than its content. */
+    /* min-width: 0 is the flex-child override, and it does the OPPOSITE of what the comment
+       here used to claim. It read "1200px is the floor the tables are laid out for", which
+       described an intention no rule implemented - there is no min-width: 1200px anywhere, and
+       never was. What this line actually does is let a flex child shrink below its content
+       width, which is what allows the nine-column table to scroll inside itself instead of
+       pushing the whole page sideways.
+       The tables ARE laid out expecting roughly 1200px of room. That is a fact about the
+       design, and it belongs in docs/design.md where it is true, rather than here attached to
+       a declaration that says something else. */
     min-width: 0;
     padding: 1rem 1.25rem 4rem;
 }
@@ -176,7 +140,7 @@ h4 {
     border-bottom: 1px solid var(--border);
     position: sticky;
     top: 0;
-    z-index: 20;
+    z-index: var(--z-sticky);
 }
 
 .hp-brand {
@@ -193,9 +157,9 @@ h4 {
 
 .hp-mode {
     font-family: var(--mono);
-    font-size: 0.8rem;
+    font-size: var(--text-lg);
     padding: 0.05rem 0.45rem;
-    border-radius: 3px;
+    border-radius: var(--radius);
     border: 1px solid currentColor;
 }
 
@@ -246,13 +210,13 @@ h4 {
 .hp-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.85rem;
+    font-size: var(--text-xl);
 }
 
 .hp-table th {
     text-align: left;
     font-weight: 600;
-    font-size: 0.72rem;
+    font-size: var(--text-xs);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--fg-dim);
@@ -262,7 +226,7 @@ h4 {
 }
 
 .hp-table td {
-    padding: 0.28rem 0.5rem;
+    padding: var(--cell-y) var(--cell-x);
     border-bottom: 1px solid var(--border);
     vertical-align: top;
 }
@@ -294,7 +258,7 @@ h4 {
 
 .hp-sub {
     display: block;
-    font-size: 0.72rem;
+    font-size: var(--text-xs);
     color: var(--fg-faint);
     font-family: var(--mono);
 }
@@ -309,7 +273,7 @@ h4 {
     color: var(--fg-dim);
     background: var(--bg-sunken);
     border: 1px dashed var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-lg);
     padding: 0.6rem 0.8rem;
 }
 
@@ -331,7 +295,7 @@ h4 {
 .hp-risk,
 .hp-decision {
     font-family: var(--mono);
-    font-size: 0.8rem;
+    font-size: var(--text-lg);
     white-space: nowrap;
 }
 
@@ -359,16 +323,16 @@ h4 {
 .dec-approval { color: var(--yellow); }
 .dec-deny { color: var(--red); }
 
-.hp-yes { color: var(--green); font-family: var(--mono); font-size: 0.8rem; }
-.hp-no { color: var(--fg-faint); font-family: var(--mono); font-size: 0.8rem; }
-.hp-partial { color: var(--yellow); font-family: var(--mono); font-size: 0.8rem; }
+.hp-yes { color: var(--green); font-family: var(--mono); font-size: var(--text-lg); }
+.hp-no { color: var(--fg-faint); font-family: var(--mono); font-size: var(--text-lg); }
+.hp-partial { color: var(--yellow); font-family: var(--mono); font-size: var(--text-lg); }
 
 .hp-chip {
     display: inline-block;
-    font-size: 0.72rem;
+    font-size: var(--text-xs);
     padding: 0.05rem 0.4rem;
     border: 1px solid var(--border-strong);
-    border-radius: 3px;
+    border-radius: var(--radius);
     color: var(--fg-dim);
     white-space: nowrap;
 }
@@ -398,14 +362,14 @@ h4 {
     padding: 0.5rem 0.7rem;
     background: var(--bg-raised);
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-lg);
 }
 
 .hp-filters label {
     display: flex;
     align-items: center;
     gap: 0.4rem;
-    font-size: 0.78rem;
+    font-size: var(--text-md);
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--fg-dim);
@@ -425,12 +389,33 @@ textarea {
     background: var(--bg-sunken);
     color: var(--fg);
     border: 1px solid var(--border-strong);
-    border-radius: 3px;
+    border-radius: var(--radius);
     padding: 0.2rem 0.35rem;
     font-family: var(--mono);
-    font-size: 0.82rem;
+    font-size: var(--text-lg);
 }
 
+/* Links were missing from this list, and links are most of what a keyboard user moves
+   between here: every incident title in the table, every nav item, every evidence citation.
+   They fell back to the user agent's own outline, which on a dark ground is frequently a thin
+   black ring that is effectively invisible. Accessibility is part of acceptance for v0.4.0
+   rather than a follow-up, and this is the cheapest half of it. */
+/* Routes.razor's <FocusOnNavigate Selector="h1" /> sends focus to the page heading on every
+   navigation, which is right for a screen reader and drew a full-width focus ring around the
+   heading for everyone else, on every page load.
+   Suppressed outright rather than restyled. The heading carries tabindex="-1", so it is never
+   reachable by Tab and the router is the ONLY thing that ever focuses it - which means a ring
+   there is not telling a keyboard user where they are, it is drawing a box around a heading
+   somebody just navigated to on purpose. Verified against the live console rather than assumed:
+   tabindex="-1", and document.activeElement is the h1 on load.
+   The first attempt at this styled h1:focus-visible instead, and Chrome matched it - so the ring
+   stayed and merely changed colour. */
+h1:focus,
+h1:focus-visible {
+    outline: none;
+}
+
+a:focus-visible,
 select:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
@@ -444,10 +429,10 @@ button {
     background: var(--bg-hover);
     color: var(--fg);
     border: 1px solid var(--border-strong);
-    border-radius: 3px;
+    border-radius: var(--radius);
     padding: 0.2rem 0.6rem;
     font-family: var(--mono);
-    font-size: 0.82rem;
+    font-size: var(--text-lg);
     cursor: pointer;
 }
 
@@ -483,7 +468,7 @@ button:disabled {
 
 .hp-kv dt {
     color: var(--fg-dim);
-    font-size: 0.75rem;
+    font-size: var(--text-sm);
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
@@ -499,7 +484,7 @@ button:disabled {
     background: var(--bg-raised);
     padding: 0.5rem 0.8rem;
     margin: 0.5rem 0;
-    border-radius: 0 3px 3px 0;
+    border-radius: 0 var(--radius) var(--radius) 0;
 }
 
 .callout-escalated { border-left-color: var(--red); }
@@ -558,7 +543,7 @@ button:disabled {
 
 .hp-investigation {
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-lg);
     padding: 0.7rem 0.9rem;
     margin-bottom: 1rem;
     background: var(--bg-raised);
@@ -583,7 +568,7 @@ button:disabled {
 .hp-step {
     border: 1px solid var(--border);
     border-left: 3px solid var(--border-strong);
-    border-radius: 3px;
+    border-radius: var(--radius);
     margin-bottom: 0.2rem;
     background: var(--bg-sunken);
 }
@@ -614,11 +599,11 @@ button:disabled {
 
 .hp-step-kind {
     font-family: var(--mono);
-    font-size: 0.7rem;
+    font-size: var(--text-2xs);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     padding: 0 0.3rem;
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     border: 1px solid currentColor;
 }
 
@@ -636,7 +621,7 @@ button:disabled {
 .hp-step-metrics {
     margin-left: auto;
     color: var(--fg-dim);
-    font-size: 0.78rem;
+    font-size: var(--text-md);
     white-space: nowrap;
 }
 
@@ -645,13 +630,13 @@ button:disabled {
 .hp-truncated {
     color: var(--orange);
     font-family: var(--mono);
-    font-size: 0.75rem;
+    font-size: var(--text-sm);
 }
 
 .hp-failed {
     color: var(--red);
     font-family: var(--mono);
-    font-size: 0.75rem;
+    font-size: var(--text-sm);
     font-weight: 600;
 }
 
@@ -662,11 +647,11 @@ button:disabled {
 
 .hp-code {
     font-family: var(--mono);
-    font-size: 0.78rem;
+    font-size: var(--text-md);
     line-height: 1.4;
     background: var(--bg);
     border: 1px solid var(--border);
-    border-radius: 3px;
+    border-radius: var(--radius);
     padding: 0.4rem 0.55rem;
     margin: 0 0 0.4rem;
     max-height: 22rem;
@@ -686,7 +671,7 @@ details > summary {
     cursor: pointer;
     color: var(--fg-dim);
     font-family: var(--mono);
-    font-size: 0.78rem;
+    font-size: var(--text-md);
 }
 
 /* The landing animation for a citation click. Two seconds is long enough to find the row
@@ -716,7 +701,7 @@ details > summary {
 
 .hp-finding {
     border: 1px solid var(--border);
-    border-radius: 3px;
+    border-radius: var(--radius);
     padding: 0.5rem 0.7rem;
     margin-bottom: 0.5rem;
     background: var(--bg-sunken);
@@ -752,7 +737,7 @@ details > summary {
     height: 0.5rem;
     background: var(--bg);
     border: 1px solid var(--border-strong);
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     overflow: hidden;
 }
 
@@ -778,7 +763,7 @@ details > summary {
    invariant themselves instead of taking the finding on trust. */
 .hp-cite {
     font-family: var(--mono);
-    font-size: 0.75rem;
+    font-size: var(--text-sm);
     padding: 0 0.35rem;
     color: var(--accent);
     border-color: var(--accent);
@@ -788,7 +773,7 @@ details > summary {
 .hp-cite-broken {
     color: var(--red);
     border: 1px solid var(--red);
-    border-radius: 3px;
+    border-radius: var(--radius);
     display: inline-block;
 }
 
@@ -797,14 +782,14 @@ details > summary {
     padding: 0.25rem 0.5rem;
     background: var(--bg);
     border: 1px solid var(--border);
-    border-radius: 3px;
-    font-size: 0.78rem;
+    border-radius: var(--radius);
+    font-size: var(--text-md);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
 }
 
 .hp-source {
-    font-size: 0.72rem;
+    font-size: var(--text-xs);
 }
 
 /* ---------------------------------------------------------------- plan */
@@ -817,7 +802,7 @@ details > summary {
     background: var(--bg-sunken);
     border: 1px solid var(--yellow);
     border-left-width: 3px;
-    border-radius: 0 3px 3px 0;
+    border-radius: 0 var(--radius) var(--radius) 0;
     padding: 0.5rem 0.8rem;
     margin-bottom: 0.5rem;
     color: var(--yellow);
@@ -834,12 +819,12 @@ details > summary {
 .hp-reasons {
     margin: 0.2rem 0 0.2rem 0.9rem;
     padding: 0;
-    font-size: 0.78rem;
+    font-size: var(--text-md);
     color: var(--fg-dim);
 }
 
 .hp-exec {
-    font-size: 0.72rem;
+    font-size: var(--text-xs);
 }
 
 /* ---------------------------------------------------------------- feedback */
@@ -867,7 +852,7 @@ details > summary {
 
 .hp-feedback-form {
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-lg);
     padding: 0.7rem 0.9rem;
     background: var(--bg-raised);
     max-width: 42rem;
@@ -882,7 +867,7 @@ details > summary {
 }
 
 .hp-label {
-    font-size: 0.75rem;
+    font-size: var(--text-sm);
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--fg-dim);
@@ -934,7 +919,7 @@ details > summary {
 
 .hp-hits > li {
     border: 1px solid var(--border);
-    border-radius: 3px;
+    border-radius: var(--radius);
     padding: 0.5rem 0.7rem;
     margin-bottom: 0.5rem;
     background: var(--bg-raised);
@@ -957,7 +942,7 @@ details > summary {
     gap: 0.5rem;
     align-items: center;
     flex-wrap: wrap;
-    font-size: 0.75rem;
+    font-size: var(--text-sm);
     color: var(--fg-dim);
 }
 
@@ -975,20 +960,20 @@ details > summary {
     flex-direction: column;
     gap: 0.1rem;
     border: 1px solid var(--border);
-    border-radius: 3px;
+    border-radius: var(--radius);
     padding: 0.5rem 0.7rem;
     background: var(--bg-raised);
 }
 
 .hp-stat-label {
-    font-size: 0.72rem;
+    font-size: var(--text-xs);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--fg-dim);
 }
 
 .hp-stat-value {
-    font-size: 1.25rem;
+    font-size: var(--text-3xl);
     font-weight: 600;
 }
 
@@ -1005,7 +990,7 @@ details > summary {
 }
 
 .hp-meter-label {
-    font-size: 0.78rem;
+    font-size: var(--text-md);
     color: var(--fg-dim);
     min-width: 11rem;
 }
@@ -1015,7 +1000,7 @@ details > summary {
     height: 0.7rem;
     background: var(--bg-sunken);
     border: 1px solid var(--border-strong);
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     overflow: hidden;
 }
 
@@ -1061,16 +1046,16 @@ details > summary {
     bottom: 0;
     left: 0;
     right: 0;
-    z-index: 1000;
+    z-index: var(--z-overlay);
     background: var(--red);
-    color: #10131a;
+    color: var(--on-alert);
     font-family: var(--mono);
     font-weight: 600;
     padding: 0.5rem 1rem;
 }
 
 #blazor-error-ui .reload {
-    color: #10131a;
+    color: var(--on-alert);
     text-decoration: underline;
     margin-left: 0.6rem;
 }
@@ -1083,13 +1068,13 @@ details > summary {
 
 .hp-arms summary {
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: var(--text-xl);
 }
 
 .hp-arms ul {
   margin: 0.5rem 0 0;
   padding-left: 1.25rem;
-  font-size: 0.85rem;
+  font-size: var(--text-xl);
   line-height: 1.7;
 }
 
@@ -1106,8 +1091,8 @@ details > summary {
     display: none;
     position: fixed;
     inset: 0;
-    z-index: 1000;
-    background: rgb(6 8 11 / 82%);
+    z-index: var(--z-overlay);
+    background: var(--scrim);
     align-items: center;
     justify-content: center;
     font-family: var(--sans);
@@ -1127,15 +1112,15 @@ details > summary {
     padding: 1.5rem 1.75rem;
     border: 1px solid var(--orange);
     border-left: 4px solid var(--orange);
-    border-radius: 4px;
+    border-radius: var(--radius-lg);
     background: var(--bg-raised);
     color: var(--fg);
-    box-shadow: 0 12px 40px rgb(0 0 0 / 55%);
+    box-shadow: var(--shadow-modal);
 }
 
 .hp-reconnect-title {
     margin: 0 0 0.6rem;
-    font-size: 1.05rem;
+    font-size: var(--text-2xl);
     font-weight: 600;
     color: var(--orange);
 }
@@ -1150,7 +1135,7 @@ details > summary {
     display: none;
     margin: 0 0 0.6rem;
     font-family: var(--mono);
-    font-size: 0.85rem;
+    font-size: var(--text-xl);
     color: var(--fg-dim);
 }
 
@@ -1162,7 +1147,7 @@ details > summary {
 
 .hp-reconnect-note {
     margin: 0;
-    font-size: 0.85rem;
+    font-size: var(--text-xl);
     color: var(--fg-faint);
 }
 
@@ -1170,7 +1155,7 @@ details > summary {
     margin-left: 0.4rem;
     padding: 0.25rem 0.7rem;
     border: 1px solid var(--border-strong);
-    border-radius: 3px;
+    border-radius: var(--radius);
     background: var(--bg-hover);
     color: var(--fg);
     font: inherit;
@@ -1197,7 +1182,7 @@ details > summary {
     margin-left: 0.4rem;
     padding: 0 0.3rem;
     border: 1px solid var(--border-strong);
-    border-radius: 3px;
+    border-radius: var(--radius);
     color: var(--fg-dim);
     font-size: 0.8em;
 }
@@ -1241,7 +1226,7 @@ details > summary {
     padding-top: 0.75rem;
     border-top: 1px solid var(--border);
     color: var(--fg-faint);
-    font-size: 0.75rem;
+    font-size: var(--text-sm);
     letter-spacing: 0.02em;
 }
 

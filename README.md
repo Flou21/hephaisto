@@ -74,6 +74,7 @@ Being precise about this matters, because the difference is the whole safety arg
 | Outbound notifications: webhook and Teams, over a Postgres outbox | built |
 | `RollbackDeployment`, `PatchResources` | not built — refused, not attempted |
 | Runbook memory, OIDC approval identity, in-card approval | not built |
+| A written design language, one token set, visual regression baselines | **works** |
 
 **"Built" rather than "works" is deliberate for the rows above.** Detection, investigation
 and diagnosis are measured against a real cluster; the acting path and the delivery path are
@@ -404,6 +405,20 @@ credential. It publishes versions that no running cluster references; a cluster 
 when a human changes a pinned version in a GitOps repo. The gap between "CI is green" and
 "the cluster changed" is where a person decides — and the thing being published can delete
 pods.
+
+## Design
+
+The console has a written design language as of v0.4.0: **[`docs/design.md`](docs/design.md)**,
+which is what a contributor is pointed at before touching CSS.
+
+One token set feeds every surface — `src/Hephaisto.Agent/wwwroot/tokens.css` — and it is canonical
+by test rather than by convention: a colour written anywhere else fails the build, and both themes
+are held to the same contrast bar. `design/gallery.html` renders every component the language has to
+keep working, and `scripts/visual-test.sh` photographs it in both themes so a stylesheet refactor
+cannot quietly change the console.
+
+`website/` is a single landing page that consumes a byte-identical copy of the same tokens. It is
+not the site; it is the proof that "one token source" survives having more than one consumer.
 
 ## Repo layout
 

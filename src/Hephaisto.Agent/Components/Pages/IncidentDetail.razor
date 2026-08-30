@@ -578,7 +578,7 @@ else
                                 <ul class="hp-evidence">
                                     @foreach (var ev in finding.Evidence)
                                     {
-                                        <li @key="ev.Id">
+                                        <li @key="ev.Id" data-testid="evidence">
                                             @* The grounding invariant, made clickable. Every excerpt must
                                                appear verbatim in the result digest of the step it names;
                                                this link is how a reader checks that themselves instead of

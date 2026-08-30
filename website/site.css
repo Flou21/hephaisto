@@ -1,0 +1,206 @@
+/*
+ * The landing page's own stylesheet.
+ *
+ * THE SECOND CONSUMER. tokens.css beside this file is a byte-identical copy of
+ * src/Hephaisto.Agent/wwwroot/tokens.css, and a test fails if the two ever differ - which is
+ * what makes "one token source" a property of the repository rather than a claim in a document.
+ * The claim was untestable until this page existed, because there was only ever one consumer.
+ *
+ * Same rule as app.css: no colour is written here. Every value below comes from a token, and a
+ * hex literal in this file fails the build exactly as it does in the console's stylesheet.
+ *
+ * Same constraint as the console, too, even though this page does not have it: system-hosted
+ * fonts only, no CDN. "The landing page looks like the product" is not a claim you can make
+ * while setting it in a typeface the product cannot load.
+ */
+
+* { box-sizing: border-box; }
+
+html {
+    font-size: var(--root-size);
+}
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+    max-width: 60rem;
+    margin: 0 auto;
+    padding: 0 1.6rem;
+}
+
+/* ---- nav ---- */
+.nav {
+    display: flex;
+    align-items: center;
+    gap: 1.2rem;
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-weight: 700;
+    font-size: var(--text-3xl);
+    letter-spacing: 0.01em;
+}
+
+.brand .dot { color: var(--accent); }
+.nav .spacer { margin-left: auto; }
+
+.nav a {
+    color: var(--fg-dim);
+    text-decoration: none;
+    font-family: var(--mono);
+    font-size: var(--text-lg);
+}
+
+.nav a:hover { color: var(--accent); }
+
+/* ---- hero ---- */
+.hero { padding: 4.5rem 0 3rem; }
+
+h1 {
+    font-size: clamp(2.2rem, 6vw, 3.6rem);
+    line-height: 1.06;
+    letter-spacing: -0.022em;
+    margin: 0 0 1.1rem;
+    max-width: 18ch;
+    text-wrap: balance;
+}
+
+.standfirst {
+    font-size: var(--text-3xl);
+    color: var(--fg-dim);
+    max-width: 54ch;
+    margin: 0 0 1.8rem;
+}
+
+.cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-family: var(--mono);
+    font-size: var(--text-lg);
+    background: var(--accent);
+    color: var(--on-alert);
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius);
+    text-decoration: none;
+    font-weight: 700;
+}
+
+.cta.ghost {
+    background: transparent;
+    color: var(--fg-dim);
+    border: 1px solid var(--border-strong);
+    font-weight: 400;
+    margin-left: 0.5rem;
+}
+
+.cta:focus-visible,
+.nav a:focus-visible,
+a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+/* ---- sections ---- */
+section { padding: 3rem 0; border-top: 1px solid var(--border); }
+
+h2 {
+    font-size: var(--text-4xl);
+    margin: 0 0 0.4rem;
+    letter-spacing: -0.012em;
+}
+
+/* Reading sizes, not console sizes. The console is dense because it is scanned by somebody
+   who already knows what they are looking at; this page is read once, by somebody deciding
+   whether to trust it. Matching the product means matching its palette, type and rhythm - it
+   does not mean setting prose at 11px. */
+.lede { color: var(--fg-dim); max-width: 60ch; margin: 0 0 1.8rem; font-size: var(--text-2xl); }
+
+/* ---- the gate list: the safety model, which leads ---- */
+.gates { display: grid; gap: 1px; background: var(--border); border: 1px solid var(--border); }
+
+.gate {
+    background: var(--bg-raised);
+    padding: 0.9rem 1.1rem;
+    display: grid;
+    grid-template-columns: 2.2rem 1fr;
+    gap: 0.9rem;
+    align-items: start;
+}
+
+.gate .glyph {
+    font-family: var(--mono);
+    font-weight: 700;
+    color: var(--accent);
+    font-size: var(--text-xl);
+}
+
+.gate h3 {
+    margin: 0 0 0.3rem;
+    font-size: var(--text-3xl);
+    font-weight: 600;
+}
+
+.gate p { margin: 0; color: var(--fg-dim); font-size: var(--text-2xl); }
+.gate code { font-family: var(--mono); color: var(--fg); }
+
+/* ---- what it does ---- */
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 1.2rem; }
+
+.step h3 {
+    font-family: var(--mono);
+    font-size: var(--text-md);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+    margin: 0 0 0.4rem;
+    font-weight: 500;
+}
+
+.step p { margin: 0; color: var(--fg-dim); font-size: var(--text-2xl); }
+
+/* ---- install ---- */
+pre {
+    font-family: var(--mono);
+    font-size: var(--text-lg);
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.9rem 1.1rem;
+    overflow-x: auto;
+    margin: 0 0 1rem;
+    line-height: 1.6;
+}
+
+pre .c { color: var(--fg-faint); }
+pre .k { color: var(--accent); }
+
+/* ---- footer ---- */
+footer {
+    padding: 2.5rem 0 4rem;
+    border-top: 1px solid var(--border);
+    color: var(--fg-faint);
+    font-size: var(--text-lg);
+    display: flex;
+    gap: 1.2rem;
+    flex-wrap: wrap;
+}
+
+footer a { color: var(--fg-dim); text-decoration: none; }
+footer a:hover { color: var(--accent); }
+
+@media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+}

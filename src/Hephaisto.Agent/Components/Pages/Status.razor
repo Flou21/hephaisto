@@ -40,7 +40,12 @@ else
                    one of them would be wrong in exactly the case that matters — someone has
                    hit the ConfigMap and the row has not caught up. *@
                 <span class="hp-stat-label">effective</span>
+                @* data-constrained states the fact; hp-alarm only paints it. The e2e suite
+                   asserts the attribute rather than the class, so that renaming a class during
+                   a stylesheet refactor cannot quietly turn a real assertion into one that can
+                   never fail. See docs/design.md. *@
                 <span class="hp-stat-value mono @(s.EffectiveMode < s.Mode ? "hp-alarm" : "")"
+                      data-constrained="@((s.EffectiveMode < s.Mode) ? "true" : "false")"
                       data-testid="effective-mode">
                     @s.EffectiveMode.ToString().ToLowerInvariant()
                 </span>
@@ -72,7 +77,7 @@ else
 
         @if (s.ModeConstrained)
         {
-            <div class="hp-callout callout-escalated">
+            <div class="hp-callout callout-escalated" data-testid="alarm-callout">
                 <span class="glyph">!!</span>
                 <strong>an arm is holding the agent back</strong>
                 <div class="hp-muted">
@@ -85,7 +90,7 @@ else
 
         @if (s.RunawayLatched)
         {
-            <div class="hp-callout callout-escalated">
+            <div class="hp-callout callout-escalated" data-testid="alarm-callout">
                 <span class="glyph">!!</span>
                 <strong>runaway backstop latched</strong>
                 @if (s.LatchedAt is { } latchedAt)
@@ -206,7 +211,7 @@ else
 
         @if (s.WatchdogStale)
         {
-            <div class="hp-callout callout-escalated">
+            <div class="hp-callout callout-escalated" data-testid="alarm-callout">
                 <span class="glyph">!!</span>
                 <strong>My alert path is broken.</strong>
                 The watchdog has not arrived for longer than @Display.Duration(WatchdogMonitor.StaleAfter).

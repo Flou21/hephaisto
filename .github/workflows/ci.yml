@@ -102,7 +102,7 @@ jobs:
       # runner - it prints `unknown option` and still exits 0, which is the same trap wearing
       # a different hat.)
       - name: Run tests
-        run: scripts/ci-test.sh tests/Hephaisto.Tests/Hephaisto.Tests.csproj 900 Release
+        run: scripts/ci-test.sh tests/Hephaisto.Tests/Hephaisto.Tests.csproj 1000 Release
 
   integration-postgres:
     runs-on: ubuntu-latest
@@ -414,3 +414,33 @@ jobs:
           kubectl -n hephaisto get all
           kubectl -n hephaisto describe pods
           kubectl -n hephaisto logs -l app.kubernetes.io/name=hephaisto --tail=200 --all-containers || true
+
+  # The safety net for the stylesheet. Nothing else in this workflow can see a visual
+  # regression: the console suite asserts behaviour against a live agent, and every one of its
+  # assertions passes just as happily against a console whose layout has collapsed.
+  #
+  # Runs INSIDE the pinned Playwright image rather than installing browsers on the runner,
+  # because that image is also what scripts/visual-test.sh uses locally. Font rasterisation is
+  # not portable, so one platform produces the baselines and compares them - otherwise CI fails
+  # on antialiasing and people learn to re-baseline past it.
+  #
+  # No cluster, no agent, no database: the subject is design/gallery.html over file://.
+  visual:
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
+    steps:
+      - uses: actions/checkout@v7
+
+      # The script asserts the run actually compared something, the same way ui/run.sh does -
+      # playwright exits 0 when everything skipped, and a visual suite that quietly stopped
+      # running looks exactly like one that passed.
+      - run: scripts/visual-test.sh
+
+      - name: The diff, when there is one
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-diff
+          path: design/visual/test-results/
+          retention-days: 7

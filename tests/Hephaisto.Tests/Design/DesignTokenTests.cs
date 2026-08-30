@@ -1,0 +1,453 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
+
+namespace Hephaisto.Tests.Design;
+
+/// <summary>
+/// Reads the stylesheets this repo actually ships and holds them to the two rules that make the
+/// token set canonical rather than advisory.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Written the same way as <see cref="ShippedAlertRulesTests"/>, and for the same reason: the
+/// failure it catches already happened. Two colours were written straight into
+/// <c>app.css</c> - <c>#10131a</c>, twice, as the text colour on a <c>var(--red)</c> ground.
+/// That is correct in dark mode, where <c>--red</c> is a light pink, and wrong in light mode,
+/// where <c>--red</c> is a dark crimson and the error banner rendered near-black on it. It sat
+/// there for three releases because nothing looked.
+/// </para>
+/// <para>
+/// A convention lasts exactly as long as the person who remembers it. These are the tests that
+/// mean "the tokens are the only place a colour is written" is a property of the repository
+/// rather than a sentence in a document.
+/// </para>
+/// </remarks>
+public class DesignTokenTests
+{
+    /// <summary>Any hex, rgb() or hsl() literal. Deliberately greedy - false positives here are cheap.</summary>
+    private static readonly Regex Colour =
+        new(@"#[0-9a-fA-F]{3,8}\b|\brgba?\s*\(|\bhsla?\s*\(", RegexOptions.Compiled);
+
+    private static readonly Regex Declaration =
+        new(@"^\s*(--[a-z0-9-]+)\s*:\s*([^;]+);", RegexOptions.Compiled | RegexOptions.Multiline);
+
+    [Fact]
+    public void NoColourIsWrittenOutsideTheTokenFile()
+    {
+        var offenders = new List<string>();
+
+        foreach (var file in ConsumingStylesheets())
+        {
+            var lines = File.ReadAllLines(file);
+
+            for (var i = 0; i < lines.Length; i++)
+            {
+                // Comments are prose about colours, not colours.
+                if (StrippedOfComments(lines[i]) is var code && !Colour.IsMatch(code))
+                {
+                    continue;
+                }
+
+                offenders.Add($"{Path.GetFileName(file)}:{i + 1}: {lines[i].Trim()}");
+            }
+        }
+
+        offenders.Should().BeEmpty(
+            "every colour belongs in tokens.css, which is the one place both themes are defined "
+            + "together and the one place contrast is checked. A literal here is a value that is "
+            + "correct in whichever theme its author happened to be looking at");
+    }
+
+    [Fact]
+    public void EveryColourTokenIsDefinedInBothThemes()
+    {
+        var (dark, light) = Themes();
+
+        var missing = dark
+            .Where(t => LooksLikeColour(t.Value))
+            .Where(t => !light.ContainsKey(t.Key))
+            .Select(t => $"{t.Key}: {t.Value}")
+            .ToList();
+
+        missing.Should().BeEmpty(
+            "a colour defined only in the dark block keeps its dark value in light mode, which is "
+            + "how a light-mode bug ships looking like a deliberate choice");
+    }
+
+    [Fact]
+    public void BothThemesDefineTheSameTokenNames()
+    {
+        var (dark, light) = Themes();
+
+        light.Keys.Except(dark.Keys).Should().BeEmpty(
+            "the light block overrides the dark one; a token that appears only in light is "
+            + "undefined everywhere else and silently resolves to nothing");
+    }
+
+    /// <summary>
+    /// Body text and interactive colour clear WCAG AA (4.5:1) against their own ground, in
+    /// BOTH themes.
+    /// </summary>
+    /// <remarks>
+    /// Light stopped being "a courtesy, not the design target" in v0.4.0. This test is what
+    /// that sentence cost: both themes are held to the same bar, and neither can be improved
+    /// by making the other worse.
+    /// </remarks>
+    [Theory]
+    [InlineData("--fg", "--bg")]
+    [InlineData("--fg", "--bg-raised")]
+    [InlineData("--fg-dim", "--bg")]
+    [InlineData("--accent", "--bg")]
+    [InlineData("--on-alert", "--red")]
+    public void ReadableTextClearsAa(string foreground, string background)
+    {
+        foreach (var (name, tokens) in AllThemes())
+        {
+            var ratio = Contrast(tokens[foreground], tokens[background]);
+
+            ratio.Should().BeGreaterThanOrEqualTo(4.5,
+                $"{foreground} on {background} is read as body text in the {name} theme "
+                + $"(it is {ratio:F2}:1)");
+        }
+    }
+
+    /// <summary>
+    /// The quieter roles clear AA-large (3:1) - the bar for text at 18.66px bold or larger, and
+    /// for the non-text parts of a control.
+    /// </summary>
+    /// <remarks>
+    /// These are deliberately held to the lower bar rather than exempted. `--fg-faint` is used
+    /// for column labels and evidence sources, and the semantic hues are the fill of a meter or
+    /// the glyph beside a word - never the only carrier of meaning, because state is never
+    /// colour alone, but still something a person has to be able to see.
+    /// </remarks>
+    [Theory]
+    [InlineData("--fg-faint", "--bg")]
+    [InlineData("--red", "--bg")]
+    [InlineData("--orange", "--bg")]
+    [InlineData("--yellow", "--bg")]
+    [InlineData("--green", "--bg")]
+    [InlineData("--blue", "--bg")]
+    [InlineData("--purple", "--bg")]
+    [InlineData("--cyan", "--bg")]
+    public void SupportingColoursClearAaLarge(string foreground, string background)
+    {
+        foreach (var (name, tokens) in AllThemes())
+        {
+            var ratio = Contrast(tokens[foreground], tokens[background]);
+
+            ratio.Should().BeGreaterThanOrEqualTo(3.0,
+                $"{foreground} on {background} has to be visible in the {name} theme "
+                + $"(it is {ratio:F2}:1)");
+        }
+    }
+
+    /// <summary>
+    /// The borders are visible, and are deliberately NOT held to 3:1.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Measured, both themes: <c>--border-strong</c> is 1.86:1 on the dark ground and 1.79:1 on
+    /// the light one. WCAG 1.4.11 asks 3:1 of "visual information required to identify user
+    /// interface components and states", and these borders are neither. They divide a table
+    /// header from its rows and a panel from the page; no border in this console ever carries
+    /// state, because state is never colour alone - it always has a glyph and a word.
+    /// </para>
+    /// <para>
+    /// Raising them to 3:1 would draw every hairline in the console about as loudly as the text
+    /// it separates, on a page whose whole argument is density. That is a design change, and it
+    /// is not one this milestone is making by accident in order to turn a test green.
+    /// </para>
+    /// <para>
+    /// So the bar is stated rather than dropped. A border must still be visible as a division:
+    /// this fails if one is ever flattened into its background, which is the regression that
+    /// would actually cost a reader something.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("--border", "--bg")]
+    [InlineData("--border-strong", "--bg")]
+    [InlineData("--border-strong", "--bg-raised")]
+    public void BordersAreVisibleWithoutBeingLoud(string border, string ground)
+    {
+        foreach (var (name, tokens) in AllThemes())
+        {
+            var ratio = Contrast(tokens[border], tokens[ground]);
+
+            ratio.Should().BeGreaterThan(1.2,
+                $"{border} has to read as a division from {ground} in the {name} theme "
+                + $"(it is {ratio:F2}:1)");
+
+            ratio.Should().BeLessThan(3.0,
+                $"{border} at {ratio:F2}:1 on {ground} in the {name} theme is loud enough to "
+                + "compete with the content; if that is intended, this bound is the place to "
+                + "say so rather than the place to find out");
+        }
+    }
+
+    /// <summary>
+    /// The interactive accent is distinguishable from every severity colour.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This test exists because of the direction this project chose. The accent is an ember
+    /// orange and the severity ramp is red, orange and yellow, so the accent sits in the middle
+    /// of the range that already means "something is wrong". That was named as the cost of the
+    /// direction before it was picked, and this is what stops it being paid by accident.
+    /// </para>
+    /// <para>
+    /// The first palette drafted for it put <c>--accent</c> and <c>--orange</c> 1.24:1 apart,
+    /// which is two colours a reader cannot reliably tell from one another - so a link and a
+    /// warning would have looked the same. Deepening the orange took it to 2.07:1 dark and
+    /// 1.72:1 light.
+    /// </para>
+    /// <para>
+    /// 1.5:1 is a low bar and deliberately so: this is not a legibility threshold, it is a
+    /// "these are visibly two different colours" threshold. What it forbids is the specific
+    /// mistake of drifting the accent back into the severity ramp while adjusting something
+    /// else.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("--red")]
+    [InlineData("--orange")]
+    [InlineData("--yellow")]
+    public void TheInteractiveAccentIsNotMistakableForASeverity(string severity)
+    {
+        foreach (var (name, tokens) in AllThemes())
+        {
+            var ratio = Contrast(tokens["--accent"], tokens[severity]);
+
+            ratio.Should().BeGreaterThan(1.5,
+                $"--accent and {severity} are {ratio:F2}:1 apart in the {name} theme, which is "
+                + "close enough that a link and a warning read as the same colour");
+        }
+    }
+
+    /// <summary>Every SVG this repo ships is well-formed XML.</summary>
+    /// <remarks>
+    /// <para>
+    /// A broken SVG does not throw and does not log. The browser renders a broken-image
+    /// placeholder and everything else on the page carries on looking correct, so the failure
+    /// surfaces as "the favicon is missing" weeks later, if at all.
+    /// </para>
+    /// <para>
+    /// This test exists because it happened while the mark was being drawn. The comment in
+    /// favicon.svg referred to the token it uses by name, and <c>--bg-raised</c> contains a
+    /// double hyphen, which is <b>illegal inside an XML comment</b>. The file was invalid and
+    /// rendered as nothing. The visual baseline caught it that time; this catches it without
+    /// needing a picture.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryShippedSvgIsWellFormed()
+    {
+        var broken = new List<string>();
+
+        foreach (var svg in Directory.EnumerateFiles(RepoRoot(), "*.svg", SearchOption.AllDirectories))
+        {
+            // node_modules and playwright's own report assets are not ours.
+            if (svg.Contains("node_modules", StringComparison.Ordinal)
+                || svg.Contains("playwright-report", StringComparison.Ordinal)
+                || svg.Contains("test-results", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            try
+            {
+                System.Xml.Linq.XDocument.Load(svg);
+            }
+            catch (System.Xml.XmlException ex)
+            {
+                broken.Add($"{Path.GetRelativePath(RepoRoot(), svg)}: {ex.Message}");
+            }
+        }
+
+        broken.Should().BeEmpty("a malformed SVG renders as a broken image and reports nothing");
+    }
+
+    /// <summary>
+    /// The website consumes the SAME token file, byte for byte.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the test that makes "one token source, more than one consumer" a fact rather
+    /// than an aspiration. Until the landing page existed there was exactly one consumer, so
+    /// the claim could not be checked and would have decayed the first time somebody adjusted
+    /// a colour on one side.
+    /// </para>
+    /// <para>
+    /// A copy rather than a symlink or a build step, because the site has to be deployable on
+    /// its own and this repo deliberately has no build step for CSS. The copy is safe only
+    /// because this test exists.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheWebsiteConsumesTheSameTokenFile()
+    {
+        File.ReadAllText(WebsiteTokenFile()).Should().Be(
+            File.ReadAllText(TokenFile()),
+            "website/tokens.css is a copy of the canonical set; regenerate it with "
+            + "`cp src/Hephaisto.Agent/wwwroot/tokens.css website/tokens.css` rather than "
+            + "editing it, or the two surfaces drift within one release");
+    }
+
+    /// <summary>The website ships the same font binaries, so the two surfaces set type identically.</summary>
+    [Theory]
+    [InlineData("archivo-latin.woff2")]
+    [InlineData("jetbrains-mono-latin.woff2")]
+    public void TheWebsiteShipsTheSameFonts(string file)
+    {
+        var app = Path.Combine(RepoRoot(), "src", "Hephaisto.Agent", "wwwroot", "fonts", file);
+        var site = Path.Combine(RepoRoot(), "website", "fonts", file);
+
+        File.ReadAllBytes(site).Should().Equal(File.ReadAllBytes(app),
+            $"{file} differs between the console and the landing page, so one of them is "
+            + "setting type in a face the other does not have");
+    }
+
+    /// <summary>
+    /// The theme-color meta tags agree with the background tokens, on both surfaces.
+    /// </summary>
+    /// <remarks>
+    /// theme-color paints the browser's own chrome and is read before any CSS, so it is the one
+    /// place a colour genuinely cannot be a var(). That makes it the one place a colour can go
+    /// stale silently: change --bg and the page still renders correctly while the bar above it
+    /// keeps the old value. This is the only reason those two literals are allowed to exist.
+    /// </remarks>
+    [Theory]
+    [InlineData("src/Hephaisto.Agent/Components/App.razor")]
+    [InlineData("website/index.html")]
+    public void ThemeColourAgreesWithTheBackgroundToken(string relative)
+    {
+        var (dark, light) = Themes();
+        var markup = File.ReadAllText(Path.Combine(RepoRoot(), relative.Replace('/', Path.DirectorySeparatorChar)));
+
+        var declared = Regex.Matches(markup, """<meta name="theme-color" content="(#[0-9a-fA-F]{6})" media="\(prefers-color-scheme: (dark|light)\)" />""")
+            .Cast<Match>()
+            .ToDictionary(m => m.Groups[2].Value, m => m.Groups[1].Value, StringComparer.Ordinal);
+
+        // The array overload, not params: ContainKeys(a, b, "because...") reads the message as a
+        // third key and fails saying it could not find a colour named after the explanation.
+        declared.Should().ContainKeys(
+            new[] { "dark", "light" },
+            "{0} should declare a theme colour for each theme", relative);
+
+        declared["dark"].Should().Be(dark["--bg"],
+            $"{relative}'s dark theme-color has drifted from --bg");
+
+        var effectiveLightBg = light.TryGetValue("--bg", out var lbg) ? lbg : dark["--bg"];
+        declared["light"].Should().Be(effectiveLightBg,
+            $"{relative}'s light theme-color has drifted from --bg");
+    }
+
+    // -- the files -------------------------------------------------------------------------
+
+    private static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Hephaisto.slnx")))
+        {
+            dir = dir.Parent;
+        }
+
+        Assert.NotNull(dir);
+        return dir!.FullName;
+    }
+
+    private static string TokenFile() =>
+        Path.Combine(RepoRoot(), "src", "Hephaisto.Agent", "wwwroot", "tokens.css");
+
+    /// <summary>Every stylesheet that CONSUMES the tokens, which is every one but the token file.</summary>
+    private static IEnumerable<string> ConsumingStylesheets()
+    {
+        yield return Path.Combine(RepoRoot(), "src", "Hephaisto.Agent", "wwwroot", "app.css");
+        yield return Path.Combine(RepoRoot(), "website", "site.css");
+    }
+
+    private static string WebsiteTokenFile() => Path.Combine(RepoRoot(), "website", "tokens.css");
+
+    private static string StrippedOfComments(string line)
+    {
+        var start = line.IndexOf("/*", StringComparison.Ordinal);
+        if (start >= 0)
+        {
+            line = line[..start];
+        }
+
+        // A line inside a block comment starts with the continuation asterisk.
+        return line.TrimStart().StartsWith('*') ? string.Empty : line;
+    }
+
+    private static bool LooksLikeColour(string value) =>
+        value.TrimStart().StartsWith('#')
+        || value.TrimStart().StartsWith("rgb", StringComparison.OrdinalIgnoreCase)
+        || value.TrimStart().StartsWith("hsl", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The dark block is <c>:root</c>; the light block is the one inside the
+    /// <c>prefers-color-scheme: light</c> query. Split on the query rather than parsing CSS.
+    /// </summary>
+    private static (Dictionary<string, string> Dark, Dictionary<string, string> Light) Themes()
+    {
+        var css = File.ReadAllText(TokenFile());
+
+        var split = css.IndexOf("prefers-color-scheme: light", StringComparison.Ordinal);
+        Assert.True(split > 0, "tokens.css no longer has a light-mode block");
+
+        return (Parse(css[..split]), Parse(css[split..]));
+    }
+
+    /// <summary>Light inherits from dark, so the effective light theme is dark overridden by it.</summary>
+    private static IEnumerable<(string Name, Dictionary<string, string> Tokens)> AllThemes()
+    {
+        var (dark, light) = Themes();
+
+        var effectiveLight = new Dictionary<string, string>(dark, StringComparer.Ordinal);
+        foreach (var (k, v) in light)
+        {
+            effectiveLight[k] = v;
+        }
+
+        yield return ("dark", dark);
+        yield return ("light", effectiveLight);
+    }
+
+    private static Dictionary<string, string> Parse(string css) =>
+        Declaration.Matches(css)
+            .Cast<Match>()
+            .ToDictionary(m => m.Groups[1].Value, m => m.Groups[2].Value.Trim(), StringComparer.Ordinal);
+
+    // -- WCAG ------------------------------------------------------------------------------
+
+    private static double Contrast(string a, string b)
+    {
+        var la = Luminance(a);
+        var lb = Luminance(b);
+
+        return (Math.Max(la, lb) + 0.05) / (Math.Min(la, lb) + 0.05);
+    }
+
+    /// <summary>WCAG 2.1 relative luminance. Hex only - the tokens compared here are all hex.</summary>
+    private static double Luminance(string hex)
+    {
+        hex = hex.Trim().TrimStart('#');
+
+        Assert.True(hex.Length is 3 or 6, $"expected a hex colour, got '{hex}'");
+
+        if (hex.Length == 3)
+        {
+            hex = string.Concat(hex.Select(c => new string(c, 2)));
+        }
+
+        double Channel(int offset)
+        {
+            var v = int.Parse(hex.Substring(offset, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture) / 255.0;
+            return v <= 0.03928 ? v / 12.92 : Math.Pow((v + 0.055) / 1.055, 2.4);
+        }
+
+        return (0.2126 * Channel(0)) + (0.7152 * Channel(2)) + (0.0722 * Channel(4));
+    }
+}

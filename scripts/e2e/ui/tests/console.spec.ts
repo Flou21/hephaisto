@@ -45,7 +45,14 @@ test.describe('the console', () => {
     // rendering correctly.
     const res = await page.request.get('/api/incidents?limit=100');
     const withDiagnosis = (await res.json()).filter((i: { hasDiagnosis: boolean }) => i.hasDiagnosis);
-    test.skip(withDiagnosis.length === 0, 'no incident has been investigated yet');
+    // Not a skip. `ui/run.sh` fails the phase on any skip at all - that is #1's fix and it is
+    // load-bearing - so a spec that opts out on a missing precondition takes the whole phase
+    // down with it while reporting nothing about why. The earlier `validate` phase has already
+    // asserted that diagnoses exist by the time this runs, so reaching this line means
+    // something upstream broke, and saying that is more useful than skipping.
+    expect(withDiagnosis.length,
+      'no incident has been investigated, so there is no diagnosis for the console to show')
+      .toBeGreaterThan(0);
 
     await open(page, `/incidents/${withDiagnosis[0].id}`);
 
@@ -67,7 +74,7 @@ test.describe('the console', () => {
     await expect(primary.getByTestId('hypothesis')).not.toBeEmpty();
 
     // A hypothesis with no evidence is a guess with a confidence score.
-    await expect(primary.locator('.hp-evidence li').first()).toBeVisible();
+    await expect(primary.getByTestId('evidence').first()).toBeVisible();
   });
 
   test('the console and the API agree on the mode, and it is not being held back', async ({ page }) => {
@@ -90,7 +97,12 @@ test.describe('the console', () => {
     // hp-alarm on the effective mode means it is being held BELOW what was configured - a kill
     // switch is engaged. Not expected in either mode, and it would silently invalidate the
     // containment assertions in Observe and the acting ones in Auto.
-    await expect(page.getByTestId('effective-mode')).not.toHaveClass(/hp-alarm/);
+    // Asserted as a stated fact rather than as a painted one. `hp-alarm` is a presentation
+    // class, and a stylesheet refactor that renamed it would have turned this line into an
+    // assertion that can never fail - the worst possible outcome for a check whose whole job
+    // is to notice that the agent is being held back. `data-constrained` cannot go quietly:
+    // if it disappears, toHaveAttribute fails.
+    await expect(page.getByTestId('effective-mode')).toHaveAttribute('data-constrained', 'false');
   });
 
   test('the budget meters agree with the API', async ({ page }) => {
@@ -128,6 +140,6 @@ test.describe('the console', () => {
     // The callout that appears when the agent believes it has gone blind. Its absence is the
     // assertion; its presence would mean the whole detection path is untrustworthy and every
     // other result in the run with it.
-    await expect(page.locator('.hp-callout.callout-escalated')).toHaveCount(0);
+    await expect(page.getByTestId('alarm-callout')).toHaveCount(0);
   });
 });

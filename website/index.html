@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hephaisto — it fixes what it can prove</title>
+<meta name="description" content="An incident-response agent for Kubernetes that ships doing nothing, acts only where it is allowed to, and escalates when it cannot prove a fix." />
+<meta name="color-scheme" content="dark light" />
+<meta name="theme-color" content="#131519" media="(prefers-color-scheme: dark)" />
+<meta name="theme-color" content="#faf8f5" media="(prefers-color-scheme: light)" />
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+
+<!-- tokens.css FIRST, and it is a byte-identical copy of the console's. See site.css. -->
+<link rel="stylesheet" href="tokens.css" />
+<link rel="stylesheet" href="site.css" />
+</head>
+<body>
+
+<div class="wrap">
+  <nav class="nav">
+    <span class="brand">
+      <!-- Inline rather than an <img>, so it can read the token set like everything else on
+           the page. favicon.svg has to hardcode the same two values because an SVG loaded
+           through <img> is an isolated document that inherits nothing. -->
+      <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="6" fill="var(--bg-raised)" />
+        <path d="M16 5.2 L27.4 26.2 L21.6 26.2 L16 15.6 L10.4 26.2 L4.6 26.2 Z" fill="var(--accent)" />
+      </svg>
+      hephaisto<span class="dot">.</span>
+    </span>
+    <span class="spacer"></span>
+    <a href="#safety">What stops it</a>
+    <a href="#install">Install</a>
+    <a href="https://github.com/Flou21/hephaisto">GitHub</a>
+  </nav>
+
+  <header class="hero">
+    <h1>It fixes what it can prove, and asks about the rest.</h1>
+    <p class="standfirst">
+      An incident-response agent for Kubernetes. It investigates on its own, acts only inside
+      limits you set explicitly, and hands the incident to a human the moment it cannot show
+      its work.
+    </p>
+    <a class="cta" href="#safety">What stops it &rarr;</a>
+    <a class="cta ghost" href="#install">Install</a>
+  </header>
+
+  <!--
+    THE SAFETY MODEL LEADS, and that ordering is a decision recorded in docs/design.md rather
+    than a habit. The reader this page is written for is a platform team assessing autonomy
+    risk, and the question such a team actually has is "what stops it", not "what can it do".
+  -->
+  <section id="safety">
+    <h2>What stops it</h2>
+    <p class="lede">
+      Every one of these is on by default, and every one of them is a separate deliberate change
+      to switch off. A fresh install does nothing at all until four of them are changed, in git,
+      by a person.
+    </p>
+
+    <div class="gates">
+      <div class="gate">
+        <span class="glyph">~</span>
+        <div>
+          <h3>It ships in observe mode</h3>
+          <p>The default is <code>mode: Observe</code>. It watches, investigates and writes
+             findings, and executes nothing. Acting is not a setting you forget to turn off; it
+             is one you have to turn on.</p>
+        </div>
+      </div>
+      <div class="gate">
+        <span class="glyph">[]</span>
+        <div>
+          <h3>The namespace allowlist is empty</h3>
+          <p><code>policy.actionableNamespaces: []</code>. It cannot touch a namespace nobody
+             named. Protected namespaces stay refused even when they are listed.</p>
+        </div>
+      </div>
+      <div class="gate">
+        <span class="glyph">+</span>
+        <div>
+          <h3>Autonomy is granted per action type, never globally</h3>
+          <p><code>policy.autoEnabledActionTypes: []</code>. Restarting a pod and scaling a
+             workload are separate grants. There is no switch that enables all of them.</p>
+        </div>
+      </div>
+      <div class="gate">
+        <span class="glyph">!</span>
+        <div>
+          <h3>The model never holds a tool that changes anything</h3>
+          <p>Diagnosis is one model call with read-only tools; planning is a second with no
+             tools at all and a JSON schema. Execution is ordinary C# over a closed list of
+             action types. The model proposes; compiled code disposes.</p>
+        </div>
+      </div>
+      <div class="gate">
+        <span class="glyph">=</span>
+        <div>
+          <h3>Everything it does is verified, then reverted if it did not work</h3>
+          <p>Each action is checked at 60 seconds, 5 minutes and 15 minutes against a
+             deterministic predicate. If the workload is not better, it rolls the change back
+             and escalates rather than declaring success.</p>
+        </div>
+      </div>
+      <div class="gate">
+        <span class="glyph">^</span>
+        <div>
+          <h3>No audit, no action</h3>
+          <p>The audit trail is append-only at the database role level — the application role
+             is denied <code>UPDATE</code> and <code>DELETE</code>. If it cannot write the
+             record, it refuses to act.</p>
+        </div>
+      </div>
+      <div class="gate">
+        <span class="glyph">x</span>
+        <div>
+          <h3>There is a kill switch, and a latch behind it</h3>
+          <p>A ConfigMap arm, an environment arm and a database arm; the most restrictive wins.
+             A runaway backstop latches on its own and will not clear until a human clears it.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="what">
+    <h2>And then, what it does</h2>
+    <p class="lede">
+      An alert arrives from Alertmanager. Everything below happens without anybody opening a
+      terminal.
+    </p>
+    <div class="steps">
+      <div class="step">
+        <h3>Investigate</h3>
+        <p>Reads metrics, logs, traces and Kubernetes objects, and writes a hypothesis with the
+           evidence it rests on — quoted, and linked back to the step that produced it.</p>
+      </div>
+      <div class="step">
+        <h3>Decide</h3>
+        <p>Eleven policy gates run before anything is proposed. Each denial records a reason
+           code, so "why didn't it act" is answerable from a metric.</p>
+      </div>
+      <div class="step">
+        <h3>Act, or ask</h3>
+        <p>Inside its grant it acts and verifies. Outside it, it asks — a card with a link, and
+           an approval that has to say who authorised it.</p>
+      </div>
+      <div class="step">
+        <h3>Tell someone</h3>
+        <p>Escalation is written to a Postgres outbox in the same transaction as the state
+           change that caused it, so a pod restart cannot lose it.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <h2>Install</h2>
+    <p class="lede">
+      A Helm chart and a multi-arch image, both on GHCR, both with build provenance attested.
+      It will do nothing until you tell it otherwise.
+    </p>
+<pre><span class="c"># installs in observe mode, acting nowhere</span>
+helm install hephaisto <span class="k">oci://ghcr.io/flou21/charts/hephaisto</span></pre>
+    <p class="lede" style="margin-bottom:0">
+      The console is on port 8080. Point it at Prometheus, Loki and Alertmanager, and it will
+      start opening incidents it has no permission to do anything about — which is the right
+      way round to start.
+    </p>
+  </section>
+
+  <footer>
+    <a href="https://github.com/Flou21/hephaisto">Source</a>
+    <a href="https://github.com/Flou21/hephaisto/blob/main/docs/architecture.md">Architecture</a>
+    <a href="https://github.com/Flou21/hephaisto/blob/main/docs/backlog.md">Everything known broken</a>
+    <span>AGPL-3.0</span>
+  </footer>
+</div>
+
+</body>
+</html>

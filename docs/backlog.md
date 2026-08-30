@@ -1359,6 +1359,9 @@ not create. Both are covered by unit tests and neither is on the critical path.
 
 ### 46. The console suite cannot pass in Observe, so a green run needs `--mode Auto`
 
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because
+these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** `scripts/e2e/run.sh` in its default mode always fails the `ui` phase, on every run,
 regardless of the code under test.
 
@@ -1381,6 +1384,30 @@ that one spec be conditional in a way the phase does not count as a skip. **Do n
 `skipped != 0` rule - that rule is #1's whole fix, and it is worth more than this spec.
 
 **Size.** S. **Blocks:** `run.sh` ever exiting 0 in its default mode.
+
+**Fixed 2026-08-30.** Neither of the two options in the paragraph above, in the end. Seeding an
+`AwaitingApproval` action turned out to have nothing to build on - there is no seeding path in
+either mode, because `--mode Auto` auto-enables only `RestartPod`, which the autonomy gate routes
+straight to `Approved`; any approval at all depends on the model proposing some other action type,
+which is not something a gate can rely on. And making the spec "conditional in a way the phase does
+not count as a skip" is the same hole as #1 wearing different clothes.
+
+So the spec asserts the contract in both directions instead, and the API decides which branch it
+takes rather than the mode. Where an approval is offered, it must require a name before it will
+act. Where none is offered, the console must be showing nobody a button to authorise something the
+policy engine already refused - which in Observe, where every action is denied at the kill-switch
+gate, is the more valuable of the two assertions. It is anchored on a rendered action row, so it
+cannot pass by finding an empty page, and it was verified falsifiable: asserting one approve
+control instead of zero turns it red.
+
+Two further skips went with it, for consistency rather than because they were failing. Both
+`acting.spec.ts`'s plan precondition and `console.spec.ts`'s diagnosis precondition now fail with
+a sentence naming what was missing, instead of opting out and taking the phase down silently -
+the same condition must not make one spec skip while another fails. **There is no `test.skip` left
+in the suite.**
+
+Fixing this exposed the failure behind it, which was not this one and was not a product bug
+either: see [#48](#48-the-console-suite-interacts-with-a-page-the-circuit-has-not-taken-over-yet).
 
 ### 47. The act phase reports two failures that are consequences of the first
 
@@ -1408,3 +1435,254 @@ reason naming the first failure rather than asserting and failing them.
 **Size.** S.
 
 
+
+---
+
+## Opened by v0.4.0
+
+### 48. The console suite interacts with a page the circuit has not taken over yet
+
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because
+these numbers and titles are the anchors `roadmap.md` links by.
+
+**Symptom.** `acting.spec.ts:79` (*"approve is disabled until someone says who they are"*) failed
+on every run that got far enough to execute it, with the approve button never enabling:
+
+```
+expect(locator).toBeEnabled() failed
+Locator:  getByTestId('approve')
+Expected: enabled   Received: disabled
+44 × locator resolved to <button disabled ... data-testid="approve">approve</button>
+```
+
+Read at face value this says the approval control in the console is broken — which would have
+been serious, because v0.3.0's entire approval story is a Teams card that deep-links to that
+button, and [#45](#45-nothing-has-been-delivered-from-a-cluster)'s acceptance clause reads
+*"an approval-required incident is approved from the browser via the link in that card"*.
+
+**It is not a product bug.** The control works. The suite was interacting with a page that was
+not interactive yet.
+
+**Evidence.** Driven against a live console on the development cluster, with the circuit's
+websocket frames captured:
+
+```
+h1 visible at            52 ms      <- what open() waited for
+_blazor websocket open   55 ms
+first RenderBatch       102 ms
+a click first lands     629 ms      <- what open() needed to wait for
+```
+
+This is a Blazor **Web App** with `<Routes @rendermode="InteractiveServer" />`, so every
+component renders twice: once as static server-rendered HTML delivered with the document, and
+then again over the SignalR circuit, which replaces that DOM wholesale. Between those two moments
+the page looks completely finished and is completely inert — the elements are present, visible
+and correctly worded, and any event dispatched into them is dropped, because the handlers belong
+to a render that has not happened yet.
+
+Once past the takeover, the same interaction is reliable. Filling the name and watching the wire
+shows the event arriving and the server re-rendering:
+
+```
+OUT  DispatchEventAsync [{"eventHandlerId":19,"eventName":"input","fieldValue":"x"}]
+IN   JS.RenderBatch
+```
+
+**Why it stayed invisible.** Reading static HTML is indistinguishable from reading the
+interactive DOM, so all 34 read-only assertions in this suite passed either way. Only a spec that
+*interacts* could ever have noticed, and there is exactly one — which is also the spec
+[#46](#46-the-console-suite-cannot-pass-in-observe-so-a-green-run-needs---mode-auto) causes to be
+skipped in the default mode. In Observe it skipped and was never reached; in Auto it ran and was
+read as a product defect. The helper's own comment asserted the opposite of the truth — *"The
+nav is server-rendered, so it is not proof of anything. The h1 is rendered by the component
+itself"* — which was correct for Blazor Server as it behaved before .NET 8, and stopped being
+correct without anybody editing the sentence.
+
+**Fixed 2026-08-30.** `helpers.ts`'s `open()` now waits for the circuit's first `RenderBatch`
+frame before asserting anything, so every element a spec goes on to find belongs to the
+interactive tree. Waiting for the websocket to *open* is not sufficient — it opens at ~55ms,
+still before the takeover.
+
+Verified falsifiable rather than assumed: the same interaction, run five times with no sleeps
+anywhere, fails 5/5 against the shipped helper and passes 5/5 against the fixed one.
+
+### 49. The console spec compares a capped API call against an uncapped page
+
+**Symptom.** `console.spec.ts:11` asserts `incident-row` count equals the length of
+`/api/incidents?limit=100`. On any install with more than 100 open incidents that is a guaranteed
+failure — observed on the development cluster as `Expected: 100, Received: 103`.
+
+**Evidence.** The spec caps its own API call at 100 and compares the result to a page that
+applies no such cap.
+
+**Why it is still open.** An e2e run has a handful of incidents, so the gate never trips there.
+It trips on any long-lived install, which is where a human is most likely to run the suite by
+hand and least likely to trust the result afterwards.
+
+**Fix.** Either cap both sides or compare the page against an uncapped count. Capping both is
+the smaller change and keeps the assertion meaningful.
+
+**Size.** S.
+
+### 50. Both themes are first-class, and neither can be chosen
+
+**Symptom.** Light mode stopped being "a courtesy, not the design target" in v0.4.0 — it is
+contrast-asserted and photographed like the dark theme. A reader still cannot select it. Theme
+follows the operating system through `prefers-color-scheme` and there is no control anywhere.
+
+**Evidence.** `tokens.css` keys light mode entirely off `@media (prefers-color-scheme: light)`.
+There is no `data-theme` attribute in the repository, no toggle, and no persisted preference.
+
+**Why it matters more after v0.4.0 than before it.** While light was explicitly not the design
+target, "your OS decides" was a coherent position. Now that both themes are held to the same bar,
+an operator on a dark-mode laptop presenting the console on a projector in a bright room has no
+way to ask for the theme the project says it supports.
+
+**Why it is still open.** It is outside the milestone's stated "done when", and smuggling it in
+would have been scope this release did not agree to.
+
+**Fix.** A `data-theme` attribute on the root, three states (system / light / dark), persisted in
+`localStorage`. The interop already exists and is proven — `wwwroot/app.js` uses it to remember
+the feedback submitter's name — and `tokens.css` would need its light block duplicated under a
+`[data-theme="light"]` selector.
+
+**Size.** S.
+
+### 51. `run.sh` has not been re-run on a kind cluster since the suite was fixed
+
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because
+these numbers and titles are the anchors `roadmap.md` links by.
+
+**Symptom.** v0.4.0 closed [#46](#46-the-console-suite-cannot-pass-in-observe-so-a-green-run-needs---mode-auto)
+and removed every `test.skip` from the console suite, and the milestone's exit criterion is that
+`scripts/e2e/run.sh` exits 0 in its default mode. That has not been observed.
+
+**Evidence.** Every spec was verified against a live console on the development cluster: 9 specs,
+0 skipped. But `run.sh` in Observe boots its own kind cluster, applies chaos fixtures and runs
+nine phases before the `ui` one, and that has not been run since the fixes landed.
+
+**Why it is still open.** It is *blocked on the branch being pushed*, not merely un-run.
+`scripts/e2e/lib/build.sh` dispatches `nightly.yml` with
+`gh workflow run --ref $(git rev-parse --abbrev-ref HEAD)` and waits for the resulting image and
+version artifact, so the harness cannot build anything from a branch GitHub has never seen. The
+only other channels are `--rc`, which pushes a tag, and `--tag`, which tests something already
+published. There is no local-build path.
+
+So the sequence is: push the branch, then run it. Until then the claim is about the specs rather
+than about the harness, and this repo has been caught by exactly that gap before — five of the six
+v0.1.0 release candidates failed on the harness rather than on the thing being measured.
+
+Two known failures are also waiting there and are *not* regressions from this milestone:
+[#49](#49-the-console-spec-compares-a-capped-api-call-against-an-uncapped-page) trips on any
+install with more than 100 incidents, and the budget-meter spec asserts non-zero spend, which is
+only true once the agent has actually investigated something in the current hour.
+
+**Fix.** Run it. `scripts/e2e/run.sh` with no arguments.
+
+**Size.** S to run, unknown to fix whatever it finds.
+
+**Fixed 2026-08-30, and "whatever it finds" was the point.** It was run, twice, and everything
+outside the console phase passed on the first attempt: five fixtures detected and classified, five
+diagnoses each citing evidence, cost reconciled against the ledger, no action executed in Observe,
+and a queued notification surviving an agent restart.
+
+The console phase failed all nine specs, and behind it were three separate things:
+
+- My own regression. #48's fix waited for a `_blazor` **websocket**, which is a transport rather
+  than a state; it passed against a development image and timed out against a published one. Now
+  it waits for the negotiation, which happens under every transport.
+- My own mistake. A `kubectl port-forward` left running against the *development* cluster owned
+  port 18100, so one run's browser reached the wrong agent entirely — the giveaway was a console
+  reporting `dryrun` and 106 incidents during an Observe run with five fixtures.
+- And underneath both, [#53](#53-the-console-was-never-interactive-in-any-released-image): the
+  console was never interactive in any released image, and this suite is the first thing in the
+  repository capable of noticing.
+
+Final state, against a live kind cluster in the default mode with the fixed image: **9 passed, 0
+failed, 0 skipped.**
+
+**Then the whole run, in one invocation.** The caveat above — that every phase had passed but not
+together, because the published image predated #53's fix — was discharged by a nightly built from
+the fixed Dockerfile:
+
+```
+hephaisto end-to-end: 0.4.0-main.0.24     channel nightly, mode Observe
+  build 4  cluster 3  deps 13  deploy 26  chaos 2  validate 15  notify 7  ui 1
+  0 failures in any phase
+  PASSED -- 71 assertions, 5 skipped        11m 46s, $0.399 of Gemini
+```
+
+The five skips are all conditions the harness states outright: `acting` because Observe installs
+nothing that can execute, unsigned deliveries because `values-e2e` leaves signing off, and three
+diagnosis-shape notes. The console phase reports `expected=9 skipped=0 unexpected=0`.
+
+### 52. Two components are implemented twice
+
+**Symptom.** The console has two unrelated implementations of a progress bar and two
+near-duplicate treatments of a monospace block.
+
+**Evidence.** `hp-meter` / `hp-meter-track` / `hp-meter-fill` (the budget meters on `/status`) and
+`hp-conf` / `hp-conf-track` / `hp-conf-fill` (the confidence bar on a finding) share no tokens and
+no rules. `hp-code` and `hp-excerpt` differ only in padding and border.
+
+**Why it is still open.** Consolidating them changes the rendering of both, which is a visual
+change rather than a refactor, and v0.4.0 had already made one deliberate visual change. Doing
+both in the same release would have made the baseline diff unattributable — which is the property
+the whole ordering of that milestone was built to preserve.
+
+**Why it is worth doing.** Two implementations of one idea drift, and a design language exists to
+stop exactly that. Both are now photographed by the visual baselines, so the consolidation is a
+change somebody can actually verify.
+
+**Size.** S.
+
+### 53. The console was never interactive in any released image
+
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because
+these numbers and titles are the anchors `roadmap.md` links by.
+
+**Symptom.** In every image this project has published, `_framework/blazor.web.js` returned
+**404**. Blazor never started, no circuit was ever established, and the console was a static
+page. Every interactive control was dead: approve, deny, re-arm, the retry button, the feedback
+form, the incident filters.
+
+**Evidence.** Against the e2e cluster, on the published `0.4.0-main.0.21`:
+
+```
+<script src="_framework/blazor.web.js">          <- not fingerprinted, which is the tell
+_framework/blazor.web.js -> 404 (0 bytes)
+grep -c blazor /app/Hephaisto.Agent.staticwebassets.endpoints.json   -> 0
+```
+
+Reproduced by building the production image locally, then bisected to one flag in `Dockerfile`:
+
+| build | manifest | entries matching `blazor` | result |
+|---|---|---|---|
+| `dotnet publish --no-restore` | 42489 bytes | **0** | 404 |
+| `dotnet publish` | 56532 bytes | `blazor.web.js` present | 200 |
+
+**Cause.** The Dockerfile restores in a separate earlier layer, against the `.csproj` files alone,
+so a source-only change reuses it. At that moment the project contains no Razor components, so
+the Blazor framework's static web assets are not resolved — and `--no-restore` at publish reuses
+that incomplete result. The endpoint is never registered, `@Assets["_framework/blazor.web.js"]`
+finds no entry and returns its input unchanged, and the browser asks for a path nothing serves.
+
+**Why nothing caught it for four releases.** Three failures stacked:
+
+1. Nothing fails. The static server-side render is unaffected, so the console looks perfect and
+   the pod logs nothing.
+2. Development never sees it. `Dockerfile.dev` runs `dotnet watch`, which builds rather than
+   publishes, and the build manifest has the assets. Every manual check was done there.
+3. The console suite could not see it. Until v0.4.0 it asserted only read-only content, and
+   reading a static render is indistinguishable from reading a live one. Its single interacting
+   spec was the one [#46](#46-the-console-suite-cannot-pass-in-observe-so-a-green-run-needs---mode-auto)
+   caused to skip in the default mode — so the only assertion in the repository that could have
+   caught this was also the only one that never ran.
+
+**Fixed 2026-08-30.** `--no-restore` removed from the publish step, with the measurement in a
+comment beside it. The layer split still earns its keep: the packages are already in the image's
+NuGet cache, so the restore the publish now performs downloads nothing.
+
+Verified end to end rather than by inspection: the fixed image was loaded into the live e2e kind
+cluster, the deployment repointed at it, and the console suite run against it — **9 passed, 0
+failed, 0 skipped**, where the same suite against the published image failed all nine.

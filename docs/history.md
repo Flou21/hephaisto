@@ -529,3 +529,173 @@ Proved on a kind cluster, not just in tests: with `effectiveMode: Off` an inject
 `Observe` took them to 8. `watchdogStale` stayed false throughout — the heartbeat is
 deliberately ungated, or the agent would believe it had gone blind the moment it was switched
 back on.
+
+---
+
+## v0.4.0 — a design language — **done, 2026-08-30**
+
+The milestone was supposed to be about taste. Most of what it cost was about measurement.
+
+### The safety net it depended on could not see a stylesheet
+
+The roadmap made [#46](backlog.md#46-the-console-suite-cannot-pass-in-observe-so-a-green-run-needs---mode-auto)
+a hard prerequisite, reasoning that a refactor of 1268 lines of CSS behind a red Playwright suite
+was unmanaged risk. Correct, and only half the problem: the suite asserts **behaviour**. All 34 of
+its read-only assertions pass against a console whose layout has collapsed, and there was no
+screenshot comparison anywhere in the repository. Turning it green would have produced a
+confident-looking net that could not catch the class of regression the milestone was about to risk.
+
+So the net was built rather than repaired, and the first thing it caught was itself:
+`maxDiffPixelRatio: 0.01` sounds tight and is not. Changing `--accent` to hot pink and re-running
+gave **sixteen passes**, because the accent is roughly 0.2% of a section's pixels. The threshold is
+`maxDiffPixels: 0` now, and the same experiment fails exactly the four dark-theme shots the accent
+appears in.
+
+**The lesson is the one this repo keeps relearning.** A tolerance that sounds reasonable is a
+guess. #1 was a suite reporting green on zero assertions; this was a suite reporting green on a
+changed colour. Both were found by deliberately breaking something and checking the test noticed.
+
+### The failing spec was not the bug it looked like
+
+`acting.spec.ts` failed on every run that reached it, asserting the approve button never enabled:
+
+```
+44 × locator resolved to <button disabled ... data-testid="approve">approve</button>
+```
+
+Read literally, that says v0.3.0's approval control is broken — and v0.3.0's entire approval story
+is a Teams card that deep-links to that button. It would have been the most serious defect in the
+project.
+
+It was not a product bug. This is a Blazor **Web App** with `<Routes @rendermode="InteractiveServer" />`,
+so every component renders twice: once as static server HTML delivered with the document, then
+again over the SignalR circuit, which replaces that DOM wholesale. Measured against a live console:
+
+```
+h1 visible at            52 ms      <- what open() waited for
+_blazor websocket open   55 ms
+first RenderBatch       102 ms
+a click first lands     629 ms      <- what open() needed to wait for
+```
+
+Between those moments the page looks finished and is inert. Events dispatched into it are dropped.
+
+**Why it stayed hidden for so long is the interesting part.** Reading static HTML is
+indistinguishable from reading the interactive DOM, so every read-only assertion passed either way.
+Only a spec that *interacts* could notice, and there was exactly one — which #46 caused to be
+skipped in the default mode. In Observe it skipped and was never reached; in Auto it ran and was
+read as a product defect. Two bugs hid each other for a release.
+
+The helper's own comment asserted the opposite of the truth — *"the h1 is rendered by the component
+itself"* — which was correct for Blazor Server before .NET 8 and stopped being correct without
+anybody editing the sentence.
+
+### Refactor first, choose second
+
+The ordering that made the release reviewable, and it was not the plan's.
+
+The tokens were extracted, the radius/z-index/type scales named, and `app.css` moved onto them with
+**every value byte-identical**. The baselines proved that pixel-for-pixel. Only then was Forge
+applied, as a data edit whose diff was exactly the intended change: 13 of 20 shots moved, and the
+light theme did not move where it overrides a token separately.
+
+That is why a 1268-line refactor and a total palette change could land in one release with both
+still attributable. It also answered a question rather than guessing at it: `0.8rem` and `0.82rem`
+were in use for the same role, and the baselines were the arbiter of whether collapsing them was
+visible — 0.26px at a 13.5px root. They confirmed it was not, but only after the form controls were
+added to the gallery, because until then nothing photographed used those sizes at all.
+
+### Forge's cost was known in advance and still nearly shipped
+
+The direction was chosen from three complete candidates, and its cost was written down before the
+choice: a warm accent has to fight the semantic red. The first palette put `--accent` and
+`--orange` **1.24:1** apart — two colours a reader cannot tell apart, so a link and a warning would
+have looked identical.
+
+Deepening the orange fixed that pair, and then the new guard test caught red at 1.28:1 and yellow
+at 1.20:1, neither of which had been looked at. Knowing a risk is not the same as having handled it;
+the test is the part that handled it.
+
+### Three smaller things, all of the same shape
+
+- `#10131a` was written twice as text on a `var(--red)` ground. Right in dark, where `--red` is a
+  light pink; wrong in light, where it is a dark crimson. The error banner rendered near-black on
+  dark red for three releases.
+- `.hp-main` carried a comment claiming *"1200px is the floor the tables are laid out for"* directly
+  above `min-width: 0`, which does the opposite. No such rule existed.
+- The favicon's comment named the CSS token it used, and a double hyphen is illegal inside an XML
+  comment. The mark was invalid XML and rendered as nothing, silently, until a light-mode baseline
+  showed a broken image.
+
+Each is a claim that was true when written, or never true, and nothing checked. That is the same
+failure the token guards, the SVG well-formedness test and the `theme-color` test now cover.
+
+### And then the harness ran, and found the real one
+
+Everything outside the console phase passed on the first attempt. The console phase failed all
+nine specs, and three separate things were stacked behind that.
+
+The first was mine. #48's fix waited for a `_blazor` **websocket** before asserting anything —
+which is a transport, not a state. SignalR negotiates, and where a websocket cannot be established
+it falls back to server-sent events or long polling with the page perfectly interactive and no
+websocket ever opening. It passed against a development image and timed out against a published
+one. It now waits for the negotiation, which happens under every transport, and the one spec that
+actually interacts retries the action rather than the assertion — because an event dispatched into
+a not-yet-interactive page is dropped silently, so re-asserting alone waits forever on an input the
+server never saw.
+
+The second was also mine, and cost a whole run: a `kubectl port-forward` left running against the
+*development* cluster owned port 18100, so the browser reached the wrong agent. The giveaway was a
+console reporting `dryrun` and 106 incidents during an Observe run with five fixtures — the numbers
+were impossible for the cluster under test, which is the only reason it was caught rather than
+explained away.
+
+Underneath both was the thing worth the whole milestone.
+
+**`_framework/blazor.web.js` returned 404 in every image this project has ever published.** Blazor
+never started. No circuit was ever established. The console was a static page in every released
+build, and every interactive control on it was dead — approve, deny, re-arm, retry, the feedback
+form, the filters. v0.3.0's entire approval story is a Teams card that deep-links to a button that
+has never worked outside a development image.
+
+The cause is one flag:
+
+```
+dotnet publish --no-restore    42489 byte manifest, 0 entries matching blazor   -> 404
+dotnet publish                 56532 byte manifest, blazor.web.js present       -> 200
+```
+
+The Dockerfile restores in an earlier layer against the `.csproj` files alone, so a source-only
+change reuses it. At that moment the project contains no Razor components, the Blazor static web
+assets are never resolved, and `--no-restore` at publish reuses the incomplete result.
+`@Assets[...]` finds no entry, returns its input unchanged, and the browser asks for a path nothing
+serves.
+
+**Why four releases missed it is the part worth keeping.** Nothing fails: the static render is
+unaffected, so the console looks perfect and the pod logs nothing. Development never sees it,
+because `dotnet watch` builds rather than publishes and the build manifest is complete — so every
+manual check was done on the one image where it worked. And the console suite could not see it,
+because until this milestone it asserted only read-only content, and reading a static render is
+indistinguishable from reading a live one. Its single interacting spec was the one #46 caused to
+skip in the default mode.
+
+So the only assertion in the repository capable of catching this was also the only one that never
+ran. Fixing #46 is what made the suite able to see it, and running the harness end to end is what
+made it look.
+
+Final state: **9 passed, 0 failed, 0 skipped** against a live kind cluster in the default mode,
+verified by loading the fixed image into the running e2e cluster rather than by inspecting the
+Dockerfile — and then again, properly, from a nightly built out of the fixed Dockerfile:
+
+```
+hephaisto end-to-end: 0.4.0-main.0.24     channel nightly, mode Observe
+  0 failures in any phase
+  PASSED -- 71 assertions, 5 skipped        11m 46s, $0.399 of Gemini
+```
+
+**The nightly was run before the rc deliberately, and it is the reason there is no dead tag.**
+`build_rc` pushes the tag *before* release.yml runs, so cutting an rc first would have minted
+`v0.4.0-rc1` against an image whose console was still a static page — permanently, and for the
+second time in three releases, since v0.3.0's MinVer divergence would have left `v0.2.1-rc1`
+tagged with nothing behind it. Both workflows build from the same `./Dockerfile` with the same
+context, so a green nightly is genuine evidence about the rc's image rather than a rehearsal.
