@@ -1,8 +1,10 @@
 using System.Text.Json;
 using Microsoft.Extensions.Options;
+using Hephaisto.Agent.Notifications;
 using Hephaisto.Agent.Persistence.Repositories;
 using Hephaisto.Core.Abstractions;
 using Hephaisto.Core.Domain;
+using Hephaisto.Core.Notifications;
 using Hephaisto.Core.Policy;
 
 namespace Hephaisto.Agent.Pipeline;
@@ -84,6 +86,17 @@ public sealed class PolicyChangeAuditor(
         try
         {
             await using var scope = scopes.CreateAsyncScope();
+
+            // Enlisted before the append, which is what saves - so the audit row and the
+            // notification about it land in one commit. A silent policy change is
+            // indistinguishable from an attack, and an audit row alone is only ever read by
+            // somebody who already suspects one.
+            scope.ServiceProvider.GetRequiredService<IAgentEventNotifier>().Enlist(
+                NotificationEvent.PolicyChanged,
+                Severity.Warning,
+                "Policy configuration reloaded",
+                "The hot-reloaded policy changed. Check that the change was intended.",
+                clock.UtcNow);
 
             await scope.ServiceProvider.GetRequiredService<IAuditRepository>()
                 .AppendAsync(

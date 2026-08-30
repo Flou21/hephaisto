@@ -2,6 +2,7 @@ using Hephaisto.Agent.Components;
 using Microsoft.Extensions.AI;
 using Hephaisto.Agent.Kubernetes;
 using Hephaisto.Agent.Llm;
+using Hephaisto.Agent.Notifications;
 using Hephaisto.Agent.Persistence;
 using Hephaisto.Agent.Pipeline;
 using Hephaisto.Agent.Safety;
@@ -36,6 +37,7 @@ builder.Services.AddHephaistoSafety(builder.Configuration);
 // silently drops everything is exactly the bug you would not notice.
 builder.Services.AddHephaistoLlm(builder.Configuration);
 builder.Services.AddHephaistoPipeline(builder.Configuration);
+builder.Services.AddHephaistoNotifications(builder.Configuration);
 builder.Services.AddHephaistoWeb();
 
 // The bridge between the two streams: the Kubernetes layer builds its read-only tools, the

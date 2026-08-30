@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 using Hephaisto.Agent.Llm;
+using Hephaisto.Agent.Notifications;
 using Hephaisto.Agent.Persistence;
 using Hephaisto.Agent.Persistence.Repositories;
 using Hephaisto.Agent.Pipeline;
@@ -11,6 +12,7 @@ using Hephaisto.Agent.Safety;
 using Hephaisto.Core;
 using Hephaisto.Core.Abstractions;
 using Hephaisto.Core.Domain;
+using Hephaisto.Core.Notifications;
 using Hephaisto.ServiceDefaults;
 
 namespace Hephaisto.Agent.Web;
@@ -824,6 +826,16 @@ public sealed class IncidentQueries(
                 new { latchReason = reason, latchedAt, clearedBy = actor },
                 AuditJson),
         });
+
+        // Same commit again, and for a sharper reason than the audit row: an operator who
+        // clears the latch is the one person who already knows. Everybody else finds out
+        // because this row rides along with it.
+        sp.GetRequiredService<IAgentEventNotifier>().Enlist(
+            NotificationEvent.ModeChanged,
+            Severity.Critical,
+            "Autonomy re-armed",
+            $"The runaway latch was cleared by {actor}. It was latched for: {reason ?? "unknown reason"}.",
+            clock.UtcNow);
 
         await modes.ReArmAsync(actor, ct);
 
