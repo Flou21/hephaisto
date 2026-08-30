@@ -1229,3 +1229,68 @@ It is thin for `ScaleWorkload`, where the interesting question is whether the re
 what was asked for rather than merely whether the workload is happy, and it has nothing
 specific for a future `PatchResources`, where it should assert the patched field actually
 changed. Neither is wrong today; both would be better. **Size.** S each.
+
+---
+
+## Opened by v0.3.0
+
+Written down at the moment they were deferred, rather than discovered later by somebody
+reading the code and wondering.
+
+### 44. Nothing sweeps `AwaitingApproval`, so `ApprovalTimedOut` has no producer
+
+**Symptom.** `EscalationReason.ApprovalTimedOut` is a defined member of the enum and nothing in
+`src/` ever sets it. An incident that reaches `AwaitingApproval` and is never approved stays
+there indefinitely.
+
+**Evidence.** `grep -rn ApprovalTimedOut src/` finds the enum declaration and nothing else. There
+is no timer, no sweeper and no `BackgroundService` that looks at `AwaitingApproval` — the only
+transitions out of it are `BeginActing` (a human approved) and `Escalate` (a human denied).
+
+**Why it matters more after v0.3.0 than before it.** Until this release, an incident sitting in
+`AwaitingApproval` was visible in the console and nowhere else, which made it one of several
+things a person had to remember to look at. Now a card goes out saying *"approval required"* with
+a link — and if nobody clicks it, nothing happens and nothing says so again. That is *"escalated,
+and nobody was told"* in slow motion, which is the exact failure the whole milestone was built to
+remove, wearing a longer timescale.
+
+**Why it is still open.** Building it means deciding what a timeout *does*, and every answer is a
+policy question rather than an implementation. Re-notify — how often, and does that become the
+storm the outbound rate limit exists to prevent? Escalate — that is a state transition, so it
+needs a reason code, an audit row and a rule about whether a timed-out approval may still be
+approved afterwards. Auto-deny — absolutely not, but somebody will propose it.
+
+**Fix.** A sweeper with a configured window, most likely re-notifying once and then escalating
+with `ApprovalTimedOut`, which is what the enum member was reserved for. It wants its own
+decision rather than being appended to a release that was already about delivery.
+
+**Size.** M.
+
+### 45. Nothing has been delivered from a cluster
+
+**Symptom.** Every claim v0.3.0 makes is supported by unit and integration tests. None of it has
+been observed leaving a running agent.
+
+**Evidence.** 989 unit tests and 53 integration tests pass, including the transactional
+guarantee — an incident cannot reach a notifiable state without an outbox row, asserted against a
+real Postgres over all thirteen escalation reasons, and verified falsifiable by commenting out
+the enqueue and watching 15 tests go red. The `notify` e2e phase is written, wired into `PHASES`,
+and **has never been executed**: it needs a kind cluster and a Gemini key.
+
+**What is unverified** is everything the environment contributes: that the chart's env-var shape
+binds as `PolicyOptionsBindingTests`'s sibling says it does *in a pod*, that the dispatcher's
+poll behaves under a real connection, that the agent can reach an endpoint outside its namespace,
+and — the one that matters — that a queued delivery survives an actual process death rather than
+a rolled-back transaction.
+
+**Why it is still open.** Deliberate, and it is the same debt v0.2.0 ended on. The two now
+compound and are **one run**: `scripts/e2e/run.sh --mode Auto` exercises the executor that
+[#41](#41-c11-has-never-been-run-against-a-cluster) is waiting on, and every notification this
+release built fires on the outcomes that run produces. Doing them separately would mean setting
+up the same cluster twice.
+
+**Size.** S to run; unknown to fix whatever it finds. The v0.2.0 precedent is that running it
+once found three bugs.
+
+**Blocks:** claiming the v0.3.0 acceptance criterion is met.
+

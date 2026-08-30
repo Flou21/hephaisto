@@ -17,7 +17,17 @@ against the code rather than believed — see [backlog #9](backlog.md#9-semantic
 
 ## Where it stands
 
-`v0.2.0` is the current release. **The agent can act**: it executes a narrow allowlist of
+`v0.3.0` is built and untagged. **The agent reaches people**: an escalation is written to a
+Postgres outbox in the same transaction as the state change that caused it, and delivered to a
+generic HTTP endpoint or a Teams card with retry, rate limiting and a link back to the incident.
+It ships delivering nowhere — an empty routing table and no channel configured.
+
+**Nothing in it has been run against a cluster.** 989 unit tests and 53 integration tests pass,
+including the transactional guarantee against a real Postgres; the `notify` e2e phase exists and
+has not been executed. That debt now compounds with v0.2.0's, and the two are **one run** — see
+the v0.3.0 section.
+
+`v0.2.0` shipped on 2026-08-30. **The agent can act**: it executes a narrow allowlist of
 reversible actions, verifies them at T+60s / T+5m / T+15m with deterministic predicates,
 reverts or escalates when they do not hold, and closes the incident when they do. It ships
 configured to act nowhere — an empty namespace list, an empty autonomy list and `mode:
@@ -340,79 +350,106 @@ deferred to before v0.4.0 by decision, not by oversight.
 
 ---
 
-## v0.3.0 — It reaches people
+## v0.3.0 — It reaches people — **done**
 
-Today **nothing leaves the process on an incident's behalf.** Escalation is a database state
-change, an `incident_events` row, an audit row, and a nudge to any open browser tab. The only
-out-of-band path to a human is *your* Alertmanager firing on Hephaisto's self-check rules, and
-that rule file ships disabled.
+**Escalation leaves the process now.** An `INotificationChannel` abstraction, routing rules, a
+Postgres outbox with retry, and two channels on it: a generic outbound HTTP endpoint and
+Microsoft Teams. It ships delivering nowhere — an empty routing table and no channel configured,
+two independent things to change, the same shape as `actionableNamespaces` plus
+`autoEnabledActionTypes` plus `mode`.
 
-**There is outbound HTTP in `src/`, and this file said there was not.** `GrafanaAnnotator` posts
-to Grafana's `/api/annotations` through a typed client registered with `AddHttpClient`
-(`Llm/LlmServiceCollectionExtensions.cs:66`), and `ServiceDefaults` applies
-`AddStandardResilienceHandler` to every client the factory builds. What is missing is a
-*notification* stack, not the ability to make a request — and the distinction matters, because
-`GrafanaAnnotator` is the template this milestone should copy rather than a counterexample:
-conditional registration, a `Null*` no-op when unconfigured, a per-call timeout linked to the
-caller's token, a one-line `Describe()` at startup saying whether it is on and why not, and a
-standing rule that nothing in it may fail an investigation. (No `PostAsJsonAsync` — it uses
-`JsonContent.Create` — and no notification package: the two halves of the old claim that were
-true.)
+**The premise this milestone was scoped on was wrong, and checking it made the work smaller.**
+This file, `README.md` and backlog #39 all said there was no outbound HTTP anywhere in `src/`.
+`GrafanaAnnotator` had been POSTing to Grafana through a client registered with `AddHttpClient`
+since `v0.1.0-rc2`. What was missing was a *notification stack*, not the ability to make a
+request — and the distinction mattered, because it made the annotator the **template** rather
+than a counterexample: conditional registration, a `Null*` no-op, a per-call timeout linked to
+the caller's token, a `Describe()` line at startup, and a standing rule that nothing in it may
+fail an investigation. Corrected first, in its own commit, before any code — the discipline
+backlog #7 established.
 
-**Scope: two channels — a generic webhook and Microsoft Teams.** Slack, email/SMTP and
-PagerDuty/Opsgenie are deliberately deferred to [Later](#later--a-menu-not-a-queue). Building
-`INotificationChannel` properly is what makes each of them a small, self-contained addition
-afterwards.
+| Found | Consequence |
+|---|---|
+| `GrafanaAnnotator.Describe` is documented as *"reported once at startup"* and **had no caller** | Every outbound integration here degrades silently when unconfigured, so "nothing happened" read the same whether it was never switched on or was broken. Shipping notifications on that would have built the same trap one storey higher. Filed and fixed as [#43](backlog.md#43-grafanaannotatordescribe-is-documented-as-a-startup-line-and-has-no-caller). |
+| `SilenceAlert` was in the policy engine's **LowRisk** set | Allow-eligible, so an operator could have promoted it and had the agent silence its own alerts unattended. It satisfies every word of that set's description; what it fails is subtler — every other low-risk action fails *visibly* when wrong, and a wrong silence fails by making the cluster look quiet. |
+| `Notifications:GrafanaUrl` had no reader | Would have shipped as the third instance of [#19](backlog.md#19-maxautoscalereplicas-and-maxautoscalestep-have-no-readers), in the same release that closed the first two. Caught before the commit that introduced it. |
+| `alertmanager.maxDuration` was written `2h` | What every other duration in a Kubernetes values file looks like, and `TimeSpan.Parse` rejects it outright. The agent would have failed to start with a binding error naming a key nobody would connect to that line. |
+| `Math.Clamp` **propagates** `NaN` | A jitter value from a random source could throw out of `TimeSpan` multiplication on the delivery path. Found by a test written to assert the clamp, not the bug. |
 
-### Three traps to design around
+### What shipped
 
-**`IIncidentNotifier` is not the transport.** It is an in-process `Channel<T>` fan-out to Blazor
-circuits, bounded at 64 with `DropOldest`, and it never blocks and never throws. That makes it a
-fine *hook point* and a catastrophic *delivery mechanism* — it is designed to drop. Delivery needs
-an **outbox with retry**, because "escalated, and nobody was told" is the worst failure this system
-has, and a pod restart must not be able to cause it.
+| | |
+|---|---|
+| `NotificationEvent`, routing, rate limit, backoff | `Hephaisto.Core`, zero I/O, pure. Six events; `Unspecified = 0` so a default row cannot claim to be an escalation. |
+| `notification_deliveries` | One row per (event × channel). Snapshot frozen at enqueue as `jsonb`; no FK to incidents, matching `audit_events`. |
+| **Enqueue by construction** | A `SaveChanges` interceptor over new `IncidentEvent` rows. An incident cannot reach a notifiable state without a delivery row, because one commit writes both. |
+| `NotificationDispatcher` | `VerificationScheduler`'s shape: prime once, `PeriodicTimer`, scope per tick, bounded read off `(status, next_attempt_at)`. The **only** retry authority — channels opt out of `AddStandardResilienceHandler`. |
+| `HttpNotificationChannel` | Optional HMAC-SHA256 over the exact bytes sent, plus a stable delivery id for receiver-side dedup. |
+| `TeamsNotificationChannel` | Power Automate Workflows, Adaptive Card 1.5. Links out; a test asserts no `Action.Submit` exists anywhere in the card. |
+| `SilenceAlert` | Executor arm, always requiring approval, duration clamped, no call at all on a dry run. Closes a third of [#39](backlog.md#39-the-executor-covers-five-action-types-three-are-refused). |
+| Chart | First-class values, closed enums in the schema, the Teams URL as a `secretRef` that a negative test proves can never render as a value. Egress NetworkPolicy, off by default. |
+| e2e | A `notification-receiver` the harness builds and `kind load`s, and a `notify` phase whose fourth assertion restarts the agent mid-delivery. |
 
-**Microsoft retired Office 365 connectors in Teams.** The classic "Incoming Webhook" URL in every
-tutorial is deprecated and being switched off. The supported path is a **Power Automate Workflows**
-trigger, or a Graph-based bot for anything interactive. Confirm against current Microsoft
-documentation when implementing rather than following an old blog post into a dead end.
+Closed: [#14](backlog.md#14-escalateonlyinvestigator-does-not-escalate),
+[#17](backlog.md#17-hephaistokuberneteswatch_reconnects-bypasses-the-constants-file),
+[#19](backlog.md#19-maxautoscalereplicas-and-maxautoscalestep-have-no-readers) (by deletion),
+[#33](backlog.md#33-alertmanager-signals-lose-their-namespace-when-the-alert-labels-it-k8s_namespace_name),
+[#35](backlog.md#35-allowedtools-is-documented-in-order-and-the-order-is-the-servers),
+[#36](backlog.md#36-the-environment-card-never-names-a-datasource-uid-because-nothing-sets-them),
+[#40](backlog.md#40-policyresult-has-no-closed-reason-code-so-the-metric-cannot-say-why),
+[#43](backlog.md#43-grafanaannotatordescribe-is-documented-as-a-startup-line-and-has-no-caller),
+and a third of [#39](backlog.md#39-the-executor-covers-five-action-types-three-are-refused).
 
-**A notifier can amplify a storm.** Ingest has dedup, flap suppression and a storm circuit breaker.
-The outbound side inherits none of it. Per-channel rate limiting, and reuse of the existing
-fingerprint, are part of the feature rather than a follow-up.
+### The decision that shaped the rest: enqueue is a consequence, not a call
 
-### Order
+The obvious design is an enqueue call at each of the ten places an incident commits a
+transition. The obvious failure of that design was **already in this codebase**: `IncidentTriage`
+reaches `Escalated` twice — the self-signal arm and the storm circuit breaker — and published no
+live event at all. Nobody noticed, because nothing asserted it. An eleventh call site added next
+year would have gone the same way.
 
-1. **`INotificationChannel`, routing rules, and the outbox.** Which kinds, severities and namespaces
-   go where; at-least-once delivery with retry. Two channels is the right number to design against —
-   one lets channel-specific detail leak into the core.
-2. **Generic webhook first.** No third-party account, so it is testable in the e2e harness against a
-   local sink, and it proves the outbox and routing before any vendor-shaped payload is involved.
-   It is also the escape hatch for anyone using something this milestone does not ship.
-3. **Microsoft Teams**, via a Power Automate Workflows trigger posting an Adaptive Card.
-4. **Egress NetworkPolicy.** The chart is `policyTypes: [Ingress]` only. Nothing forces this today,
-   but once the agent posts outward it is worth being explicit about where it may talk.
-5. **Deep links in every message.** `generate_deeplink` is already an allowlisted grafana-mcp tool,
-   so a card can carry a real Grafana Explore link beside the diagnosis, plus a link to the incident.
-6. **Secrets by `secretRef` only.** A Workflows trigger URL is a bearer credential in a query
-   string and must never be a plaintext value.
+`IncidentStateMachine.Transition` appends an `IncidentEvent` on every edge without exception, so
+watching those rows gives the property directly rather than by diligence. The two silent triage
+paths were covered the day the interceptor landed, without being touched.
 
-### Approvals from Teams — and why v1 should not be interactive
+**The guard test is the deliverable, not the interceptor.** It drives the real state machine
+against a real database over all thirteen escalation reasons — and it was verified the way
+`IncidentMetricsTests` was: commenting out the enqueue turns 15 tests red.
 
-The payoff that joins this milestone to v0.2.0 is approving a `restart_pod` from where the
-escalation arrived. But Teams is the harder platform for it: its interactive paths go through Power
-Automate or a registered bot, and both mean accepting inbound calls on a service whose only current
-inbound route is deliberately unauthenticated and protected solely by NetworkPolicy. That is a real
-security change, not a feature increment.
+### What did not ship, and why
 
-So **v1 of the card carries a deep link into Hephaisto's own approval UI**, not an Approve button.
-No new inbound surface, no signature verification, and the approval still happens where the audit
-row already lives. In-card approval gets its own gate later.
+- **In-card approval.** Teams' interactive paths need a registered bot or Power Automate, and
+  both mean accepting inbound calls on a service whose only inbound route is deliberately
+  unauthenticated. A security change, not a feature increment. The identity story converges
+  anyway: approving in Hephaisto's UI makes the free-text `ApprovedBy` the weak point, and the
+  fix is OIDC — for a Teams shop, the same Entra ID the card was delivered through.
+- **Slack, email/SMTP, PagerDuty.** Deferred as scoped. Two channels was the right number to
+  design against; a third would have been designing against consumers that exist.
+- **An approval-timeout sweeper.** `EscalationReason.ApprovalTimedOut` still has no producer, and
+  now matters more: once a card says "approve this", *"awaiting approval and nobody was
+  reminded"* is the slow-motion form of the failure this release fixed. Deciding what a timeout
+  *does* is a policy question. [#44](backlog.md#opened-by-v030).
+- **`PatchResources` and `RollbackDeployment`.** Unchanged from v0.2.0's reasoning.
+- **A cluster run of anything.** See below.
 
-That also lines the identity story up correctly: approving in Hephaisto's UI makes the free-text
-`ApprovedBy` the weak point, and the fix is OIDC — which for a Teams shop is Entra ID, the same
-directory the card was delivered through. Interactive approval and OIDC approval converge on the
-same answer, so the link-out costs nothing and skips a throwaway design.
+### Done when — status
+
+A fixture escalates, a card arrives in Teams and a body arrives at the outbound receiver each
+carrying a working link; the receiver is taken down, the agent restarted, the receiver brought
+back, and the delivery arrives anyway; a burst is rate-limited rather than repeated; and a stock
+install delivers nowhere.
+
+**Written, and unexecuted against a cluster.** 989 unit tests and 53 integration tests pass,
+including the transactional guarantee against a real Postgres and the falsifiability check on the
+guard test. The `notify` e2e phase exists and **has not been run** — it needs a kind cluster and
+a Gemini key, and this milestone did not spend one.
+
+That is the same honesty v0.2.0 ended on and it is the same debt. The two now compound: v0.2.0's
+acting path has never completed against a cluster ([#41](backlog.md#41-c11-has-never-been-run-against-a-cluster)),
+and v0.3.0's delivery path has never been observed leaving one. **Both are owed before v0.4.0,
+and they are one run** — `run.sh --mode Auto` exercises the executor, and every notification this
+release built fires on the outcomes that run produces.
+
 
 ---
 
@@ -599,9 +636,14 @@ Roughly in order of value:
 - **OIDC for approvals.** No schema change; `ApprovedBy` is populated from a verified claim instead
   of a text box. Stops being optional the moment more than one person operates this, or it points at
   anything that matters.
-- **The deferred notification channels** — Slack, email/SMTP, PagerDuty/Opsgenie. Small additions
-  once v0.3.0's abstraction exists.
-- **Interactive in-card approval**, with the inbound signature verification it requires.
+- **The deferred notification channels** — Slack, email/SMTP, PagerDuty/Opsgenie. The abstraction
+  exists now: a channel is a `Name`, a `Describe()` and a `SendAsync` returning a
+  `DeliveryResult`, with the outbox, routing, retry and rate limiting already behind it. Slack's
+  incoming webhooks are the cheapest of the three.
+- **Interactive in-card approval**, with the inbound signature verification it requires. Worth
+  reading [#44](backlog.md#44-nothing-sweeps-awaitingapproval-so-approvaltimedout-has-no-producer)
+  first: an approval nobody acts on is the failure that matters, and a sweeper is cheaper than a
+  bot.
 - **Change correlation** — "this started 4 minutes after the rollout of `x:sha`".
 - **Postmortem generation**, drawing on the digest index for "this has happened N times".
 - **Leading indicators** — PVC fill projection, memory trending to limit, cert expiry, HPA pinned at
