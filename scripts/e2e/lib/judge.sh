@@ -28,6 +28,7 @@ fixture_truth() {
         c7)  echo "A referenced Secret does not exist (c7-database-credentials), so the kubelet cannot construct the container environment and reports CreateContainerConfigError. This is NOT an image pull problem." ;;
         c8)  echo "The readiness probe alternates pass/fail on a 60s cycle, so the pod flaps in and out of the Service endpoints. The container is NOT crashing and restarts are zero - a Sev1 here would be a false positive." ;;
         c10) echo "The service returns 500s for about 15% of requests with an elevated p95 latency, while Kubernetes reports it perfectly healthy - the pod stays Ready and no event is emitted." ;;
+        c11) echo "The container aborts at startup because it finds a stale generation counter on its persistent volume at /data/generation - the value is 1 and it requires 2 - so it exits 1 and the Deployment enters CrashLoopBackOff. The decisive evidence is a FATAL log line naming that generation." ;;
         *)   echo "" ;;
     esac
 }

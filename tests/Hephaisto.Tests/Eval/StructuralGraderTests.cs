@@ -197,16 +197,38 @@ public class StructuralGraderTests
     }
 
     [Fact]
-    public void The_answer_key_covers_the_eight_gradeable_fixtures_and_omits_c6_and_c9()
+    public void The_answer_key_covers_the_nine_gradeable_fixtures_and_omits_c6_and_c9()
     {
-        AnswerKey.All.Should().HaveCount(8);
+        AnswerKey.All.Should().HaveCount(9);
         AnswerKey.All.Select(k => k.Fixture).Should().BeEquivalentTo(
-            ["c1", "c2", "c3", "c4", "c5", "c7", "c8", "c10"]);
+            ["c1", "c2", "c3", "c4", "c5", "c7", "c8", "c10", "c11"]);
 
         // c6 cannot fire on local-path and c9 is node-wide; neither is gradeable, and pretending
         // otherwise is how a corpus of 8 gets reported as 10.
         AnswerKey.For("c6").Should().BeNull();
         AnswerKey.For("c9").Should().BeNull();
+    }
+
+    [Fact]
+    public void Exactly_one_fixture_expects_the_agent_to_act()
+    {
+        // Every key in this corpus had AcceptableActions empty until c11, which means
+        // PlanGrader.MissedAnAction - "proposed nothing where an action was available" - had
+        // never been reachable by any scenario. An eval where declining is always correct
+        // measures one direction of a two-directional behaviour, and cannot see the failure
+        // docs/backlog.md #41 records.
+        //
+        // This is not a cap. If a later fixture is one an action genuinely answers, raise it
+        // and say so - the assertion exists so that going back to zero is loud.
+        var acting = AnswerKey.All.Where(k => k.AcceptableActions.Count > 0).ToList();
+
+        acting.Should().ContainSingle().Which.Fixture.Should().Be("c11");
+
+        // And the other direction stays asserted: the four fixtures a restart would answer
+        // plausibly and wrongly still forbid it.
+        AnswerKey.All.Where(k => k.MustNotPropose.Contains(ActionType.RestartPod))
+            .Select(k => k.Fixture)
+            .Should().BeEquivalentTo(["c1", "c2", "c3", "c4"]);
     }
 
     [Fact]
