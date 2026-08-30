@@ -1,0 +1,367 @@
+using System.Net;
+using k8s;
+using k8s.Autorest;
+using k8s.Models;
+using Hephaisto.Agent.Kubernetes;
+using Hephaisto.Agent.Persistence.Repositories;
+using Hephaisto.Core.Abstractions;
+using Hephaisto.Core.Domain;
+using Hephaisto.Core.Policy;
+
+namespace Hephaisto.Agent.Pipeline;
+
+/// <summary>
+/// Thrown when the facts the policy engine needs could not be read. The caller must escalate
+/// rather than evaluate policy on what it managed to get.
+/// </summary>
+/// <remarks>
+/// This type exists because of the direction partial facts fail in. <see cref="ClusterFacts"/>
+/// has no "unknown" - a workload it could not read is <c>null</c>, and a null workload means
+/// gates 7, 8 and 9 are skipped rather than failed. A missing fact therefore *removes* safety
+/// checks, silently, and the resulting Allow looks identical to a considered one. So the
+/// gatherer refuses to return a half-built record at all.
+/// </remarks>
+public sealed class ClusterFactsUnavailableException(string message, Exception? inner = null)
+    : Exception(message, inner);
+
+/// <summary>
+/// Reads, at decision time, everything <see cref="PolicyEngine"/> is allowed to know.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The policy engine is a pure function over facts passed in, which is what makes it
+/// exhaustively unit-testable without a cluster. This class is the other half of that
+/// bargain: all of the I/O, in one place, so the engine needs none.
+/// </para>
+/// <para>
+/// It lives in <c>Pipeline</c> rather than <c>Kubernetes</c> because it reads Postgres too -
+/// the action budget is as much a fact about the world as the replica count. Filing it under
+/// Kubernetes would describe half of it.
+/// </para>
+/// <para>
+/// <b>Until v0.2.0 nothing built this.</b> <c>InvestigationCoordinator</c> passed a record
+/// carrying only the clock, the mode and the quarantine stamp, so gates 3, 7, 8-fractional, 9,
+/// 10 and 13's budget downgrade could not fail: the policy engine ran for real against facts
+/// that could not contradict it. Every one of those gates has unit tests, all of which passed,
+/// because the tests supply the facts the caller did not.
+/// </para>
+/// </remarks>
+public sealed class ClusterFactsGatherer(
+    KubernetesApi api,
+    IActionRepository actions,
+    IClock clock,
+    ILogger<ClusterFactsGatherer> logger)
+{
+    public async Task<ClusterFacts> GatherAsync(Incident incident, AgentMode mode, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(incident);
+
+        var target = incident.Target;
+        var now = clock.UtcNow;
+
+        try
+        {
+            var budget = await actions
+                .ReadBudgetAsync(incident.Id, target, mode, ct)
+                .ConfigureAwait(false);
+
+            var namespaceLabels = await ReadNamespaceLabelsAsync(target.Namespace, ct).ConfigureAwait(false);
+            var (workload, workloadLabels) = await ReadWorkloadAsync(target, now, ct).ConfigureAwait(false);
+            var targetLabels = await ReadTargetLabelsAsync(target, workloadLabels, ct).ConfigureAwait(false);
+            var node = await ReadNodeAsync(target.NodeName, ct).ConfigureAwait(false);
+            var unhealthy = await ClusterUnhealthyFractionAsync(ct).ConfigureAwait(false);
+
+            return new ClusterFacts
+            {
+                Now = now,
+                Mode = mode,
+                Workload = workload,
+                Node = node,
+                TargetLabels = targetLabels,
+                NamespaceLabels = namespaceLabels,
+                RecentActionsOnWorkload = budget.ActionsOnWorkloadLastHour,
+                LastActionOnWorkloadAt = budget.LastActionOnWorkloadAt,
+                ActionsOnIncident = budget.ActionsOnIncident,
+                ActionsClusterWideLastHour = budget.ActionsClusterWideLastHour,
+                ActionsClusterWideLastDay = budget.ActionsClusterWideLastDay,
+                QuarantinedUntil = incident.QuarantinedUntil,
+                ClusterUnhealthyFraction = unhealthy,
+
+                // Deliberately false, and deliberately not quietly defaulted: nothing in this
+                // repo defines a maintenance window. There is a SuppressionReason for it and a
+                // policy gate reading it, and no schedule, no chart value and no producer. A
+                // window invented here would be a control that looks configured and is not -
+                // the failure mode PolicyOptions.MaxAutoScaleReplicas is already an example of.
+                InMaintenanceWindow = false,
+            };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not ClusterFactsUnavailableException)
+        {
+            throw new ClusterFactsUnavailableException(
+                $"Could not read the facts needed to judge an action on {target.WorkloadKey}.", ex);
+        }
+    }
+
+    /// <summary>
+    /// The namespace's own opt-in label. A namespace that cannot be read is not an opt-in.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<string, string>> ReadNamespaceLabelsAsync(
+        string @namespace, CancellationToken ct)
+    {
+        var ns = await api.Core.ReadNamespaceAsync(@namespace, cancellationToken: ct).ConfigureAwait(false);
+
+        return Copy(ns.Metadata?.Labels);
+    }
+
+    /// <summary>
+    /// Replica, generation and revision facts for the owning controller, plus its labels.
+    /// </summary>
+    /// <remarks>
+    /// Keyed on the OWNER, never the object the signal arrived about: a crash-looping
+    /// Deployment produces a new pod name every couple of minutes, and blast radius, rollout
+    /// state and revision age are all properties of the controller rather than of whichever
+    /// pod happened to fail last.
+    /// </remarks>
+    private async Task<(WorkloadFacts? Facts, IDictionary<string, string>? Labels)> ReadWorkloadAsync(
+        TargetRef target, DateTimeOffset now, CancellationToken ct)
+    {
+        var kind = target.OwnerKind is { Length: > 0 } ok ? ok : target.Kind;
+        var name = target.OwnerName is { Length: > 0 } on ? on : target.Name;
+        var ns = target.Namespace;
+
+        switch (kind)
+        {
+            case "Deployment":
+            {
+                var d = await api.Apps.ReadNamespacedDeploymentAsync(name, ns, cancellationToken: ct).ConfigureAwait(false);
+                var (current, previous) = await RevisionAgesAsync(d, now, ct).ConfigureAwait(false);
+
+                return (new WorkloadFacts
+                {
+                    Key = target.WorkloadKey,
+                    Kind = kind,
+                    DesiredReplicas = d.Spec?.Replicas ?? 0,
+                    ReadyReplicas = d.Status?.ReadyReplicas ?? 0,
+                    UpdatedReplicas = d.Status?.UpdatedReplicas ?? 0,
+                    Generation = d.Metadata?.Generation ?? 0,
+                    ObservedGeneration = d.Status?.ObservedGeneration ?? 0,
+                    YoungestPodAge = await YoungestPodAgeAsync(ns, d.Spec?.Selector, now, ct).ConfigureAwait(false),
+                    CurrentRevisionAge = current,
+                    PreviousRevisionHealthyFor = previous,
+                }, d.Metadata?.Labels);
+            }
+
+            case "StatefulSet":
+            {
+                var s = await api.Apps.ReadNamespacedStatefulSetAsync(name, ns, cancellationToken: ct).ConfigureAwait(false);
+
+                return (new WorkloadFacts
+                {
+                    Key = target.WorkloadKey,
+                    Kind = kind,
+                    DesiredReplicas = s.Spec?.Replicas ?? 0,
+                    ReadyReplicas = s.Status?.ReadyReplicas ?? 0,
+                    UpdatedReplicas = s.Status?.UpdatedReplicas ?? 0,
+                    Generation = s.Metadata?.Generation ?? 0,
+                    ObservedGeneration = s.Status?.ObservedGeneration ?? 0,
+                    YoungestPodAge = await YoungestPodAgeAsync(ns, s.Spec?.Selector, now, ct).ConfigureAwait(false),
+                }, s.Metadata?.Labels);
+            }
+
+            case "DaemonSet":
+            {
+                var d = await api.Apps.ReadNamespacedDaemonSetAsync(name, ns, cancellationToken: ct).ConfigureAwait(false);
+
+                // A DaemonSet's "replicas" is however many nodes it is scheduled on, so the
+                // blast-radius maths is the same shape with different field names.
+                return (new WorkloadFacts
+                {
+                    Key = target.WorkloadKey,
+                    Kind = kind,
+                    DesiredReplicas = d.Status?.DesiredNumberScheduled ?? 0,
+                    ReadyReplicas = d.Status?.NumberReady ?? 0,
+                    UpdatedReplicas = d.Status?.UpdatedNumberScheduled ?? 0,
+                    Generation = d.Metadata?.Generation ?? 0,
+                    ObservedGeneration = d.Status?.ObservedGeneration ?? 0,
+                    YoungestPodAge = await YoungestPodAgeAsync(ns, d.Spec?.Selector, now, ct).ConfigureAwait(false),
+                }, d.Metadata?.Labels);
+            }
+
+            default:
+                // A bare Pod, a Job, or something with no controller. There is no replica set
+                // to reason about, so the blast-radius and rollout gates have nothing to say -
+                // which is honest here, unlike a workload read that failed.
+                logger.LogDebug(
+                    "No workload facts for kind {Kind}; blast-radius and rollout gates will not apply.", kind);
+                return (null, null);
+        }
+    }
+
+    /// <summary>
+    /// Age of the current revision, and how long the one before it lasted.
+    /// </summary>
+    /// <remarks>
+    /// A Deployment's history IS its ReplicaSets - the revision number is an annotation on
+    /// each one and there is no history object to read. <c>PreviousRevisionHealthyFor</c> is a
+    /// proxy: how long the previous revision was the live one, measured between the two
+    /// creation timestamps. It is not a health measurement, and the gate that reads it treats
+    /// "survived a while" as the signal. Anything better needs a rollout-status history nobody
+    /// keeps.
+    /// </remarks>
+    private async Task<(TimeSpan? Current, TimeSpan? Previous)> RevisionAgesAsync(
+        V1Deployment deployment, DateTimeOffset now, CancellationToken ct)
+    {
+        var uid = deployment.Metadata?.Uid;
+
+        if (uid is null)
+        {
+            return (null, null);
+        }
+
+        var replicaSets = await api.Apps
+            .ListNamespacedReplicaSetAsync(deployment.Metadata!.NamespaceProperty, cancellationToken: ct)
+            .ConfigureAwait(false);
+
+        var owned = replicaSets.Items
+            .Where(rs => rs.Metadata?.OwnerReferences?.Any(o => o.Uid == uid) == true)
+            .OrderByDescending(ClusterFactsRules.RevisionOf)
+            .ToList();
+
+        if (owned.Count == 0)
+        {
+            return (null, null);
+        }
+
+        var currentCreated = owned[0].Metadata?.CreationTimestamp;
+        TimeSpan? current = currentCreated is { } c ? now - c : null;
+
+        if (owned.Count < 2)
+        {
+            return (current, null);
+        }
+
+        var previousCreated = owned[1].Metadata?.CreationTimestamp;
+        TimeSpan? previous = currentCreated is { } cc && previousCreated is { } pc ? cc - pc : null;
+
+        return (current, previous);
+    }
+
+    /// <summary>
+    /// Age of the youngest pod under a selector. Gate 7 refuses to act on pods that have not
+    /// had a fair chance to become healthy, and the youngest is the one that decides that.
+    /// </summary>
+    private async Task<TimeSpan?> YoungestPodAgeAsync(
+        string @namespace, V1LabelSelector? selector, DateTimeOffset now, CancellationToken ct)
+    {
+        var labelSelector = ClusterFactsRules.LabelSelector(selector);
+
+        if (labelSelector is null)
+        {
+            return null;
+        }
+
+        var pods = await api.Core
+            .ListNamespacedPodAsync(@namespace, labelSelector: labelSelector, cancellationToken: ct)
+            .ConfigureAwait(false);
+
+        var youngest = pods.Items
+            .Select(p => p.Metadata?.CreationTimestamp)
+            .Where(t => t is not null)
+            .Select(t => t!.Value)
+            .DefaultIfEmpty()
+            .Max();
+
+        return youngest == default ? null : now - youngest;
+    }
+
+    /// <summary>
+    /// Labels on the target itself, for the protected-label check.
+    /// </summary>
+    /// <remarks>
+    /// The workload's labels are the base, because that is where a team puts an opt-out. A
+    /// readable pod's labels are merged over the top. Merging is safe in exactly one direction
+    /// and this is it: <see cref="PolicyOptions.ProtectedLabels"/> only ever produces denials,
+    /// so a larger set can refuse more and permit nothing extra. A pod that has already gone -
+    /// routine, since these are usually crash-looping - is not an error.
+    /// </remarks>
+    private async Task<IReadOnlyDictionary<string, string>> ReadTargetLabelsAsync(
+        TargetRef target, IDictionary<string, string>? workloadLabels, CancellationToken ct)
+    {
+        var labels = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var (key, value) in workloadLabels ?? new Dictionary<string, string>())
+        {
+            labels[key] = value;
+        }
+
+        if (!string.Equals(target.Kind, "Pod", StringComparison.OrdinalIgnoreCase))
+        {
+            return labels;
+        }
+
+        try
+        {
+            var pod = await api.Core
+                .ReadNamespacedPodAsync(target.Name, target.Namespace, cancellationToken: ct)
+                .ConfigureAwait(false);
+
+            foreach (var (key, value) in pod.Metadata?.Labels ?? new Dictionary<string, string>())
+            {
+                labels[key] = value;
+            }
+        }
+        catch (HttpOperationException ex) when (ex.Response?.StatusCode == HttpStatusCode.NotFound)
+        {
+            logger.LogDebug(
+                "Pod {Namespace}/{Name} is gone; using the workload's labels for the protected-label check.",
+                target.Namespace, target.Name);
+        }
+
+        return labels;
+    }
+
+    private async Task<NodeFacts?> ReadNodeAsync(string? nodeName, CancellationToken ct)
+    {
+        if (nodeName is not { Length: > 0 })
+        {
+            return null;
+        }
+
+        var node = await api.Core.ReadNodeAsync(nodeName, cancellationToken: ct).ConfigureAwait(false);
+
+        var pods = await api.Core
+            .ListPodForAllNamespacesAsync(fieldSelector: $"spec.nodeName={nodeName}", cancellationToken: ct)
+            .ConfigureAwait(false);
+
+        return new NodeFacts
+        {
+            Name = nodeName,
+            Unschedulable = node.Spec?.Unschedulable ?? false,
+            PodCount = pods.Items.Count,
+            MemoryPressure = ClusterFactsRules.HasCondition(node, "MemoryPressure"),
+            DiskPressure = ClusterFactsRules.HasCondition(node, "DiskPressure"),
+        };
+    }
+
+    /// <summary>
+    /// The fraction of pods cluster-wide that are unhealthy. Above the configured ceiling,
+    /// restarting one pod is the wrong response to what is clearly a cluster-level event.
+    /// </summary>
+    /// <remarks>
+    /// One list of every pod in the cluster, per action proposal. That is affordable because
+    /// proposals are rare - a handful an hour at the budget caps, against an investigation
+    /// that already costs several seconds and several cents. It would not be affordable on a
+    /// hot path, and this is deliberately not on one.
+    /// </remarks>
+    private async Task<double> ClusterUnhealthyFractionAsync(CancellationToken ct)
+    {
+        var pods = await api.Core.ListPodForAllNamespacesAsync(cancellationToken: ct).ConfigureAwait(false);
+
+        return ClusterFactsRules.UnhealthyFraction(pods.Items);
+    }
+
+    private static IReadOnlyDictionary<string, string> Copy(IDictionary<string, string>? source) =>
+        source is null
+            ? new Dictionary<string, string>(StringComparer.Ordinal)
+            : new Dictionary<string, string>(source, StringComparer.Ordinal);
+}

@@ -3,9 +3,15 @@ using Hephaisto.Core.Domain;
 namespace Hephaisto.Core.Policy;
 
 /// <summary>
-/// Bound via IOptionsMonitor so it hot-reloads from the ConfigMap. Every reload writes an
-/// audit row - a silent policy change is indistinguishable from an attack.
+/// Bound via IOptionsMonitor so it hot-reloads from the ConfigMap.
 /// </summary>
+/// <remarks>
+/// This type is the policy engine's entire configuration surface, so treat a change to it as
+/// a change to the safety model. Note what is NOT yet true: a reload is currently silent, and
+/// a silent policy change is indistinguishable from an attack. Auditing reloads is tracked
+/// separately rather than asserted here - a comment describing behaviour nobody wrote is how
+/// the next person plans against a control that does not exist.
+/// </remarks>
 public sealed class PolicyOptions
 {
     public const string SectionName = "Policy";
@@ -33,6 +39,21 @@ public sealed class PolicyOptions
     {
         ["hephaisto.io/protected"] = "true",
     };
+
+    /// <summary>
+    /// A namespace must carry this label set to <c>true</c> before anything in it may be acted
+    /// on - the "second, independent confirmation" the RBAC manifests have described since
+    /// before any code read it. Set to empty to disable the check.
+    /// </summary>
+    /// <remarks>
+    /// It is deliberately a different authority from <see cref="AllowedNamespaces"/>. The
+    /// allowlist ships in the chart, set by whoever installs Hephaisto; this label is on the
+    /// namespace object, set by whoever owns that namespace. Requiring both means a platform
+    /// engineer cannot opt someone else's namespace in, and a team cannot opt itself in
+    /// without the operator. Note the cost of that: a namespace added to the allowlist and
+    /// never labelled is denied, and the reason says so.
+    /// </remarks>
+    public string RequiredNamespaceLabel { get; set; } = "hephaisto.io/destructive-actions-allowed";
 
     /// <summary>Opt-in escape hatch for restarting the only replica of a single-replica workload.</summary>
     public string AllowSingleReplicaRestartLabel { get; set; } = "hephaisto.io/allow-single-replica-restart";

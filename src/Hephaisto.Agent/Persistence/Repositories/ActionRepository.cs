@@ -268,8 +268,27 @@ public sealed class ActionRepository(
         return ActionAdmission.Admit(budget, reasons);
     }
 
-    private async Task<ActionBudgetSnapshot> ReadBudgetAsync(
+    /// <inheritdoc />
+    public Task<ActionBudgetSnapshot> ReadBudgetAsync(
+        Guid incidentId, TargetRef target, AgentMode mode, CancellationToken ct) =>
+        ReadBudgetAsync(incidentId, target, mode, clock.UtcNow, ct);
+
+    private Task<ActionBudgetSnapshot> ReadBudgetAsync(
         AgentAction action,
+        AgentMode mode,
+        DateTimeOffset now,
+        CancellationToken ct) =>
+        ReadBudgetAsync(action.IncidentId, action.Target, mode, now, ct);
+
+    /// <remarks>
+    /// One query set, two callers: admission runs it inside the serializable transaction and
+    /// the policy pre-check runs it outside. Keeping them on one method is the point - two
+    /// copies of "what counts against the budget" would drift, and the copy that drifted would
+    /// be the one nobody was watching.
+    /// </remarks>
+    private async Task<ActionBudgetSnapshot> ReadBudgetAsync(
+        Guid incidentId,
+        TargetRef target,
         AgentMode mode,
         DateTimeOffset now,
         CancellationToken ct)
@@ -283,12 +302,12 @@ public sealed class ActionRepository(
         // gates: undoing damage must not be rationed by the damage.
         var counted = admitted.Where(a => a.IsRollbackOf == null);
 
-        var workload = WorkloadQuery.ForWorkload(counted, action.Target);
+        var workload = WorkloadQuery.ForWorkload(counted, target);
 
         return new ActionBudgetSnapshot
         {
             Mode = mode,
-            ActionsOnIncident = await counted.CountAsync(a => a.IncidentId == action.IncidentId, ct),
+            ActionsOnIncident = await counted.CountAsync(a => a.IncidentId == incidentId, ct),
             ActionsOnWorkloadLastHour = await workload.CountAsync(a => a.ApprovedAt >= hourAgo, ct),
             ActionsClusterWideLastHour = await counted.CountAsync(a => a.ApprovedAt >= hourAgo, ct),
             ActionsClusterWideLastDay = await counted.CountAsync(a => a.ApprovedAt >= dayAgo, ct),

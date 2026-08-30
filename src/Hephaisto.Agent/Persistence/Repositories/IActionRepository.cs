@@ -84,5 +84,20 @@ public interface IActionRepository
     /// </summary>
     Task<ActionAdmission> TryAdmitActionAsync(AgentAction action, PolicyOptions options, CancellationToken ct);
 
+    /// <summary>
+    /// The same counts <see cref="TryAdmitActionAsync"/> gates on, read outside a transaction
+    /// so the policy engine can see them before an action is proposed.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately advisory. These counts feed the policy engine's <b>downgrade</b> decision -
+    /// "you are at your hourly budget, so a human should confirm this" - and are read without a
+    /// lock, so they can be stale by the time anything acts. That is fine, and it is why
+    /// admission re-reads them inside a <c>Serializable</c> transaction rather than trusting
+    /// what it is handed. Never treat this as the enforcement point; enforcement is the one
+    /// place where losing a race means an unintended write.
+    /// </remarks>
+    Task<ActionBudgetSnapshot> ReadBudgetAsync(
+        Guid incidentId, TargetRef target, AgentMode mode, CancellationToken ct);
+
     Task<int> SaveChangesAsync(CancellationToken ct);
 }

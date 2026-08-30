@@ -3,6 +3,7 @@ using Hephaisto.Agent.Options;
 using Hephaisto.Agent.Web;
 using Hephaisto.Core;
 using Hephaisto.Core.Abstractions;
+using Hephaisto.Core.Policy;
 
 namespace Hephaisto.Agent.Pipeline;
 
@@ -13,6 +14,13 @@ public static class PipelineServiceCollectionExtensions
         IConfiguration configuration)
     {
         services.Configure<IngestOptions>(configuration.GetSection(IngestOptions.SectionName));
+
+        // The policy engine's configuration. This binding was missing until v0.2.0, and its
+        // absence was invisible: IOptionsMonitor<PolicyOptions> resolves happily to a
+        // default-constructed instance, whose AllowedNamespaces is empty, so gate 2 denied
+        // every action for the right-looking reason. The chart has been setting
+        // Policy__AllowedNamespaces__N since the write Role existed and nothing read it.
+        services.Configure<PolicyOptions>(configuration.GetSection(PolicyOptions.SectionName));
 
         services.TryAddSingleton<IClock>(SystemClock.Instance);
         services.AddSingleton<HephaistoMetrics>();
@@ -26,6 +34,10 @@ public static class PipelineServiceCollectionExtensions
         // Runs once at startup. Without it, anything queued or in flight when the
         // process last stopped stays Investigating in Postgres forever.
         services.AddHostedService<StrandedIncidentRequeue>();
+
+        // Scoped: it reads the action budget through the scoped repository, and those counts
+        // must come from the same DbContext as the decision they inform.
+        services.AddScoped<ClusterFactsGatherer>();
 
         services.AddScoped<IncidentStateMachine>();
         services.AddScoped<IncidentTriage>();

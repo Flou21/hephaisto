@@ -67,6 +67,91 @@ public sealed class PolicyEngineTests
             .Decision.Should().Be(PolicyDecision.Deny);
     }
 
+    [Fact]
+    public void AllowlistedNamespace_StillDenies_WithoutTheNamespacesOwnOptIn()
+    {
+        // The allowlist is the operator's authority; the label is the namespace owner's. One
+        // without the other is half a decision. This is the check the RBAC manifests have
+        // described as "a second, independent confirmation" since before any code read it.
+        var facts = Given.Facts() with { NamespaceLabels = Given.Labels() };
+
+        var result = PolicyEngine.Evaluate(Given.Request(), facts, Given.Options());
+
+        result.Decision.Should().Be(PolicyDecision.Deny);
+        result.Reasons.Should().ContainMatch("*does not carry hephaisto.io/destructive-actions-allowed=true*");
+    }
+
+    [Theory]
+    [InlineData("false")]
+    [InlineData("")]
+    [InlineData("yes")]
+    [InlineData("1")]
+    public void NamespaceOptIn_RequiresLiterallyTrue(string value)
+    {
+        // "yes" and "1" are the plausible near-misses. Accepting them would mean the label
+        // silently means something different from what the manifests document.
+        var facts = Given.Facts() with
+        {
+            NamespaceLabels = Given.Labels(("hephaisto.io/destructive-actions-allowed", value)),
+        };
+
+        PolicyEngine.Evaluate(Given.Request(), facts, Given.Options())
+            .Decision.Should().Be(PolicyDecision.Deny);
+    }
+
+    [Fact]
+    public void NamespaceOptIn_IsCaseInsensitiveOnTheValue()
+    {
+        var facts = Given.Facts() with
+        {
+            NamespaceLabels = Given.Labels(("hephaisto.io/destructive-actions-allowed", "True")),
+        };
+
+        PolicyEngine.Evaluate(Given.Request(), facts, Given.Options())
+            .Decision.Should().Be(PolicyDecision.Allow);
+    }
+
+    [Fact]
+    public void NamespaceOptIn_BeatsRollback()
+    {
+        // Same reasoning as ProtectedNamespace_BeatsRollback: undoing an action in a namespace
+        // is itself an action in that namespace.
+        var facts = Given.Facts() with { NamespaceLabels = Given.Labels() };
+        var request = Given.Request() with { IsRollback = true };
+
+        PolicyEngine.Evaluate(request, facts, Given.Options())
+            .Decision.Should().Be(PolicyDecision.Deny);
+    }
+
+    [Fact]
+    public void NamespaceOptIn_CanBeDisabledByOperatorsWhoDoNotLabelNamespaces()
+    {
+        // An escape hatch that fails CLOSED unless deliberately emptied: the default is the
+        // label, and turning the check off is a visible configuration act.
+        var options = Given.Options();
+        options.RequiredNamespaceLabel = string.Empty;
+
+        var facts = Given.Facts() with { NamespaceLabels = Given.Labels() };
+
+        PolicyEngine.Evaluate(Given.Request(), facts, options)
+            .Decision.Should().Be(PolicyDecision.Allow);
+    }
+
+    [Fact]
+    public void NamespaceLabels_AreNotSatisfiedByTheSameLabelOnTheTarget()
+    {
+        // The two label sets are separate fields precisely so a workload cannot opt its own
+        // namespace in. Merging them would make this pass, which is the bug being prevented.
+        var facts = Given.Facts() with
+        {
+            NamespaceLabels = Given.Labels(),
+            TargetLabels = Given.Labels(("hephaisto.io/destructive-actions-allowed", "true")),
+        };
+
+        PolicyEngine.Evaluate(Given.Request(), facts, Given.Options())
+            .Decision.Should().Be(PolicyDecision.Deny);
+    }
+
     [Theory]
     [InlineData("kube-system")]
     [InlineData("hephaisto")]
@@ -661,7 +746,9 @@ public sealed class PolicyEngineTests
     [Fact]
     public void ActionWithoutARollbackSpec_IsNeverAllowed()
     {
-        var request = Given.Request() with { HasRollbackSpec = false };
+        // RolloutRestart rather than the default RestartPod: a pod delete is exempt, because
+        // it has no inverse to specify. See SelfHealingTypes_* below.
+        var request = Given.Request(ActionType.RolloutRestart) with { HasRollbackSpec = false };
 
         var result = PolicyEngine.Evaluate(request, Given.Facts(), Given.Options());
 
@@ -671,7 +758,6 @@ public sealed class PolicyEngineTests
     }
 
     [Theory]
-    [InlineData(ActionType.RestartPod)]
     [InlineData(ActionType.DeleteStuckJob)]
     [InlineData(ActionType.SilenceAlert)]
     [InlineData(ActionType.RolloutRestart)]
@@ -681,6 +767,40 @@ public sealed class PolicyEngineTests
 
         PolicyEngine.Evaluate(request, Given.Facts(), Given.Options())
             .Decision.Should().NotBe(PolicyDecision.Allow);
+    }
+
+    [Theory]
+    [InlineData(ActionType.RestartPod)]
+    [InlineData(ActionType.DeleteFailedJobPods)]
+    public void SelfHealingTypes_AreAllowedWithoutARollbackSpec(ActionType type)
+    {
+        // Deleting a pod is not undone, it is reconciled: the controller recreates it, which
+        // is the entire mechanism of "restart a pod". There is no prior state to return to, so
+        // requiring a rollback spec would ask the model for a fiction - and would make
+        // RestartPod, the action v0.2.0 exists to automate, permanently RequireApproval.
+        var request = Given.Request(type) with { HasRollbackSpec = false };
+
+        PolicyEngine.Evaluate(request, Given.Facts(), Given.Options())
+            .Decision.Should().Be(PolicyDecision.Allow);
+    }
+
+    [Fact]
+    public void TheSelfHealingExemption_IsExactlyTwoTypesWide()
+    {
+        // Pins the width. The exemption weakens gate 14, so it earns a test that fails when
+        // someone widens it - adding a type whose effects a controller does NOT reconcile
+        // would let an unrevertable action run unattended, and nothing else would notice.
+        var exempt = new[] { ActionType.RestartPod, ActionType.DeleteFailedJobPods };
+
+        foreach (var type in Enum.GetValues<ActionType>().Except(exempt))
+        {
+            var request = Given.Request(type) with { HasRollbackSpec = false };
+
+            PolicyEngine.Evaluate(request, Given.Facts(), Given.Options())
+                .Decision.Should().NotBe(
+                    PolicyDecision.Allow,
+                    $"{type} is not self-healing, so it needs a rollback spec to run unattended");
+        }
     }
 
     // --- reason accumulation ---------------------------------------------------------------

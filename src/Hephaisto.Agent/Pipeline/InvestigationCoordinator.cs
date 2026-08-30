@@ -45,6 +45,7 @@ public sealed class InvestigationCoordinator(
     IncidentEmbedder embedder,
     IIncidentNotifier notifier,
     IOptionsMonitor<PolicyOptions> policyOptions,
+    ClusterFactsGatherer facts,
     IClock clock,
     HephaistoMetrics metrics,
     Observability.IGrafanaAnnotator annotator,
@@ -156,7 +157,7 @@ public sealed class InvestigationCoordinator(
         foreach (var rejection in outcome.Rejections)
             metrics.GroundingRejected(rejection.ToString() ?? "unknown");
 
-        var escalation = DecideOutcome(incident, outcome, mode);
+        var escalation = await DecideOutcomeAsync(incident, outcome, mode, ct).ConfigureAwait(false);
 
         // Snapshot before the transition so the event it appends can be Added explicitly.
         var eventsBefore = incident.Events.Count;
@@ -263,10 +264,11 @@ public sealed class InvestigationCoordinator(
     /// Runs every proposed action past the policy engine, records the verdict on the action,
     /// and decides why the incident is going to a human.
     /// </summary>
-    private (EscalationReason Reason, string? Detail) DecideOutcome(
+    private async Task<(EscalationReason Reason, string? Detail)> DecideOutcomeAsync(
         Incident incident,
         InvestigationOutcome outcome,
-        AgentMode mode)
+        AgentMode mode,
+        CancellationToken ct)
     {
         if (outcome.Escalation is { } forced)
             return (forced, outcome.Investigation.TerminationReason.ToString());
@@ -279,15 +281,37 @@ public sealed class InvestigationCoordinator(
         }
 
         var options = policyOptions.CurrentValue;
-        var now = clock.UtcNow;
 
-        var facts = new ClusterFacts
+        // Read the world once, immediately before judging, and refuse to judge without it.
+        //
+        // This used to be an inline record carrying the clock, the mode and the quarantine
+        // stamp - nothing else. An unread fact is not a neutral fact: a null Workload skips
+        // the stability, blast-radius and last-replica gates rather than failing them, and an
+        // empty label set satisfies every label check. So the engine ran in full and could
+        // not fail most of itself, and would have started saying Allow the moment autonomy
+        // was switched on.
+        ClusterFacts world;
+
+        try
         {
-            Now = now,
-            Mode = mode,
-            TargetLabels = new Dictionary<string, string>(),
-            QuarantinedUntil = incident.QuarantinedUntil,
-        };
+            world = await facts.GatherAsync(incident, mode, ct).ConfigureAwait(false);
+        }
+        catch (ClusterFactsUnavailableException ex)
+        {
+            // Default-deny includes the case where the question cannot be asked. An action
+            // nobody could judge is not an action anybody approved.
+            logger.LogWarning(ex, "Could not gather cluster facts for incident {IncidentId}.", incident.Id);
+
+            foreach (var action in outcome.Plan.Actions)
+            {
+                action.IncidentId = incident.Id;
+                action.Decision = PolicyDecision.Deny;
+                action.DecisionReasons = ["cluster facts could not be read, so no action can be judged"];
+                action.State = ActionState.Denied;
+            }
+
+            return (EscalationReason.PolicyDenied, "cluster facts unavailable; nothing could be judged");
+        }
 
         foreach (var action in outcome.Plan.Actions)
         {
@@ -304,7 +328,7 @@ public sealed class InvestigationCoordinator(
                 GroundedFindingIds = action.EvidenceFindingIds,
             };
 
-            var verdict = PolicyEngine.Evaluate(request, facts, options);
+            var verdict = PolicyEngine.Evaluate(request, world, options);
 
             action.Decision = verdict.Decision;
             action.DecisionReasons = [.. verdict.Reasons];
