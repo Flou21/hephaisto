@@ -256,7 +256,32 @@ public sealed class ActionRepository(
         action.ModeAtExecution = mode;
         action.DryRun = action.DryRun || mode == AgentMode.DryRun;
 
-        db.AgentActions.Add(action);
+        // Insert only if this action is genuinely new. Usually it is NOT: DecideOutcome writes
+        // every proposed action to agent_actions during the investigation, and AdmittedStates
+        // deliberately counts Proposed and AwaitingApproval - a proposal reserves its own
+        // budget slot, so refusing an action costs the same as taking one. Admission therefore
+        // TRANSITIONS the row the proposal already created. Adding here unconditionally would
+        // insert a second row with the same key and take the whole transaction down with it.
+        //
+        // The genuinely-new case is a rollback: the executor builds that action fresh, with
+        // IsRollbackOf set, and it has never been near the database.
+        var entry = db.Entry(action);
+
+        if (entry.State == EntityState.Detached)
+        {
+            var alreadyPersisted = await db.AgentActions
+                .AsNoTracking()
+                .AnyAsync(a => a.Id == action.Id, ct);
+
+            if (alreadyPersisted)
+            {
+                db.AgentActions.Attach(action).State = EntityState.Modified;
+            }
+            else
+            {
+                db.AgentActions.Add(action);
+            }
+        }
 
         string[] reasons = isRollback
             ? ["rollback: budget and cooldown bypassed by design", $"mode {mode}"]

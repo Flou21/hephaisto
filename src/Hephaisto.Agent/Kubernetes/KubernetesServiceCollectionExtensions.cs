@@ -58,6 +58,12 @@ public static class KubernetesServiceCollectionExtensions
         services.TryAddSingleton<OwnerCache>();
         services.TryAddSingleton<KubernetesReadTools>();
 
+        // The real executor, registered where the API handle is - phase 3 of the loop. Scoped,
+        // because it writes through the scoped action repository and its saves must land in
+        // that DbContext. This REPLACES the RefusingActionExecutor the pipeline TryAdds, and
+        // the direction matters: a host with no Kubernetes client keeps the one that refuses.
+        services.AddScoped<Pipeline.IActionExecutor, Pipeline.ActionExecutor>();
+
         // Before the watcher. See the remarks above.
         services.AddHostedService<RbacSelfCheck>();
         services.AddHostedService<KubernetesWatcherService>();

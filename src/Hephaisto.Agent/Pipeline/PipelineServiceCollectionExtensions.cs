@@ -55,6 +55,13 @@ public static class PipelineServiceCollectionExtensions
         // order cannot silently downgrade a working investigator to the escalate-only stub.
         services.TryAddScoped<IIncidentInvestigator, EscalateOnlyInvestigator>();
 
+        // Same shape, opposite risk. The investigator stub exists so a misordered registration
+        // still diagnoses; this one exists so a misordered registration still cannot ACT. The
+        // real executor is registered by AddHephaistoKubernetes, which owns the API handle -
+        // so a host with no Kubernetes client gets an executor that refuses rather than one
+        // that half works.
+        services.TryAddScoped<IActionExecutor, RefusingActionExecutor>();
+
         return services;
     }
 }
