@@ -1601,6 +1601,13 @@ The console phase failed all nine specs, and behind it were three separate thing
 Final state, against a live kind cluster in the default mode with the fixed image: **9 passed, 0
 failed, 0 skipped.**
 
+**One honest caveat.** That is every phase passing, not one run passing. The nine phases before
+the console ran against the published `0.4.0-main.0.21`; the console phase then passed against the
+same cluster after #53's fix was loaded into it, because the published image predates that fix. A
+single end-to-end green run needs one more nightly build. Nothing is known to be wrong — but "all
+the pieces passed" and "the run is green" are different sentences, and this file is the wrong place
+to blur them.
+
 ### 52. Two components are implemented twice
 
 **Symptom.** The console has two unrelated implementations of a progress bar and two

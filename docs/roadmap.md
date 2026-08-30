@@ -592,7 +592,7 @@ the accent is about 0.2% of a section's pixels. It is `maxDiffPixels: 0` now.
 | `app.css` refactored onto it, UI unchanged except where the direction says | **done, and measured.** Zero-diff proven across the extraction; the Forge change is attributable shot by shot |
 | The app has a favicon | **done** — plus wordmark, social card, `theme-color` and a description |
 | Accessibility in acceptance | **done** — contrast asserted in both themes, focus ring baselined with real keyboard focus, reduced motion honoured |
-| `scripts/e2e/run.sh` exits 0 in its default mode | **done, and it earned its keep.** 9 passed, 0 failed, 0 skipped against a live kind cluster — after the run exposed [#53](backlog.md#53-the-console-was-never-interactive-in-any-released-image) |
+| `scripts/e2e/run.sh` exits 0 in its default mode | **every phase has passed, but not yet in one run.** Nine of ten passed against the published image; the console phase then passed 9/9 against the same cluster once the [#53](backlog.md#53-the-console-was-never-interactive-in-any-released-image) fix was loaded into it. A single green run needs one more nightly, because the image it installs still predates that fix |
 
 **The last row is why the distinction between "the specs pass" and "the harness passes" was worth
 insisting on.** Everything outside the console phase passed on the first run. The console phase
