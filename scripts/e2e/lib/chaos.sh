@@ -564,9 +564,16 @@ chaos_assert_action_executed() {
          | .actions[]? | select(.executedAt != null and .dryRun == false) | .type' \
         "$details" 2>/dev/null | wc -l | tr -d ' ')
 
-    [ "${executed:-0}" -ge 1 ] \
-        && pass "c11 was acted on ($executed action(s) executed)" \
-        || fail "c11 was not acted on" "expected at least one executed, non-dry-run action"
+    # Recorded, not just reported. chaos_assert_verification asks two questions that only have
+    # a subject if something ran, and answering them anyway is how a report ends up confidently
+    # wrong about why - see the comment there.
+    if [ "${executed:-0}" -ge 1 ]; then
+        C11_EXECUTED=1
+        pass "c11 was acted on ($executed action(s) executed)"
+    else
+        C11_EXECUTED=0
+        fail "c11 was not acted on" "expected at least one executed, non-dry-run action"
+    fi
 
     # Every executed action must name an approver. In Auto that is hephaisto/auto; the point
     # is that "no audit, no action" holds on the path that actually writes to the cluster.
@@ -602,6 +609,25 @@ _c11_available() {
 # did something" from "the agent fixed it", and it is why c11 exists rather than reusing c8:
 # a fixture that recovers on its own would pass this whatever the agent did.
 chaos_assert_verification() {
+    # NOTHING RAN MEANS THERE IS NOTHING TO VERIFY, and saying so is the whole point.
+    #
+    # Both assertions below carry an explanation of their own failure - "the action ran but the
+    # workload did not recover", "the workload recovered but verification never closed the
+    # incident". When no action was executed, neither sentence is true: no action ran and
+    # nothing recovered. They are the first failure restated as downstream symptoms with
+    # confident and incorrect causes attached, and they cost eight minutes of wall clock
+    # burning two 240s timeouts to produce. A reader then goes looking for a broken restart
+    # and a broken verifier when the actual finding is that nothing was proposed.
+    #
+    # So: skip, naming the assertion that actually failed. A report that is wrong about why is
+    # worse than one that is merely incomplete.
+    if [ "${C11_EXECUTED:-0}" != "1" ]; then
+        local because="nothing was executed - see 'c11 was not acted on'; there is no action to verify"
+        skip "c11 is available after the restart" "$because"
+        skip "c11's incident reached Resolved" "$because"
+        return 0
+    fi
+
     # WAIT, do not sample. The first verification is not due until T+60s and the scheduler
     # polls every 10s, so an assertion made the moment the action returns is asking a question
     # the system has not been given time to answer - and it would report a healthy agent as a
