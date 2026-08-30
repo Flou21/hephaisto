@@ -3,7 +3,12 @@
  *
  * Plain CSS, no framework, no CDN. This pod can run in a cluster with no egress, and an
  * incident console whose stylesheet fails to load is unreadable at exactly the moment
- * somebody needs it. Everything here is in this one file for the same reason.
+ * somebody needs it.
+ *
+ * That rule is about the NETWORK, not about the file count, and it used to be written here as
+ * "everything here is in this one file for the same reason". Since v0.4.0 there are two, both
+ * served from this pod's own wwwroot: tokens.css holds the canonical token set and this file
+ * holds everything that consumes it. No colour may be written below - a test enforces it.
  *
  * Dark first, dense, monospace for anything a human might compare character by character -
  * ids, workload keys, log excerpts, timestamps. Target reader: on call at 3am, on whatever
@@ -13,58 +18,10 @@
  * a word next to it. Colour is the third channel, never the only one.
  */
 
-:root {
-    --bg: #0e1116;
-    --bg-raised: #151a21;
-    --bg-sunken: #0a0d11;
-    --bg-hover: #1c232c;
-    --border: #262d38;
-    --border-strong: #384252;
-
-    --fg: #dbe1e8;
-    --fg-dim: #8d99a8;
-    --fg-faint: #5f6b7a;
-
-    --accent: #58a6ff;
-
-    --red: #f7768e;
-    --orange: #ff9e64;
-    --yellow: #e0af68;
-    --green: #73daca;
-    --blue: #7aa2f7;
-    --purple: #bb9af7;
-    --cyan: #2ac3de;
-
-    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
-    --sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-
-    --row: 1.55rem;
-}
-
-/* Light mode is a courtesy, not the design target: this thing is read in a dark room. */
-@media (prefers-color-scheme: light) {
-    :root {
-        --bg: #fbfcfd;
-        --bg-raised: #ffffff;
-        --bg-sunken: #f1f3f6;
-        --bg-hover: #eef1f5;
-        --border: #d7dde5;
-        --border-strong: #b6c0cd;
-
-        --fg: #1a1f26;
-        --fg-dim: #56616f;
-        --fg-faint: #7d8896;
-
-        --accent: #0b60d0;
-        --red: #b32d3f;
-        --orange: #a85a10;
-        --yellow: #8a6100;
-        --green: #10756a;
-        --blue: #2a5db0;
-        --purple: #6b3fb5;
-        --cyan: #0d6f85;
-    }
-}
+/*
+ * Tokens live in tokens.css, which is linked before this file and is the canonical set. A
+ * colour written below this line will fail the build - see that file for why.
+ */
 
 * {
     box-sizing: border-box;
@@ -1063,14 +1020,14 @@ details > summary {
     right: 0;
     z-index: 1000;
     background: var(--red);
-    color: #10131a;
+    color: var(--on-alert);
     font-family: var(--mono);
     font-weight: 600;
     padding: 0.5rem 1rem;
 }
 
 #blazor-error-ui .reload {
-    color: #10131a;
+    color: var(--on-alert);
     text-decoration: underline;
     margin-left: 0.6rem;
 }
@@ -1107,7 +1064,7 @@ details > summary {
     position: fixed;
     inset: 0;
     z-index: 1000;
-    background: rgb(6 8 11 / 82%);
+    background: var(--scrim);
     align-items: center;
     justify-content: center;
     font-family: var(--sans);
@@ -1130,7 +1087,7 @@ details > summary {
     border-radius: 4px;
     background: var(--bg-raised);
     color: var(--fg);
-    box-shadow: 0 12px 40px rgb(0 0 0 / 55%);
+    box-shadow: var(--shadow-modal);
 }
 
 .hp-reconnect-title {

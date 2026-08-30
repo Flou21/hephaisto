@@ -10,8 +10,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <base href="/" />
     <title>Hephaisto</title>
-    @* Local stylesheet only. This pod may run in a cluster with no egress, and a console
-       whose CSS silently fails to load is unreadable at exactly the moment it is needed. *@
+    @* Local stylesheets only. This pod may run in a cluster with no egress, and a console
+       whose CSS silently fails to load is unreadable at exactly the moment it is needed.
+
+       Two files, one origin. tokens.css is the canonical token set and MUST come first: it
+       defines the custom properties app.css then reads. Both are served from this pod's own
+       wwwroot and fingerprinted by MapStaticAssets, so this is not a second network dependency
+       - which is the thing the no-CDN rule is actually about. *@
+    <link rel="stylesheet" href="@Assets["tokens.css"]" />
     <link rel="stylesheet" href="@Assets["app.css"]" />
     <link rel="icon" href="data:," />
     <HeadOutlet @rendermode="InteractiveServer" />

@@ -1,0 +1,101 @@
+/*
+ * THE CANONICAL TOKEN SET.
+ *
+ * One source, and every surface consumes it from here: the console links this file, and
+ * website/tokens.css is a byte-identical copy that a test enforces. A colour that changes here
+ * changes everywhere, which is the only reason the design language is a system rather than a
+ * document describing one.
+ *
+ * TWO RULES, BOTH ENFORCED BY TESTS RATHER THAN BY GOODWILL - see tests/Hephaisto.Tests/Design/.
+ *
+ *   1. No colour is written anywhere else. Not in app.css, not in a Razor file, not inline.
+ *      Two already escaped before this file existed and broke in light mode for months
+ *      without anybody noticing, which is exactly how long a convention lasts when nothing
+ *      checks it.
+ *
+ *   2. Both themes are held to the same contrast bar. Light stopped being "a courtesy" in
+ *      v0.4.0: a landing page brings evaluators, and some of them open the console in a bright
+ *      room in a meeting about whether to trust it.
+ *
+ * Still no CDN and no build step. This is a plain stylesheet the pod serves from its own
+ * wwwroot, so an egress-free cluster loads it and `tilt live_update` syncs an edit without a
+ * rebuild. It is a second file rather than a second ORIGIN - the rule in app.css's header is
+ * about the network, not about the file count.
+ */
+
+:root {
+    --bg: #0e1116;
+    --bg-raised: #151a21;
+    --bg-sunken: #0a0d11;
+    --bg-hover: #1c232c;
+    --border: #262d38;
+    --border-strong: #384252;
+
+    --fg: #dbe1e8;
+    --fg-dim: #8d99a8;
+    --fg-faint: #5f6b7a;
+
+    --accent: #58a6ff;
+
+    --red: #f7768e;
+    --orange: #ff9e64;
+    --yellow: #e0af68;
+    --green: #73daca;
+    --blue: #7aa2f7;
+    --purple: #bb9af7;
+    --cyan: #2ac3de;
+
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+
+    --row: 1.55rem;
+
+    /* Text on a --red ground. NOT a fixed near-black: --red is a light pink in dark mode and a
+       dark crimson in light, so one literal cannot sit on both. It was a literal for three
+       releases and the light-mode error banner was near-black on dark red the whole time. */
+    --on-alert: #10131a;
+
+    /* The reconnect scrim and the dialog it dims for. A scrim darkens in both themes - it is
+       not a background, it is an absence of one - but light needs less of it. */
+    --scrim: rgb(6 8 11 / 82%);
+    --shadow-modal: 0 12px 40px rgb(0 0 0 / 55%);
+}
+
+/* Light mode was "a courtesy, not the design target" for three releases. It is not any more:
+   both themes are contrast-checked and both are photographed by the visual baselines. A
+   component is not done until it is correct in both. */
+@media (prefers-color-scheme: light) {
+    :root {
+        --bg: #fbfcfd;
+        --bg-raised: #ffffff;
+        --bg-sunken: #f1f3f6;
+        --bg-hover: #eef1f5;
+        --border: #d7dde5;
+        --border-strong: #b6c0cd;
+
+        --fg: #1a1f26;
+        --fg-dim: #56616f;
+        --fg-faint: #7d8896;
+
+        --accent: #0b60d0;
+        --red: #b32d3f;
+        --orange: #a85a10;
+        --yellow: #8a6100;
+        --green: #10756a;
+        --blue: #2a5db0;
+        --purple: #6b3fb5;
+        --cyan: #0d6f85;
+
+        --on-alert: #ffffff;
+        --scrim: rgb(12 16 22 / 55%);
+        --shadow-modal: 0 12px 40px rgb(20 26 34 / 22%);
+    }
+}
+
+
+/*
+ * Deliberately NOT here: a spacing, radius, type or z-index scale. They do not exist yet - the
+ * stylesheet hardcodes 2px/3px/4px radii about forty times and every font-size is a literal -
+ * and a token with no reader is config that behaves like a comment. They land with their
+ * consumers, in the commit that gives them one.
+ */
