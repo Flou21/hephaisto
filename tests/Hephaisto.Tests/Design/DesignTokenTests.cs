@@ -224,6 +224,49 @@ public class DesignTokenTests
         }
     }
 
+    /// <summary>Every SVG this repo ships is well-formed XML.</summary>
+    /// <remarks>
+    /// <para>
+    /// A broken SVG does not throw and does not log. The browser renders a broken-image
+    /// placeholder and everything else on the page carries on looking correct, so the failure
+    /// surfaces as "the favicon is missing" weeks later, if at all.
+    /// </para>
+    /// <para>
+    /// This test exists because it happened while the mark was being drawn. The comment in
+    /// favicon.svg referred to the token it uses by name, and <c>--bg-raised</c> contains a
+    /// double hyphen, which is <b>illegal inside an XML comment</b>. The file was invalid and
+    /// rendered as nothing. The visual baseline caught it that time; this catches it without
+    /// needing a picture.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryShippedSvgIsWellFormed()
+    {
+        var broken = new List<string>();
+
+        foreach (var svg in Directory.EnumerateFiles(RepoRoot(), "*.svg", SearchOption.AllDirectories))
+        {
+            // node_modules and playwright's own report assets are not ours.
+            if (svg.Contains("node_modules", StringComparison.Ordinal)
+                || svg.Contains("playwright-report", StringComparison.Ordinal)
+                || svg.Contains("test-results", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            try
+            {
+                System.Xml.Linq.XDocument.Load(svg);
+            }
+            catch (System.Xml.XmlException ex)
+            {
+                broken.Add($"{Path.GetRelativePath(RepoRoot(), svg)}: {ex.Message}");
+            }
+        }
+
+        broken.Should().BeEmpty("a malformed SVG renders as a broken image and reports nothing");
+    }
+
     // -- the files -------------------------------------------------------------------------
 
     private static string RepoRoot()

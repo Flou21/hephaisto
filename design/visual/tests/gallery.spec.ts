@@ -39,6 +39,7 @@ test.describe('the design language', () => {
   });
 
   const sections = [
+    ['brand', 'Brand'],
     ['tokens', 'Colour tokens'],
     ['vocabulary', 'State, severity, risk, decision'],
     ['incident-row', 'Hard component 1'],

@@ -1,0 +1,59 @@
+<!doctype html>
+<meta charset="utf-8" />
+<!--
+  The source of design/brand/social-preview.png, 1280x640.
+
+  Generated rather than drawn, and generated from the SHIPPING token file and the SHIPPING
+  fonts - so the card a link unfurls into cannot drift away from the product the way a PNG
+  exported from a design tool always eventually does.
+
+  Regenerate with:  scripts/brand-assets.sh
+-->
+<link rel="stylesheet" href="../../src/Hephaisto.Agent/wwwroot/tokens.css" />
+<style>
+  html, body { margin: 0; }
+  body {
+    width: 1280px; height: 640px; overflow: hidden;
+    background: var(--bg); color: var(--fg);
+    font-family: var(--sans); font-size: 16px;
+    display: grid; grid-template-rows: auto 1fr; gap: 0;
+  }
+  .top { padding: 74px 80px 0; }
+  .mark { display: flex; align-items: center; gap: 18px; margin-bottom: 40px; }
+  .mark svg { display: block; }
+  .name { font-size: 34px; font-weight: 700; letter-spacing: .01em; }
+  .name span { color: var(--accent); }
+  h1 {
+    font-size: 62px; line-height: 1.06; margin: 0 0 22px; font-weight: 700;
+    letter-spacing: -.022em; max-width: 20ch;
+  }
+  p { font-size: 23px; line-height: 1.45; color: var(--fg-dim); margin: 0; max-width: 52ch; }
+  .strip {
+    margin: 46px 80px 0; border-top: 1px solid var(--border);
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 0 28px;
+    font-family: var(--mono); font-size: 16px; align-content: start;
+  }
+  .strip > div { padding-top: 26px; }
+  .k { color: var(--fg-faint); font-size: 12px; letter-spacing: .1em; text-transform: uppercase;
+       white-space: nowrap; }
+  .v { margin-top: 8px; white-space: nowrap; }
+  .glyph { font-weight: 700; }
+</style>
+<div class="top">
+  <div class="mark">
+    <svg width="46" height="46" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="6" fill="#1b1e24" />
+      <path d="M16 5.2 L27.4 26.2 L21.6 26.2 L16 15.6 L10.4 26.2 L4.6 26.2 Z" fill="#ff8a3d" />
+    </svg>
+    <span class="name">hephaisto<span>.</span></span>
+  </div>
+  <h1>It fixes what it can prove, and asks about the rest.</h1>
+  <p>An incident-response agent for Kubernetes that ships doing nothing, and tells you exactly
+     which four changes would let it act.</p>
+</div>
+<div class="strip">
+  <div><div class="k">default mode</div><div class="v" style="color:var(--cyan)"><span class="glyph">~</span> observe</div></div>
+  <div><div class="k">autonomy</div><div class="v" style="color:var(--fg-dim)">per action type</div></div>
+  <div><div class="k">every action</div><div class="v" style="color:var(--green)"><span class="glyph">+</span> audited</div></div>
+  <div><div class="k">no proof</div><div class="v" style="color:var(--accent)"><span class="glyph">^</span> escalates</div></div>
+</div>
