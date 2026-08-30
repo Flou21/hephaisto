@@ -1040,8 +1040,23 @@ volume before the replacement pod wants it, and that the first pod reaches
 `CrashLoopBackOff` rather than some other waiting reason. Any of those would make the fixture
 wrong in a way the acceptance test would report as an agent failure.
 
-**Fix.** `scripts/e2e/run.sh --mode Auto`, once, and read the result. **Size.** S, and it
-gates trusting the v0.2.0 acceptance test at all.
+**Run once on 2026-08-30, and most of this entry is answered.** c11 applied cleanly, the PVC
+bound under `WaitForFirstConsumer`, `Recreate` did not deadlock on the ReadWriteOnce volume,
+the first pod wedged as designed, and the shipped rule classified it `CrashLoopBackOff` - so
+the fixture is sound and gets the right runbook.
+
+**What it also showed is that the fixture was lying about recovery.** With no readiness probe
+a container is Ready the instant it is Running, and this one runs for two seconds before
+exiting - so the Deployment reported `availableReplicas: 1` for part of every crash cycle, and
+both the harness and the agent's own verification predicate read that as recovered.
+`minReadySeconds: 20` and a stability check in `VerificationChecks` close it.
+
+**What remains open** is the second half: the acting path has never completed. The first run
+was stopped by gate 9 refusing the restart, and while that is fixed, nothing has yet observed
+an execution, a passing verification and a `Resolved` incident in sequence. Deferred to before
+v0.4.0 by decision.
+
+**Size.** S. **Blocks:** claiming the v0.2.0 acceptance criterion is met.
 
 ### 42. Verification predicates are workload-shaped, and two action types are not
 

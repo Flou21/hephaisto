@@ -66,13 +66,19 @@ Being precise about this matters, because the difference is the whole safety arg
 | Kill switch — three independent arms, most restrictive wins | **works** |
 | Audit log, budgets, cooldowns, oscillation detection | **works** |
 | Plan generation (schema-constrained, no tools) | **works** |
-| Executing a plan against the cluster | **works** — five action types, see below |
-| Verification at T+60s / T+5m / T+15m, and rollback | **works** |
+| Executing a plan against the cluster | built, five action types — see below |
+| Verification at T+60s / T+5m / T+15m, and rollback | built |
 | Approval workflow — UI and API | **works** |
 | Oscillation detection wired to a workload quarantine | **works** |
 | `RollbackDeployment`, `PatchResources`, `SilenceAlert` | not built — refused, not attempted |
 | Notifications: anything leaving the process | not built — v0.3.0 |
 | Runbook memory, OIDC approval identity | not built |
+
+**"Built" rather than "works" is deliberate for the two rows above.** Detection, investigation
+and diagnosis are measured against a real cluster; the acting path is unit-tested and has not
+yet been observed completing end to end. The first run of the acceptance test found three bugs
+between the proposal and the restart, all since fixed and none re-run. `docs/roadmap.md` has
+the detail.
 
 The executor covers exactly the verbs the write `Role` grants: `RestartPod`,
 `RolloutRestart`, `ScaleWorkload`, `DeleteStuckJob` and `DeleteFailedJobPods`. Anything

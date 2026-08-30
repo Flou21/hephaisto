@@ -359,17 +359,44 @@ denies — on the one code path nobody watches, minutes after the incident, with
 by design. It is read for typed values, and the revert is built as an ordinary action over the
 same closed enum. Only `ScaleWorkload` has an expressible inverse today, and the rest say so.
 
-### What is not claimed
+### Running it once found three bugs, and every one of them needed a cluster
 
-The acceptance test is written and **has not been run**. `c11-transient` — the only fixture a
-restart actually fixes, because every other one is a permanent fault and c8 self-heals on a
-60-second cycle — was verified by simulating its container logic locally, not by applying it.
-853 unit and 28 integration tests pass, the migration is verified against a real Postgres, and
-none of that is the same as having watched the agent restart a pod and close the incident.
+The acceptance test was written, and then run. It got as far as the agent proposing exactly the
+right action for c11 and no further, which is the most useful place it could have stopped.
 
-One `scripts/e2e/run.sh --mode Auto` turns the claim into a measurement. Until then the honest
-statement is "built and unit-tested", and it is written that way in `roadmap.md`,
-`verification.md` and [backlog #41](backlog.md#41-c11-has-never-been-run-against-a-cluster).
+**Gate 9 refused every restart the feature exists for.** It fired at `ReadyReplicas <= 1`, and
+that includes zero - so it protected a last Ready replica that was not there, on a workload
+that was already entirely down. Its denial said so in as many words: "this would restart the
+last Ready replica (0 ready of 1 desired)". Since a crash-looping pod is by definition not
+Ready, `RestartPod` - the single action type v0.2.0 promotes to auto - could never have fired
+on the fault it was promoted for. The feature was dead on arrival, all 853 unit tests passed,
+and the suite contained `[InlineData(3, 0)]` asserting the denial explicitly. The tests encoded
+the same wrong belief as the code, which is the failure mode unit tests cannot catch by
+construction.
+
+**Verification passed on a workload that was still crash-looping**, which is the worse one
+because it fails toward yes. The fixture's container has no readiness probe, so it is Ready the
+instant it is Running, and while wedged it runs for two seconds before exiting: the Deployment
+reports `availableReplicas: 1` for part of every crash cycle with nothing Waiting. Sample there
+and a broken workload verifies clean, the incident reaches `Resolved`, and the agent reports
+success for a fault it did not fix.
+
+**The harness fell for the identical trick**, logging "c11 is available after the restart" while
+the pod sat in CrashLoopBackOff with six restarts - which is the sixth time this harness has
+measured its own instrumentation rather than the agent, across two releases.
+
+The common property is worth keeping: none of the three was reachable without executing against
+a real cluster. The first needed the policy engine to see true replica counts, the other two
+needed a workload that is Ready and broken at the same moment. No amount of unit testing
+produces either condition, because both are facts about Kubernetes rather than about this code.
+
+### What is still not claimed
+
+All three are fixed and **none of the fixes has been re-run**. Nothing has yet observed an
+execution, a passing verification and a `Resolved` incident in sequence. That re-verification is
+deferred to before v0.4.0 by decision rather than oversight, and until it happens the honest
+statement is that everything up to "the agent decides to restart the pod" is measured and
+everything after it is built.
 
 ---
 

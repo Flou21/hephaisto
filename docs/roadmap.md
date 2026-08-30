@@ -23,11 +23,24 @@ reverts or escalates when they do not hold, and closes the incident when they do
 configured to act nowhere — an empty namespace list, an empty autonomy list and `mode:
 Observe`, three independent things to change.
 
-The v0.2.0 acceptance test is **written and not yet executed**: it needs one
-`scripts/e2e/run.sh --mode Auto` against a real cluster, and until then the milestone is built
-and unit-tested rather than measured. See
-[backlog #41](backlog.md#41-c11-has-never-been-run-against-a-cluster). Saying anything stronger
-would be the dishonesty the eval harness exists to remove.
+The v0.2.0 acceptance test **has been run once, and it found three bugs.** Detection,
+investigation and diagnosis are verified against a real cluster - 5 fixtures, 5 incidents, all
+classified correctly, 2/2 graded correct for $0.56. **Acting is not yet demonstrated end to
+end**, because the run stopped at the point it exists to test:
+
+- Gate 9 refused every restart the feature exists for. It fired at `ReadyReplicas <= 1`, which
+  includes zero, so it protected a replica that was not there - and a crash-looping pod is by
+  definition not Ready. `RestartPod`, the one type promoted to auto, could never have fired.
+- Verification passed on a still-crash-looping workload, which fails toward *yes*: no readiness
+  probe means Ready the instant the container is Running, so a pod that runs two seconds per
+  cycle reports one available replica for part of it.
+- The harness made the identical mistake and reported "c11 is available after the restart"
+  while the pod sat in CrashLoopBackOff with six restarts.
+
+All three are fixed and unit-tested. **None of the fixes has been re-run against a cluster**,
+which is deliberate: end-to-end re-verification is deferred to before v0.4.0, and until it
+happens "the agent restarts a pod and closes the incident" remains built rather than observed.
+See [backlog #41](backlog.md#41-c11-has-never-been-run-against-a-cluster).
 
 `v0.1.0` shipped on 2026-08-29 after six release candidates, meeting its gate at **22/24
 correct root cause** over cassette replay and 7/8 live. It took six candidates and the agent
@@ -314,11 +327,15 @@ A transiently-failing pod is auto-restarted, verification passes, the incident r
 `Resolved`, and the audit trail reconstructs the decision **without reading a log file**; and a
 seeded oscillating workload is quarantined after 3 attempts instead of looping forever.
 
-**Built and unit-tested end to end; not yet demonstrated on a cluster.** Every piece exists and
-853 unit plus 28 integration tests pass, including the migration against a real Postgres. The
-acceptance test is written out in [`verification.md`](verification.md) and needs one
-`scripts/e2e/run.sh --mode Auto` to become a measurement rather than a claim. Saying otherwise
-would be the exact dishonesty the eval harness was built to remove.
+**Half measured, half still a claim.** The run on 2026-08-30 proved the first half against a
+real cluster: c11 applies, classifies as `CrashLoopBackOff`, and the agent proposes exactly the
+right action for it. It then found three bugs that stood between the proposal and the restart -
+see [Where it stands](#where-it-stands) - and those are fixed, unit-tested at 855 plus 28, and
+**not re-run**.
+
+So the honest state of the criterion is: everything up to and including "the agent decides to
+restart the pod" is observed; everything after it is built and untested. Re-verification is
+deferred to before v0.4.0 by decision, not by oversight.
 
 ---
 
