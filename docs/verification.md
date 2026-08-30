@@ -217,6 +217,43 @@ kubectl -n hephaisto-chaos delete deployment offtest
 
 ---
 
+## 16. Notifications actually leave the process
+
+The startup line first, because every outbound integration here degrades silently when it is
+not configured - and "nothing was delivered" reads identically whether it was never switched on
+or is broken.
+
+```sh
+kubectl -n hephaisto logs deploy/hephaisto | grep -E "channel is (ON|OFF)|Notifications are"
+#   -> "Outbound webhook channel is ON, posting to https://... (signed)."
+#   -> "Notifications are ON: 1 route(s) over webhook."
+# "Notifications are OFF: no routes are configured" is the SHIPPED DEFAULT, not a fault.
+```
+
+Then that a delivery was actually made, from the table rather than from a log line:
+
+```sh
+psql "$HEPHAISTO_DB" -c "
+  select channel, event, status, attempt_count, left(coalesce(last_error,''),60) as err
+  from notification_deliveries order by created_at desc limit 10;"
+#   -> at least one row, status Delivered
+```
+
+**The row to look for is `status = 'Failed'`.** That is the one that means an incident escalated
+and nobody was told, and it is the only failure in this system that an operator cannot stumble
+across, because not looking at the console is the premise. `HephaistoNotificationsFailing` fires
+on it immediately, through *your* Alertmanager rather than through Hephaisto - the one place a
+delivery failure cannot be reported is the channel that just failed.
+
+```sh
+curl -s http://$H:8100/metrics | grep hephaisto_notifications
+#   hephaisto_notifications_delivered_total{channel="...",outcome="delivered"}
+#   hephaisto_notifications_pending  -> should return to 0 between incidents
+```
+
+A `pending` that climbs and never comes back down is a backlog of people who have not been told
+yet, which is what `HephaistoNotificationOutboxBacklog` watches for.
+
 ## Running all of this automatically
 
 Everything above is the manual form, and it is still the right thing when you are chasing one
@@ -229,15 +266,21 @@ scripts/e2e/run.sh --rc               # cut a real release candidate and test it
 scripts/e2e/run.sh --tag 0.0.1-rc2    # test something already published
 ```
 
-It covers steps 1, 2, 5, 6, 9, 11, 12 and 14 above, plus the parts CI cannot reach: that the
-`release:` selector actually selects (CI installs no Prometheus), and that a real investigation
-runs end to end (CI has no key). See `scripts/e2e/README.md`.
+It covers steps 1, 2, 5, 6, 9, 11, 12, 14 and 16 above, plus the parts CI cannot reach: that the
+`release:` selector actually selects (CI installs no Prometheus), that a real investigation runs
+end to end (CI has no key), and — as of the `notify` phase — that a queued notification survives
+the agent being restarted, which nothing short of a real process death can show. See
+`scripts/e2e/README.md`.
 
 Two things it deliberately does **not** cover, and neither does anything else:
 
 - **NetworkPolicy enforcement (step 9's sibling).** kind's default CNI accepts the objects and
   ignores them, and that policy is the webhook's entire authentication. Verify it by hand, on a
   cluster whose CNI enforces.
+- **The Teams channel.** It needs a Power Automate Workflows trigger, which needs a tenant. The
+  card's shape and its credential handling are unit-tested; that Microsoft accepts the envelope
+  is not, and is worth re-checking against current documentation rather than assumed — Microsoft
+  retired the connector this replaces.
 - **Root cause quality.** The harness grades each diagnosis against the answer key in
   `infra/chaos/README.md` and reports a score, but never fails on it. The MVP bar — ≥ 7/10 over
   ≥ 10 scenarios — is still a judgement someone makes by reading.
@@ -383,3 +426,81 @@ kubectl -n hephaisto-chaos delete pvc c11-transient-state
 
 Deleting the Deployment alone leaves the counter at 2, and the fixture comes back healthy —
 which looks exactly like the agent fixing something it never touched.
+
+---
+
+## The v0.3.0 acceptance test - it reaches people
+
+```sh
+cd ~/hephaisto && ./scripts/e2e/run.sh --fixtures c2,c4 --mode Observe
+```
+
+Observe is enough, and that is the point: this milestone is about escalation, and Observe is the
+mode in which everything escalates. The harness installs a `notification-receiver` alongside the
+observability stack, points the agent's outbound channel at it, and reads back exactly what
+arrived.
+
+**Five things must hold, and the fourth is the only one that could not have been a unit test.**
+
+1. **The agent says it is switched on.** `notify_assert_configured` greps the startup log for
+   `Outbound webhook channel is ON` and `Notifications are ON`. Without this a run in which
+   notifications were misconfigured would report zero deliveries identically to one in which the
+   agent tried and failed.
+
+2. **An escalation arrives**, carrying a delivery id and a link somebody can open:
+
+   ```sh
+   curl -s http://127.0.0.1:18099/received | jq '.[0] | {deliveryId, event, link: .body.links.incident}'
+   #   -> a non-empty deliveryId, event "IncidentEscalated", and an absolute incident URL
+   ```
+
+3. **The incident named in the payload is one the API knows about**, so this is the agent's own
+   notification rather than something left in the receiver by an earlier run:
+
+   ```sh
+   curl -s http://127.0.0.1:18100/api/incidents/$(curl -s http://127.0.0.1:18099/received \
+       | jq -r '[.[] | .body.incident.id][0]') | jq '.state'
+   #   -> "Escalated"
+   ```
+
+4. **A delivery survives the process that queued it.** The receiver is switched to 503, an
+   escalation is queued against it, the agent pod is restarted mid-flight, and the receiver is
+   brought back:
+
+   ```sh
+   curl -sX POST http://127.0.0.1:18099/mode/fail
+   # ... queue an escalation, then:
+   kubectl -n hephaisto rollout restart deploy/hephaisto
+   kubectl -n hephaisto rollout status  deploy/hephaisto
+   curl -sX POST http://127.0.0.1:18099/mode/ok
+   # within ~5 minutes:
+   curl -s http://127.0.0.1:18099/received/count      # -> > 0
+   ```
+
+   **This is the milestone.** Everything else demonstrates that a message can be sent. Only this
+   tests the claim actually being made - that an outbox row and the transition that caused it are
+   written by one commit, so a pod dying between them is not a thing that can happen. An outbox
+   that has never survived a restart is an outbox in name only.
+
+5. **Nothing was told twice, and nothing was silently dropped.** A second identical burst is
+   suppressed rather than doubled, and the suppression is a row rather than an absence:
+
+   ```sh
+   psql "$HEPHAISTO_DB" -c "
+     select status, count(*) from notification_deliveries group by status;"
+   #   -> Delivered >= 1, Suppressed may be > 0, Failed MUST be 0
+   ```
+
+### And the part that is deliberately not tested here
+
+**Teams.** It needs a Power Automate Workflows trigger, which needs a tenant, which the harness
+does not have and should not acquire. Its card is covered by golden-file unit tests over the
+envelope and the schema version, and its credential handling by a test asserting the trigger URL
+never reaches `Describe()`. What is unverified is that Microsoft accepts the envelope - and
+since Microsoft retired the connector this replaces, that is worth re-checking against current
+documentation rather than assuming.
+
+**Signing.** `notifications.webhook.signed` is false in `values-e2e.yaml`: the key would be a
+`secretKeyRef` and the chart has no Secret template, so enabling it means minting another Secret
+in `deps_secrets` for a property unit tests already cover. The phase skips that assertion with a
+reason rather than passing it silently.

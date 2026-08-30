@@ -70,13 +70,15 @@ Being precise about this matters, because the difference is the whole safety arg
 | Verification at T+60s / T+5m / T+15m, and rollback | built |
 | Approval workflow — UI and API | **works** |
 | Oscillation detection wired to a workload quarantine | **works** |
-| `RollbackDeployment`, `PatchResources`, `SilenceAlert` | not built — refused, not attempted |
-| Notifications: anything leaving the process | not built — v0.3.0 |
-| Runbook memory, OIDC approval identity | not built |
+| `SilenceAlert` — always requiring approval | built |
+| Outbound notifications: webhook and Teams, over a Postgres outbox | built |
+| `RollbackDeployment`, `PatchResources` | not built — refused, not attempted |
+| Runbook memory, OIDC approval identity, in-card approval | not built |
 
-**"Built" rather than "works" is deliberate for the two rows above.** Detection, investigation
-and diagnosis are measured against a real cluster; the acting path is unit-tested and has not
-yet been observed completing end to end. The first run of the acceptance test found three bugs
+**"Built" rather than "works" is deliberate for the rows above.** Detection, investigation
+and diagnosis are measured against a real cluster; the acting path and the delivery path are
+unit- and integration-tested and have not yet been observed completing end to end on a
+cluster. The first run of the acceptance test found three bugs
 between the proposal and the restart, all since fixed and none re-run. `docs/roadmap.md` has
 the detail.
 
@@ -257,12 +259,41 @@ for `:`.
 | `Investigation` | Per-run step, token, cost and wall-clock budgets |
 | `Policy` | `AllowedNamespaces`, protected namespaces and labels, rate caps |
 | `Grafana:McpUrl` | grafana-mcp, for PromQL/LogQL tools |
+| `Notifications` | Outbound delivery: channels, routing rules, the outbox's retry schedule |
+| `Alertmanager:Url` | Write-only, and the only thing written is a silence |
 | `KillSwitch` | Arm configuration; env arm defaults to `HEPHAISTO_MODE` |
 
 `Policy:AllowedNamespaces` defaults to **empty**, which means the agent may act nowhere.
 `Policy:ProtectedNamespaces` is never actionable whatever the allowlist says, and includes
 Hephaisto's own namespace and the observability stack — a self-inflicted outage would also
 blind the agent to the fact that it caused one.
+
+### Notifications
+
+Until v0.3.0 nothing left the process. An escalation was a database row, an audit row and a
+nudge to any browser tab that happened to be open — and if nobody was looking, nobody was told.
+
+**It still ships that way.** `notifications.routes` is empty and no channel is configured, so a
+stock install delivers nowhere. Two independent things have to change, in the same spirit as
+`policy.actionableNamespaces` and `mode`.
+
+| | |
+|---|---|
+| Channels | A generic outbound HTTP endpoint (optionally HMAC-signed), and Microsoft Teams via a Power Automate Workflows trigger |
+| Events | `IncidentEscalated`, `ApprovalRequired`, `IncidentResolved`, `VerificationFailed`, `ModeChanged`, `PolicyChanged` |
+| Routing | Per event, minimum severity and namespace. Additive only — there is no deny rule |
+| Delivery | A Postgres outbox with exponential backoff and jitter. **The delivery row and the state transition that caused it are written by one `SaveChangesAsync`** |
+| Rate limiting | Per-channel hourly cap, plus a per-workload cooldown. The first message for a workload always goes out; the repeats are suppressed and counted |
+
+The outbox is the point. `IIncidentNotifier` is an in-process channel that drops on overflow by
+design — right for nudging a browser, catastrophic for telling somebody the agent gave up. An
+incident cannot reach `Escalated` without a delivery row existing, because both are written in
+the same transaction, so a pod restart cannot lose the news.
+
+**The Teams card carries a link, not an Approve button.** Approving in-card means accepting
+inbound calls on a service whose only inbound route is deliberately unauthenticated, which is a
+security change rather than a feature. The link goes to Hephaisto's own approval UI, where the
+audit row already lives.
 
 ### HTTP surface
 
@@ -278,6 +309,10 @@ blind the agent to the fact that it caused one.
 | `GET /api/version` | the running version and commit; touches no database |
 | `GET /healthz`, `/readyz`, `/metrics` | health and Prometheus metrics |
 | `/` | Blazor Server UI |
+
+This table is **unchanged in v0.3.0**, which is worth stating rather than leaving implied: the
+milestone adds outbound delivery and no new inbound route. That is the property that makes
+linking out of a Teams card cheap and approving inside one expensive.
 
 **The Alertmanager webhook is unauthenticated** (Alertmanager cannot authenticate to a
 receiver). It is protected by a NetworkPolicy, and that NetworkPolicy is therefore its
