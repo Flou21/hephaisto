@@ -48,6 +48,12 @@ public static class NotificationServiceCollectionExtensions
 
         services.AddScoped<IAgentEventNotifier, AgentEventNotifier>();
 
+        // Registered unconditionally, even with no routes configured. Its tick is two indexed
+        // reads that find nothing, which is cheap enough to be worth the property it buys: a
+        // route added by a ConfigMap edit starts delivering without a pod restart, so turning
+        // notifications on is not a thing that can appear to work and quietly not.
+        services.AddHostedService<NotificationDispatcher>();
+
         return services;
     }
 }

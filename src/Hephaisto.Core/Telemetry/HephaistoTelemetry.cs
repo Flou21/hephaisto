@@ -23,6 +23,9 @@ public static class HephaistoTelemetry
         public const string ActionExecute = "hephaisto.action.execute";
         public const string Verification = "hephaisto.verification";
         public const string ToolPrefix = "hephaisto.tool.";
+
+        /// <summary>One attempt to hand one message to one channel.</summary>
+        public const string NotificationDeliver = "hephaisto.notification.deliver";
     }
 
     public static class Metrics
@@ -77,5 +80,28 @@ public static class HephaistoTelemetry
         /// the one a dashboard otherwise cannot answer.
         /// </remarks>
         public const string BuildInfo = "hephaisto.build.info";
+
+        /// <summary>Outbox rows written. Labelled by event and channel, both closed sets.</summary>
+        public const string NotificationsEnqueued = "hephaisto.notifications.enqueued";
+
+        /// <summary>
+        /// How each outbox row ended: <c>delivered</c>, <c>failed</c> or <c>suppressed</c>.
+        /// </summary>
+        /// <remarks>
+        /// <b>The <c>failed</c> series is the one that matters.</b> It counts the times nobody
+        /// was told, which is the worst outcome this system produces and the only one an
+        /// operator cannot discover by looking at the console - because the whole point of a
+        /// notification is that they were not looking.
+        /// </remarks>
+        public const string NotificationsDelivered = "hephaisto.notifications.delivered";
+
+        /// <summary>Enqueue to delivery, in seconds. How late the news was, not how slow the HTTP was.</summary>
+        public const string NotificationLatency = "hephaisto.notification.latency";
+
+        /// <summary>
+        /// Rows still pending. A number that climbs and does not come down means an endpoint is
+        /// down and the backlog is people who have not been told yet.
+        /// </summary>
+        public const string NotificationsPending = "hephaisto.notifications.pending";
     }
 }

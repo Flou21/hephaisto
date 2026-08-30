@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using Hephaisto.Agent.Persistence;
 using Hephaisto.Core.Domain;
+using Hephaisto.Core.Notifications;
 using Hephaisto.Core.Telemetry;
 
 namespace Hephaisto.Agent;
@@ -36,6 +37,9 @@ public sealed class HephaistoMetrics : IDisposable
     private readonly Counter<long> verificationResults;
     private readonly Counter<long> groundingRejected;
     private readonly Counter<long> humanFeedback;
+    private readonly Counter<long> notificationsEnqueued;
+    private readonly Counter<long> notificationsDelivered;
+    private readonly Histogram<double> notificationLatency;
 
     public HephaistoMetrics(IMeterFactory meterFactory)
     {
@@ -72,6 +76,14 @@ public sealed class HephaistoMetrics : IDisposable
         verificationResults = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.VerificationResult);
         groundingRejected  = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.GroundingRejected);
         humanFeedback      = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.HumanFeedback);
+
+        notificationsEnqueued  = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.NotificationsEnqueued);
+        notificationsDelivered = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.NotificationsDelivered);
+
+        // Seconds, like every other duration here, and measured from ENQUEUE rather than
+        // from the start of the HTTP call: the question a person asks after an outage is
+        // "how late was I told", not "how slow was the request".
+        notificationLatency    = meter.CreateHistogram<double>(HephaistoTelemetry.Metrics.NotificationLatency, "s");
     }
 
     public void SignalReceived(SignalSource source, SignalKind kind) =>
@@ -222,6 +234,32 @@ public sealed class HephaistoMetrics : IDisposable
             new("kind", kind.ToString()),
             new("false_positive", feedback.FalsePositive ? "true" : "false"));
     }
+
+    /// <summary>An outbox row was written for one channel.</summary>
+    public void NotificationEnqueued(NotificationEvent kind, string channel) =>
+        notificationsEnqueued.Add(1, new("event", kind.ToString()), new("channel", channel));
+
+    /// <summary>
+    /// One outbox row reached a terminal state.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="channel"/> is the only label here that is not an enum, and it is bounded
+    /// by configuration rather than by the type system - a routing table naming a thousand
+    /// channels would be a thousand series. That is acceptable where a free-text reason was not,
+    /// because a channel is something a person configured deliberately and an error string is
+    /// whatever an endpoint happened to return. The reason text lives on the row and the span.
+    /// </remarks>
+    public void NotificationDelivered(string channel, DeliveryStatus outcome) =>
+        notificationsDelivered.Add(
+            1,
+            new("channel", channel),
+            new("outcome", outcome.ToString().ToLowerInvariant()));
+
+    /// <summary>Enqueue to delivery. How late the news was.</summary>
+    public void NotificationLatency(string channel, TimeSpan elapsed) =>
+        notificationLatency.Record(
+            elapsed.TotalSeconds,
+            new KeyValuePair<string, object?>("channel", channel));
 
     public void Dispose() => meter.Dispose();
 }
