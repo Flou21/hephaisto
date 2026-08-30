@@ -260,6 +260,22 @@ otel:
 grafanaMcp:
   url: ""
 
+  # Datasource name -> uid, put straight into the agent's environment card so it does not have
+  # to spend a tool call on list_datasources before it can query anything (backlog #36).
+  #
+  # This is the cheapest available reduction in steps: a fact the agent cannot look up is
+  # exactly what the environment card is FOR, and the measured baseline is 7.5 steps and
+  # $0.080 per investigation. The uids are stable per cluster:
+  #
+  #   curl -sH "Authorization: Bearer $TOKEN" $GRAFANA/api/datasources | jq '.[] | {name, uid}'
+  #
+  # Empty renders no section at all rather than an empty one, so leaving it unset costs a
+  # discovery call and nothing else.
+  datasourceUids: {}
+    # prometheus: abc123
+    # loki: def456
+    # tempo: ghi789
+
 # -----------------------------------------------------------------------------------------
 # Grafana itself - annotations
 # -----------------------------------------------------------------------------------------

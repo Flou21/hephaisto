@@ -737,6 +737,8 @@ across restarts.
 
 ### 17. `hephaisto.kubernetes.watch_reconnects` bypasses the constants file
 
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** A metric emitted from a raw string literal rather than a shared constant.
 
 **Evidence.** `Kubernetes/KubernetesWatcherService.cs:92` calls
@@ -746,6 +748,16 @@ which is exactly the drift the constants file exists to prevent: *"the names are
 dashboard, an alert rule and the code that emits the metric cannot drift apart."*
 
 **Size.** S.
+
+**Fixed 2026-08-30.** The name is now `HephaistoTelemetry.Metrics.KubernetesWatchReconnects`
+and the watcher emits it from there.
+
+The entry calls this the drift the constants file exists to prevent, and understates it slightly:
+a metric emitted from a literal is invisible to the dashboard and the alert rules **by
+construction**, so it cannot drift back into agreement either. The metric is still uncharted and
+unalerted — a reconnect counter is worth a panel, since a watch that reconnects constantly is an
+agent that is intermittently blind and nothing else reports that — but it is at least now
+nameable from the file the dashboard reads.
 
 ### 18. Two audit event types are named and never written
 
@@ -777,6 +789,8 @@ remains open, since every policy verdict is already persisted on the action row 
 
 ### 19. `MaxAutoScaleReplicas` and `MaxAutoScaleStep` have no readers
 
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** Two policy knobs that look like configuration and behave like documentation.
 
 **Evidence.** Declared at `Core/Policy/PolicyOptions.cs:67,69`. `grep -rn` across `src/`, `tests/`,
@@ -793,7 +807,26 @@ needs a reader in `src/` in the same commit."* Two survived the sweep.
 
 ---
 
+**Resolved 2026-08-30 by deletion**, which is the half of "either wire them or delete them"
+that the code supports.
+
+They were documented as *"Ceiling for an unattended scale-up, and the maximum step size"*, and
+**there is no unattended scale-up**. `PolicyEngine` returns *"scaling changes capacity and cost,
+so it requires approval"* for `ScaleWorkload`, so it is never allow-eligible and every scale that
+happens has a person's name on it. Wiring a cap on unattended scaling would have built a control
+for a path that cannot occur — which is worse than the dead config it replaced, because it would
+*look* like a safety property while holding nothing up.
+
+Capping a human-approved scale is a different control with a different name, and it needs a
+`RequestedReplicas` on `ActionRequest` that does not exist. Filed here rather than built, so the
+next person meets the decision instead of the absence.
+
+Deleting them also removed a stray `<summary>` block that had been documenting
+`MaintenanceWindows` with these two properties' description.
+
 ### 35. `AllowedTools` is documented "in order", and the order is the server's
+
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
 
 **Symptom.** The allowlist reads as though it sets the order the model sees tools in. It does not.
 
@@ -820,7 +853,17 @@ plans an experiment against a lever that does not exist.
 
 ---
 
+**Fixed 2026-08-30** by making the code match the comment, which is what the entry asked for.
+The projection is driven from `AllowedTools` and looks each name up in what the server returned,
+rather than filtering the server's list — so the surviving order is the one written in the option.
+
+The entry's reasoning is the reason it was fixed this way rather than by editing the comment:
+whether tool order influences selection is an **unvalidated hypothesis**, the eval harness now
+exists to settle it, and an experiment cannot be run against a lever that does not exist.
+
 ### 36. The environment card never names a datasource uid, because nothing sets them
+
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
 
 **Symptom.** `EnvironmentCardOptions.DatasourceUids` is empty everywhere, so the prompt section
 that would say *"Datasource uids (pass these, not the names)"* is never rendered — and the model
@@ -845,6 +888,17 @@ They are not.
 **Size.** S to populate from the chart; the uids are stable per cluster.
 
 ---
+
+**Fixed 2026-08-30.** `grafanaMcp.datasourceUids` is a chart value rendering
+`Investigation__Environment__DatasourceUids__<name>`, with the `curl` that finds the uids in the
+comment beside it. It ships **empty**, which renders no section at all rather than an empty one —
+so an operator who does not set it pays one discovery call and nothing else, which is exactly the
+behaviour that let this go unnoticed.
+
+Worth restating what it buys: at a measured baseline of 7.5 steps and $0.080 per investigation,
+removing a `list_datasources` call from every investigation that touches Grafana is the cheapest
+step reduction available, and a fact the agent cannot look up is precisely what the environment
+card is for.
 
 ## Documentation asserting things that do not exist
 

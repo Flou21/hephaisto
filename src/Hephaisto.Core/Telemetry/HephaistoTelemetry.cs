@@ -81,6 +81,19 @@ public static class HephaistoTelemetry
         /// </remarks>
         public const string BuildInfo = "hephaisto.build.info";
 
+        /// <summary>
+        /// Kubernetes watch reconnects. A watch that reconnects constantly is an agent that is
+        /// intermittently blind, and nothing else reports that.
+        /// </summary>
+        /// <remarks>
+        /// Emitted from a raw string literal in the Kubernetes layer until 2026-08-30
+        /// (backlog #17), which is exactly the drift this file exists to prevent - the names
+        /// are shared so a dashboard, an alert rule and the code that emits the metric cannot
+        /// disagree, and one emitted from a literal is invisible to the other two by
+        /// construction.
+        /// </remarks>
+        public const string KubernetesWatchReconnects = "hephaisto.kubernetes.watch_reconnects";
+
         /// <summary>Outbox rows written. Labelled by event and channel, both closed sets.</summary>
         public const string NotificationsEnqueued = "hephaisto.notifications.enqueued";
 

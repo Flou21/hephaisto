@@ -104,6 +104,18 @@
       }
     },
 
+    "grafanaMcp": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string" },
+        "datasourceUids": {
+          "type": "object",
+          "description": "Datasource name -> uid, injected into the environment card so the agent need not call list_datasources.",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+
     "alertmanager": {
       "type": "object",
       "description": "Write-only, and the only thing written is a silence. Alerts arrive by webhook.",

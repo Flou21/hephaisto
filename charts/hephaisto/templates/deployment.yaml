@@ -271,6 +271,13 @@ spec:
                   key: token
             {{- end }}
 
+            {{- range $name, $uid := .Values.grafanaMcp.datasourceUids }}
+            # A fact the agent cannot look up is what the environment card is for. Each of
+            # these saves a list_datasources call on every investigation that touches Grafana.
+            - name: Investigation__Environment__DatasourceUids__{{ $name }}
+              value: {{ $uid | quote }}
+            {{- end }}
+
             {{- if .Values.alertmanager.url }}
             # Write-only, and the only thing written is a silence. Alerts arrive by webhook.
             - name: Alertmanager__Url
