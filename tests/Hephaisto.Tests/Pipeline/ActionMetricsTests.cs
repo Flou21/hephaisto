@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Hephaisto.Agent;
 using Hephaisto.Agent.Pipeline;
 using Hephaisto.Core.Domain;
+using Hephaisto.Core.Policy;
 using Hephaisto.Core.Telemetry;
 using Hephaisto.Tests.TestData;
 using NSubstitute;
@@ -99,11 +100,23 @@ public sealed class ActionMetricsTests : IDisposable
         // unbounded series on a counter that fires for every proposed action.
         using var recorded = new Recorder(HephaistoTelemetry.Metrics.PolicyDecisions);
 
-        metrics.PolicyDecision(PolicyDecision.RequireApproval, ActionType.RestartPod, downgraded: true);
+        metrics.PolicyDecision(
+            PolicyDecision.RequireApproval,
+            ActionType.RestartPod,
+            downgraded: true,
+            PolicyReasonCode.WorkloadCooldown);
 
         var tags = recorded.Tags.Should().ContainSingle().Subject;
 
-        tags.Should().NotContainKey("reason");
+        // `reason` came BACK in v0.3.0, and the distinction is the whole point of backlog #40:
+        // it is a PolicyReasonCode member, not the verdict's first sentence. The per-gate
+        // breakdown - "how often does the cooldown bite versus the namespace allowlist" - is a
+        // genuinely useful question, and it is answerable again without the prose that made the
+        // series unbounded. Deriving the code from the string instead would have been brittle
+        // in the one place brittleness is least acceptable.
+        tags["reason"].Should().Be("WorkloadCooldown");
+        Enum.GetNames<PolicyReasonCode>().Should().Contain(tags["reason"]!.ToString());
+
         tags["decision"].Should().Be("RequireApproval");
         tags["action_type"].Should().Be("RestartPod");
         tags["downgraded"].Should().Be("true");

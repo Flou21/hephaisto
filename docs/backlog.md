@@ -1148,6 +1148,8 @@ merge patch. **Size.** M each.
 
 ### 40. `PolicyResult` has no closed reason code, so the metric cannot say why
 
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 `hephaisto.policy.decisions` used to label on the verdict's first reason and now labels on
 `decision`, `action_type` and `downgraded` - see [#12](#12-unbounded-label-cardinality-on-hephaistogroundingrejected)
 for why the prose had to go.
@@ -1160,6 +1162,30 @@ from the string instead would be brittle in the one place brittleness is least a
 
 A change to every gate in the safety argument, so it wants its own commit and its own pass over
 `PolicyEngineTests`. **Size.** M.
+
+**Fixed 2026-08-30**, in its own commit and with its own pass over `PolicyEngineTests`, as the
+entry asked.
+
+`PolicyReasonCode` has 23 members — eighteen denials in the order the gates run, five downgrades
+— and `PolicyResult` carries a `Codes` list alongside `Reasons` plus a `PrimaryCode` for the
+label. The gates run cheapest-and-most-certain first, so the first code is both the most specific
+answer and the one a human would give.
+
+**Carried beside the human text at each site, never derived from it**, exactly as this entry
+insisted. The sites use a local `Deny(code, reason)` / `Downgrade(code, reason)` helper, so a
+sentence and its code cannot be added apart.
+
+The invariant that keeps it true is a test rather than a convention: a denial must have exactly
+one code per reason, none of them `None`, and all distinct. A future bare `denials.Add(...)`
+produces a count mismatch there instead of a metric that quietly attributes the denial to
+whichever gate happened to fire beside it.
+
+`ActionMetricsTests.A_policy_decision_carries_no_free_text` was the test asserting `reason` was
+absent, and it is updated rather than deleted: the label is back, and the assertion is now that
+its value is a `PolicyReasonCode` member. The dashboard's metric-contract panel is corrected too
+— it had been claiming `decision`, `reason`, `action_type`, `risk`, and the code emits
+`decision`, `action_type`, `downgraded`, `reason`, so the spec had drifted from the emitter in
+both directions at once.
 
 ### 41. c11 has never been run against a cluster
 

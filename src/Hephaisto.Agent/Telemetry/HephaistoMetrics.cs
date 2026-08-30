@@ -3,6 +3,7 @@ using System.Diagnostics.Metrics;
 using Hephaisto.Agent.Persistence;
 using Hephaisto.Core.Domain;
 using Hephaisto.Core.Notifications;
+using Hephaisto.Core.Policy;
 using Hephaisto.Core.Telemetry;
 
 namespace Hephaisto.Agent;
@@ -174,11 +175,24 @@ public sealed class HephaistoMetrics : IDisposable
     /// is the one thing the verdict alone cannot tell you - whether this was refused outright
     /// or was allow-eligible until a budget or a missing rollback spec pulled it back.
     /// </remarks>
-    public void PolicyDecision(PolicyDecision decision, ActionType type, bool downgraded) =>
+    /// <param name="reason">
+    /// The gate that decided it, as a closed enum. This is the per-gate breakdown backlog #12
+    /// took away and backlog #40 asked back: the label used to be the verdict's first reason,
+    /// which is prose written for a human - "workload is quarantined until
+    /// 2026-08-30T12:34:56.789Z" - and timestamps in a label on a counter that fires for every
+    /// proposed action are unbounded series. An enum member is bounded by construction, and the
+    /// prose still lives on the action row, the audit trail and the policy.evaluate span.
+    /// </param>
+    public void PolicyDecision(
+        PolicyDecision decision,
+        ActionType type,
+        bool downgraded,
+        PolicyReasonCode reason) =>
         policyDecisions.Add(1,
             new("decision", decision.ToString()),
             new("action_type", type.ToString()),
-            new("downgraded", downgraded ? "true" : "false"));
+            new("downgraded", downgraded ? "true" : "false"),
+            new("reason", reason.ToString()));
 
     public void ActionExecuted(ActionType type, AgentMode mode, string outcome) =>
         actionsExecuted.Add(1,

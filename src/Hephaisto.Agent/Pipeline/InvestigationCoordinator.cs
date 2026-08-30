@@ -389,7 +389,11 @@ public sealed class InvestigationCoordinator(
                 _ => ActionState.Denied,
             };
 
-            metrics.PolicyDecision(verdict.Decision, action.Type, verdict.DowngradedFrom is not null);
+            metrics.PolicyDecision(
+                verdict.Decision,
+                action.Type,
+                verdict.DowngradedFrom is not null,
+                verdict.PrimaryCode);
 
             // The prose belongs here, where cardinality is not a concern and a human reading
             // one investigation gets the whole verdict rather than its first line.

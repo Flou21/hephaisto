@@ -941,4 +941,159 @@ public sealed class PolicyEngineTests
 
         act.Should().Throw<ArgumentNullException>();
     }
+
+    // --- reason codes ---------------------------------------------------------------------
+
+    /// <summary>
+    /// Every gate reports itself as a closed code, so the per-gate breakdown is answerable from
+    /// metrics without prose in a label.
+    /// </summary>
+    /// <remarks>
+    /// backlog #40. The label used to be the verdict's first reason, and those are sentences
+    /// written for a person - "workload is quarantined until 2026-08-30T12:34:56.789Z" - so it
+    /// was unbounded series on a counter that fires for every proposed action (backlog #12).
+    /// Taking the prose out was right and cost the breakdown; this is the breakdown back, as an
+    /// enum carried BESIDE each sentence rather than parsed out of it. Deriving it from the
+    /// string would silently start answering wrongly the moment somebody improved a sentence.
+    /// </remarks>
+    [Fact]
+    public void A_protected_namespace_reports_itself()
+    {
+        var options = Given.Options();
+        var request = Given.Request() with
+        {
+            Target = new TargetRef { Namespace = "kube-system", Kind = "Pod", Name = "x" },
+        };
+
+        PolicyEngine.Evaluate(request, Given.Facts(), options)
+            .Codes.Should().Contain(PolicyReasonCode.ProtectedNamespace);
+    }
+
+    [Fact]
+    public void An_unlisted_namespace_reports_itself()
+    {
+        var request = Given.Request() with
+        {
+            Target = new TargetRef { Namespace = "somewhere-else", Kind = "Pod", Name = "x" },
+        };
+
+        PolicyEngine.Evaluate(request, Given.Facts(), Given.Options())
+            .Codes.Should().Contain(PolicyReasonCode.NamespaceNotAllowed);
+    }
+
+    [Fact]
+    public void A_quarantine_reports_itself()
+    {
+        var facts = Given.Facts() with { QuarantinedUntil = Given.Now.AddHours(4) };
+
+        PolicyEngine.Evaluate(Given.Request(), facts, Given.Options())
+            .Codes.Should().Contain(PolicyReasonCode.Quarantined);
+    }
+
+    [Fact]
+    public void An_ungrounded_action_reports_itself()
+    {
+        var request = Given.Request() with { GroundedFindingIds = [] };
+
+        PolicyEngine.Evaluate(request, Given.Facts(), Given.Options())
+            .Codes.Should().Contain(PolicyReasonCode.Ungrounded);
+    }
+
+    [Fact]
+    public void Observe_mode_reports_itself_separately_from_off()
+    {
+        // The two are distinct codes for the reason they are distinct sentences: Observe is the
+        // normal operating mode, and "denied because the agent is off" would read as a fault.
+        PolicyEngine.Evaluate(Given.Request(), Given.Facts() with { Mode = AgentMode.Observe }, Given.Options())
+            .Codes.Should().Contain(PolicyReasonCode.ObserveMode);
+
+        PolicyEngine.Evaluate(Given.Request(), Given.Facts() with { Mode = AgentMode.Off }, Given.Options())
+            .Codes.Should().Contain(PolicyReasonCode.AgentOff);
+    }
+
+    [Fact]
+    public void An_action_that_always_needs_a_human_reports_why_it_was_not_eligible()
+    {
+        var facts = Given.Facts() with
+        {
+            Mode = AgentMode.Auto,
+            Workload = Given.Workload() with { DesiredReplicas = 3, ReadyReplicas = 3 },
+        };
+
+        var result = PolicyEngine.Evaluate(Given.Request(ActionType.ScaleWorkload), facts, Given.Options());
+
+        result.Decision.Should().Be(PolicyDecision.RequireApproval);
+        result.PrimaryCode.Should().Be(PolicyReasonCode.NotAllowEligible);
+    }
+
+    [Fact]
+    public void A_downgrade_reports_which_gate_downgraded_it()
+    {
+        // Allow-eligible, but the type is not promoted. Distinct from NotAllowEligible: one is
+        // a property of the action, the other of the operator's configuration, and telling them
+        // apart is most of what the breakdown is for.
+        var facts = Given.Facts() with
+        {
+            Mode = AgentMode.Auto,
+            Workload = Given.Workload() with { DesiredReplicas = 3, ReadyReplicas = 3 },
+        };
+
+        var options = Given.Options();
+        options.AutoEnabledActionTypes.Clear();
+
+        var result = PolicyEngine.Evaluate(Given.Request(), facts, options);
+
+        result.Decision.Should().Be(PolicyDecision.RequireApproval);
+        result.DowngradedFrom.Should().Be(PolicyDecision.Allow);
+        result.Codes.Should().Contain(PolicyReasonCode.TypeNotAutoEnabled);
+    }
+
+    /// <summary>
+    /// The structural invariant: a denial has exactly one code per reason, and none of them is
+    /// <see cref="PolicyReasonCode.None"/>.
+    /// </summary>
+    /// <remarks>
+    /// This is what catches the next bare <c>denials.Add(...)</c>. The codes are carried in a
+    /// parallel list, so a site that adds a sentence without a code produces a mismatch here
+    /// rather than a metric that quietly attributes the denial to whichever gate happened to
+    /// fire alongside it.
+    /// </remarks>
+    [Fact]
+    public void Every_denial_carries_exactly_one_code_and_never_None()
+    {
+        var facts = Given.Facts() with
+        {
+            Mode = AgentMode.Off,
+            QuarantinedUntil = Given.Now.AddHours(4),
+            InMaintenanceWindow = true,
+        };
+
+        var request = Given.Request() with
+        {
+            Target = new TargetRef { Namespace = "kube-system", Kind = "Pod", Name = "x" },
+            GroundedFindingIds = [],
+        };
+
+        var result = PolicyEngine.Evaluate(request, facts, Given.Options());
+
+        result.Decision.Should().Be(PolicyDecision.Deny);
+        result.Codes.Should().HaveCount(result.Reasons.Count);
+        result.Codes.Should().NotContain(PolicyReasonCode.None);
+        result.Codes.Should().OnlyHaveUniqueItems();
+    }
+
+    [Fact]
+    public void A_clean_allow_attributes_itself_to_no_gate()
+    {
+        var facts = Given.Facts() with
+        {
+            Mode = AgentMode.Auto,
+            Workload = Given.Workload() with { DesiredReplicas = 3, ReadyReplicas = 3 },
+        };
+
+        var result = PolicyEngine.Evaluate(Given.Request(), facts, Given.Options());
+
+        result.Decision.Should().Be(PolicyDecision.Allow);
+        result.PrimaryCode.Should().Be(PolicyReasonCode.None);
+    }
 }

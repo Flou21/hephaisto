@@ -143,11 +143,77 @@ public sealed record NodeFacts
 /// The verdict. <see cref="Reasons"/> is populated on allow as well as deny, because
 /// "why did it think this was fine" is the question asked after something goes wrong.
 /// </summary>
+/// <summary>
+/// Why the policy engine decided what it decided, as a closed vocabulary.
+/// </summary>
+/// <remarks>
+/// <para>
+/// This exists because the human-readable reasons could not be a metric label and their absence
+/// left a real question unanswerable. <c>hephaisto.policy.decisions</c> used to carry the
+/// verdict's first reason as a label value, and those reasons are prose written for a person -
+/// "workload is quarantined until 2026-08-30T12:34:56.789Z", "pod is 45s old, younger than the
+/// 120s minimum". Timestamps and ages in a label are unbounded series on a counter that fires
+/// for every proposed action, which is backlog #12. Taking the prose out was urgent; what went
+/// with it was the per-gate breakdown, and "how often does the cooldown bite versus the
+/// namespace allowlist" is a genuinely useful question when tuning.
+/// </para>
+/// <para>
+/// <b>Carried beside the human text at each site, never derived from it.</b> Parsing a code back
+/// out of prose would be brittle in the one place brittleness is least acceptable, and it would
+/// silently start producing the wrong answer the moment somebody improved a sentence.
+/// </para>
+/// </remarks>
+public enum PolicyReasonCode
+{
+    /// <summary>No specific gate. Present so a default-constructed value is not a lie about one.</summary>
+    None = 0,
+
+    // --- denials, in the order the gates run ---
+    NeverApprovable = 1,
+    ProtectedNamespace = 2,
+    NamespaceNotAllowed = 3,
+    NamespaceLabelMissing = 4,
+    ProtectedLabel = 5,
+    AgentOff = 6,
+    ObserveMode = 7,
+    Quarantined = 8,
+    Ungrounded = 9,
+    RolloutInFlight = 10,
+    PodTooYoung = 11,
+    MaintenanceWindow = 12,
+    ClusterWideEvent = 13,
+    BlastRadiusPods = 14,
+    BlastRadiusFraction = 15,
+    LastReadyReplica = 16,
+    WorkloadCooldown = 17,
+    NoRoutingRule = 18,
+
+    // --- downgrades: allow-eligible, but not unattended ---
+    NotAllowEligible = 30,
+    NotAutoMode = 31,
+    TypeNotAutoEnabled = 32,
+    BudgetExhausted = 33,
+    NoRollbackSpec = 34,
+}
+
 public sealed record PolicyResult
 {
     public required PolicyDecision Decision { get; init; }
 
     public required IReadOnlyList<string> Reasons { get; init; }
+
+    /// <summary>
+    /// The gates that fired, in the order they were checked, alongside <see cref="Reasons"/>.
+    /// </summary>
+    /// <remarks>
+    /// Safe as a metric label where <see cref="Reasons"/> is not. The FIRST entry is the one
+    /// worth labelling on: the gates run cheapest-and-most-certain first, so it is both the most
+    /// specific answer and the one a human would give.
+    /// </remarks>
+    public IReadOnlyList<PolicyReasonCode> Codes { get; init; } = [];
+
+    /// <summary>The gate to attribute this decision to, or <c>None</c> for a clean allow.</summary>
+    public PolicyReasonCode PrimaryCode => Codes.Count > 0 ? Codes[0] : PolicyReasonCode.None;
 
     /// <summary>Set when the decision was downgraded rather than reached directly, e.g. Allow to RequireApproval on budget.</summary>
     public PolicyDecision? DowngradedFrom { get; init; }

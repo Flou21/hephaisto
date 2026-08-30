@@ -92,6 +92,18 @@ public static class PolicyEngine
         ArgumentNullException.ThrowIfNull(options);
 
         var denials = new List<string>();
+
+        // Carried beside each human sentence rather than parsed back out of it. See
+        // PolicyReasonCode for why deriving them from the prose would be brittle in exactly the
+        // wrong place.
+        var codes = new List<PolicyReasonCode>();
+
+        void Deny(PolicyReasonCode code, string reason)
+        {
+            codes.Add(code);
+            denials.Add(reason);
+        }
+
         var target = request.Target;
         var ns = target.Namespace;
         var workload = facts.Workload;
@@ -102,19 +114,21 @@ public static class PolicyEngine
         //    action there can blind the agent to the outage it just caused.
         if (NeverApprovable.Contains(request.Type))
         {
-            denials.Add($"action type {request.Type} is permanently denied and can never be approved");
+            Deny(PolicyReasonCode.NeverApprovable,
+                $"action type {request.Type} is permanently denied and can never be approved");
         }
 
         if (options.ProtectedNamespaces.Contains(ns))
         {
-            denials.Add($"namespace '{ns}' is protected; no action of any kind is permitted there");
+            Deny(PolicyReasonCode.ProtectedNamespace,
+                $"namespace '{ns}' is protected; no action of any kind is permitted there");
         }
 
         // 2. Allowlist, not denylist: a denylist fails open for every namespace created after
         //    it was written, and namespaces get created without telling anyone.
         if (!options.AllowedNamespaces.Contains(ns))
         {
-            denials.Add($"namespace '{ns}' is not in the allowed namespaces");
+            Deny(PolicyReasonCode.NamespaceNotAllowed, $"namespace '{ns}' is not in the allowed namespaces");
         }
 
         //    ...and the namespace must say so itself. Two authorities, deliberately: the
@@ -125,7 +139,7 @@ public static class PolicyEngine
             !(facts.NamespaceLabels.TryGetValue(required, out var optIn) &&
               string.Equals(optIn, "true", StringComparison.OrdinalIgnoreCase)))
         {
-            denials.Add($"namespace '{ns}' does not carry {required}=true");
+            Deny(PolicyReasonCode.NamespaceLabelMissing, $"namespace '{ns}' does not carry {required}=true");
         }
 
         // 3. Per-object opt-out. A team that labels its workload has said no, and that beats
@@ -135,7 +149,7 @@ public static class PolicyEngine
             if (facts.TargetLabels.TryGetValue(key, out var actual) &&
                 string.Equals(actual, value, StringComparison.OrdinalIgnoreCase))
             {
-                denials.Add($"target carries protected label {key}={value}");
+                Deny(PolicyReasonCode.ProtectedLabel, $"target carries protected label {key}={value}");
             }
         }
 
@@ -144,10 +158,10 @@ public static class PolicyEngine
         switch (facts.Mode)
         {
             case AgentMode.Off:
-                denials.Add("agent is off");
+                Deny(PolicyReasonCode.AgentOff, "agent is off");
                 break;
             case AgentMode.Observe:
-                denials.Add("agent is in observe mode");
+                Deny(PolicyReasonCode.ObserveMode, "agent is in observe mode");
                 break;
         }
 
@@ -155,7 +169,7 @@ public static class PolicyEngine
         //    on this workload that its fix does not hold; doing it a fourth time is not a plan.
         if (facts.QuarantinedUntil is { } quarantinedUntil && quarantinedUntil > facts.Now)
         {
-            denials.Add($"workload is quarantined until {quarantinedUntil:O}");
+            Deny(PolicyReasonCode.Quarantined, $"workload is quarantined until {quarantinedUntil:O}");
         }
 
         // 6. Grounding. An action with no surviving finding behind it is an action the model
@@ -163,31 +177,33 @@ public static class PolicyEngine
         //    Rollbacks are exempt because undoing does not need a fresh diagnosis.
         if (request.GroundedFindingIds.Count == 0 && !request.IsRollback)
         {
-            denials.Add("no grounded finding justifies this action");
+            Deny(PolicyReasonCode.Ungrounded, "no grounded finding justifies this action");
         }
 
         // 7. Stability. Each of these is a case where the cluster is already changing and the
         //    agent's change would be attributed to, or would fight, someone else's.
         if (workload?.RolloutInFlight == true)
         {
-            denials.Add("a rollout is in flight; do not fight a human deploy");
+            Deny(PolicyReasonCode.RolloutInFlight, "a rollout is in flight; do not fight a human deploy");
         }
 
         if (workload?.YoungestPodAge is { } youngest && youngest < options.MinPodAgeBeforeAction)
         {
-            denials.Add(
+            Deny(
+                PolicyReasonCode.PodTooYoung,
                 $"youngest pod is {youngest.TotalSeconds:0}s old, below the " +
                 $"{options.MinPodAgeBeforeAction.TotalSeconds:0}s minimum; it has not had a fair chance to become healthy");
         }
 
         if (facts.InMaintenanceWindow)
         {
-            denials.Add("a maintenance window is in progress");
+            Deny(PolicyReasonCode.MaintenanceWindow, "a maintenance window is in progress");
         }
 
         if (facts.ClusterUnhealthyFraction > options.ClusterUnhealthyCeiling)
         {
-            denials.Add(
+            Deny(
+                PolicyReasonCode.ClusterWideEvent,
                 $"{facts.ClusterUnhealthyFraction:P0} of the cluster is unhealthy: " +
                 "cluster-wide event, not a pod-level problem");
         }
@@ -196,7 +212,8 @@ public static class PolicyEngine
         //    stops the agent taking out a majority of a small workload in one move.
         if (request.AffectedPodCount > options.MaxPodsPerAction)
         {
-            denials.Add(
+            Deny(
+                PolicyReasonCode.BlastRadiusPods,
                 $"blast radius {request.AffectedPodCount} pods exceeds the maximum of {options.MaxPodsPerAction}");
         }
 
@@ -207,7 +224,8 @@ public static class PolicyEngine
             var fraction = (double)request.AffectedPodCount / sized.DesiredReplicas;
             if (fraction > options.MaxWorkloadFraction)
             {
-                denials.Add(
+                Deny(
+                    PolicyReasonCode.BlastRadiusFraction,
                     $"blast radius {fraction:P0} of the workload exceeds the maximum of {options.MaxWorkloadFraction:P0}");
             }
         }
@@ -232,7 +250,8 @@ public static class PolicyEngine
             (only.DesiredReplicas == 1 || only.ReadyReplicas <= 1) &&
             !HasSingleReplicaEscapeHatch(facts, options))
         {
-            denials.Add(
+            Deny(
+                PolicyReasonCode.LastReadyReplica,
                 $"this would restart the last Ready replica of {only.Kind} {only.Key} " +
                 $"({only.ReadyReplicas} ready of {only.DesiredReplicas} desired); " +
                 $"set label {options.AllowSingleReplicaRestartLabel}=true to opt in");
@@ -243,21 +262,23 @@ public static class PolicyEngine
         if (facts.LastActionOnWorkloadAt is { } lastAction && facts.Now - lastAction < options.WorkloadCooldown)
         {
             var elapsed = facts.Now - lastAction;
-            denials.Add(
+            Deny(
+                PolicyReasonCode.WorkloadCooldown,
                 $"workload cooldown active: last action {elapsed.TotalMinutes:0.#} min ago, " +
                 $"cooldown is {options.WorkloadCooldown.TotalMinutes:0.#} min");
         }
 
         if (denials.Count > 0)
         {
-            return PolicyResult.Deny([.. denials]);
+            return PolicyResult.Deny([.. denials]) with { Codes = [.. codes] };
         }
 
         // 11. Risk routing. Only from here on can the answer be anything other than Deny.
         var (allowEligible, routingReason) = Route(request, workload, options);
         if (routingReason is null)
         {
-            return PolicyResult.Deny($"action type {request.Type} has no routing rule and is therefore denied");
+            return PolicyResult.Deny($"action type {request.Type} has no routing rule and is therefore denied")
+                with { Codes = [PolicyReasonCode.NoRoutingRule] };
         }
 
         var reasons = new List<string> { routingReason };
@@ -266,21 +287,33 @@ public static class PolicyEngine
         {
             // Reached directly, not downgraded: DowngradedFrom stays null so the audit trail
             // distinguishes "this always needed a human" from "this would have been automatic".
-            return PolicyResult.Approval([.. reasons]);
+            return PolicyResult.Approval([.. reasons])
+                with { Codes = [PolicyReasonCode.NotAllowEligible] };
         }
 
         var downgrades = new List<string>();
+        var downgradeCodes = new List<PolicyReasonCode>();
+
+        void Downgrade(PolicyReasonCode code, string reason)
+        {
+            downgradeCodes.Add(code);
+            downgrades.Add(reason);
+        }
 
         // 12. Autonomy gate. Allow-eligible is a property of the action; Allow is a property of
         //     the operator's configuration. Auto-enabled types are promoted one at a time after
         //     watching that type require no human correction, so eligibility alone is not enough.
         if (facts.Mode is not AgentMode.Auto)
         {
-            downgrades.Add($"agent is in {facts.Mode} mode, so an allow-eligible action still needs a human");
+            Downgrade(
+                PolicyReasonCode.NotAutoMode,
+                $"agent is in {facts.Mode} mode, so an allow-eligible action still needs a human");
         }
         else if (!options.AutoEnabledActionTypes.Contains(request.Type))
         {
-            downgrades.Add($"action type {request.Type} is not in the auto-enabled set");
+            Downgrade(
+                PolicyReasonCode.TypeNotAutoEnabled,
+                $"action type {request.Type} is not in the auto-enabled set");
         }
 
         // 13. Budgets downgrade, never deny. An exhausted budget means the agent should stop
@@ -296,7 +329,7 @@ public static class PolicyEngine
             var budget = ActionBudget.Evaluate(facts, options);
             if (budget.IsExceeded)
             {
-                downgrades.Add(budget.Reason);
+                Downgrade(PolicyReasonCode.BudgetExhausted, budget.Reason);
             }
         }
         else
@@ -313,7 +346,9 @@ public static class PolicyEngine
         //     whether the model wrote something in the rollback field.
         if (!request.HasRollbackSpec && !SelfHealing.Contains(request.Type))
         {
-            downgrades.Add("action has no rollback spec, so a failed verification would have no recourse");
+            Downgrade(
+                PolicyReasonCode.NoRollbackSpec,
+                "action has no rollback spec, so a failed verification would have no recourse");
         }
 
         if (downgrades.Count > 0)
@@ -323,6 +358,7 @@ public static class PolicyEngine
             {
                 Decision = PolicyDecision.RequireApproval,
                 Reasons = [.. reasons],
+                Codes = [.. downgradeCodes],
                 DowngradedFrom = PolicyDecision.Allow,
             };
         }
