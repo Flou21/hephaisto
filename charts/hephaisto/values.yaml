@@ -129,6 +129,67 @@ secrets:
   # A Grafana service-account token that may WRITE annotations: key `token`. Editor is enough,
   # and is deliberately less than grafana-mcp's Admin. Only read when grafana.url is set.
   grafanaAnnotation: hephaisto-grafana-annotation
+  # The HMAC key the outbound webhook signs with: key `signingSecret`. Only read when
+  # notifications.webhook.signed is true.
+  notificationWebhook: hephaisto-notification-webhook
+  # The Teams Power Automate Workflows trigger URL: key `url`. It is a SECRET rather than a
+  # value because the URL *is* the credential - its `sig` query parameter is the entire
+  # authentication - so it must never reach `helm get values` or a git repo.
+  notificationTeams: hephaisto-notification-teams
+
+# -----------------------------------------------------------------------------------------
+# Outbound notifications
+# -----------------------------------------------------------------------------------------
+# Nothing here is on by default, and `routes` being empty is what makes that true: with no
+# routes the agent queues nothing and delivers nowhere, exactly as an empty
+# policy.actionableNamespaces means it may act nowhere.
+#
+# Two independent things have to change to be told anything - configure a channel, and add a
+# route that names it - and a route naming a channel you did not configure is refused at
+# startup rather than discovered the first time something escalates.
+notifications:
+  # The externally reachable URL of THIS Hephaisto. Every message exists to make somebody open
+  # a link, and the pod cannot work this out for itself: it knows the address it binds, not the
+  # one a person reaches it on. Required as soon as any route exists, and validated at startup.
+  baseUrl: ""
+
+  # Grafana's external URL, for a "look at the graphs" link beside the diagnosis. Optional -
+  # a message without it is thinner, not broken. This is the address a HUMAN uses, which is not
+  # the in-cluster grafana.url above.
+  grafanaUrl: ""
+
+  # The generic outbound HTTP channel. Deliberately not called "webhook" in code: in this
+  # chart a webhook is the thing Alertmanager posts INTO the agent.
+  webhook:
+    # Where to POST. Empty means the channel is not registered at all.
+    url: ""
+    # Sign each request with HMAC-SHA256 over the exact body, in X-Hephaisto-Signature, so the
+    # receiver can prove it came from this agent. Worth turning on: Hephaisto's own INBOUND
+    # webhook cannot be authenticated at all, because Alertmanager has no field for a header,
+    # and a receiver of yours does not have to accept that trade.
+    signed: false
+
+  # Microsoft Teams, via a Power Automate Workflows trigger. NOT the retired Office 365
+  # "Incoming Webhook" connector. The trigger URL comes from secrets.notificationTeams.
+  teams:
+    enabled: false
+
+  # Which events, at which severity, in which namespaces, go where. Additive only - there is
+  # no deny rule, because a subtractive routing table is one nobody can reason about and the
+  # thing being routed is the message that says the agent needs help.
+  #
+  # events: IncidentEscalated | ApprovalRequired | IncidentResolved | VerificationFailed |
+  #         ModeChanged | PolicyChanged
+  # minSeverity: Info | Warning | Critical   (inclusive; defaults to Info)
+  # namespaces: empty means "not scoped by namespace", which is the only way a route can carry
+  #             ModeChanged or PolicyChanged - those are about the agent and have no namespace.
+  #
+  # routes:
+  #   - channel: teams
+  #     events: [IncidentEscalated, ApprovalRequired, VerificationFailed, ModeChanged]
+  #     minSeverity: Warning
+  #     namespaces: []
+  routes: []
 
 # -----------------------------------------------------------------------------------------
 # Database

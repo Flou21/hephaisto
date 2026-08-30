@@ -90,20 +90,6 @@ networkPolicy:
 #
 # Raised to leave headroom for the widest fixture set while still bounding a loop. If a run ever
 # approaches $3 something is genuinely wrong, which is what the cap is for.
-#
-# The notification settings below go through extraEnv for the same reason the budget ones do,
-# and it is a documented state rather than an oversight: backlog #22 records that the budget
-# caps became settable this way before they were first-class values, and says to promote them
-# once the names have settled. These are one release younger than that, so they are here.
-#
-# Notifications__Webhook__Url must match RECEIVER_URL in scripts/e2e/lib/notify.sh, or the
-# agent delivers nowhere and every assertion in the notify phase fails for a reason that has
-# nothing to do with the agent.
-#
-# The signing secret is a literal, and that is safe here in a way it would never be in
-# values-dev.yaml or the chart: it is an HMAC key for a throwaway kind cluster that exists for
-# one run, shared with a receiver that is itself test equipment. It is not a credential to
-# anything. Real installs pass this by secretRef and the chart has no Secret template at all.
 extraEnv:
   - name: Llm__Budget__MaxCostUsdPerIncident
     value: "0.10"
@@ -112,34 +98,39 @@ extraEnv:
   - name: Llm__Budget__MaxCostUsdPerDay
     value: "6.00"
 
-  # The agent cannot discover the address a person reaches it on, so every link in every
-  # message depends on this being right.
-  - name: Notifications__BaseUrl
-    value: "http://127.0.0.1:18100"
-  - name: Notifications__Webhook__Url
-    value: "http://notification-receiver.hephaisto-obs:8080/hooks/hephaisto"
-  - name: Notifications__Webhook__SigningSecret
-    value: "e2e-not-a-real-secret"
-
-  # Everything, to the one channel. A narrower table would test the routing rules rather than
-  # the delivery path, and the routing rules already have unit tests.
-  - name: Notifications__Routes__0__Channel
-    value: "webhook"
-  - name: Notifications__Routes__0__Events__0
-    value: "IncidentEscalated"
-  - name: Notifications__Routes__0__Events__1
-    value: "VerificationFailed"
-  - name: Notifications__Routes__0__Events__2
-    value: "ApprovalRequired"
-  - name: Notifications__Routes__0__Events__3
-    value: "IncidentResolved"
-  - name: Notifications__Routes__0__Events__4
-    value: "ModeChanged"
-  - name: Notifications__Routes__0__Events__5
-    value: "PolicyChanged"
-
-  # The outbound cooldown is 15 minutes by default, which is right in production and would
-  # suppress the second half of a run that lasts twenty. Shortened so the storm behaviour is
-  # still exercised without swallowing the assertions.
+  # The outbound cooldown has no first-class value - the chart exposes the settings you cannot
+  # run without and leaves the tuning knobs to extraEnv, which is the same line the budget caps
+  # sit on. Fifteen minutes is right in production and would swallow the second half of a
+  # twenty-minute run's assertions.
   - name: Notifications__CorrelationCooldown
     value: "00:00:30"
+
+# -------------------------------------------------------------------------------------------
+# Outbound notifications
+# -------------------------------------------------------------------------------------------
+# webhook.url must match RECEIVER_URL in scripts/e2e/lib/notify.sh, or the agent delivers
+# nowhere and every assertion in the notify phase fails for a reason that has nothing to do
+# with the agent.
+#
+# signed is FALSE here and the assertion for signing is skipped accordingly - the signing key
+# is a secretKeyRef and the chart has no Secret template, so turning it on would mean minting
+# another Secret in deps_secrets for a property already covered by unit tests. What this
+# harness is here to prove is that the message survives a restart.
+notifications:
+  # The forwarded address, because that is where the harness itself reaches the console - so a
+  # link in a delivered message is one this run could actually follow.
+  baseUrl: "http://127.0.0.1:18100"
+  webhook:
+    url: "http://notification-receiver.hephaisto-obs:8080/hooks/hephaisto"
+    signed: false
+  routes:
+    # Everything, to the one channel. A narrower table would be testing the routing rules
+    # rather than the delivery path, and the routing rules already have unit tests.
+    - channel: webhook
+      events:
+        - IncidentEscalated
+        - VerificationFailed
+        - ApprovalRequired
+        - IncidentResolved
+        - ModeChanged
+        - PolicyChanged

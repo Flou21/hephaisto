@@ -64,6 +64,25 @@ WHAT IT CAN DO TO YOUR CLUSTER
    record of what the agent WOULD have done and whether it was right, which is what makes
    promoting it a decision based on evidence rather than on hope.
 {{- end }}
+{{- if and (gt (len .Values.notifications.routes) 0) (not .Values.notifications.baseUrl) }}
+
+!! notifications.routes is set but notifications.baseUrl is empty.
+   The agent will refuse to start. Every message exists to make somebody open a link, and the
+   pod cannot work out the address a person reaches it on - it only knows the one it binds.
+{{- end }}
+{{- if eq (len .Values.notifications.routes) 0 }}
+
+Note: notifications.routes is empty, so nothing leaves this process. An escalation is a
+database row and a nudge to any open browser tab; if nobody is looking, nobody is told. Add a
+channel and a route to change that - both are needed, and a route naming a channel you have
+not configured is refused at startup rather than silently delivering nowhere.
+{{- end }}
+{{- if and .Values.notifications.webhook.url (not .Values.notifications.webhook.signed) }}
+
+Note: the outbound webhook is UNSIGNED. Your receiver cannot tell a delivery from Hephaisto
+apart from anything else that can reach it. Set notifications.webhook.signed and create
+secrets.notificationWebhook to fix that.
+{{- end }}
 {{- if .Values.postgres.embedded.enabled }}
 
 Note: postgres.embedded is on. One replica, one PVC, no backups. Fine for evaluating the

@@ -60,6 +60,35 @@ refuses "grafana-mcp url with no token secret" \
     --set grafanaMcp.url=http://grafana-mcp:8000/mcp --set secrets.grafanaMcp=""
 
 echo
+echo "Outbound notifications refuse to be half-configured:"
+# A signed channel with no key would render a dangling secretKeyRef and surface twenty minutes
+# later as CreateContainerConfigError on a pod nobody is watching yet.
+refuses "a signed webhook with no secret name" \
+    --set notifications.webhook.url=https://r.example/hook \
+    --set notifications.webhook.signed=true \
+    --set secrets.notificationWebhook=""
+refuses "teams enabled with no secret name" \
+    --set notifications.teams.enabled=true \
+    --set secrets.notificationTeams=""
+
+# The routing vocabulary is closed in the schema, so a typo is refused at `helm template`
+# rather than becoming a rule that matches nothing and delivers nowhere - which is the exact
+# failure this whole feature exists to remove, and it looks identical to working.
+refuses "a route to a channel that does not exist" \
+    --set 'notifications.routes[0].channel=slack' \
+    --set 'notifications.routes[0].events[0]=IncidentEscalated'
+refuses "a route carrying an event that does not exist" \
+    --set 'notifications.routes[0].channel=teams' \
+    --set 'notifications.routes[0].events[0]=IncidentExploded'
+refuses "a route carrying no events at all" \
+    --set 'notifications.routes[0].channel=teams' \
+    --set 'notifications.routes[0].namespaces[0]=app'
+refuses "a severity that is not a severity" \
+    --set 'notifications.routes[0].channel=teams' \
+    --set 'notifications.routes[0].events[0]=IncidentEscalated' \
+    --set 'notifications.routes[0].minSeverity=Urgent'
+
+echo
 echo "The safe defaults still render:"
 renders "defaults"     --values "$CHART/ci/minimal-values.yaml"
 renders "full values"  --values "$CHART/ci/full-values.yaml"
@@ -107,6 +136,28 @@ if grep -q 'type: Recreate' <<<"$FULL"; then
     pass "strategy is Recreate, so a rollout never runs two executors"
 else
     fail "strategy must be Recreate"
+fi
+
+# The whole outbound feature ships off, in the same direction as an empty
+# actionableNamespaces and mode: Observe. Two independent things have to change to be told
+# anything, and this asserts that neither has happened by accident.
+if grep -q 'Notifications__' <<<"$MIN"; then
+    fail "notifications must be entirely absent by default"
+else
+    pass "notifications ship off - no Notifications__ env at all by default"
+fi
+
+# The Teams trigger URL carries its bearer token in the query string, so it is the one setting
+# here that must NEVER be renderable as a plain value. If this ever passes as `value:`, the
+# credential is in `helm get values`, in the release Secret, and in the git repo holding the
+# Argo Application - forever.
+TEAMS=$(helm template t "$CHART" --namespace hephaisto --values "$CHART/ci/full-values.yaml" \
+    --set notifications.teams.enabled=true 2>/dev/null)
+
+if grep -A1 'name: Notifications__Teams__WorkflowUrl' <<<"$TEAMS" | grep -q 'valueFrom:'; then
+    pass "the Teams trigger URL is only ever a secretKeyRef"
+else
+    fail "the Teams trigger URL rendered as a plain value; it is a credential"
 fi
 
 # The cordon/drain role ships unbound. Binding it is a separate, hand-written human act.

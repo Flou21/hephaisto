@@ -272,6 +272,59 @@ spec:
             {{- end }}
 
             # ---------------------------------------------------------------------------
+            # Outbound notifications - the only thing here that leaves the cluster on the
+            # agent's own initiative
+            # ---------------------------------------------------------------------------
+            {{- with .Values.notifications }}
+            {{- if .baseUrl }}
+            - name: Notifications__BaseUrl
+              value: {{ .baseUrl | quote }}
+            {{- end }}
+            {{- if .grafanaUrl }}
+            - name: Notifications__GrafanaUrl
+              value: {{ .grafanaUrl | quote }}
+            {{- end }}
+            {{- if .webhook.url }}
+            - name: Notifications__Webhook__Url
+              value: {{ .webhook.url | quote }}
+            {{- if .webhook.signed }}
+            - name: Notifications__Webhook__SigningSecret
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secrets.notificationWebhook is required when notifications.webhook.signed is true. The chart never creates a Secret, it only references one." $.Values.secrets.notificationWebhook }}
+                  key: signingSecret
+            {{- end }}
+            {{- end }}
+            {{- if .teams.enabled }}
+            # A secretKeyRef and never a value: a Workflows trigger URL carries its bearer
+            # token in the query string, so passing it as a Helm value would put a live
+            # credential in `helm get values`, in the release Secret, and in whatever git repo
+            # holds your Argo Application - forever.
+            - name: Notifications__Teams__WorkflowUrl
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secrets.notificationTeams is required when notifications.teams.enabled is true. The URL is the credential, so it cannot be a chart value." $.Values.secrets.notificationTeams }}
+                  key: url
+            {{- end }}
+            {{- range $i, $route := .routes }}
+            - name: Notifications__Routes__{{ $i }}__Channel
+              value: {{ required "every notifications.routes entry needs a channel" $route.channel | quote }}
+            {{- if $route.minSeverity }}
+            - name: Notifications__Routes__{{ $i }}__MinSeverity
+              value: {{ $route.minSeverity | quote }}
+            {{- end }}
+            {{- range $j, $event := $route.events }}
+            - name: Notifications__Routes__{{ $i }}__Events__{{ $j }}
+              value: {{ $event | quote }}
+            {{- end }}
+            {{- range $k, $ns := $route.namespaces }}
+            - name: Notifications__Routes__{{ $i }}__Namespaces__{{ $k }}
+              value: {{ $ns | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+
+            # ---------------------------------------------------------------------------
             # LLM
             # ---------------------------------------------------------------------------
             - name: GEMINI_API_KEY
