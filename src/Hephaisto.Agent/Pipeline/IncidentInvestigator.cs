@@ -22,15 +22,34 @@ public interface IIncidentInvestigator
 /// Escalating is the honest response: a human is told there is a problem and that nothing
 /// diagnosed it, which is exactly what happened.
 /// </summary>
+/// <remarks>
+/// <b>It did not escalate</b> until 2026-08-30 (backlog #14). The name said so, the doc comment
+/// above said so, and the body logged a warning and returned - so the incident was left in
+/// exactly the state the caller found it, nothing transitioned, and nobody was told. Latent,
+/// because it is registered with <c>TryAdd</c> and only reachable if the LLM stack was never
+/// registered, which no shipped configuration does.
+///
+/// It stopped being harmless in v0.3.0. Escalation is now the thing that reaches a person, so a
+/// fallback investigator that silently does nothing is the exact failure this release exists to
+/// remove - and the one install that reaches it is the one running with no model, where every
+/// incident depends on it.
+/// </remarks>
 internal sealed class EscalateOnlyInvestigator(
+    IncidentTriage triage,
     ILogger<EscalateOnlyInvestigator> logger) : IIncidentInvestigator
 {
-    public Task InvestigateAsync(Guid incidentId, CancellationToken ct)
+    public async Task InvestigateAsync(Guid incidentId, CancellationToken ct)
     {
         logger.LogWarning(
-            "Incident {IncidentId} was not investigated: no IIncidentInvestigator is registered.",
+            "Incident {IncidentId} was not investigated: no IIncidentInvestigator is registered. "
+                + "Escalating it, because an undiagnosed problem is still a problem.",
             incidentId);
 
-        return Task.CompletedTask;
+        // InvestigationFailed rather than NoPlanProduced: no plan was produced because no
+        // investigation ran at all, and the distinction is what tells a reader whether to look
+        // for a bad diagnosis or a missing model.
+        await triage
+            .EscalateAsync(incidentId, EscalationReason.InvestigationFailed, ct)
+            .ConfigureAwait(false);
     }
 }

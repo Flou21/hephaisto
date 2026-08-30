@@ -83,14 +83,24 @@ public sealed class PolicyOptions
     /// <summary>The previous revision must have been healthy at least this long to roll back to it unattended.</summary>
     public TimeSpan RollbackPreviousHealthyMinimum { get; set; } = TimeSpan.FromHours(1);
 
-    /// <summary>Ceiling for an unattended scale-up, and the maximum step size.</summary>
     /// <summary>
     /// Windows during which nothing may be acted on. Empty means no freeze, which is the
     /// default: an invented window is a control nobody asked for.
     /// </summary>
     public List<MaintenanceWindow> MaintenanceWindows { get; set; } = [];
 
-    public int MaxAutoScaleReplicas { get; set; } = 10;
-
-    public int MaxAutoScaleStep { get; set; } = 2;
+    // MaxAutoScaleReplicas and MaxAutoScaleStep were here, declared and read by nothing
+    // (backlog #19). They are DELETED rather than wired, and the reason is worth keeping: they
+    // were documented as "ceiling for an unattended scale-up", and there is no such thing.
+    // ScaleWorkload is never allow-eligible - PolicyEngine returns "scaling changes capacity
+    // and cost, so it requires approval" - so every scale that happens has a human's name on
+    // it. Wiring a cap on unattended scaling would have been building a control for a path
+    // that cannot occur, which is a worse outcome than the dead config: it would look like a
+    // safety property and hold nothing up.
+    //
+    // If a human-approved scale should be capped, that is a different control with a different
+    // name, and it needs a RequestedReplicas on ActionRequest that does not exist today.
+    //
+    // The stray <summary> block that used to sit above MaintenanceWindows belonged to these
+    // two and went with them - it had been documenting the wrong property.
 }

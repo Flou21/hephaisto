@@ -59,6 +59,13 @@ public sealed class PersistenceOptions
     /// </summary>
     public TimeSpan LlmUsageRetention { get; set; } = TimeSpan.FromDays(30);
 
+    /// <summary>
+    /// How long a completed notification delivery is kept. Applies to delivered and suppressed
+    /// rows only - a FAILED delivery is the record of a human not being reached, which puts it
+    /// in the same class as an audit event, and nothing here deletes those.
+    /// </summary>
+    public TimeSpan NotificationRetention { get; set; } = TimeSpan.FromDays(30);
+
     public TimeSpan RetentionSweepInterval { get; set; } = TimeSpan.FromHours(1);
 
     /// <summary>Rows deleted per statement. Bounded so a sweep never holds a long write lock.</summary>

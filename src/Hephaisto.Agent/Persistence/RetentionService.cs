@@ -1,3 +1,4 @@
+using Hephaisto.Core.Notifications;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -106,16 +107,31 @@ public sealed class RetentionService(
             o.RetentionBatchSize,
             ct);
 
+        var deliveryCutoff = now - o.NotificationRetention;
+
+        // Delivered and suppressed only. A FAILED delivery is the evidence that somebody was
+        // not told, which is the same class of record as an audit event - and a pending one has
+        // not happened yet, so ageing either out would delete exactly the rows worth keeping.
+        var deliveries = await DeleteInBatchesAsync(
+            () => db.NotificationDeliveries
+                .Where(d => d.CreatedAt <= deliveryCutoff
+                    && (d.Status == DeliveryStatus.Delivered || d.Status == DeliveryStatus.Suppressed))
+                .Select(d => d.Id),
+            ids => db.NotificationDeliveries.Where(d => ids.Contains(d.Id)),
+            o.RetentionBatchSize,
+            ct);
+
         // Nothing here deletes an incident, a digest, an audit event or an action. Those
         // are the record of what happened and what was done about it, and they are small.
 
-        if (blobs + usage + breaches > 0)
+        if (blobs + usage + breaches + deliveries > 0)
         {
             logger.LogInformation(
-                "Retention sweep removed {Blobs} evidence blobs, {Usage} usage rows, {Breaches} breach rows",
+                "Retention sweep removed {Blobs} evidence blobs, {Usage} usage rows, {Breaches} breach rows, {Deliveries} notification deliveries",
                 blobs,
                 usage,
-                breaches);
+                breaches,
+                deliveries);
         }
     }
 

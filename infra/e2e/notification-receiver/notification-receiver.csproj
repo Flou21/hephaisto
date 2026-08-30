@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    A test fixture, not part of the product. Deliberately NOT in Hephaisto.slnx, so it
+    never appears in `dotnet build` of the solution or in coverage - the same treatment
+    infra/chaos/faulty-service gets, and for the same reason.
+
+    Central Package Management applies: MSBuild walks up to /Directory.Packages.props and
+    /Directory.Build.props, so the container build context must be the REPO ROOT. See the
+    Dockerfile header.
+
+    It has no PackageReference at all. A receiver that needed dependencies to record what
+    it was sent would be a receiver that can fail for reasons unrelated to the thing under
+    test, and this exists to be the trustworthy half of an assertion.
+  -->
+  <PropertyGroup>
+    <AssemblyName>notification-receiver</AssemblyName>
+    <RootNamespace>NotificationReceiver</RootNamespace>
+    <NoWarn>$(NoWarn);CA1848;CA2254;CA1305</NoWarn>
+  </PropertyGroup>
+
+</Project>

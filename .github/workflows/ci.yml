@@ -54,7 +54,13 @@ jobs:
           # Directory.Build.props says main.0, so without it the CLI and the compiler disagree
           # about what this very commit is called - and the image tag stops matching the
           # assembly inside it.
-          V=$(dotnet minver -t v -p main.0)
+          # ...and `-m` is not optional either, for the identical reason: the CLI does not read
+          # Directory.Build.props, so MinVerMinimumMajorMinor is invisible to it. Read out of
+          # the props file rather than hardcoded, so bumping the floor for a milestone cannot
+          # leave this line behind.
+          M=$(sed -n 's:.*<MinVerMinimumMajorMinor>\(.*\)</MinVerMinimumMajorMinor>.*:\1:p' \
+                Directory.Build.props | head -1)
+          V=$(dotnet minver -t v -p main.0 ${M:+-m "$M"})
           # Strip +metadata before anything sees it: OCI tags cannot contain '+', and Helm
           # silently rewrites it to '_', so Chart.yaml would say 0.0.1+abc while the OCI tag
           # is 0.0.1_abc and Argo cannot find the version it was told to install.
@@ -96,7 +102,7 @@ jobs:
       # runner - it prints `unknown option` and still exits 0, which is the same trap wearing
       # a different hat.)
       - name: Run tests
-        run: scripts/ci-test.sh tests/Hephaisto.Tests/Hephaisto.Tests.csproj 600 Release
+        run: scripts/ci-test.sh tests/Hephaisto.Tests/Hephaisto.Tests.csproj 900 Release
 
   integration-postgres:
     runs-on: ubuntu-latest
@@ -159,7 +165,7 @@ jobs:
           # The fixture THROWS rather than skipping when this is unset. A silently skipped
           # database suite is indistinguishable from a passing one.
           ConnectionStrings__hephaisto: Host=localhost;Port=5432;Database=hephaisto;Username=hephaisto;Password=hephaisto
-        run: scripts/ci-test.sh tests/Hephaisto.IntegrationTests/Hephaisto.IntegrationTests.csproj 6 Release
+        run: scripts/ci-test.sh tests/Hephaisto.IntegrationTests/Hephaisto.IntegrationTests.csproj 50 Release
 
   chart:
     runs-on: ubuntu-latest

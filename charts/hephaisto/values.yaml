@@ -129,6 +129,90 @@ secrets:
   # A Grafana service-account token that may WRITE annotations: key `token`. Editor is enough,
   # and is deliberately less than grafana-mcp's Admin. Only read when grafana.url is set.
   grafanaAnnotation: hephaisto-grafana-annotation
+  # The HMAC key the outbound webhook signs with: key `signingSecret`. Only read when
+  # notifications.webhook.signed is true.
+  notificationWebhook: hephaisto-notification-webhook
+  # The Teams Power Automate Workflows trigger URL: key `url`. It is a SECRET rather than a
+  # value because the URL *is* the credential - its `sig` query parameter is the entire
+  # authentication - so it must never reach `helm get values` or a git repo.
+  notificationTeams: hephaisto-notification-teams
+
+# -----------------------------------------------------------------------------------------
+# Alertmanager - for the SilenceAlert action, and nothing else
+# -----------------------------------------------------------------------------------------
+# Empty means SilenceAlert is refused by the executor before any call is made, which is the
+# honest answer for an install with no Alertmanager rather than a 404 that reads like a bug.
+#
+# Note what this is NOT: the agent does not read alerts from here - they arrive by webhook.
+# This is write-only, and the only thing it writes is a silence.
+#
+# SilenceAlert ALWAYS requires approval, whatever policy.autoEnabledActionTypes says. It is
+# the one action whose failure mode is that everything looks fine.
+alertmanager:
+  url: ""
+  # Hard ceiling on a silence, whatever the model asks for. The dangerous silence is not the
+  # wrong one, it is the LONG one: a silence nobody remembers is a monitoring gap that looks
+  # like a quiet system.
+  #
+  # .NET TimeSpan format - "hh:mm:ss", NOT Go/Prometheus duration. "2h" is what everything
+  # else in a Kubernetes values file looks like and it does NOT parse here: the agent would
+  # fail to start with a binding error naming a key most people would not connect to this
+  # line. values.schema.json enforces the shape so `helm template` catches it first.
+  maxDuration: "02:00:00"
+
+# -----------------------------------------------------------------------------------------
+# Outbound notifications
+# -----------------------------------------------------------------------------------------
+# Nothing here is on by default, and `routes` being empty is what makes that true: with no
+# routes the agent queues nothing and delivers nowhere, exactly as an empty
+# policy.actionableNamespaces means it may act nowhere.
+#
+# Two independent things have to change to be told anything - configure a channel, and add a
+# route that names it - and a route naming a channel you did not configure is refused at
+# startup rather than discovered the first time something escalates.
+notifications:
+  # The externally reachable URL of THIS Hephaisto. Every message exists to make somebody open
+  # a link, and the pod cannot work this out for itself: it knows the address it binds, not the
+  # one a person reaches it on. Required as soon as any route exists, and validated at startup.
+  baseUrl: ""
+
+  # Grafana's external URL, for a "look at the graphs" link beside the diagnosis. Optional -
+  # a message without it is thinner, not broken. This is the address a HUMAN uses, which is not
+  # the in-cluster grafana.url above.
+  grafanaUrl: ""
+
+  # The generic outbound HTTP channel. Deliberately not called "webhook" in code: in this
+  # chart a webhook is the thing Alertmanager posts INTO the agent.
+  webhook:
+    # Where to POST. Empty means the channel is not registered at all.
+    url: ""
+    # Sign each request with HMAC-SHA256 over the exact body, in X-Hephaisto-Signature, so the
+    # receiver can prove it came from this agent. Worth turning on: Hephaisto's own INBOUND
+    # webhook cannot be authenticated at all, because Alertmanager has no field for a header,
+    # and a receiver of yours does not have to accept that trade.
+    signed: false
+
+  # Microsoft Teams, via a Power Automate Workflows trigger. NOT the retired Office 365
+  # "Incoming Webhook" connector. The trigger URL comes from secrets.notificationTeams.
+  teams:
+    enabled: false
+
+  # Which events, at which severity, in which namespaces, go where. Additive only - there is
+  # no deny rule, because a subtractive routing table is one nobody can reason about and the
+  # thing being routed is the message that says the agent needs help.
+  #
+  # events: IncidentEscalated | ApprovalRequired | IncidentResolved | VerificationFailed |
+  #         ModeChanged | PolicyChanged
+  # minSeverity: Info | Warning | Critical   (inclusive; defaults to Info)
+  # namespaces: empty means "not scoped by namespace", which is the only way a route can carry
+  #             ModeChanged or PolicyChanged - those are about the agent and have no namespace.
+  #
+  # routes:
+  #   - channel: teams
+  #     events: [IncidentEscalated, ApprovalRequired, VerificationFailed, ModeChanged]
+  #     minSeverity: Warning
+  #     namespaces: []
+  routes: []
 
 # -----------------------------------------------------------------------------------------
 # Database
@@ -175,6 +259,22 @@ otel:
 # and the agent logs a warning saying so rather than starting silently toolless.
 grafanaMcp:
   url: ""
+
+  # Datasource name -> uid, put straight into the agent's environment card so it does not have
+  # to spend a tool call on list_datasources before it can query anything (backlog #36).
+  #
+  # This is the cheapest available reduction in steps: a fact the agent cannot look up is
+  # exactly what the environment card is FOR, and the measured baseline is 7.5 steps and
+  # $0.080 per investigation. The uids are stable per cluster:
+  #
+  #   curl -sH "Authorization: Bearer $TOKEN" $GRAFANA/api/datasources | jq '.[] | {name, uid}'
+  #
+  # Empty renders no section at all rather than an empty one, so leaving it unset costs a
+  # discovery call and nothing else.
+  datasourceUids: {}
+    # prometheus: abc123
+    # loki: def456
+    # tempo: ghi789
 
 # -----------------------------------------------------------------------------------------
 # Grafana itself - annotations
@@ -231,6 +331,47 @@ networkPolicy:
   # fails and the pod is killed in a loop by its own protection. If that happens, prefer the
   # node CIDR over 0.0.0.0/0.
   extraIngressCIDRs: []
+
+  # ---------------------------------------------------------------------------------------
+  # Egress - OFF by default, and the default is load-bearing
+  # ---------------------------------------------------------------------------------------
+  # Adding Egress to a NetworkPolicy denies EVERYTHING not explicitly listed. For this pod
+  # that means DNS, the Kubernetes API server, Postgres, the observability stack, grafana-mcp
+  # and the LLM API - all of which it needs. Turning this on with an incomplete allow list
+  # produces an agent that starts cleanly, reports healthy, and does nothing, which is one of
+  # the harder failures to diagnose because every symptom points somewhere else.
+  #
+  # So it is opt-in, and switching it on is a deliberate act with a checklist. Work through
+  # every entry below before enabling it, and expect to need apiServerCIDRs.
+  egress:
+    enabled: false
+
+    # DNS. Almost nothing works without it, so it is allowed to the whole cluster rather than
+    # to a namespace: CoreDNS lives in kube-system on most clusters and somewhere else on
+    # enough of them that pinning it is how this breaks on the cluster you did not test.
+    dns: true
+
+    # The Kubernetes API server. THIS IS THE ONE THAT CATCHES PEOPLE. The API server is not a
+    # pod in a namespace you can select - it is an endpoint, typically the control-plane node
+    # address on 6443, or a load balancer outside the cluster entirely. There is no portable
+    # selector for it, so you must supply the CIDR:
+    #
+    #   kubectl get endpoints kubernetes -o jsonpath='{.subsets[*].addresses[*].ip}'
+    #
+    # Left empty the agent cannot watch pods, cannot read events and cannot act - which is to
+    # say it cannot do anything at all.
+    apiServerCIDRs: []
+    apiServerPorts: [443, 6443]
+
+    # Everything outside the cluster the agent talks to: the LLM API, and whatever your
+    # notification channels point at. Ships empty, which means investigations fail and
+    # notifications never arrive - both loudly, at least.
+    #
+    # `0.0.0.0/0` on 443 is the honest starting point for most people, and is still a
+    # meaningful restriction: it stops the agent reaching anything in-cluster it was not
+    # granted above.
+    extraEgressCIDRs: []
+    extraEgressPorts: [443]
 
 # -----------------------------------------------------------------------------------------
 # RBAC

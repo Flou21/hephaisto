@@ -89,7 +89,7 @@ public sealed class KubernetesWatcherService : BackgroundService
         signalsReceived = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.SignalsReceived);
         var dropped = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.SignalsDropped);
         signalsDropped = dropped;
-        watchReconnects = meter.CreateCounter<long>("hephaisto.kubernetes.watch_reconnects");
+        watchReconnects = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.KubernetesWatchReconnects);
 
         queue = Channel.CreateBounded<Signal>(
             new BoundedChannelOptions(this.options.SignalQueueCapacity)

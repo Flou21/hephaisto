@@ -109,4 +109,60 @@ public class ShippedAlertRulesTests
         // Tiltfile applies these same files.
         return Path.Combine(dir!.FullName, "charts", "hephaisto", "files", "alerts");
     }
+
+    /// <summary>
+    /// Every namespace-shaped label in the shipped rules is one the ingest actually reads.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The other half of backlog #33, and the half that stops it coming back. The fallback in
+    /// <c>AlertmanagerEndpoints.ResolveTarget</c> is a fix; this is the thing that fails when
+    /// somebody adds a rule grouping by a fourth spelling.
+    /// </para>
+    /// <para>
+    /// An empty namespace is not cosmetic. It is part of the signal fingerprint, it is what
+    /// <c>Policy:AllowedNamespaces</c> is checked against, it is what every tool call needs as
+    /// an argument, and as of v0.3.0 it is what a notification route filters on - so a rule
+    /// that labels it something unread produces an incident that can be neither acted on nor
+    /// escalated to anybody. It cost two release candidates the first time, because the
+    /// harness reported c10 as having opened no incident while the incident existed
+    /// throughout.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_namespace_label_in_the_shipped_rules_is_one_the_ingest_reads()
+    {
+        // The three ResolveTarget falls back through, in order.
+        string[] understood = ["namespace", "exported_namespace", "k8s_namespace_name"];
+
+        // Any identifier that looks like it names a namespace. Deliberately broad: the point is
+        // to catch a spelling nobody thought of, so a pattern that only matched known ones
+        // would assert nothing.
+        var candidate = new Regex(@"\b([A-Za-z_][A-Za-z0-9_]*namespace[A-Za-z0-9_]*)\b", RegexOptions.IgnoreCase);
+
+        var offenders = new SortedSet<string>(StringComparer.Ordinal);
+
+        foreach (var file in Directory.EnumerateFiles(AlertsDirectory(), "*.yaml"))
+        {
+            foreach (var match in candidate.Matches(File.ReadAllText(file)).Cast<Match>())
+            {
+                var label = match.Groups[1].Value;
+
+                // `namespace:` as a YAML key, and Prometheus's own metric names, are not label
+                // names an alert would carry.
+                if (understood.Contains(label, StringComparer.Ordinal)
+                    || label.StartsWith("kube_", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                offenders.Add($"{Path.GetFileName(file)}: {label}");
+            }
+        }
+
+        offenders.Should().BeEmpty(
+            "every namespace-shaped label in a shipped rule must be one AlertmanagerEndpoints "
+            + "reads, or the incident it opens has no namespace and can be neither acted on "
+            + "nor routed to anybody");
+    }
 }

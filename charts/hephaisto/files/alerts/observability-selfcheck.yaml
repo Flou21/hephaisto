@@ -326,3 +326,50 @@ spec:
               minutes, so zero over 15 minutes means the agent's ingest loop is stalled even
               though its process is alive. Check /healthz versus /readyz, and check whether
               the webhook endpoint is returning non-2xx to Alertmanager.
+
+        - alert: HephaistoNotificationsFailing
+          # The agent could not tell anybody.
+          #
+          # This is the sharpest self-check in the file, and the only one whose subject is the
+          # alerting path itself: every other rule here assumes somebody will see it. A
+          # delivery that exhausts its retries means an escalation reached nobody, and the one
+          # place that failure cannot be reported is the channel that just failed - so it has
+          # to come out through YOUR Alertmanager rather than through Hephaisto.
+          expr: |
+            sum(increase(hephaisto_notifications_delivered_total{outcome="failed"}[15m])) > 0
+          for: 0m
+          labels:
+            severity: critical
+            hephaisto_kind: ObservabilityDegraded
+          annotations:
+            summary: 'Hephaisto could not deliver {{ $value | printf "%.0f" }} notification(s)'
+            description: >-
+              One or more notifications exhausted their retries, which means an incident
+              escalated and nobody was told. Fires immediately (for: 0m): unlike a backlog
+              this is already terminal, and waiting fifteen minutes to report that somebody
+              was not paged is its own version of the same fault. The rows are in
+              notification_deliveries with status = Failed and the endpoint's own error in
+              last_error; a notification.failed audit row names each one.
+
+        - alert: HephaistoNotificationOutboxBacklog
+          # Deliveries are queueing and not draining.
+          #
+          # Distinct from the rule above and deliberately less severe: a backlog means the
+          # endpoint is down and the outbox is doing exactly its job - holding the message
+          # until it comes back. It becomes a problem when it does not drain, because the
+          # queue is then a list of people who have not been told yet and the retries are
+          # counting down toward Failed.
+          expr: |
+            min_over_time(hephaisto_notifications_pending[10m]) > 0
+          for: 10m
+          labels:
+            severity: warning
+            hephaisto_kind: ObservabilityDegraded
+          annotations:
+            summary: 'Hephaisto has {{ $value | printf "%.0f" }} notification(s) stuck in its outbox'
+            description: >-
+              Pending deliveries have not reached zero at any point in ten minutes, so the
+              queue is growing or stalled rather than passing through. min_over_time rather
+              than a plain comparison, because a healthy system is briefly non-zero on every
+              incident and alerting on that would make this rule noise. Check the channel
+              endpoint, and the agent's log for the retry warnings naming the delivery id.

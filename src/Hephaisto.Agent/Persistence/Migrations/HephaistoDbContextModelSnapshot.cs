@@ -147,6 +147,81 @@ namespace Hephaisto.Agent.Persistence.Migrations
                     b.ToTable("llm_usage", (string)null);
                 });
 
+            modelBuilder.Entity("Hephaisto.Agent.Persistence.NotificationDelivery", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempt_count");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("channel");
+
+                    b.Property<string>("CorrelationKey")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("correlation_key");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeliveredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("delivered_at");
+
+                    b.Property<string>("Event")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("event");
+
+                    b.Property<Guid?>("IncidentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("incident_id");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("last_error");
+
+                    b.Property<DateTimeOffset>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("next_attempt_at");
+
+                    b.Property<string>("Snapshot")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("snapshot");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("status");
+
+                    b.HasKey("Id")
+                        .HasName("pk_notification_deliveries");
+
+                    b.HasIndex("IncidentId")
+                        .HasDatabaseName("ix_notification_deliveries_incident_id");
+
+                    b.HasIndex("Channel", "DeliveredAt")
+                        .HasDatabaseName("ix_notification_deliveries_channel_delivered_at");
+
+                    b.HasIndex("Status", "NextAttemptAt")
+                        .HasDatabaseName("ix_notification_deliveries_status_next_attempt_at");
+
+                    b.HasIndex("Channel", "CorrelationKey", "DeliveredAt")
+                        .HasDatabaseName("ix_notification_deliveries_channel_correlation_key_delivered_at");
+
+                    b.ToTable("notification_deliveries", (string)null);
+                });
+
             modelBuilder.Entity("Hephaisto.Agent.Persistence.WorkloadActionLock", b =>
                 {
                     b.Property<string>("WorkloadKey")

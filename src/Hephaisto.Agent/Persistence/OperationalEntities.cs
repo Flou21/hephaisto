@@ -1,8 +1,9 @@
 using Hephaisto.Core.Domain;
+using Hephaisto.Core.Notifications;
 
 namespace Hephaisto.Agent.Persistence;
 
-// These four types are infrastructure, not domain. They live here rather than in
+// These five types are infrastructure, not domain. They live here rather than in
 // Hephaisto.Core because nothing in Core reasons about them: they exist only because the
 // safety properties Core describes as pure functions have to survive a process restart,
 // and a row in Postgres is the only thing here that does.
@@ -113,4 +114,74 @@ public sealed class AgentModeRow
     public string? ChangedBy { get; set; }
 
     public DateTimeOffset ChangedAt { get; set; }
+}
+
+/// <summary>
+/// One outbound message, one channel, and everything needed to send it again later.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>This table is the reason the milestone exists.</b> <c>IIncidentNotifier</c> is an
+/// in-process fan-out that drops on overflow by design; it is a fine way to nudge a browser tab
+/// and a catastrophic way to tell somebody the agent has given up. A row here is written in the
+/// SAME transaction as the state change that caused it, so an incident cannot reach
+/// <c>Escalated</c> without a delivery existing to carry that fact outward, and a pod restart
+/// between the two is not a thing that can happen.
+/// </para>
+/// <para>
+/// One row per (event, channel) rather than one per event: a Teams outage must not hold up the
+/// webhook, and the attempt count and backoff are per-channel facts.
+/// </para>
+/// <para>
+/// <see cref="Snapshot"/> is frozen at enqueue. Re-reading the incident at send time would make
+/// a retry describe a LATER state than the event it reports - an escalation card that has
+/// quietly become a resolution card - which is the one thing a delivery must never do.
+/// </para>
+/// </remarks>
+public sealed class NotificationDelivery
+{
+    /// <summary>
+    /// Stable across every retry, and put on the wire so a receiver can dedupe. At-least-once
+    /// delivery makes a duplicate normal rather than a bug, and a receiver with no key to
+    /// dedupe on cannot tell the difference.
+    /// </summary>
+    public Guid Id { get; set; } = Guid.CreateVersion7();
+
+    public NotificationEvent Event { get; set; }
+
+    /// <summary>Null for the two events that are about the agent rather than an incident.</summary>
+    public Guid? IncidentId { get; set; }
+
+    public string Channel { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Denormalised out of the snapshot because the outbound cooldown queries it, and a
+    /// cooldown that had to deserialise every candidate row to find its key would be a
+    /// sequential scan on the delivery path.
+    /// </summary>
+    public string CorrelationKey { get; set; } = string.Empty;
+
+    public DeliveryStatus Status { get; set; }
+
+    /// <summary>The facts as they were. See the remarks on this class.</summary>
+    public NotificationSnapshot Snapshot { get; set; } = new() { Event = NotificationEvent.Unspecified };
+
+    public int AttemptCount { get; set; }
+
+    public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>
+    /// When the dispatcher should next pick this up. Set to the creation time on enqueue, so
+    /// "due now" and "due after a backoff" are one query rather than two.
+    /// </summary>
+    public DateTimeOffset NextAttemptAt { get; set; }
+
+    public DateTimeOffset? DeliveredAt { get; set; }
+
+    /// <summary>
+    /// Why the last attempt did not work, in the words the endpoint used. Truncated on the way
+    /// in - a stack trace or an HTML error page in a column that a UI renders is how an
+    /// operator ends up scrolling past the thing they needed to read.
+    /// </summary>
+    public string? LastError { get; set; }
 }

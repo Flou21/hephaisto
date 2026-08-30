@@ -191,6 +191,82 @@ The `observability-selfcheck` rules webhook back into the agent's own ingest, wi
 **self-signals hard-coded to `Escalated` and never auto-actionable** — otherwise the agent
 can act on itself in a feedback loop.
 
+## Reaching people: the outbox
+
+Everything above happens inside one process. This is the part that does not.
+
+**The problem it solves is not "send a message".** `IIncidentNotifier` could already send one:
+an in-process `Channel<T>` fan-out to Blazor circuits, bounded at 64 with `DropOldest`. It is a
+fine hook point and a catastrophic delivery mechanism, because it is *designed* to drop — right
+for nudging a browser that will re-read from Postgres anyway, and wrong for the one message
+whose whole purpose is to reach somebody who is not looking. "Escalated, and nobody was told" is
+the worst failure this system has, and a pod restart must not be able to cause it.
+
+So delivery is a table.
+
+```
+IncidentStateMachine.Transition        appends an IncidentEvent on EVERY edge
+        |
+        v
+HephaistoDbContext.SaveChangesAsync    interceptor scans new IncidentEvent rows,
+        |                              evaluates routing, adds notification_deliveries
+        v                              -- ALL IN THE SAME TRANSACTION
+  one commit
+        |
+        v
+NotificationDispatcher (10s poll)      due rows off (status, next_attempt_at)
+        |
+        +-- rate limit --> Suppressed (recorded, counted, never discarded)
+        |
+        +-- INotificationChannel --> Delivered
+                                 --> Retryable  -> backoff, stay Pending
+                                 --> Permanent  -> Failed + audit row + ERROR
+```
+
+### Why the interceptor rather than ten call sites
+
+The obvious design is an enqueue call at each place an incident commits a transition. The
+obvious failure of that design was already in this codebase: `IncidentTriage` reaches
+`Escalated` twice — the self-signal arm and the storm circuit breaker — and published no live
+event at all. Nobody noticed, because nothing asserted it.
+
+`Transition` appends an `IncidentEvent` on every edge without exception; that is the log the
+audit trail is built from. Watching those rows gives the property directly: **an incident cannot
+reach a notifiable state without a delivery row being written by the same
+`SaveChangesAsync`.** There is no ordering, no second commit, and nothing for an eleventh call
+site to forget.
+
+The two events that are not transitions — the mode changing and the policy reloading — are
+enlisted explicitly, following the same stage-don't-save discipline as an audit row.
+
+### Why the payload is frozen
+
+An outbox row can sit for twenty minutes behind a failing endpoint. Re-reading the incident at
+send time — which is exactly what `IIncidentNotifier` correctly does for a UI nudge — would make
+a retry describe a *later* state than the event it reports, so an escalation card would quietly
+become a resolution card. The snapshot is taken at enqueue and never re-read.
+
+Deep links are the exception and are built at render, because a wrong base URL should be fixable
+by editing a value rather than by re-queuing every pending row.
+
+### One retry authority
+
+`ServiceDefaults` applies `AddStandardResilienceHandler` to every client the HTTP factory
+builds. The notification channels opt out of it. The outbox owns retry because the outbox is the
+only layer that survives a restart, and two schedules stacked would multiply every attempt
+against an endpoint that is already struggling.
+
+### The notifier must not amplify a storm
+
+Ingest has dedup, flap suppression and a storm circuit breaker; the outbound side inherits none
+of them, and a storm that opens forty incidents would otherwise produce forty pages. Two
+controls, both pure functions in `Hephaisto.Core` for the reason `ActionBudget` is: a status
+page has to be able to answer "why did that not go out" with the identical arithmetic.
+
+The **first** message for a workload always goes out. A cooldown that could swallow the opening
+message would be a worse failure than the storm it prevents. The repeats are suppressed, counted
+on the row, and stated on the next message that does go out.
+
 ## Persistence: Postgres 17 + pgvector
 
 Four demands that rarely co-occur, all served by one process:

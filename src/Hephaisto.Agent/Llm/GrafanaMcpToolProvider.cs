@@ -201,13 +201,26 @@ public sealed class GrafanaMcpToolProvider(
                 var client = _client ??= await ConnectAsync(o, ct).ConfigureAwait(false);
                 var tools = await client.ListToolsAsync(cancellationToken: ct).ConfigureAwait(false);
 
-                var allowed = tools
-                    .Where(t => o.AllowedTools.Contains(t.Name, StringComparer.OrdinalIgnoreCase))
-                    .Cast<AIFunction>()
+                // Driven from AllowedTools, not from the server's list, so the surviving order
+                // is the one written here rather than whatever grafana-mcp happened to return.
+                // The option is documented as "in order" and until 2026-08-30 the code filtered
+                // instead (backlog #17's neighbour, #35), which made the ordering claim false in
+                // about the same number of lines it takes to make it true.
+                //
+                // Whether tool order influences selection at all is an UNVALIDATED hypothesis -
+                // nothing here measures it. That is the reason to make the code match the
+                // comment rather than to delete the comment: the eval harness exists now and
+                // can settle it, and an experiment cannot be run against a lever that does not
+                // exist.
+                var byName = tools.ToDictionary(x => x.Name, StringComparer.OrdinalIgnoreCase);
+
+                var allowed = o.AllowedTools
+                    .Where(byName.ContainsKey)
+                    .Select(name => (AIFunction)byName[name])
                     .ToArray();
 
                 var missing = o.AllowedTools
-                    .Where(name => !tools.Any(t => string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase)))
+                    .Where(name => !byName.ContainsKey(name))
                     .ToArray();
 
                 if (missing.Length > 0)

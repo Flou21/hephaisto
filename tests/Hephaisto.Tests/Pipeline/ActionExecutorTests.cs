@@ -6,6 +6,7 @@ using Hephaisto.Agent;
 using Hephaisto.Agent.Kubernetes;
 using Hephaisto.Agent.Persistence.Repositories;
 using Hephaisto.Agent.Pipeline;
+using Hephaisto.Agent.Observability;
 using Hephaisto.Core.Domain;
 using Hephaisto.Core.Policy;
 using Hephaisto.Tests.TestData;
@@ -47,6 +48,10 @@ public sealed class ActionExecutorTests : IDisposable
             api,
             actions,
             new ActionEventMirror(api, Given.Clock(), NullLogger<ActionEventMirror>.Instance),
+
+            // Unconfigured, which is the shipped default and makes SilenceAlert refuse before
+            // any call rather than after a failed one.
+            new NullAlertSilencer(),
             new PolicyStub(Given.Options()),
             metrics,
             Given.Clock(),

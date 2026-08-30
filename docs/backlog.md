@@ -587,6 +587,8 @@ not recurred since it was written. That is the difference between "tested" and "
 
 ### 14. `EscalateOnlyInvestigator` does not escalate
 
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** A class whose name and doc comment both promise an escalation, whose body performs
 none.
 
@@ -600,9 +602,28 @@ stack was never registered, which does not happen in any shipped configuration.
 
 **Size.** S.
 
+**Fixed 2026-08-30.** It delegates to `IncidentTriage.EscalateAsync` with
+`EscalationReason.InvestigationFailed` — chosen over `NoPlanProduced` because no plan was
+produced *for want of an investigation*, and the distinction is what tells a reader whether to
+look for a bad diagnosis or a missing model.
+
+It stopped being harmless in v0.3.0, which is why it was picked up now rather than left as a
+latent S. Escalation is the thing that reaches a person as of this release, so a fallback
+investigator that silently does nothing is the exact failure the milestone exists to remove —
+and the single configuration that reaches it, an install running with no model at all, is the
+one where every incident depends on it.
+
+**Not unit-tested, and that is worth stating rather than implying.** The class is `internal` and
+its collaborator is a concrete `IncidentTriage` with six dependencies; the honest test is the
+integration one asserting every path to `Escalated` leaves an outbox row, which now exists and
+covers the transition this produces. A test that constructed six substitutes to assert one
+delegation would be testing the mock.
+
 ---
 
 ### 33. Alertmanager signals lose their namespace when the alert labels it `k8s_namespace_name`
+
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
 
 **Symptom.** Every incident opened from a metric-derived alert has an empty namespace, so the
 incident card tells the model to investigate `Target: `//faulty-service``.
@@ -646,6 +667,22 @@ time a metric-derived incident was investigated deliberately rather than inciden
 
 **Size.** S for the label fallback; M to add a test over the real rule labels, which is the part
 that stops it regressing.
+
+**Fixed 2026-08-30, both halves.** `ResolveTarget` falls back through `namespace`,
+`exported_namespace` and now `k8s_namespace_name`.
+
+The half worth more is the test. `ShippedAlertRulesTests` now scans every shipped rule file for
+any identifier that *looks like* it names a namespace and fails if it is not one of the three the
+ingest reads — deliberately broad, because a pattern matching only the known spellings would
+assert nothing about the fourth one somebody adds next year. Verified by appending
+`sum by (pod_namespace_name)` to `slo-rules.yaml` and watching it go red.
+
+It was promoted from "worth fixing" to blocking by v0.3.0: notification routes filter on
+namespace, so an incident that arrives without one is now not merely awkward to investigate but
+impossible to route — it matches no namespace-scoped rule and reaches nobody, while the routing
+table looks entirely correct. `NotificationRouter` reports that case separately
+(`SuppressedByUnknownNamespace`) and the interceptor logs it by incident id, so the two halves
+fail loudly rather than quietly.
 
 ---
 
@@ -700,6 +737,8 @@ across restarts.
 
 ### 17. `hephaisto.kubernetes.watch_reconnects` bypasses the constants file
 
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** A metric emitted from a raw string literal rather than a shared constant.
 
 **Evidence.** `Kubernetes/KubernetesWatcherService.cs:92` calls
@@ -709,6 +748,16 @@ which is exactly the drift the constants file exists to prevent: *"the names are
 dashboard, an alert rule and the code that emits the metric cannot drift apart."*
 
 **Size.** S.
+
+**Fixed 2026-08-30.** The name is now `HephaistoTelemetry.Metrics.KubernetesWatchReconnects`
+and the watcher emits it from there.
+
+The entry calls this the drift the constants file exists to prevent, and understates it slightly:
+a metric emitted from a literal is invisible to the dashboard and the alert rules **by
+construction**, so it cannot drift back into agreement either. The metric is still uncharted and
+unalerted — a reconnect counter is worth a panel, since a watch that reconnects constantly is an
+agent that is intermittently blind and nothing else reports that — but it is at least now
+nameable from the file the dashboard reads.
 
 ### 18. Two audit event types are named and never written
 
@@ -740,6 +789,8 @@ remains open, since every policy verdict is already persisted on the action row 
 
 ### 19. `MaxAutoScaleReplicas` and `MaxAutoScaleStep` have no readers
 
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** Two policy knobs that look like configuration and behave like documentation.
 
 **Evidence.** Declared at `Core/Policy/PolicyOptions.cs:67,69`. `grep -rn` across `src/`, `tests/`,
@@ -756,7 +807,26 @@ needs a reader in `src/` in the same commit."* Two survived the sweep.
 
 ---
 
+**Resolved 2026-08-30 by deletion**, which is the half of "either wire them or delete them"
+that the code supports.
+
+They were documented as *"Ceiling for an unattended scale-up, and the maximum step size"*, and
+**there is no unattended scale-up**. `PolicyEngine` returns *"scaling changes capacity and cost,
+so it requires approval"* for `ScaleWorkload`, so it is never allow-eligible and every scale that
+happens has a person's name on it. Wiring a cap on unattended scaling would have built a control
+for a path that cannot occur — which is worse than the dead config it replaced, because it would
+*look* like a safety property while holding nothing up.
+
+Capping a human-approved scale is a different control with a different name, and it needs a
+`RequestedReplicas` on `ActionRequest` that does not exist. Filed here rather than built, so the
+next person meets the decision instead of the absence.
+
+Deleting them also removed a stray `<summary>` block that had been documenting
+`MaintenanceWindows` with these two properties' description.
+
 ### 35. `AllowedTools` is documented "in order", and the order is the server's
+
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
 
 **Symptom.** The allowlist reads as though it sets the order the model sees tools in. It does not.
 
@@ -783,7 +853,17 @@ plans an experiment against a lever that does not exist.
 
 ---
 
+**Fixed 2026-08-30** by making the code match the comment, which is what the entry asked for.
+The projection is driven from `AllowedTools` and looks each name up in what the server returned,
+rather than filtering the server's list — so the surviving order is the one written in the option.
+
+The entry's reasoning is the reason it was fixed this way rather than by editing the comment:
+whether tool order influences selection is an **unvalidated hypothesis**, the eval harness now
+exists to settle it, and an experiment cannot be run against a lever that does not exist.
+
 ### 36. The environment card never names a datasource uid, because nothing sets them
+
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
 
 **Symptom.** `EnvironmentCardOptions.DatasourceUids` is empty everywhere, so the prompt section
 that would say *"Datasource uids (pass these, not the names)"* is never rendered — and the model
@@ -808,6 +888,17 @@ They are not.
 **Size.** S to populate from the chart; the uids are stable per cluster.
 
 ---
+
+**Fixed 2026-08-30.** `grafanaMcp.datasourceUids` is a chart value rendering
+`Investigation__Environment__DatasourceUids__<name>`, with the `curl` that finds the uids in the
+comment beside it. It ships **empty**, which renders no section at all rather than an empty one —
+so an operator who does not set it pays one discovery call and nothing else, which is exactly the
+behaviour that let this go unnoticed.
+
+Worth restating what it buys: at a measured baseline of 7.5 steps and $0.080 per investigation,
+removing a `list_datasources` call from every investigation that touches Grafana is the cheapest
+step reduction available, and a fact the agent cannot look up is precisely what the environment
+card is for.
 
 ## Documentation asserting things that do not exist
 
@@ -890,6 +981,44 @@ exception of the incident's own cancellation.
 The token is a **separate Editor service account**, not grafana-mcp's Admin one: this is the only
 Grafana credential in the system that may write. `chaos_assert_annotations` checks them in the e2e
 using that same token, so `docs/verification.md`'s clause is now asserted rather than assumed.
+
+### 43. `GrafanaAnnotator.Describe` is documented as a startup line and has no caller
+
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
+**Symptom.** An operator who has not configured Grafana annotations is told nothing about it,
+by a mechanism whose own documentation says they are.
+
+**Evidence.** `Observability/GrafanaAnnotator.cs:42-46`, on `NullGrafanaAnnotator`, verbatim:
+
+> The absence is reported once at startup by `GrafanaAnnotator.Describe` rather than per
+> incident: a warning on every transition would train people to ignore the log on exactly the
+> installs that have chosen not to wire Grafana up.
+
+The reasoning is right and the method exists — `:109-121`, returning one of three sentences
+naming the missing key. `grep -rn "GrafanaAnnotator.Describe" src/ tests/` returns **nothing but
+that doc comment**. Nothing has ever called it.
+
+**Why it is still open.** It fails in the direction that looks fine, and it is invisible from
+both sides: the method is written, documented and correct, and the `Null*` fallback works
+exactly as intended. The only observable difference is a log line nobody knew to miss.
+
+**Why it matters more than a missing log line.** Every outbound integration in this codebase
+degrades silently when unconfigured, which is the right behaviour per call and a bad one
+overall — the failure mode of the whole feature is that nothing happens, and "nothing happened"
+looks identical whether it was never switched on or is broken. That is precisely the confusion
+v0.3.0 exists to remove, so shipping notifications on top of it would have been building the
+same trap one storey higher.
+
+**Size.** S.
+
+**Fixed 2026-08-30.** `OutboundStartupReport` is the caller, and it covers the notification
+channels too: `INotificationChannel.Describe()` is part of the interface rather than a
+convention, so a channel cannot be added without answering "what does this say at startup".
+It also reports when no routes are configured — at `Information`, not `Warning`, because
+shipping unable to notify is the deliberate default and warning about it every start would
+train people to ignore the line on exactly the installs that chose it — and at `Error` when a
+route names a channel that is not registered.
 
 ### 21. "The workflows have never run — there is no remote yet" is stale
 
@@ -997,9 +1126,14 @@ reading the code and wondering.
 Everything else fails closed with `outcome=unsupported` and nothing attempted.
 
 For `CordonNode` and `DrainNode` that is the correct permanent answer until someone binds
-their `ClusterRole`, which ships unbound on purpose. `SilenceAlert` needs an outbound HTTP
-client, and there is none anywhere in `src/`; it belongs with v0.3.0's notification stack,
-which introduces one.
+their `ClusterRole`, which ships unbound on purpose. `SilenceAlert` needs an outbound client
+bound to Alertmanager; it belongs with v0.3.0's notification stack.
+
+**Corrected 2026-08-30.** This entry read *"and there is none anywhere in `src/`"*, which was
+already wrong when it was written: `GrafanaAnnotator` has posted to Grafana through a client
+registered with `AddHttpClient` since the annotations landed in `v0.1.0-rc2`. What `SilenceAlert`
+is missing is the Alertmanager binding and the policy gate around it, not the ability to make a
+request. The same false claim was in `roadmap.md` and `README.md` and is corrected in all three.
 
 The two that matter are **`PatchResources` and `RollbackDeployment`**. `PatchResources` is the
 actual remediation for c4 (a bad image tag) and c7 (a missing secret ref) - the two fixtures
@@ -1014,6 +1148,8 @@ merge patch. **Size.** M each.
 
 ### 40. `PolicyResult` has no closed reason code, so the metric cannot say why
 
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 `hephaisto.policy.decisions` used to label on the verdict's first reason and now labels on
 `decision`, `action_type` and `downgraded` - see [#12](#12-unbounded-label-cardinality-on-hephaistogroundingrejected)
 for why the prose had to go.
@@ -1026,6 +1162,30 @@ from the string instead would be brittle in the one place brittleness is least a
 
 A change to every gate in the safety argument, so it wants its own commit and its own pass over
 `PolicyEngineTests`. **Size.** M.
+
+**Fixed 2026-08-30**, in its own commit and with its own pass over `PolicyEngineTests`, as the
+entry asked.
+
+`PolicyReasonCode` has 23 members — eighteen denials in the order the gates run, five downgrades
+— and `PolicyResult` carries a `Codes` list alongside `Reasons` plus a `PrimaryCode` for the
+label. The gates run cheapest-and-most-certain first, so the first code is both the most specific
+answer and the one a human would give.
+
+**Carried beside the human text at each site, never derived from it**, exactly as this entry
+insisted. The sites use a local `Deny(code, reason)` / `Downgrade(code, reason)` helper, so a
+sentence and its code cannot be added apart.
+
+The invariant that keeps it true is a test rather than a convention: a denial must have exactly
+one code per reason, none of them `None`, and all distinct. A future bare `denials.Add(...)`
+produces a count mismatch there instead of a metric that quietly attributes the denial to
+whichever gate happened to fire beside it.
+
+`ActionMetricsTests.A_policy_decision_carries_no_free_text` was the test asserting `reason` was
+absent, and it is updated rather than deleted: the label is back, and the assertion is now that
+its value is a `PolicyReasonCode` member. The dashboard's metric-contract panel is corrected too
+— it had been claiming `decision`, `reason`, `action_type`, `risk`, and the code emits
+`decision`, `action_type`, `downgraded`, `reason`, so the spec had drifted from the emitter in
+both directions at once.
 
 ### 41. c11 has never been run against a cluster
 
@@ -1069,3 +1229,68 @@ It is thin for `ScaleWorkload`, where the interesting question is whether the re
 what was asked for rather than merely whether the workload is happy, and it has nothing
 specific for a future `PatchResources`, where it should assert the patched field actually
 changed. Neither is wrong today; both would be better. **Size.** S each.
+
+---
+
+## Opened by v0.3.0
+
+Written down at the moment they were deferred, rather than discovered later by somebody
+reading the code and wondering.
+
+### 44. Nothing sweeps `AwaitingApproval`, so `ApprovalTimedOut` has no producer
+
+**Symptom.** `EscalationReason.ApprovalTimedOut` is a defined member of the enum and nothing in
+`src/` ever sets it. An incident that reaches `AwaitingApproval` and is never approved stays
+there indefinitely.
+
+**Evidence.** `grep -rn ApprovalTimedOut src/` finds the enum declaration and nothing else. There
+is no timer, no sweeper and no `BackgroundService` that looks at `AwaitingApproval` — the only
+transitions out of it are `BeginActing` (a human approved) and `Escalate` (a human denied).
+
+**Why it matters more after v0.3.0 than before it.** Until this release, an incident sitting in
+`AwaitingApproval` was visible in the console and nowhere else, which made it one of several
+things a person had to remember to look at. Now a card goes out saying *"approval required"* with
+a link — and if nobody clicks it, nothing happens and nothing says so again. That is *"escalated,
+and nobody was told"* in slow motion, which is the exact failure the whole milestone was built to
+remove, wearing a longer timescale.
+
+**Why it is still open.** Building it means deciding what a timeout *does*, and every answer is a
+policy question rather than an implementation. Re-notify — how often, and does that become the
+storm the outbound rate limit exists to prevent? Escalate — that is a state transition, so it
+needs a reason code, an audit row and a rule about whether a timed-out approval may still be
+approved afterwards. Auto-deny — absolutely not, but somebody will propose it.
+
+**Fix.** A sweeper with a configured window, most likely re-notifying once and then escalating
+with `ApprovalTimedOut`, which is what the enum member was reserved for. It wants its own
+decision rather than being appended to a release that was already about delivery.
+
+**Size.** M.
+
+### 45. Nothing has been delivered from a cluster
+
+**Symptom.** Every claim v0.3.0 makes is supported by unit and integration tests. None of it has
+been observed leaving a running agent.
+
+**Evidence.** 989 unit tests and 53 integration tests pass, including the transactional
+guarantee — an incident cannot reach a notifiable state without an outbox row, asserted against a
+real Postgres over all thirteen escalation reasons, and verified falsifiable by commenting out
+the enqueue and watching 15 tests go red. The `notify` e2e phase is written, wired into `PHASES`,
+and **has never been executed**: it needs a kind cluster and a Gemini key.
+
+**What is unverified** is everything the environment contributes: that the chart's env-var shape
+binds as `PolicyOptionsBindingTests`'s sibling says it does *in a pod*, that the dispatcher's
+poll behaves under a real connection, that the agent can reach an endpoint outside its namespace,
+and — the one that matters — that a queued delivery survives an actual process death rather than
+a rolled-back transaction.
+
+**Why it is still open.** Deliberate, and it is the same debt v0.2.0 ended on. The two now
+compound and are **one run**: `scripts/e2e/run.sh --mode Auto` exercises the executor that
+[#41](#41-c11-has-never-been-run-against-a-cluster) is waiting on, and every notification this
+release built fires on the outcomes that run produces. Doing them separately would mean setting
+up the same cluster twice.
+
+**Size.** S to run; unknown to fix whatever it finds. The v0.2.0 precedent is that running it
+once found three bugs.
+
+**Blocks:** claiming the v0.3.0 acceptance criterion is met.
+

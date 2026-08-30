@@ -23,6 +23,9 @@ public static class HephaistoTelemetry
         public const string ActionExecute = "hephaisto.action.execute";
         public const string Verification = "hephaisto.verification";
         public const string ToolPrefix = "hephaisto.tool.";
+
+        /// <summary>One attempt to hand one message to one channel.</summary>
+        public const string NotificationDeliver = "hephaisto.notification.deliver";
     }
 
     public static class Metrics
@@ -77,5 +80,41 @@ public static class HephaistoTelemetry
         /// the one a dashboard otherwise cannot answer.
         /// </remarks>
         public const string BuildInfo = "hephaisto.build.info";
+
+        /// <summary>
+        /// Kubernetes watch reconnects. A watch that reconnects constantly is an agent that is
+        /// intermittently blind, and nothing else reports that.
+        /// </summary>
+        /// <remarks>
+        /// Emitted from a raw string literal in the Kubernetes layer until 2026-08-30
+        /// (backlog #17), which is exactly the drift this file exists to prevent - the names
+        /// are shared so a dashboard, an alert rule and the code that emits the metric cannot
+        /// disagree, and one emitted from a literal is invisible to the other two by
+        /// construction.
+        /// </remarks>
+        public const string KubernetesWatchReconnects = "hephaisto.kubernetes.watch_reconnects";
+
+        /// <summary>Outbox rows written. Labelled by event and channel, both closed sets.</summary>
+        public const string NotificationsEnqueued = "hephaisto.notifications.enqueued";
+
+        /// <summary>
+        /// How each outbox row ended: <c>delivered</c>, <c>failed</c> or <c>suppressed</c>.
+        /// </summary>
+        /// <remarks>
+        /// <b>The <c>failed</c> series is the one that matters.</b> It counts the times nobody
+        /// was told, which is the worst outcome this system produces and the only one an
+        /// operator cannot discover by looking at the console - because the whole point of a
+        /// notification is that they were not looking.
+        /// </remarks>
+        public const string NotificationsDelivered = "hephaisto.notifications.delivered";
+
+        /// <summary>Enqueue to delivery, in seconds. How late the news was, not how slow the HTTP was.</summary>
+        public const string NotificationLatency = "hephaisto.notification.latency";
+
+        /// <summary>
+        /// Rows still pending. A number that climbs and does not come down means an endpoint is
+        /// down and the backlog is people who have not been told yet.
+        /// </summary>
+        public const string NotificationsPending = "hephaisto.notifications.pending";
     }
 }

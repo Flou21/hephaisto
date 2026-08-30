@@ -3,6 +3,7 @@ using Npgsql;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Hephaisto.Agent.Notifications;
 using Hephaisto.Agent.Options;
 using Hephaisto.Agent.Persistence.Repositories;
 using Hephaisto.Core.Abstractions;
@@ -41,8 +42,19 @@ public static class PersistenceServiceCollectionExtensions
 
         services.AddSingleton(new DatabaseRoles(connectionString, appConnectionString));
 
-        services.AddDbContext<HephaistoDbContext>(o =>
+        // Registered here rather than with the rest of the notification stream, so that the
+        // DbContext can always resolve it. Its options bind in AddHephaistoNotifications; if
+        // that stream is never added, IOptionsMonitor hands back a default with no routes and
+        // the interceptor leaves after one field read.
+        services.TryAddSingleton<NotificationEnqueueInterceptor>();
+
+        services.AddDbContext<HephaistoDbContext>((sp, o) =>
         {
+            // An outbox row and the state transition that caused it are written by ONE
+            // SaveChangesAsync. That is the whole guarantee: no ordering, no second commit, and
+            // no window in which the pod can die between an escalation and the news of it.
+            o.AddInterceptors(sp.GetRequiredService<NotificationEnqueueInterceptor>());
+
             o.UseNpgsql(appConnectionString ?? connectionString, npgsql =>
             {
                 npgsql.UseVector();
@@ -65,6 +77,7 @@ public static class PersistenceServiceCollectionExtensions
         services.AddScoped<IAuditRepository, AuditRepository>();
         services.AddScoped<IActionRepository, ActionRepository>();
         services.AddScoped<IAgentModeStore, AgentModeStore>();
+        services.AddScoped<INotificationOutbox, NotificationOutbox>();
 
         services.AddScoped<LlmBudgetService>();
         services.AddScoped<IncidentSearch>();

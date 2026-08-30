@@ -44,7 +44,13 @@ jobs:
         run: |
           set -euo pipefail
           dotnet tool restore
-          V=$(dotnet minver -t v -p main.0)
+          # ...and `-m` is not optional either, for the identical reason: the CLI does not read
+          # Directory.Build.props, so MinVerMinimumMajorMinor is invisible to it. Read out of
+          # the props file rather than hardcoded, so bumping the floor for a milestone cannot
+          # leave this line behind.
+          M=$(sed -n 's:.*<MinVerMinimumMajorMinor>\(.*\)</MinVerMinimumMajorMinor>.*:\1:p' \
+                Directory.Build.props | head -1)
+          V=$(dotnet minver -t v -p main.0 ${M:+-m "$M"})
           SEMVER="${V%%+*}"
 
           # On a tag, MinVer must produce exactly that tag. If it does not, the tag was pushed
@@ -70,7 +76,7 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with: { dotnet-version: '10.0.x' }
       - run: dotnet build -c Release -warnaserror
-      - run: scripts/ci-test.sh tests/Hephaisto.Tests/Hephaisto.Tests.csproj 600 Release
+      - run: scripts/ci-test.sh tests/Hephaisto.Tests/Hephaisto.Tests.csproj 900 Release
 
   chart-checks:
     runs-on: ubuntu-latest

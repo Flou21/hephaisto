@@ -400,6 +400,118 @@ everything after it is built.
 
 ---
 
+## v0.3.0 — it reaches people — **done, 2026-08-30**
+
+Before this release an escalation was a database row, an audit row, and a nudge to any browser
+tab that happened to be open. If nobody was looking, nobody was told. For a system whose pitch is
+autonomous remediation with a human backstop, that is the worst failure available, and a pod
+restart could cause it.
+
+### The premise was wrong, and checking it made the milestone smaller
+
+The roadmap, the README and backlog #39 all said there was **no outbound HTTP anywhere in
+`src/`** — no `AddHttpClient`, no notification package. `GrafanaAnnotator` had been POSTing to
+Grafana's `/api/annotations` through a client registered with `AddHttpClient` since
+`v0.1.0-rc2`.
+
+The correction was worth more than the time it saved. What was actually missing was a
+*notification stack*, not the ability to make a request — and that reframed the annotator from a
+counterexample into the **template**: conditional registration on config being present, a `Null*`
+no-op when it is not, a per-call timeout linked to the caller's cancellation token, a
+`Describe()` line at startup saying whether it is on and why not, and a doc-comment rule that
+nothing in it may fail an investigation. Every one of those is in `INotificationChannel` now
+because it was already in the file the plan called a counterexample.
+
+Corrected in its own commit before any code, which is the discipline backlog #7 established:
+doing it the other way round leaves a window in which the fix justifies the lie.
+
+### Four things that were silently inert, and one that was silently wrong
+
+The pattern from v0.2.0 repeated, which by now is less a surprise than a method.
+
+**`GrafanaAnnotator.Describe` had no caller.** Its own remarks say the absence of Grafana
+configuration *"is reported once at startup by `GrafanaAnnotator.Describe`"*. The method exists,
+is correct, and `grep -rn` across `src/` and `tests/` found nothing but that sentence. The
+reasoning behind it is right — a warning per incident would train people to ignore the log on
+exactly the installs that chose not to wire Grafana up — and the line was never emitted.
+
+It mattered more than a missing log line. **Every outbound integration here degrades silently
+when unconfigured**, which is correct per call and wrong overall: the failure mode of the whole
+feature is that nothing happens, and "nothing happened" looks identical whether it was never
+switched on or is broken. Shipping notifications on top of that would have built the same trap
+one storey higher. `OutboundStartupReport` is the caller now, and `Describe()` is on the
+`INotificationChannel` interface rather than a convention, so a channel cannot be added without
+answering what it says at startup.
+
+**`SilenceAlert` was allow-eligible.** It sat in the policy engine's `LowRisk` set, so an
+operator could have put it in `autoEnabledActionTypes` and had the agent silence its own alerts
+unattended. It satisfies every word of that set's description — cheap, reversible,
+single-object. What it fails is subtler and took reading the set's *purpose* rather than its
+definition: every other action on that list **fails visibly** when it is wrong. A bad restart
+shows up as a pod still crash-looping. A bad silence shows up as nothing at all, for as long as
+it lasts. It now has its own routing case and can never be automatic, and a test asserts that
+from the other side — auto-enabled, in `Auto` mode, still `RequireApproval`.
+
+**`Notifications:GrafanaUrl` had no reader**, caught before the commit that introduced it. It
+would have shipped as the third instance of backlog #19 in the same release that closed the first
+two, which is a good argument for the standing rule being a rule.
+
+**`alertmanager.maxDuration` was `2h`.** That is what every other duration in a Kubernetes values
+file looks like, and `TimeSpan.Parse` rejects it outright — the agent would have failed to start
+with a binding error naming a key nobody would connect to that line. `values.schema.json` now
+enforces the `hh:mm:ss` shape so `helm template` refuses it first.
+
+**`Math.Clamp` propagates `NaN`.** A jitter value from a random source could throw out of
+`TimeSpan` multiplication on the delivery path. Found by a test written to assert the clamp
+worked, not to find a bug in it.
+
+### The decision the milestone rests on
+
+Delivery could have been an enqueue call at each of the ten places an incident commits a
+transition. The reason it is not is that **the failure of that design was already in the
+codebase**: `IncidentTriage` reaches `Escalated` twice — the self-signal arm and the storm
+circuit breaker — and published no live event at all. Nobody had noticed, because nothing
+asserted it. The storm one is precisely the bulk case.
+
+`IncidentStateMachine.Transition` appends an `IncidentEvent` on every edge without exception;
+that is the log the audit trail is built from. A `SaveChanges` interceptor over those rows turns
+the property from a matter of diligence into a matter of construction: **an incident cannot reach
+a notifiable state without a delivery row, because one commit writes both.** The two silent
+triage paths were fixed the day it landed, without being touched.
+
+It costs three constraints, because it runs on every save in the process. It must be cheap — a
+stock install has no routes and leaves after one field read. It must not query — everything comes
+from the change graph already in memory, and an incident missing from it yields a thinner message
+rather than none, because "incident X escalated, look here" is enormously better than silence. And
+it must not throw: a notification bug that could roll back an incident write would be a far worse
+defect than the silence it was built to fix.
+
+### Two places where the honest answer was "no call at all"
+
+A **dry run of `SilenceAlert` sends nothing.** Every other action routes its dry run through the
+API server's own `dryRun=All`, which validates without mutating. Alertmanager has no equivalent,
+so the only honest dry run is not to ask — a "validated" silence that actually silenced something
+would make DryRun a liar about the one action whose entire effect is to hide things.
+
+The **Teams `Describe()` prints scheme and host only.** A Workflows trigger URL is a bearer
+credential in a query string; the thing every other channel here can safely do, print its
+configured URL, would write a live credential into the pod log.
+
+### What is still not claimed
+
+**Nothing has been delivered from a cluster.** 989 unit tests and 53 integration tests pass,
+including the transactional guarantee asserted against a real Postgres over all thirteen
+escalation reasons — and verified falsifiable, the way `IncidentMetricsTests` was, by commenting
+out the enqueue and watching 15 tests go red. The `notify` e2e phase is written and wired and has
+never been executed.
+
+That is the same debt v0.2.0 ended on, and the two now compound. They are also **one run**:
+`--mode Auto` exercises the executor #41 is waiting on, and every notification this release built
+fires on the outcomes that run produces. Filed as #45 rather than left implied.
+
+The v0.2.0 precedent is the reason not to round this off: running that acceptance test once found
+three bugs, and every one of them needed a cluster to find.
+
 ## Resolved open items
 
 Items that spent time on the open list and are now closed. Kept with their original reasoning,
