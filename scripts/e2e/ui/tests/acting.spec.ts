@@ -62,7 +62,12 @@ test.describe('acting', () => {
       break;
     }
 
-    test.skip(withPlan === null, 'no incident in this run produced a plan');
+    // Not a skip, for the same reason as the spec below: a run in which nothing produced a
+    // plan did not exercise this contract, and a phase that tested nothing must not be green.
+    // The two specs share this precondition, so they must share its verdict - one skipping
+    // while the other failed would make the report disagree with itself.
+    expect(withPlan, 'no incident in this run produced a plan, so the approval controls were never rendered')
+      .not.toBeNull();
 
     await open(page, `/incidents/${withPlan!.id}`);
 
@@ -76,27 +81,69 @@ test.describe('acting', () => {
     await expect(page.getByTestId('action-state').first()).toBeVisible();
   });
 
-  test('approve is disabled until someone says who they are', async ({ page }) => {
+  /**
+   * This spec used to `test.skip` when nothing was awaiting approval, which in the default mode
+   * is *always* - Observe denies at the kill-switch gate, long before the risk routing that
+   * would ever produce an approval. So the suite could not exit 0 in the mode it ships in, and
+   * `ui/run.sh` correctly refused to call a run with a skip in it green. See docs/backlog.md #46.
+   *
+   * Relaxing the `skipped != 0` rule was not an option - that rule is the whole fix for #1, and
+   * it is worth more than this spec. So the spec asserts the contract in BOTH directions
+   * instead, and the branch it takes is decided by the API rather than by the mode:
+   *
+   *   - approval offered  -> it must require a name before it will act
+   *   - none offered      -> the console must not be showing anyone a button to authorise
+   *                          something the policy engine already refused
+   *
+   * The second half is not a consolation assertion. In Observe it is the more important of the
+   * two: an approve button on a page where every action was denied would be an invitation to
+   * authorise something the agent is not permitted to do.
+   */
+  test('approval is offered only where policy asked for it, and it requires a name', async ({ page }) => {
     const res = await page.request.get('/api/incidents?limit=100');
+    expect(res.ok()).toBeTruthy();
+
     const incidents = await res.json();
 
-    let target: string | null = null;
+    let awaiting: string | null = null;
+    let anyPlan: string | null = null;
 
     for (const summary of incidents) {
       const detail = await page.request.get(`/api/incidents/${summary.id}`);
       if (!detail.ok()) continue;
 
       const body = await detail.json();
-      const awaiting = (body.investigations ?? []).flatMap(
-        (i: { plan?: { actions?: { state: string }[] } }) => i.plan?.actions ?? [])
-        .some((a: { state: string }) => a.state === 'AwaitingApproval');
+      const actions = (body.investigations ?? []).flatMap(
+        (i: { plan?: { actions?: { state: string }[] } }) => i.plan?.actions ?? []);
 
-      if (awaiting) { target = summary.id; break; }
+      if (actions.length === 0) continue;
+      anyPlan ??= summary.id;
+
+      if (actions.some((a: { state: string }) => a.state === 'AwaitingApproval')) {
+        awaiting = summary.id;
+        break;
+      }
     }
 
-    test.skip(target === null, 'no action is awaiting approval in this run');
+    // Not a skip. If nothing in this run produced a plan at all then this spec examined
+    // nothing, and saying so out loud is the point of #1's rule - a phase that tested nothing
+    // must not report green. Naming the precondition is what stops the next reader debugging
+    // the approval control instead of the run that fed it.
+    expect(anyPlan, 'no incident in this run produced a plan, so the approval contract was never exercised')
+      .not.toBeNull();
 
-    await open(page, `/incidents/${target}`);
+    if (awaiting === null) {
+      await open(page, `/incidents/${anyPlan}`);
+
+      // Anchored on a rendered plan, so this cannot pass by finding an empty page.
+      await expect(page.getByTestId('action-state').first()).toBeVisible();
+
+      await expect(page.getByTestId('approve')).toHaveCount(0);
+      await expect(page.getByTestId('deny')).toHaveCount(0);
+      return;
+    }
+
+    await open(page, `/incidents/${awaiting}`);
 
     // approved_by is the only record of who authorised a change to the cluster. It is
     // attribution rather than authentication until OIDC lands, and an empty one would make

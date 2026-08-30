@@ -45,7 +45,14 @@ test.describe('the console', () => {
     // rendering correctly.
     const res = await page.request.get('/api/incidents?limit=100');
     const withDiagnosis = (await res.json()).filter((i: { hasDiagnosis: boolean }) => i.hasDiagnosis);
-    test.skip(withDiagnosis.length === 0, 'no incident has been investigated yet');
+    // Not a skip. `ui/run.sh` fails the phase on any skip at all - that is #1's fix and it is
+    // load-bearing - so a spec that opts out on a missing precondition takes the whole phase
+    // down with it while reporting nothing about why. The earlier `validate` phase has already
+    // asserted that diagnoses exist by the time this runs, so reaching this line means
+    // something upstream broke, and saying that is more useful than skipping.
+    expect(withDiagnosis.length,
+      'no incident has been investigated, so there is no diagnosis for the console to show')
+      .toBeGreaterThan(0);
 
     await open(page, `/incidents/${withDiagnosis[0].id}`);
 

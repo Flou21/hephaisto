@@ -1359,6 +1359,9 @@ not create. Both are covered by unit tests and neither is on the critical path.
 
 ### 46. The console suite cannot pass in Observe, so a green run needs `--mode Auto`
 
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because
+these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** `scripts/e2e/run.sh` in its default mode always fails the `ui` phase, on every run,
 regardless of the code under test.
 
@@ -1381,6 +1384,30 @@ that one spec be conditional in a way the phase does not count as a skip. **Do n
 `skipped != 0` rule - that rule is #1's whole fix, and it is worth more than this spec.
 
 **Size.** S. **Blocks:** `run.sh` ever exiting 0 in its default mode.
+
+**Fixed 2026-08-30.** Neither of the two options in the paragraph above, in the end. Seeding an
+`AwaitingApproval` action turned out to have nothing to build on - there is no seeding path in
+either mode, because `--mode Auto` auto-enables only `RestartPod`, which the autonomy gate routes
+straight to `Approved`; any approval at all depends on the model proposing some other action type,
+which is not something a gate can rely on. And making the spec "conditional in a way the phase does
+not count as a skip" is the same hole as #1 wearing different clothes.
+
+So the spec asserts the contract in both directions instead, and the API decides which branch it
+takes rather than the mode. Where an approval is offered, it must require a name before it will
+act. Where none is offered, the console must be showing nobody a button to authorise something the
+policy engine already refused - which in Observe, where every action is denied at the kill-switch
+gate, is the more valuable of the two assertions. It is anchored on a rendered action row, so it
+cannot pass by finding an empty page, and it was verified falsifiable: asserting one approve
+control instead of zero turns it red.
+
+Two further skips went with it, for consistency rather than because they were failing. Both
+`acting.spec.ts`'s plan precondition and `console.spec.ts`'s diagnosis precondition now fail with
+a sentence naming what was missing, instead of opting out and taking the phase down silently -
+the same condition must not make one spec skip while another fails. **There is no `test.skip` left
+in the suite.**
+
+Fixing this exposed the failure behind it, which was not this one and was not a product bug
+either: see [#48](#48-the-console-suite-interacts-with-a-page-the-circuit-has-not-taken-over-yet).
 
 ### 47. The act phase reports two failures that are consequences of the first
 
