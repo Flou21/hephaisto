@@ -182,13 +182,30 @@ public enum ActionState
 /// </summary>
 public enum ApprovalSource
 {
+    /// <summary>
+    /// Nobody approved this, and nobody was supposed to. The zero value, deliberately.
+    /// </summary>
+    /// <remarks>
+    /// <c>Ui</c> used to be zero, and <c>ActionPlan.ApprovalSource</c> is never set on the
+    /// denial path - so every action the policy engine refused was written to the database
+    /// reading "a human typed a name into the console", for actions no human ever saw. The
+    /// first eight-fixture e2e run produced two of them. <c>approved_by</c> was correctly
+    /// null on the same rows, so nothing was unsafe; it was the audit trail saying something
+    /// untrue, which is the one place where misleading is worse than absent.
+    /// </remarks>
+    NotApplicable = 0,
+
     /// <summary>Free-text name typed into the Blazor UI. Attribution, not authentication.</summary>
-    Ui = 0,
-    Api = 1,
+    Ui = 1,
+
+    /// <summary>Free-text name posted to the HTTP API. Attribution, not authentication.</summary>
+    Api = 2,
+
     /// <summary>Executed by policy under L3 autonomy. ApprovedBy is <c>hephaisto/auto</c>.</summary>
-    Auto = 2,
+    Auto = 3,
+
     /// <summary>Reserved for the OIDC upgrade; populated from a verified claim.</summary>
-    Oidc = 3,
+    Oidc = 4,
 }
 
 /// <summary>

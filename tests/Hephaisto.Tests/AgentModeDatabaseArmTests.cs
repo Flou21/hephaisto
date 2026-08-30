@@ -52,11 +52,10 @@ public sealed class AgentModeDatabaseArmTests
             NullLogger<KillSwitch>.Instance);
     }
 
-    private static AgentModeRow Row(bool latched = false, AgentMode column = AgentMode.Observe) =>
+    private static AgentModeRow Row(bool latched = false) =>
         new()
         {
             Id = AgentModeRow.SingletonId,
-            Mode = column,
             RunawayLatched = latched,
             LatchReason = latched ? "spend runaway" : null,
             ChangedAt = DateTimeOffset.UnixEpoch,
@@ -74,18 +73,19 @@ public sealed class AgentModeDatabaseArmTests
     }
 
     [Fact]
-    public async Task The_seeded_mode_column_is_ignored_whatever_it_says()
+    public async Task The_row_cannot_express_a_mode_at_all()
     {
-        // The column is vestigial. Neither its seeded value nor a stale hand-written one may
-        // move the mode - otherwise the "GitOps decides" property holds only until someone has
-        // once run an UPDATE.
-        foreach (var column in new[] { AgentMode.Off, AgentMode.Observe, AgentMode.DryRun, AgentMode.Auto })
-        {
-            var resolved = await Build(Row(column: column), envMode: "DryRun")
-                .ResolveAsync(CancellationToken.None);
+        // agent_mode.mode is GONE, dropped in the ActingSchema migration, so "the column is
+        // ignored" is now structural rather than something this test has to police. What is
+        // left to pin is that the row carries no way to say anything about the mode - if a
+        // column like it ever comes back, the arm has to stay silent about it.
+        typeof(AgentModeRow).GetProperties()
+            .Select(p => p.PropertyType)
+            .Should().NotContain(typeof(AgentMode), "the database does not decide the mode; the Helm values do");
 
-            resolved.Effective.Should().Be(AgentMode.DryRun, $"the column said {column} and must not be consulted");
-        }
+        var resolved = await Build(Row(), envMode: "DryRun").ResolveAsync(CancellationToken.None);
+
+        resolved.Effective.Should().Be(AgentMode.DryRun);
     }
 
     [Fact]
@@ -117,8 +117,7 @@ public sealed class AgentModeDatabaseArmTests
     {
         // The direction that matters. An operator who sets Observe in the chart to stop an
         // agent must actually stop it, whatever any row says.
-        var resolved = await Build(Row(column: AgentMode.Auto), envMode: "Observe")
-            .ResolveAsync(CancellationToken.None);
+        var resolved = await Build(Row(), envMode: "Observe").ResolveAsync(CancellationToken.None);
 
         resolved.Effective.Should().Be(AgentMode.Observe);
     }

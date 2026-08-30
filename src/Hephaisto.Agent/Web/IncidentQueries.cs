@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using Hephaisto.Agent.Llm;
 using Hephaisto.Agent.Persistence;
 using Hephaisto.Agent.Persistence.Repositories;
+using Hephaisto.Agent.Pipeline;
 using Hephaisto.Agent.Safety;
 using Hephaisto.Core;
 using Hephaisto.Core.Abstractions;
@@ -603,6 +604,169 @@ public sealed class IncidentQueries(
     }
 
     /// <summary>
+    /// Approves or denies a single proposed action, and executes it if approved.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Approving goes through <see cref="IActionExecutor"/>, which goes through
+    /// <see cref="IActionRepository.TryAdmitActionAsync"/>. That is not a style preference:
+    /// the budget check, the cooldown check, the kill-switch check and the INSERT are one
+    /// Serializable transaction, and a component that wrote <c>State = Executed</c> and called
+    /// the Kubernetes API itself would bypass every one of them. Components/README.md has said
+    /// so since before there was anything to approve.
+    /// </para>
+    /// <para>
+    /// The approval is recorded and committed BEFORE the action runs, so an execution can
+    /// never exist without the row saying who authorised it.
+    /// </para>
+    /// </remarks>
+    public async Task<ApprovalResult> DecideActionAsync(
+        Guid incidentId,
+        Guid actionId,
+        bool approve,
+        string decidedBy,
+        ApprovalSource source,
+        CancellationToken ct)
+    {
+        var actor = decidedBy?.Trim() ?? string.Empty;
+        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+
+        // A model must not be able to approve its own plan by putting a name in a field. The
+        // state machine already refuses these as granters of a Resolved; approval is the same
+        // question one step earlier.
+        if (IncidentStateMachine.IsForbiddenGranter(actor))
+        {
+            return new ApprovalResult
+            {
+                Outcome = ApprovalOutcome.ForbiddenActor,
+                Detail = $"'{actor}' is a model identity and may not approve an action.",
+            };
+        }
+
+        await using var scope = scopes.CreateAsyncScope();
+        var sp = scope.ServiceProvider;
+
+        var db = sp.GetRequiredService<HephaistoDbContext>();
+        var audit = sp.GetRequiredService<IAuditRepository>();
+
+        var action = await db.AgentActions.FirstOrDefaultAsync(
+            a => a.Id == actionId && a.IncidentId == incidentId, ct);
+
+        if (action is null)
+        {
+            return new ApprovalResult { Outcome = ApprovalOutcome.NotFound };
+        }
+
+        if (action.State != ActionState.AwaitingApproval)
+        {
+            // Covers the double-click and the two-operators race. Deliberately not idempotent-
+            // silent: "already approved" and "approved" must not look the same to whoever is
+            // pressing the button during an incident.
+            return new ApprovalResult
+            {
+                Outcome = ApprovalOutcome.NotAwaitingApproval,
+                Detail = $"This action is {action.State}, not awaiting approval.",
+            };
+        }
+
+        var incident = await db.Incidents
+            .Include(i => i.Events)
+            .FirstOrDefaultAsync(i => i.Id == incidentId, ct);
+
+        if (incident is null)
+        {
+            return new ApprovalResult { Outcome = ApprovalOutcome.NotFound };
+        }
+
+        var eventsBefore = incident.Events.Count;
+
+        if (!approve)
+        {
+            action.State = ActionState.Denied;
+            action.ApprovedBy = null;
+            action.ApprovalSource = ApprovalSource.NotApplicable;
+            action.DecisionReasons = [.. action.DecisionReasons, $"denied by {actor}"];
+
+            sp.GetRequiredService<IncidentStateMachine>()
+                .Escalate(incident, EscalationReason.PolicyDenied, $"{action.Type} denied by {actor}");
+
+            db.TrackNewIncidentChildren(incident, eventsBefore);
+
+            audit.Enlist(new AuditEvent
+            {
+                At = clock.UtcNow,
+                Type = "action.refused",
+                IncidentId = incidentId,
+                ActionId = actionId,
+                Actor = actor,
+                Summary = $"{action.Type} denied by a human",
+            });
+
+            await db.SaveChangesAsync(ct);
+
+            notifier.Publish(new IncidentLiveEvent
+            {
+                IncidentId = incidentId,
+                Kind = IncidentLiveEventKind.StateChanged,
+                State = incident.State,
+                Detail = $"{action.Type} denied by {actor}",
+            });
+
+            return new ApprovalResult { Outcome = ApprovalOutcome.Denied, Detail = $"{action.Type} denied." };
+        }
+
+        action.State = ActionState.Approved;
+        action.ApprovedBy = actor;
+        action.ApprovalSource = source;
+        action.ApprovedAt = clock.UtcNow;
+
+        sp.GetRequiredService<IncidentStateMachine>()
+            .BeginActing(incident, $"{action.Type} approved by {actor}");
+
+        db.TrackNewIncidentChildren(incident, eventsBefore);
+
+        audit.Enlist(new AuditEvent
+        {
+            At = clock.UtcNow,
+            Type = "action.approved",
+            IncidentId = incidentId,
+            ActionId = actionId,
+            Actor = actor,
+            Summary = $"{action.Type} approved via {source}",
+        });
+
+        await db.SaveChangesAsync(ct);
+
+        // Only now. Admission re-reads the kill switch and every budget inside its own
+        // transaction, so this cannot be the thing that authorises it - but the row saying a
+        // human said yes is durable before anything touches the cluster.
+        var result = await sp.GetRequiredService<IActionExecutor>()
+            .ExecuteAsync(action, ct)
+            .ConfigureAwait(false);
+
+        notifier.Publish(new IncidentLiveEvent
+        {
+            IncidentId = incidentId,
+            Kind = IncidentLiveEventKind.StateChanged,
+            State = incident.State,
+            Detail = $"{action.Type}: {result.Outcome}",
+        });
+
+        logger.LogInformation(
+            "{Action} on incident {IncidentId} approved by {Actor} via {Source}: {Outcome}",
+            action.Type, incidentId, actor, source, result.Outcome);
+
+        return new ApprovalResult
+        {
+            Outcome = result.Outcome == ActionExecutionOutcome.Executed
+                ? ApprovalOutcome.Executed
+                : ApprovalOutcome.ExecutionRefused,
+            Detail = result.Detail ?? $"{action.Type} {result.Outcome}",
+            DryRun = result.DryRun,
+        };
+    }
+
+    /// <summary>
     /// Clears the runaway latch, restoring whatever mode the deployment already grants.
     /// </summary>
     /// <remarks>
@@ -843,6 +1007,36 @@ public enum ReinvestigateOutcome
 
     /// <summary>The kill switch is Off.</summary>
     Disabled = 5,
+}
+
+/// <summary>What happened to an approve or deny request.</summary>
+public enum ApprovalOutcome
+{
+    Executed = 0,
+
+    Denied = 1,
+
+    NotFound = 2,
+
+    /// <summary>Already decided, or never awaiting a decision. Covers the double-click.</summary>
+    NotAwaitingApproval = 3,
+
+    /// <summary>Approved, and then admission or the API call refused it.</summary>
+    ExecutionRefused = 4,
+
+    /// <summary>A model identity tried to approve a plan.</summary>
+    ForbiddenActor = 5,
+}
+
+public sealed record ApprovalResult
+{
+    public required ApprovalOutcome Outcome { get; init; }
+
+    public string? Detail { get; init; }
+
+    public bool DryRun { get; init; }
+
+    public bool Accepted => Outcome is ApprovalOutcome.Executed or ApprovalOutcome.Denied;
 }
 
 /// <summary>Whether clearing the runaway latch did anything.</summary>

@@ -44,6 +44,18 @@ public sealed class IncidentStateMachine(IClock clock)
 
     private static readonly string[] ForbiddenGranters = [ModelActor, "model", "llm", "gemini", "hephaisto/llm"];
 
+    /// <summary>
+    /// Whether an actor name is a model identity, and therefore may not grant anything.
+    /// </summary>
+    /// <remarks>
+    /// Exposed because approving an action asks the same question one step earlier than
+    /// resolving an incident does, and the two must not be able to disagree about who counts
+    /// as a model. Free text either way - this is attribution, not authentication - but the
+    /// obvious way to launder a model decision into a human one should not be the easy one.
+    /// </remarks>
+    public static bool IsForbiddenGranter(string? actor) =>
+        actor is not null && ForbiddenGranters.Contains(actor.Trim(), StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Detected -&gt; Triaging. Dedup, suppression and scope checks happen inside triage.</summary>
     public IncidentEvent Triage(Incident incident, string reason) =>
         Transition(incident, [IncidentState.Detected], IncidentState.Triaging, reason);

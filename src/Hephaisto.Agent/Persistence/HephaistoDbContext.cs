@@ -594,13 +594,14 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
             e.ToTable("agent_mode");
             e.HasKey(m => m.Id);
 
-            // Seeded so the kill switch has a defined answer on a fresh database. Observe,
-            // because an agent whose mode cannot be determined must not be able to act -
-            // the same direction the env var and ConfigMap arms fail in.
+            // Seeded so the row exists, and so its ABSENCE stays meaningful: the kill switch
+            // reads a missing row as Unreadable and floors the agent at Observe, on the
+            // grounds that the only way to lose a seeded row is a truncated or half-restored
+            // database. A row that is simply present and unlatched says nothing about the
+            // mode - that is the Helm value's job, on the env and ConfigMap arms.
             e.HasData(new AgentModeRow
             {
                 Id = AgentModeRow.SingletonId,
-                Mode = AgentMode.Observe,
                 RunawayLatched = false,
                 ChangedBy = "hephaisto/system",
                 ChangedAt = DateTimeOffset.UnixEpoch,

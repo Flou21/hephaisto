@@ -620,13 +620,30 @@ else
                 {
                     var plan = inv.Plan;
 
+                    @* The banner used to say "observe mode, nothing was executed" unconditionally,
+                       which stopped being true the moment an executor existed. It now reads the
+                       actions themselves rather than asserting a mode. *@
+                    var executed = plan.Actions.Any(a => a.ExecutedAt is not null && !a.DryRun);
+                    var awaiting = plan.Actions.Any(a => a.State == ActionState.AwaitingApproval);
+
                     <div class="hp-plan-banner">
                         <span class="glyph">!</span>
-                        <strong>Would have done this — observe mode, nothing was executed.</strong>
+                        @if (executed)
+                        {
+                            <strong>This was executed against the cluster.</strong>
+                        }
+                        else if (awaiting)
+                        {
+                            <strong>Waiting for a human. Nothing has been executed.</strong>
+                        }
+                        else
+                        {
+                            <strong>Would have done this — nothing was executed.</strong>
+                        }
                         <span class="hp-muted">
                             The planning model holds no tools and emits JSON against a schema; execution
-                            is separate C# over a closed action vocabulary. Everything below is inert
-                            data that the policy engine judged.
+                            is separate C# over a closed action vocabulary. Every action below was judged
+                            by the policy engine before anything could touch it.
                         </span>
                     </div>
 
@@ -710,7 +727,7 @@ else
                                                     }
                                                 </ul>
                                             }
-                                            <div class="hp-muted mono hp-exec">
+                                            <div class="hp-muted mono hp-exec" data-testid="action-state">
                                                 state @action.State
                                                 @if (action.ExecutedAt is { } at)
                                                 {
@@ -720,7 +737,45 @@ else
                                                 {
                                                     <text> · never executed</text>
                                                 }
+                                                @if (action.ApprovedBy is { Length: > 0 } approver)
+                                                {
+                                                    <text> · by @approver (@action.ApprovalSource)</text>
+                                                }
                                             </div>
+
+                                            @if (action.State == ActionState.AwaitingApproval)
+                                            {
+                                                @* Goes through IncidentQueries, which goes through
+                                                   TryAdmitActionAsync. A component must never write
+                                                   State or call Kubernetes itself: the budget, cooldown
+                                                   and kill-switch checks and the INSERT are one
+                                                   transaction, and this is the seam that respects it. *@
+                                                <div class="hp-retry-controls" data-testid="approval">
+                                                    <input class="hp-retry-name" placeholder="your name"
+                                                           aria-label="your name"
+                                                           data-testid="approval-actor"
+                                                           @bind="_approvalActor" @bind:event="oninput" />
+                                                    <button type="button" class="hp-submit"
+                                                            data-testid="approve"
+                                                            disabled="@(_deciding is not null || string.IsNullOrWhiteSpace(_approvalActor))"
+                                                            @onclick="() => DecideAsync(action.Id, true)">
+                                                        @(_deciding == action.Id ? "…" : "approve")
+                                                    </button>
+                                                    <button type="button" class="hp-submit"
+                                                            data-testid="deny"
+                                                            disabled="@(_deciding is not null || string.IsNullOrWhiteSpace(_approvalActor))"
+                                                            @onclick="() => DecideAsync(action.Id, false)">
+                                                        deny
+                                                    </button>
+                                                </div>
+                                            }
+
+                                            @if (_decisionMessages.TryGetValue(action.Id, out var message))
+                                            {
+                                                <span class="@(message.Ok ? "hp-yes" : "hp-error")">
+                                                    <span class="glyph">@(message.Ok ? "+" : "!!")</span> @message.Text
+                                                </span>
+                                            }
                                         </td>
                                     </tr>
                                 }
@@ -864,6 +919,10 @@ else
     private const string NameStorageKey = "hephaisto.feedback.name";
 
     private bool _retrying;
+
+    private string? _approvalActor;
+    private Guid? _deciding;
+    private readonly Dictionary<Guid, (bool Ok, string Text)> _decisionMessages = [];
     private string? _retryError;
     private string? _retryMessage;
 
@@ -1184,6 +1243,47 @@ else
             await _cts.CancelAsync();
             _cts.Dispose();
             _cts = null;
+        }
+    }
+
+    /// <summary>
+    /// Approves or denies one proposed action.
+    /// </summary>
+    /// <remarks>
+    /// Calls the query layer, which admits the action through the same Serializable
+    /// transaction everything else does and only then executes. This method deliberately does
+    /// not touch ActionState, and must not: a component that set it would skip the budget,
+    /// the cooldown and the kill switch, on the one path where losing that race means an
+    /// unintended write.
+    /// </remarks>
+    private async Task DecideAsync(Guid actionId, bool approve)
+    {
+        if (string.IsNullOrWhiteSpace(_approvalActor) || _deciding is not null)
+        {
+            return;
+        }
+
+        _deciding = actionId;
+        _decisionMessages.Remove(actionId);
+
+        try
+        {
+            var result = await Queries.DecideActionAsync(
+                Id, actionId, approve, _approvalActor, ApprovalSource.Ui,
+                _cts?.Token ?? CancellationToken.None);
+
+            _decisionMessages[actionId] = (result.Accepted, result.Detail ?? result.Outcome.ToString());
+
+            await Js.InvokeVoidAsync("hephaisto.storageSet", "hephaisto.name", _approvalActor);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _decisionMessages[actionId] = (false, ex.Message);
+        }
+        finally
+        {
+            _deciding = null;
         }
     }
 }
