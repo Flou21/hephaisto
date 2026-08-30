@@ -640,10 +640,10 @@ Roughly in order of value:
   exists now: a channel is a `Name`, a `Describe()` and a `SendAsync` returning a
   `DeliveryResult`, with the outbox, routing, retry and rate limiting already behind it. Slack's
   incoming webhooks are the cheapest of the three.
-- **Interactive in-card approval**, with the inbound signature verification it requires. Worth
-  reading [#44](backlog.md#44-nothing-sweeps-awaitingapproval-so-approvaltimedout-has-no-producer)
-  first: an approval nobody acts on is the failure that matters, and a sweeper is cheaper than a
-  bot.
+- **Interactive in-card approval** — approve a `restart_pod` from the Teams card it arrived in,
+  rather than following a link. Possible, and it is the payoff that joins this project's
+  notification and approval halves; it is also the one item on this menu that changes the
+  security posture rather than extending it. Written up below.
 - **Change correlation** — "this started 4 minutes after the rollout of `x:sha`".
 - **Postmortem generation**, drawing on the digest index for "this has happened N times".
 - **Leading indicators** — PVC fill projection, memory trending to limit, cert expiry, HPA pinned at
@@ -657,6 +657,89 @@ Roughly in order of value:
 - Chaos self-testing, natural-language history queries, Pyroscope, multi-cluster.
 - **Cheaper LLM providers**, Gemini Flash is a bit too expensive for rapid development and testing so a cheaper LLM solution should be searched
 - **More expensive LLM providers**, Gemini Flash is pretty solid, but for real production usage a model like Opus or Fable are more appropriate
+
+### Interactive in-card approval — what it would actually cost
+
+The payoff is obvious: an escalation arrives in Teams, and the person who reads it approves the
+restart without leaving the conversation. v0.3.0 deliberately shipped a **link** instead, and
+that decision is worth revisiting only with the price written down, because the price is not the
+card.
+
+**The card is the easy part.** An Adaptive Card supports `Action.Submit` today, and the payload
+Hephaisto already builds would need one more element. Nothing in `TeamsNotificationChannel`
+resists this — there is a test asserting no `Action.Submit` exists anywhere in the card, and it
+exists to make removing it a decision rather than a detail.
+
+**The hard part is that Hephaisto would have to accept an inbound call from outside the
+cluster.** Today its only inbound route is `/webhooks/alertmanager`, and the comment on it is
+unusually blunt:
+
+> That means the NetworkPolicy is load-bearing, not defence in depth. If it is ever removed or
+> the pod is exposed through an Ingress, anything on the network can inject signals — which is a
+> way to make the agent investigate whatever an attacker names, and in a future non-observe mode,
+> to steer what it acts on. **Do not add an Ingress for /webhooks.**
+
+Every interactive path requires Hephaisto to be reachable from Microsoft's side, which inverts
+that posture. Doing it safely is a piece of security work, not a feature increment — which is
+the whole reason v0.3.0 linked out.
+
+#### Two mechanisms, and only one of them is cheap
+
+**A — Power Automate holds the interaction.** The flow posts the card with
+*"Post adaptive card and wait for a response"*, blocks, and on a click calls Hephaisto's existing
+`POST /api/incidents/{id}/actions/{actionId}/approve`. Teams never talks to Hephaisto; the flow
+does.
+
+This is the cheap option and it has one genuinely useful property: **unlike Alertmanager, a Power
+Automate HTTP action can set headers.** The whole reason `/webhooks` is unauthenticated is that
+Alertmanager cannot send a credential — that constraint simply does not apply here, so the new
+route can require a bearer token from a Secret and be a normal authenticated endpoint rather than
+a second network-layer-only one. The exposure narrows to one authenticated path.
+
+The costs are a flow that holds state for the life of an approval (with its own timeout, which
+must not silently disagree with [#44](backlog.md#44-nothing-sweeps-awaitingapproval-so-approvaltimedout-has-no-producer)'s),
+and Hephaisto being routable from Azure at all — an Ingress, or a tunnel.
+
+**B — a registered bot.** Azure Bot Service, an Entra app registration, a Teams app package, and
+Bot Framework JWT validation on an invoke endpoint. This is the only path to **Universal Actions
+/ `Action.Execute`**, and therefore the only one that can *refresh the card in place*. Full-fat,
+and a much larger surface.
+
+#### The problem nobody thinks of first: stale cards
+
+A card is delivered to a channel, and it stays there. Three people can open the same
+already-approved action and press the button, and the second and third presses need to do
+something sensible rather than something alarming.
+
+The API is close to ready for this — `ReArmAsync` already sets the precedent with
+`ReArmOutcome.NotLatched`, on the reasoning that *"a button that reports 'done' when it did
+nothing teaches an operator that pressing it is meaningless"*. Approve and deny would need the
+same treatment: idempotent, and able to say **"already decided by X at Y"** distinctly from
+"approved just now". Only mechanism B can then update the card to show it; mechanism A can only
+reply.
+
+#### It could improve the identity story, or quietly wreck it
+
+`ApprovedBy` is free text today — attribution, not authentication. A Teams click *knows who
+clicked*, so in principle this is an upgrade.
+
+In practice it is only an upgrade if the path is authenticated end to end. A Power Automate flow
+can put any string in that field, so mechanism A without a verified claim moves the trust from
+"whoever typed a name into a console" to "whoever can invoke the flow" — different, and not
+obviously better. **OIDC should land first**, and for a Teams shop that is Entra ID, the same
+directory the card was delivered through. The two converge, which is exactly why linking out cost
+nothing.
+
+#### Ordering, if this is ever picked up
+
+1. **[#44](backlog.md#44-nothing-sweeps-awaitingapproval-so-approvaltimedout-has-no-producer)
+   first.** The common failure is not that approving is inconvenient, it is that **nobody clicks
+   at all** and nothing says so again. A sweeper is an afternoon; a bot is not.
+2. **OIDC second**, so the identity the card asserts is one Hephaisto can verify.
+3. **Then mechanism A**, with an authenticated route and idempotent approve/deny — most of the
+   value, a fraction of the surface.
+4. **Mechanism B only if card refresh proves necessary**, which is a question about how the cards
+   read in a busy channel, and is unanswerable until people have lived with the link-out version.
 
 ---
 
