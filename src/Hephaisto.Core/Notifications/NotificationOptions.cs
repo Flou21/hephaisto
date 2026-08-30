@@ -82,9 +82,18 @@ public sealed class TeamsChannelOptions
 }
 
 /// <summary>
-/// Outbound delivery configuration. Bound via <c>IOptionsMonitor</c> so it hot-reloads from the
-/// ConfigMap, like <c>PolicyOptions</c>.
+/// Outbound delivery configuration.
 /// </summary>
+/// <remarks>
+/// <para>
+/// Bound through <c>IOptionsMonitor</c> for consistency with the rest of the options in this
+/// codebase, but <b>it does not hot-reload in the shipped chart</b> and nothing should be
+/// designed as though it does. Every setting here arrives as an environment variable on the pod
+/// spec - unlike the kill switch, which is a projected ConfigMap volume precisely so it can
+/// change without a roll - so there is no file for the monitor to watch, and a
+/// <c>helm upgrade</c> that changes one of these replaces the pod anyway.
+/// </para>
+/// </remarks>
 /// <remarks>
 /// <b>Every default here is off or conservative.</b> <see cref="Routes"/> is empty, so a stock
 /// install delivers nothing, matching <c>Policy:AllowedNamespaces</c> and <c>mode: Observe</c>.

@@ -125,9 +125,15 @@ public static class NotificationServiceCollectionExtensions
         }
 
         // Registered unconditionally, even with no routes configured. Its tick is two indexed
-        // reads that find nothing, which is cheap enough to be worth the property it buys: a
-        // route added by a ConfigMap edit starts delivering without a pod restart, so turning
-        // notifications on is not a thing that can appear to work and quietly not.
+        // reads that find nothing, so the cost is negligible, and it buys one thing worth
+        // having: rows queued under a PREVIOUS configuration still drain. Disabling a route
+        // should stop new deliveries, not strand the ones already promised.
+        //
+        // Note what this does NOT buy, because an earlier version of this comment claimed it:
+        // routing does not hot-reload. Every notification setting arrives as an environment
+        // variable on the pod spec - there is no ConfigMap for them, unlike the kill switch -
+        // so IOptionsMonitor has no file to watch, and a `helm upgrade` that changes one rolls
+        // the pod regardless. Turning notifications on is a restart either way.
         services.AddHostedService<NotificationDispatcher>();
 
         // Says once, at startup, what this process can and cannot send outward - because every
