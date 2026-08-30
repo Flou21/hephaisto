@@ -24,26 +24,26 @@
  */
 
 :root {
-    --bg: #0e1116;
-    --bg-raised: #151a21;
-    --bg-sunken: #0a0d11;
-    --bg-hover: #1c232c;
-    --border: #262d38;
-    --border-strong: #384252;
+    --bg: #131519;
+    --bg-raised: #1b1e24;
+    --bg-sunken: #0e1013;
+    --bg-hover: #23272e;
+    --border: #2b3037;
+    --border-strong: #3e454e;
 
-    --fg: #dbe1e8;
-    --fg-dim: #8d99a8;
-    --fg-faint: #5f6b7a;
+    --fg: #e4e1db;
+    --fg-dim: #a49d92;
+    --fg-faint: #7d7669;
 
-    --accent: #58a6ff;
+    --accent: #ff8a3d;
 
-    --red: #f7768e;
-    --orange: #ff9e64;
-    --yellow: #e0af68;
-    --green: #73daca;
-    --blue: #7aa2f7;
-    --purple: #bb9af7;
-    --cyan: #2ac3de;
+    --red: #e33a35;
+    --orange: #a85f1e;
+    --yellow: #ffd97a;
+    --green: #57c7a0;
+    --blue: #7fa8d8;
+    --purple: #b998e8;
+    --cyan: #45bfbf;
 
     --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
     --sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
@@ -53,12 +53,59 @@
     /* Text on a --red ground. NOT a fixed near-black: --red is a light pink in dark mode and a
        dark crimson in light, so one literal cannot sit on both. It was a literal for three
        releases and the light-mode error banner was near-black on dark red the whole time. */
-    --on-alert: #10131a;
+    --on-alert: #0a0703;
 
     /* The reconnect scrim and the dialog it dims for. A scrim darkens in both themes - it is
        not a background, it is an absence of one - but light needs less of it. */
-    --scrim: rgb(6 8 11 / 82%);
-    --shadow-modal: 0 12px 40px rgb(0 0 0 / 55%);
+    --scrim: rgb(10 8 6 / 82%);
+    --shadow-modal: 0 12px 40px rgb(0 0 0 / 58%);
+
+    /* ---- radius ------------------------------------------------------------------------
+       Three values were in use across about twenty declarations - 2px, 3px and 4px - with no
+       rule about which went where. Read back off the rules that actually use them: 2px is on
+       small or thin things (a step badge, the confidence bar, the meter track), 4px is on large
+       containers (the empty state, the investigation panel, the feedback form, the reconnect
+       box), and 3px is the default for everything else with a border. Named after the job
+       rather than the size, so a direction that squares everything off changes three values
+       instead of twenty. */
+    --radius-sm: 2px;
+    --radius: 3px;
+    --radius-lg: 4px;
+
+    /* ---- elevation ---------------------------------------------------------------------
+       Two layers, and they are the only two: something pinned over the page (the error banner,
+       the reconnect scrim) and something sticky within it (the nav). Written as tokens because
+       a raw 1000 in a stylesheet is a number chosen to beat whatever else was on screen at the
+       time, and the next one is always higher. */
+    --z-sticky: 20;
+    --z-overlay: 1000;
+
+    /* ---- type --------------------------------------------------------------------------
+       A 13px root, and note that almost every step is BELOW it: this is a dense console and
+       most of its text is smaller than the browser default, which is why the scale reads
+       downward from --text-root rather than upward from a base.
+
+       Read back off 42 declarations rather than invented. Eight were 0.78rem and seven were
+       0.75rem, so the shape was already there; what was missing was names. The one real smell
+       it exposed: 0.8rem and 0.82rem were both in use for what is visibly the same role, which
+       is what happens when two people pick a number because there is nothing to reach for.
+       They are collapsed to one step here, and the visual baselines were the arbiter rather
+       than the argument - the difference is 0.26px at this root size and they confirmed it
+       renders identically.
+
+       Deliberately NOT renumbered into a neat ratio. That would change the rendering of every
+       surface in the console, and it is a decision to make on purpose rather than to smuggle
+       in while extracting tokens. */
+    --text-2xs: 0.7rem;
+    --text-xs: 0.72rem;
+    --text-sm: 0.75rem;
+    --text-md: 0.78rem;
+    --text-lg: 0.8rem;
+    --text-xl: 0.85rem;
+    --text-root: 1rem;
+    --text-2xl: 1.05rem;
+    --text-3xl: 1.25rem;
+    --text-4xl: 1.35rem;
 }
 
 /* Light mode was "a courtesy, not the design target" for three releases. It is not any more:
@@ -66,29 +113,29 @@
    component is not done until it is correct in both. */
 @media (prefers-color-scheme: light) {
     :root {
-        --bg: #fbfcfd;
+        --bg: #faf8f5;
         --bg-raised: #ffffff;
-        --bg-sunken: #f1f3f6;
-        --bg-hover: #eef1f5;
-        --border: #d7dde5;
-        --border-strong: #b6c0cd;
+        --bg-sunken: #f2ede6;
+        --bg-hover: #ece5db;
+        --border: #e0d9cf;
+        --border-strong: #c3b9ab;
 
-        --fg: #1a1f26;
-        --fg-dim: #56616f;
-        --fg-faint: #7d8896;
+        --fg: #1c1a17;
+        --fg-dim: #5f5850;
+        --fg-faint: #7a7266;
 
-        --accent: #0b60d0;
-        --red: #b32d3f;
-        --orange: #a85a10;
-        --yellow: #8a6100;
-        --green: #10756a;
-        --blue: #2a5db0;
-        --purple: #6b3fb5;
-        --cyan: #0d6f85;
+        --accent: #b8500a;
+        --red: #8e1a12;
+        --orange: #6d420c;
+        --yellow: #5c4300;
+        --green: #0d6f5a;
+        --blue: #2f5c9e;
+        --purple: #6d3fb0;
+        --cyan: #0e6d78;
 
         --on-alert: #ffffff;
-        --scrim: rgb(12 16 22 / 55%);
-        --shadow-modal: 0 12px 40px rgb(20 26 34 / 22%);
+        --scrim: rgb(28 26 23 / 55%);
+        --shadow-modal: 0 12px 40px rgb(60 48 34 / 20%);
     }
 }
 

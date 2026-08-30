@@ -185,6 +185,45 @@ public class DesignTokenTests
         }
     }
 
+    /// <summary>
+    /// The interactive accent is distinguishable from every severity colour.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This test exists because of the direction this project chose. The accent is an ember
+    /// orange and the severity ramp is red, orange and yellow, so the accent sits in the middle
+    /// of the range that already means "something is wrong". That was named as the cost of the
+    /// direction before it was picked, and this is what stops it being paid by accident.
+    /// </para>
+    /// <para>
+    /// The first palette drafted for it put <c>--accent</c> and <c>--orange</c> 1.24:1 apart,
+    /// which is two colours a reader cannot reliably tell from one another - so a link and a
+    /// warning would have looked the same. Deepening the orange took it to 2.07:1 dark and
+    /// 1.72:1 light.
+    /// </para>
+    /// <para>
+    /// 1.5:1 is a low bar and deliberately so: this is not a legibility threshold, it is a
+    /// "these are visibly two different colours" threshold. What it forbids is the specific
+    /// mistake of drifting the accent back into the severity ramp while adjusting something
+    /// else.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("--red")]
+    [InlineData("--orange")]
+    [InlineData("--yellow")]
+    public void TheInteractiveAccentIsNotMistakableForASeverity(string severity)
+    {
+        foreach (var (name, tokens) in AllThemes())
+        {
+            var ratio = Contrast(tokens["--accent"], tokens[severity]);
+
+            ratio.Should().BeGreaterThan(1.5,
+                $"--accent and {severity} are {ratio:F2}:1 apart in the {name} theme, which is "
+                + "close enough that a link and a warning read as the same colour");
+        }
+    }
+
     // -- the files -------------------------------------------------------------------------
 
     private static string RepoRoot()

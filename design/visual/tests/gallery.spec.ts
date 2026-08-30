@@ -33,6 +33,7 @@ test.describe('the design language', () => {
     ['finding', 'Hard component 2'],
     ['budget-meter', 'Hard component 3'],
     ['code-block', 'Hard component 4'],
+    ['form-controls', 'Form controls'],
     ['callouts', 'Callouts'],
   ] as const;
 

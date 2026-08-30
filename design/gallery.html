@@ -271,6 +271,31 @@ Events:
     </section>
 
     <section class="g-sec">
+      <h2>Form controls</h2>
+      <p class="g-note">
+        The base <code>input</code>, <code>select</code>, <code>textarea</code> and
+        <code>button</code> rules, which nothing else in this gallery reaches. They are here
+        because a type-scale change that only touches form controls would otherwise be
+        invisible to every baseline on this page — which is exactly the gap that let two
+        near-duplicate font sizes coexist unnoticed.
+      </p>
+      <div class="g-strip" style="align-items:flex-end">
+        <label class="g-note" style="margin:0">
+          state<br />
+          <select><option>all</option><option>escalated</option></select>
+        </label>
+        <label class="g-note" style="margin:0">
+          workload<br />
+          <input type="text" value="prod/api-7d9c4" />
+        </label>
+        <button type="button">apply</button>
+        <button type="button" disabled="disabled">approve</button>
+        <button type="button" class="hp-submit">submit</button>
+      </div>
+      <textarea rows="2" style="margin-top:.6rem;width:32rem;max-width:100%">What did it get right or wrong?</textarea>
+    </section>
+
+    <section class="g-sec">
       <h2>Callouts</h2>
       <div class="hp-callout callout-escalated"><span class="glyph">!!</span> <strong>My alert path is broken.</strong>
         Until the watchdog returns, an empty incident list means nothing.</div>
