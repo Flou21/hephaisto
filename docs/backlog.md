@@ -587,6 +587,8 @@ not recurred since it was written. That is the difference between "tested" and "
 
 ### 14. `EscalateOnlyInvestigator` does not escalate
 
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** A class whose name and doc comment both promise an escalation, whose body performs
 none.
 
@@ -599,6 +601,23 @@ nobody is told. The incident is left exactly as the caller found it.
 stack was never registered, which does not happen in any shipped configuration.
 
 **Size.** S.
+
+**Fixed 2026-08-30.** It delegates to `IncidentTriage.EscalateAsync` with
+`EscalationReason.InvestigationFailed` — chosen over `NoPlanProduced` because no plan was
+produced *for want of an investigation*, and the distinction is what tells a reader whether to
+look for a bad diagnosis or a missing model.
+
+It stopped being harmless in v0.3.0, which is why it was picked up now rather than left as a
+latent S. Escalation is the thing that reaches a person as of this release, so a fallback
+investigator that silently does nothing is the exact failure the milestone exists to remove —
+and the single configuration that reaches it, an install running with no model at all, is the
+one where every incident depends on it.
+
+**Not unit-tested, and that is worth stating rather than implying.** The class is `internal` and
+its collaborator is a concrete `IncidentTriage` with six dependencies; the honest test is the
+integration one asserting every path to `Escalated` leaves an outbox row, which now exists and
+covers the transition this produces. A test that constructed six substitutes to assert one
+delegation would be testing the mock.
 
 ---
 
