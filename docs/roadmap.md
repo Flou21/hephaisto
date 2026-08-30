@@ -17,7 +17,21 @@ against the code rather than believed — see [backlog #9](backlog.md#9-semantic
 
 ## Where it stands
 
-`v0.3.0` is the current release. **The agent reaches people**: an escalation is written to a
+`v0.4.0` is the current release. **The console has a written design language**: one token set that
+the app and a landing page both consume from the same file, canonical by test rather than by
+convention, and a visual safety net that photographs every component in both themes on every pull
+request. Light mode stopped being "a courtesy". The app has a favicon, and the repository has its
+first images.
+
+It also found that the safety net the milestone depended on could not see a stylesheet at all, and
+that the console suite's one failing spec was not the product bug it looked like — see
+[#48](backlog.md#48-the-console-suite-interacts-with-a-page-the-circuit-has-not-taken-over-yet).
+
+**What is not yet observed** is `scripts/e2e/run.sh` exiting 0 on a kind cluster. Every spec passes
+against a live console and no spec skips any more, which makes that a statement about the specs
+rather than about the harness. [#51](backlog.md#51-runsh-has-not-been-re-run-on-a-kind-cluster-since-the-suite-was-fixed).
+
+`v0.3.0` shipped on 2026-08-30. **The agent reaches people**: an escalation is written to a
 Postgres outbox in the same transaction as the state change that caused it, and delivered to a
 generic HTTP endpoint or a Teams card with retry, rate limiting and a link back to the incident.
 It ships delivering nowhere — an empty routing table and no channel configured, two independent
@@ -483,111 +497,105 @@ it was this morning.
 
 
 ---
+## v0.4.0 — A design language — **done**
 
-## v0.4.0 — A design language
+Three surfaces were coming — the console that exists, a landing page and a docs site — with
+nothing shared between them to build against. The app already had a design system; it was a
+comment at the top of one 1268-line stylesheet, next to 108 classes and a 20-token `:root` block,
+and nothing else could consume it.
 
-**Before anything visual gets built, decide what it should look like.** Three surfaces are coming —
-the app UI that exists, a landing page, and a docs site — with nothing shared between them to build
-against.
+**The milestone's stated prerequisite was half of the real one.** The roadmap promoted
+[#46](backlog.md#46-the-console-suite-cannot-pass-in-observe-so-a-green-run-needs---mode-auto) to
+a hard dependency on the grounds that a red safety net is not a safety net. True — and fixing it
+would still have left the refactor unprotected, because the Playwright suite asserts *behaviour*.
+Every one of its 34 read-only assertions passes against a console whose layout has collapsed.
+There was no screenshot comparison of any kind in the repository. The net had to be built, not
+repaired.
 
-The honest starting position: **the app already has a design system, it is just not written down
-and not reusable.** `src/Hephaisto.Agent/wwwroot/app.css` is 1268 lines of hand-written plain CSS
-whose header states a real brief:
+| Found | Consequence |
+|---|---|
+| The console suite was red in `--mode Auto` too, for a failure nowhere in the backlog: `acting.spec.ts` ran and failed, asserting the approve button never enabled | Read at face value it said v0.3.0's approval control was broken — the thing its Teams card deep-links to. It was not. `open()` returned ~600ms before the Blazor circuit took the page over, so every interaction dispatched into an inert DOM. [#48](backlog.md#48-the-console-suite-interacts-with-a-page-the-circuit-has-not-taken-over-yet) |
+| Two of the suite's assertions selected on CSS class names *and asserted absence* | A rename during the refactor would not have broken them. It would have made them pass forever, on a page no longer containing the alarm they watched for — #1's defect again |
+| `#10131a` was written twice as the text colour on a `var(--red)` ground | Correct in dark, where `--red` is a light pink; wrong in light, where it is a dark crimson. The error banner had rendered near-black on dark red for three releases |
+| Forge's ember accent lands inside its own severity ramp | The first palette put `--accent` and `--orange` **1.24:1** apart — a link and a warning the same colour. Now a test asserts >1.5:1 against every severity, in both themes |
+| `a:focus-visible` did not exist | Links are most of what a keyboard user moves between here, and they fell back to a UA outline that is near-invisible on a dark ground |
+| `.hp-main` carried a comment claiming a 1200px floor | Above `min-width: 0`, which does the opposite. No such rule existed, or ever had |
+| The favicon's own comment named the token it used | A double hyphen is illegal inside an XML comment. The mark was invalid XML and rendered as nothing, silently |
 
-> Plain CSS, no framework, no CDN. This pod can run in a cluster with no egress, and an incident
-> console whose stylesheet fails to load is unreadable at exactly the moment somebody needs it.
->
-> Dark first, dense, monospace for anything a human might compare character by character — ids,
-> workload keys, log excerpts, timestamps. Target reader: on call at 3am, on whatever monitor is in
-> the room.
->
-> STATE IS NEVER COLOUR ALONE. Every state, severity, risk and decision carries a glyph and a word
-> next to it. Colour is the third channel, never the only one.
+### What shipped
 
-That is a better brief than most projects write. But it is a comment in one file, next to ~110 `hp-`
-classes, a `:root` token block, and a light mode its own comment calls "a courtesy, not the design
-target". Nothing else can consume it, and nobody deciding a landing-page question can find it.
+**[`docs/design.md`](design.md)** — the guideline, and what a contributor is pointed at before
+touching CSS. Four rules, each with a test behind it, plus `Display.cs` documented as a first-class
+half of the system and an honest list of what the language does not cover.
 
-### A — Direction, settled by asking before drafting
+**One canonical token set**, `src/Hephaisto.Agent/wwwroot/tokens.css`, consumed by the console and
+by `website/`'s landing page from a byte-identical copy. Canonical **by test**: a colour written
+anywhere else fails the build, the two copies must not differ, both font binaries must not differ,
+and the `theme-color` metas — the one place a colour genuinely cannot be a `var()` — must still
+equal `--bg` in each theme.
 
-The forks that change everything downstream. Judgement calls, not technical ones, and answered
-before any option is drawn:
+**Forge.** Chosen from three complete directions rendered side by side in both themes with measured
+contrast. Heat as an encoding rather than an ornament; ember accent, warmed neutrals, no anvils.
+Archivo and JetBrains Mono, **self-hosted** — 66KB of latin subsets — because the pod may have no
+egress and a CDN font fails silently into a system stack.
 
-- **Should the landing page look like the product, or contrast with it?** The biggest fork. Dark,
-  dense and terminal-adjacent says "serious operator tool, here is exactly what you get". Light and
-  editorial reaches people evaluating rather than operating. Both defensible; deciding late is
-  expensive.
-- **Is dark-first non-negotiable across all three surfaces, or app-only?** Docs are overwhelmingly
-  read in light mode. A deliberate divergence is fine — an accidental one is not.
-- **Does light mode stop being "a courtesy"?** A landing page brings evaluators, and some of them
-  will open the UI in a bright room.
-- **Typography, under a hard constraint.** The app cannot load a CDN — the pod may have no egress —
-  so its fonts are self-hosted or system stacks. The landing page and docs have no such limit.
-  Either the shared type system respects the tighter constraint, or the divergence is deliberate and
-  documented.
-- **How much personality?** Hephaisto is the god of the forge, which offers an obvious metaphor and
-  an obvious cliché. Decide on purpose rather than drifting into anvils.
-- **Who is the landing page's reader** — an SRE choosing a tool, a platform team assessing autonomy
-  risk, or a potential contributor? The safety model is this project's most distinctive asset, and
-  how prominent it is follows directly from this answer.
+**A visual safety net that can see the stylesheet.** `design/gallery.html` renders every component
+the language has to keep working — all ten states, three severities, four risk tiers, six callouts,
+a broken citation, a meter past 100%, the form controls — and `scripts/visual-test.sh` photographs
+it in both themes, in a pinned container, on every pull request. 28 baselines.
 
-### B — Generate real options, not adjectives
+**Brand.** A mark, a wordmark, a favicon and a generated social card, in a repository that had
+contained no image of any kind. The mark is the console's own `^` glyph for *escalated*.
 
-**Three complete, genuinely distinct directions**, each rendered as something you can look at rather
-than read about. A direction only counts as comparable if it commits to all of:
+**Light mode stopped being "a courtesy, not the design target"** — its own words, for three
+releases. Both themes are contrast-asserted and both are photographed.
 
-- a full palette in **both themes**, with contrast ratios checked rather than assumed
-- a type pairing with a real fallback stack, honouring the no-CDN constraint
-- a density and spacing scale — this app is deliberately dense at a 13px base, and a landing page
-  must either inherit that or break it knowingly
-- the same four hard components in every direction, so the comparison is like-for-like: an incident
-  table row, a finding with its evidence citation, a budget meter, a code block
-- a landing hero and a docs page in the same language
+Closed: [#46](backlog.md#46-the-console-suite-cannot-pass-in-observe-so-a-green-run-needs---mode-auto),
+[#48](backlog.md#48-the-console-suite-interacts-with-a-page-the-circuit-has-not-taken-over-yet).
+**There is no `test.skip` left in the console suite.**
 
-Judged side by side on the page, not in a spec.
+### The decision that shaped the rest: refactor first, choose second
 
-### C — Choose one, then write it down
+The tokens were extracted, the scales named and `app.css` moved onto them **with every value left
+byte-identical** — and the baselines proved that pass pixel-for-pixel, twice. Only then was Forge
+applied, as a data edit whose diff was exactly the intended change: 13 of 20 shots moved, and the
+light theme did not move where it overrides a token separately.
 
-`docs/design.md` — the guideline this project does not have. It carries the rules that already exist
-implicitly, plus everything A settled, and it is what a contributor is pointed at before touching
-CSS.
+That ordering is why a 1268-line refactor and a total palette change could land in the same
+release without either being unattributable. It also caught its own mistake: `maxDiffPixelRatio:
+0.01` sounded tight and was not — changing `--accent` to hot pink gave **sixteen passes**, because
+the accent is about 0.2% of a section's pixels. It is `maxDiffPixels: 0` now.
 
-### D — One token source, three consumers
+### What did not ship, and why
 
-The deliverable that makes this more than a document: **the `:root` custom properties become the
-canonical token set**, and the VitePress theme and landing page consume the same tokens. A colour
-that changes changes everywhere. Without it the guideline is advisory and the surfaces drift within
-one release.
+- **The VitePress docs site**, and the rest of the project track. `website/` is one page whose job
+  is to prove the token pipeline survives a second consumer. Building the site before the language
+  existed would have meant building it twice.
+- **A spacing scale.** There is no latent one to extract — the paddings are hand-tuned per
+  component and no ratio joins them. Inventing one means renumbering ~30 declarations and changing
+  every surface, which is a decision, not a side effect of moving tokens. Density is adjusted
+  through `--root-size` instead, which works because every length is already in `rem`.
+- **A theme toggle.** Both themes are first-class and selection is still delegated entirely to the
+  OS, so a reader on a dark OS who wants light cannot ask.
+  [#50](backlog.md#50-both-themes-are-first-class-and-neither-can-be-chosen).
+- **Responsive layout.** Still zero width breakpoints. Recorded as a limitation in `design.md`
+  rather than left to be discovered.
 
-### E — Apply, with a safety net that must be repaired first
+### Done when — status
 
-Refactoring 1268 lines of framework-free CSS onto new tokens is an ordered refactor, and the `hp-`
-namespace is stable and semantic enough to survive it. There is nominally a safety net: a Playwright
-suite and `data-testid` attributes.
+| Criterion | Status |
+|---|---|
+| `docs/design.md` exists | **done** — and covers `Display.cs`, not only the CSS |
+| One token source feeds all three surfaces | **two of three.** Console and landing page, byte-identical and test-enforced. The docs theme is the project track — and is now a copy of a proven step rather than a leap |
+| `app.css` refactored onto it, UI unchanged except where the direction says | **done, and measured.** Zero-diff proven across the extraction; the Forge change is attributable shot by shot |
+| The app has a favicon | **done** — plus wordmark, social card, `theme-color` and a description |
+| Accessibility in acceptance | **done** — contrast asserted in both themes, focus ring baselined with real keyboard focus, reduced motion honoured |
+| `scripts/e2e/run.sh` exits 0 in its default mode | **unverified end to end.** The console suite has no skips left and passes against a live console; the full harness has not been re-run on a kind cluster since |
 
-**That suite runs now** — [backlog #1](backlog.md#1-the-e2e-playwright-phase-reports-pass-on-a-zero-assertion-run)
-was fixed on 2026-08-29, and nine specs execute against a real console full of seeded incidents.
-It is still a **hard dependency** of this milestone: without it the visual regression risk on a
-1268-line CSS refactor is entirely unmanaged.
-
-**But it cannot currently pass in the default mode**
-([#46](backlog.md#46-the-console-suite-cannot-pass-in-observe-so-a-green-run-needs---mode-auto)),
-because one spec skips when nothing is `AwaitingApproval` and under Observe nothing ever can be.
-A safety net that is red before you start is not a safety net — you cannot tell your regression
-from the standing failure. **#46 is therefore a prerequisite of this milestone rather than a
-nice-to-have**, and it is an S. Do it before the first token lands, not after the refactor has
-already moved a hundred selectors.
-
-Also lands here, because these are design outputs rather than project chores: the **wordmark**, the
-**favicon** (currently disabled — `App.razor` has `<link rel="icon" href="data:," />`), and the
-**social preview image**. The repo contains zero image files today.
-
-Accessibility is part of acceptance, not a follow-up: contrast checked in both themes, visible focus
-states, `prefers-reduced-motion` honoured.
-
-**Done when** `docs/design.md` exists, one token source feeds all three surfaces, `app.css` is
-refactored onto it with the UI unchanged except where the chosen direction says otherwise, and the
-app has a favicon.
+The last row is the honest one. Every spec was fixed and verified against a real console on the
+development cluster, but `run.sh` in Observe spins its own kind cluster and that has not been run.
+Until it is, "the harness exits 0 in its default mode" is a statement about the specs rather than
+about the harness.
 
 ---
 
@@ -686,14 +694,23 @@ Self-hosting a marketing site is ops work that buys nothing until there is traff
 
 ### Screenshots should be generated, not taken
 
-The repo contains no images. It does have a Playwright suite driving a UI with `data-testid`
+The repo now contains images, all of them generated. It also has a Playwright suite driving a UI with `data-testid`
 attributes against a kind cluster full of real seeded incidents. So screenshots should be **captured
 by a script in the e2e harness** — the alternative is a landing page showing a UI that shipped four
-versions ago. Depends on [backlog #1](backlog.md#1-the-e2e-playwright-phase-reports-pass-on-a-zero-assertion-run).
+versions ago.
+
+[backlog #1](backlog.md#1-the-e2e-playwright-phase-reports-pass-on-a-zero-assertion-run) is fixed,
+and v0.4.0 built most of the rest of this: `scripts/visual-test.sh` already drives a browser at a
+fixed viewport in a pinned container and writes PNGs, and `scripts/brand-assets.sh` already renders
+a page to a committed image and refuses to do it if the fonts did not load. Site screenshots are
+those two scripts pointed at a live console rather than new machinery.
 
 ### Branding
 
-Settled by v0.4.0 and consumed here, not decided here.
+**Settled.** v0.4.0 chose *Forge* and shipped the mark, the wordmark, the favicon and a generated
+social card; `docs/design.md` carries the rules and `design/brand/` the assets. The site consumes
+them, and consumes `tokens.css` the same way `website/index.html` already does — which is now a
+copy of a proven step rather than an untested claim.
 
 ### The rest — a checklist, all currently absent
 

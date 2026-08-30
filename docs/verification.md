@@ -254,6 +254,38 @@ curl -s http://$H:8100/metrics | grep hephaisto_notifications
 A `pending` that climbs and never comes back down is a backlog of people who have not been told
 yet, which is what `HephaistoNotificationOutboxBacklog` watches for.
 
+## 17. The console is serving its own fonts, and the token file it was built with
+
+```sh
+curl -s "http://$H:8100/status" | grep -oE '<link[^>]*stylesheet[^>]*>'
+# expect tokens.<hash>.css FIRST, then app.<hash>.css - the order matters, app.css reads
+# the custom properties tokens.css defines
+
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' \
+  "http://$H:8100/fonts/jetbrains-mono-latin.woff2"
+# expect 200 font/woff2
+
+curl -s "http://$H:8100/tokens.css" | grep -c '^\s*--'
+# expect 61 - the canonical set, both themes, served by the pod itself
+```
+
+**The silent failure this catches is a webfont that did not load.** A browser that cannot fetch
+`fonts/` falls back to a system stack and renders a page that looks entirely fine, so the console
+does not report anything and neither does the pod. The only signal is that it is set in the wrong
+typeface, which nobody notices without a before-and-after. The same trap applies to `tokens.css`:
+if it 404s, every `var(--bg)` resolves to nothing and the console renders as unstyled black text
+on white — which is at least obvious, unlike the font case.
+
+In a browser, the honest check is one line in the console:
+
+```js
+document.fonts.check('16px Archivo') && document.fonts.check('16px "JetBrains Mono"')
+// expect true
+```
+
+This is the same assertion the visual suite makes before every comparison, for the same reason:
+a baseline photographed against a fallback stack is a stable picture of the wrong thing.
+
 ## Running all of this automatically
 
 Everything above is the manual form, and it is still the right thing when you are chasing one
@@ -272,7 +304,13 @@ end to end (CI has no key), and — as of the `notify` phase — that a queued n
 the agent being restarted, which nothing short of a real process death can show. See
 `scripts/e2e/README.md`.
 
-Two things it deliberately does **not** cover, and neither does anything else:
+**Step 17 is covered by neither**, and is covered somewhere better. The stylesheet and the fonts
+are checked by `scripts/visual-test.sh` on every pull request, without a cluster, against
+`design/gallery.html` — including the assertion that the faces actually loaded, because a webfont
+that fails falls back silently and renders a page that looks fine. The manual form above exists to
+check the same thing about the *deployed pod*, which is the one place the harness cannot look.
+
+Three things it deliberately does **not** cover, and neither does anything else:
 
 - **NetworkPolicy enforcement (step 9's sibling).** kind's default CNI accepts the objects and
   ignores them, and that policy is the webhook's entire authentication. Verify it by hand, on a
@@ -504,3 +542,66 @@ documentation rather than assuming.
 `secretKeyRef` and the chart has no Secret template, so enabling it means minting another Secret
 in `deps_secrets` for a property unit tests already cover. The phase skips that assertion with a
 reason rather than passing it silently.
+
+
+---
+
+## The v0.4.0 acceptance test — a design language
+
+Unlike the three before it, most of this one runs without a cluster. That is deliberate: the
+subject is a stylesheet, and a check that needs a kind cluster to tell you a colour changed is a
+check nobody runs.
+
+```sh
+cd ~/hephaisto
+
+# 1. The token guards. A colour written anywhere but tokens.css fails here, both themes are
+#    contrast-asserted, and the accent is asserted distinguishable from every severity.
+./scripts/test.sh
+# expect 1021+ passed, 0 failed
+
+# 2. The visual baselines, in both themes, in the pinned container.
+./scripts/visual-test.sh
+# expect: 28 passed / visual: expected=28 skipped=0 unexpected=0
+
+# 3. Prove the net is real rather than decorative. THIS IS THE STEP THAT MATTERS.
+sed -i '' 's/--accent: #ff8a3d;/--accent: #ff00aa;/' src/Hephaisto.Agent/wwwroot/tokens.css
+./scripts/visual-test.sh
+# expect FIVE dark-theme failures - gallery, focus-ring, tokens, incident-row, finding - and
+# the light theme untouched, because light overrides --accent separately.
+#
+# The LANDING PAGE shots do not move, and that is not a gap: website/tokens.css is its own
+# copy, so this edit genuinely does not reach it. What catches that is the other half of the
+# guarantee - ./scripts/test.sh now fails TheWebsiteConsumesTheSameTokenFile, because the two
+# copies have diverged. Between them, nothing can change on one surface and not the other.
+git checkout src/Hephaisto.Agent/wwwroot/tokens.css
+
+# 4. And that the colour guard is real.
+printf '\n.x { color: #ff00aa; }\n' >> src/Hephaisto.Agent/wwwroot/app.css
+./scripts/test.sh   # expect NoColourIsWrittenOutsideTheTokenFile to FAIL
+git checkout src/Hephaisto.Agent/wwwroot/app.css
+```
+
+Then, against a running console — check 17 above, plus:
+
+```sh
+# The favicon is a real file rather than the data:, placeholder it was for three releases.
+curl -s -o /dev/null -w '%{http_code}\n' "http://$H:8100/favicon.svg"    # expect 200
+```
+
+### And the part that is deliberately not tested here
+
+**`scripts/e2e/run.sh` exiting 0 in its default mode has not been observed**, and it is the
+milestone's own exit criterion. The console suite has no `test.skip` left and all nine specs pass
+against a live console, but the harness boots its own kind cluster and runs nine phases in front
+of the `ui` one. Until that has been run, this is a claim about the specs and not about the
+harness — a distinction this project has already been caught by once, when five of six v0.1.0
+release candidates failed on the harness rather than on the thing being measured.
+[backlog #51](backlog.md#51-runsh-has-not-been-re-run-on-a-kind-cluster-since-the-suite-was-fixed)
+tracks it, and two known non-regressions are waiting there: #49, and the budget-meter spec, which
+asserts non-zero spend and is therefore only true once the agent has investigated something in the
+current hour.
+
+**Nothing here checks that the design is good.** These assertions check that it is consistent,
+legible, and that it cannot drift silently. Whether Forge was the right choice of three is a
+judgement that was made by looking, and no test replaces that.

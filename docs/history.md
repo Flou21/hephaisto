@@ -529,3 +529,110 @@ Proved on a kind cluster, not just in tests: with `effectiveMode: Off` an inject
 `Observe` took them to 8. `watchdogStale` stayed false throughout — the heartbeat is
 deliberately ungated, or the agent would believe it had gone blind the moment it was switched
 back on.
+
+---
+
+## v0.4.0 — a design language — **done, 2026-08-30**
+
+The milestone was supposed to be about taste. Most of what it cost was about measurement.
+
+### The safety net it depended on could not see a stylesheet
+
+The roadmap made [#46](backlog.md#46-the-console-suite-cannot-pass-in-observe-so-a-green-run-needs---mode-auto)
+a hard prerequisite, reasoning that a refactor of 1268 lines of CSS behind a red Playwright suite
+was unmanaged risk. Correct, and only half the problem: the suite asserts **behaviour**. All 34 of
+its read-only assertions pass against a console whose layout has collapsed, and there was no
+screenshot comparison anywhere in the repository. Turning it green would have produced a
+confident-looking net that could not catch the class of regression the milestone was about to risk.
+
+So the net was built rather than repaired, and the first thing it caught was itself:
+`maxDiffPixelRatio: 0.01` sounds tight and is not. Changing `--accent` to hot pink and re-running
+gave **sixteen passes**, because the accent is roughly 0.2% of a section's pixels. The threshold is
+`maxDiffPixels: 0` now, and the same experiment fails exactly the four dark-theme shots the accent
+appears in.
+
+**The lesson is the one this repo keeps relearning.** A tolerance that sounds reasonable is a
+guess. #1 was a suite reporting green on zero assertions; this was a suite reporting green on a
+changed colour. Both were found by deliberately breaking something and checking the test noticed.
+
+### The failing spec was not the bug it looked like
+
+`acting.spec.ts` failed on every run that reached it, asserting the approve button never enabled:
+
+```
+44 × locator resolved to <button disabled ... data-testid="approve">approve</button>
+```
+
+Read literally, that says v0.3.0's approval control is broken — and v0.3.0's entire approval story
+is a Teams card that deep-links to that button. It would have been the most serious defect in the
+project.
+
+It was not a product bug. This is a Blazor **Web App** with `<Routes @rendermode="InteractiveServer" />`,
+so every component renders twice: once as static server HTML delivered with the document, then
+again over the SignalR circuit, which replaces that DOM wholesale. Measured against a live console:
+
+```
+h1 visible at            52 ms      <- what open() waited for
+_blazor websocket open   55 ms
+first RenderBatch       102 ms
+a click first lands     629 ms      <- what open() needed to wait for
+```
+
+Between those moments the page looks finished and is inert. Events dispatched into it are dropped.
+
+**Why it stayed hidden for so long is the interesting part.** Reading static HTML is
+indistinguishable from reading the interactive DOM, so every read-only assertion passed either way.
+Only a spec that *interacts* could notice, and there was exactly one — which #46 caused to be
+skipped in the default mode. In Observe it skipped and was never reached; in Auto it ran and was
+read as a product defect. Two bugs hid each other for a release.
+
+The helper's own comment asserted the opposite of the truth — *"the h1 is rendered by the component
+itself"* — which was correct for Blazor Server before .NET 8 and stopped being correct without
+anybody editing the sentence.
+
+### Refactor first, choose second
+
+The ordering that made the release reviewable, and it was not the plan's.
+
+The tokens were extracted, the radius/z-index/type scales named, and `app.css` moved onto them with
+**every value byte-identical**. The baselines proved that pixel-for-pixel. Only then was Forge
+applied, as a data edit whose diff was exactly the intended change: 13 of 20 shots moved, and the
+light theme did not move where it overrides a token separately.
+
+That is why a 1268-line refactor and a total palette change could land in one release with both
+still attributable. It also answered a question rather than guessing at it: `0.8rem` and `0.82rem`
+were in use for the same role, and the baselines were the arbiter of whether collapsing them was
+visible — 0.26px at a 13.5px root. They confirmed it was not, but only after the form controls were
+added to the gallery, because until then nothing photographed used those sizes at all.
+
+### Forge's cost was known in advance and still nearly shipped
+
+The direction was chosen from three complete candidates, and its cost was written down before the
+choice: a warm accent has to fight the semantic red. The first palette put `--accent` and
+`--orange` **1.24:1** apart — two colours a reader cannot tell apart, so a link and a warning would
+have looked identical.
+
+Deepening the orange fixed that pair, and then the new guard test caught red at 1.28:1 and yellow
+at 1.20:1, neither of which had been looked at. Knowing a risk is not the same as having handled it;
+the test is the part that handled it.
+
+### Three smaller things, all of the same shape
+
+- `#10131a` was written twice as text on a `var(--red)` ground. Right in dark, where `--red` is a
+  light pink; wrong in light, where it is a dark crimson. The error banner rendered near-black on
+  dark red for three releases.
+- `.hp-main` carried a comment claiming *"1200px is the floor the tables are laid out for"* directly
+  above `min-width: 0`, which does the opposite. No such rule existed.
+- The favicon's comment named the CSS token it used, and a double hyphen is illegal inside an XML
+  comment. The mark was invalid XML and rendered as nothing, silently, until a light-mode baseline
+  showed a broken image.
+
+Each is a claim that was true when written, or never true, and nothing checked. That is the same
+failure the token guards, the SVG well-formedness test and the `theme-color` test now cover.
+
+### What it did not settle
+
+`scripts/e2e/run.sh` still has not been observed exiting 0 on a kind cluster. Every spec passes
+against a live console and no spec skips any more — which makes "the harness is green in its
+default mode" a statement about the specs rather than about the harness, and this project has been
+caught by that exact gap before. [#51](backlog.md#51-runsh-has-not-been-re-run-on-a-kind-cluster-since-the-suite-was-fixed).

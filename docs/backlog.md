@@ -1523,3 +1523,70 @@ hand and least likely to trust the result afterwards.
 the smaller change and keeps the assertion meaningful.
 
 **Size.** S.
+
+### 50. Both themes are first-class, and neither can be chosen
+
+**Symptom.** Light mode stopped being "a courtesy, not the design target" in v0.4.0 — it is
+contrast-asserted and photographed like the dark theme. A reader still cannot select it. Theme
+follows the operating system through `prefers-color-scheme` and there is no control anywhere.
+
+**Evidence.** `tokens.css` keys light mode entirely off `@media (prefers-color-scheme: light)`.
+There is no `data-theme` attribute in the repository, no toggle, and no persisted preference.
+
+**Why it matters more after v0.4.0 than before it.** While light was explicitly not the design
+target, "your OS decides" was a coherent position. Now that both themes are held to the same bar,
+an operator on a dark-mode laptop presenting the console on a projector in a bright room has no
+way to ask for the theme the project says it supports.
+
+**Why it is still open.** It is outside the milestone's stated "done when", and smuggling it in
+would have been scope this release did not agree to.
+
+**Fix.** A `data-theme` attribute on the root, three states (system / light / dark), persisted in
+`localStorage`. The interop already exists and is proven — `wwwroot/app.js` uses it to remember
+the feedback submitter's name — and `tokens.css` would need its light block duplicated under a
+`[data-theme="light"]` selector.
+
+**Size.** S.
+
+### 51. `run.sh` has not been re-run on a kind cluster since the suite was fixed
+
+**Symptom.** v0.4.0 closed [#46](#46-the-console-suite-cannot-pass-in-observe-so-a-green-run-needs---mode-auto)
+and removed every `test.skip` from the console suite, and the milestone's exit criterion is that
+`scripts/e2e/run.sh` exits 0 in its default mode. That has not been observed.
+
+**Evidence.** Every spec was verified against a live console on the development cluster: 9 specs,
+0 skipped. But `run.sh` in Observe boots its own kind cluster, applies chaos fixtures and runs
+nine phases before the `ui` one, and that has not been run since the fixes landed.
+
+**Why it is still open.** The claim is currently about the specs rather than about the harness,
+and this repo has been caught by exactly that gap before — three of the four v0.1.0 release
+candidates failed on the harness rather than on the thing being measured.
+
+Two known failures are also waiting there and are *not* regressions from this milestone:
+[#49](#49-the-console-spec-compares-a-capped-api-call-against-an-uncapped-page) trips on any
+install with more than 100 incidents, and the budget-meter spec asserts non-zero spend, which is
+only true once the agent has actually investigated something in the current hour.
+
+**Fix.** Run it. `scripts/e2e/run.sh` with no arguments.
+
+**Size.** S to run, unknown to fix whatever it finds.
+
+### 52. Two components are implemented twice
+
+**Symptom.** The console has two unrelated implementations of a progress bar and two
+near-duplicate treatments of a monospace block.
+
+**Evidence.** `hp-meter` / `hp-meter-track` / `hp-meter-fill` (the budget meters on `/status`) and
+`hp-conf` / `hp-conf-track` / `hp-conf-fill` (the confidence bar on a finding) share no tokens and
+no rules. `hp-code` and `hp-excerpt` differ only in padding and border.
+
+**Why it is still open.** Consolidating them changes the rendering of both, which is a visual
+change rather than a refactor, and v0.4.0 had already made one deliberate visual change. Doing
+both in the same release would have made the baseline diff unattributable — which is the property
+the whole ordering of that milestone was built to preserve.
+
+**Why it is worth doing.** Two implementations of one idea drift, and a design language exists to
+stop exactly that. Both are now photographed by the visual baselines, so the consolidation is a
+change somebody can actually verify.
+
+**Size.** S.
