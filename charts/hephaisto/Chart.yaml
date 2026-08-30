@@ -5,6 +5,11 @@ type: application
 home: https://github.com/Flou21/hephaisto
 sources:
   - https://github.com/Flou21/hephaisto
+# Artifact Hub renders this beside the chart, and it was blank for four releases because the
+# repository contained no image to point at. Raw GitHub rather than a site URL: the site is not
+# deployed yet, and a chart icon that 404s is worse than the blank tile it replaced.
+icon: https://raw.githubusercontent.com/Flou21/hephaisto/main/design/brand/mark.svg
+
 annotations:
   # Artifact Hub surfaces the licence from here. Worth setting explicitly: a chart that
   # installs an AGPL program should say so where someone browsing charts will see it.

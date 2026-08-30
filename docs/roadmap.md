@@ -720,8 +720,8 @@ copy of a proven step rather than an untested claim.
 - **Repo metadata** — description, topics and homepage are empty. Discussions off. Wiki on and
   unused; turn it off rather than leave a second place for docs to rot.
 - **Discoverability** — no `artifacthub-repo.yml`, so the chart publishes and nothing announces it.
-  `Chart.yaml` has two Artifact Hub annotations but no `icon` (blank tile), no `maintainers`, no
-  `screenshots`.
+  `Chart.yaml` now has an `icon` — v0.4.0 gave it something to point at — but still no
+  `maintainers` and no `screenshots`.
 - **CI quality gates** — no `.editorconfig`, no `dotnet format`, no coverage, no link check, no
   spell check, no markdown lint, no CodeQL, no SBOM, no image scanning. Build provenance attestation
   is currently the only supply-chain signal.
