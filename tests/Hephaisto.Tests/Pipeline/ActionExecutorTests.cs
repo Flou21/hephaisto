@@ -41,9 +41,12 @@ public sealed class ActionExecutorTests : IDisposable
     {
         var client = new k8s.Kubernetes(new KubernetesClientConfiguration { Host = "http://127.0.0.1:1" });
 
+        var api = new KubernetesApi(client);
+
         return new ActionExecutor(
-            new KubernetesApi(client),
+            api,
             actions,
+            new ActionEventMirror(api, Given.Clock(), NullLogger<ActionEventMirror>.Instance),
             new PolicyStub(Given.Options()),
             metrics,
             Given.Clock(),

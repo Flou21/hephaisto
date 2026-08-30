@@ -62,10 +62,30 @@
       "required": ["actionableNamespaces"],
       "properties": {
         "actionableNamespaces": {
-          "description": "Namespaces the agent may act in. Empty means nowhere. kube-*, default, the release namespace and observabilityNamespace are refused at render time.",
+          "description": "Namespaces the agent may act in. Empty means nowhere. kube-*, default, the release namespace and observabilityNamespace are refused at render time. Each must also carry the label hephaisto.io/destructive-actions-allowed=true, which the policy engine checks.",
           "type": "array",
           "uniqueItems": true,
           "items": { "type": "string", "minLength": 1 }
+        },
+        "autoEnabledActionTypes": {
+          "description": "Action types that may execute without a human, and only in Auto mode. Empty means everything waits for approval. Promote one type at a time.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "RestartPod",
+              "RolloutRestart",
+              "RollbackDeployment",
+              "ScaleWorkload",
+              "DeleteStuckJob",
+              "DeleteFailedJobPods",
+              "SilenceAlert",
+              "PatchResources",
+              "CordonNode",
+              "DrainNode"
+            ]
+          }
         }
       }
     },

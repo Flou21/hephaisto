@@ -36,6 +36,7 @@ namespace Hephaisto.Agent.Pipeline;
 public sealed class ActionExecutor(
     KubernetesApi api,
     IActionRepository actions,
+    ActionEventMirror events,
     IOptionsMonitor<PolicyOptions> policyOptions,
     HephaistoMetrics metrics,
     IClock clock,
@@ -156,6 +157,16 @@ public sealed class ActionExecutor(
         await actions.SaveChangesAsync(ct).ConfigureAwait(false);
 
         metrics.ActionExecuted(action.Type, mode, action.Outcome);
+
+        // Onto the object itself, so `kubectl describe` answers "why did this restart" where
+        // an on-call engineer is already looking. Not for a dry run: nothing happened to the
+        // object, and an event saying otherwise would be the most misleading line in the
+        // output. Best effort, and after the row is committed - the durable record is the
+        // audit trail, and failing to annotate must not fail the action.
+        if (!dryRun)
+        {
+            await events.MirrorAsync(action, ct).ConfigureAwait(false);
+        }
 
         logger.LogInformation(
             "{Action} on {Workload} {Verb} (mode {Mode}).",

@@ -73,6 +73,7 @@ public sealed class RbacSelfCheckException(string message) : Exception(message);
 public sealed class RbacSelfCheck(
     KubernetesApi api,
     IOptions<KubernetesOptions> options,
+    IOptionsMonitor<Core.Policy.PolicyOptions> policy,
     ILogger<RbacSelfCheck> logger) : IHostedService
 {
     private readonly KubernetesOptions options = options.Value;
@@ -151,10 +152,69 @@ public sealed class RbacSelfCheck(
         new("list", "nodes", "metrics.k8s.io", Why: "get_resource_usage"),
     ];
 
+    /// <summary>
+    /// The write verbs the executor needs, in the namespaces the operator has opted in.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Namespace-scoped and therefore computed rather than declared: the write Role is bound
+    /// per entry in <c>policy.actionableNamespaces</c>, and an empty list means the agent is
+    /// not supposed to hold any of these anywhere. Asking about them then would produce a page
+    /// of warnings about capabilities nobody wanted.
+    /// </para>
+    /// <para>
+    /// Warn, never refuse. A missing write grant is a misconfiguration rather than a danger -
+    /// the failure mode it prevents is an approved action dying on a 403 in the middle of an
+    /// incident, which reads as a bug in the agent. Refusing to boot over it would take a
+    /// working diagnostic agent offline to protect a capability nobody has used yet.
+    /// </para>
+    /// </remarks>
+    private IReadOnlyList<RbacProbe> WriteProbes()
+    {
+        var namespaces = policy.CurrentValue.AllowedNamespaces;
+
+        if (namespaces.Count == 0)
+        {
+            return [];
+        }
+
+        return
+        [
+            .. namespaces.SelectMany(ns => new RbacProbe[]
+            {
+                new("delete", "pods", Namespace: ns, Why: "restart_pod - deleting a managed pod IS the restart"),
+                new("patch", "deployments", "apps", ns, Why: "rollout_restart, patch_resources"),
+                new("patch", "deployments", "apps", ns, "scale", Why: "scale_workload - the subresource is granted separately"),
+                new("delete", "jobs", "batch", ns, Why: "delete_stuck_job"),
+                new("create", "events", Namespace: ns, Why: "writing the action back onto the object for kubectl describe"),
+            }),
+        ];
+    }
+
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         var forbidden = await RunAsync(Forbidden, cancellationToken).ConfigureAwait(false);
         var required = await RunAsync(Required, cancellationToken).ConfigureAwait(false);
+        var writes = await RunAsync(WriteProbes(), cancellationToken).ConfigureAwait(false);
+
+        var missingWrites = writes.Where(r => r.Allowed != true).ToArray();
+
+        if (missingWrites.Length > 0)
+        {
+            logger.LogWarning(
+                "RBAC self-check: {Count} WRITE permission(s) are configured as actionable but NOT "
+                + "granted, so an approved action will fail with a 403 mid-incident: {Missing}. "
+                + "policy.actionableNamespaces renders the write Role, so this usually means the "
+                + "chart and the running RBAC have drifted.",
+                missingWrites.Length,
+                string.Join("; ", missingWrites.Select(m => $"{m.Probe.Display} ({m.Probe.Why})")));
+        }
+        else if (writes.Count > 0)
+        {
+            logger.LogInformation(
+                "RBAC self-check: all {Count} write permission(s) granted in {Namespaces}.",
+                writes.Count, string.Join(", ", policy.CurrentValue.AllowedNamespaces));
+        }
 
         // One log line, not one per probe. A security review wants the whole matrix in a
         // single artefact it can copy; forty interleaved lines are not that.

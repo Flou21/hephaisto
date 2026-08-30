@@ -72,7 +72,32 @@ policy:
   # independent facts that nothing reconciles. An empty list renders no Role at all.
   #
   # Refused outright: kube-*, default, the release namespace, observabilityNamespace.
+  #
+  # EACH NAMESPACE MUST ALSO CARRY THE LABEL `hephaisto.io/destructive-actions-allowed: "true"`.
+  # That is a second, independent confirmation and it is checked by the policy engine, not
+  # just documented: this list is the operator's authority, the label is the namespace
+  # owner's, and both have to agree before anything in it can be touched. A namespace named
+  # here and left unlabelled is denied, and the reason on the action says so.
   actionableNamespaces: []
+
+  # ACTION TYPES THAT MAY RUN WITHOUT A HUMAN, and only when `mode` is Auto. Empty means every
+  # action waits for someone to press approve, which is the correct default and the state most
+  # installs should stay in.
+  #
+  # Promote ONE TYPE AT A TIME, after watching that type propose correctly for a while and
+  # need no human correction. Promoting globally is how you find out that the action set
+  # contains something you had not thought about, all at once, in production.
+  #
+  # restart_pod is the sane first and often only entry: it is the most common correct
+  # remediation there is, and it is self-healing - the controller restores the pod, so the
+  # worst sustained case at the budget caps is roughly ten restarts an hour, which is
+  # indistinguishable from a badly tuned HPA.
+  #
+  # Valid values are ActionType members: RestartPod, RolloutRestart, RollbackDeployment,
+  # ScaleWorkload, DeleteStuckJob, DeleteFailedJobPods, SilenceAlert, PatchResources,
+  # CordonNode, DrainNode. DeletePvc and DeleteWorkload are permanently denied and naming
+  # them here does nothing.
+  autoEnabledActionTypes: []
 
 # -----------------------------------------------------------------------------------------
 # Mode
