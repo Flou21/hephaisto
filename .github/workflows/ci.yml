@@ -102,7 +102,7 @@ jobs:
       # runner - it prints `unknown option` and still exits 0, which is the same trap wearing
       # a different hat.)
       - name: Run tests
-        run: scripts/ci-test.sh tests/Hephaisto.Tests/Hephaisto.Tests.csproj 900 Release
+        run: scripts/ci-test.sh tests/Hephaisto.Tests/Hephaisto.Tests.csproj 1000 Release
 
   integration-postgres:
     runs-on: ubuntu-latest
