@@ -268,6 +268,14 @@ if should_run act; then
     if [ "${E2E_MODE:-Observe}" = "Observe" ]; then
         phase "7a. acting (skipped)"
         skip "acting" "installed in Observe; run with --mode Auto to exercise the executor"
+    elif [ "${LLM_AVAILABLE:-0}" != "1" ]; then
+        # No key means no investigation, which means no plan, which means there was never
+        # going to be an action. Asserting anyway would spend eleven minutes waiting and then
+        # report "the agent did not act" - which measures the absence of an API key rather
+        # than anything about the agent, and is the exact failure this harness has now made
+        # five times in different clothes.
+        phase "7a. acting (skipped)"
+        skip "acting" "no Gemini key, so nothing investigated and nothing could be proposed"
     else
         phase "7a. acting"
         chaos_assert_action_executed
