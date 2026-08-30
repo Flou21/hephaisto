@@ -565,9 +565,18 @@ Refactoring 1268 lines of framework-free CSS onto new tokens is an ordered refac
 namespace is stable and semantic enough to survive it. There is nominally a safety net: a Playwright
 suite and `data-testid` attributes.
 
-**That suite currently runs nothing**
-([backlog #1](backlog.md#1-the-e2e-playwright-phase-reports-pass-on-a-zero-assertion-run)). It is a
-**hard dependency** of this milestone — without it the visual regression risk is entirely unmanaged.
+**That suite runs now** — [backlog #1](backlog.md#1-the-e2e-playwright-phase-reports-pass-on-a-zero-assertion-run)
+was fixed on 2026-08-29, and nine specs execute against a real console full of seeded incidents.
+It is still a **hard dependency** of this milestone: without it the visual regression risk on a
+1268-line CSS refactor is entirely unmanaged.
+
+**But it cannot currently pass in the default mode**
+([#46](backlog.md#46-the-console-suite-cannot-pass-in-observe-so-a-green-run-needs---mode-auto)),
+because one spec skips when nothing is `AwaitingApproval` and under Observe nothing ever can be.
+A safety net that is red before you start is not a safety net — you cannot tell your regression
+from the standing failure. **#46 is therefore a prerequisite of this milestone rather than a
+nice-to-have**, and it is an S. Do it before the first token lands, not after the refactor has
+already moved a hundred selectors.
 
 Also lands here, because these are design outputs rather than project chores: the **wordmark**, the
 **favicon** (currently disabled — `App.razor` has `<link rel="icon" href="data:," />`), and the
