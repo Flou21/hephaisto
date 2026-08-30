@@ -70,7 +70,7 @@ test.describe('the console', () => {
     await expect(primary.locator('.hp-evidence li').first()).toBeVisible();
   });
 
-  test('status shows Observe, and the mode is not being held back', async ({ page }) => {
+  test('the console and the API agree on the mode, and it is not being held back', async ({ page }) => {
     await open(page, '/status');
     await expect(page.locator('h1')).toHaveText('status');
 
@@ -79,13 +79,17 @@ test.describe('the console', () => {
     await expect(page.getByTestId('effective-mode')).toHaveText(s.effectiveMode.toLowerCase());
     await expect(page.getByTestId('configured-mode')).toHaveText(s.mode.toLowerCase());
 
-    // The harness installs with mode: Observe and asserts no mutation. If the console showed
-    // anything else, one of the two is lying.
-    await expect(page.getByTestId('effective-mode')).toHaveText('observe');
+    // The harness installs with whatever --mode asked for, and the containment assertions in
+    // chaos.sh are conditional on the same variable. Pinning 'observe' here was right while
+    // Observe was the only mode the agent could be installed in; it now has to agree with the
+    // run rather than with a constant, or an --mode Auto run fails on the console assertion
+    // instead of on anything real.
+    const expected = (process.env.E2E_MODE ?? 'Observe').toLowerCase();
+    await expect(page.getByTestId('effective-mode')).toHaveText(expected);
 
     // hp-alarm on the effective mode means it is being held BELOW what was configured - a kill
-    // switch is engaged. Not expected here, and it would silently invalidate the mutation
-    // assertions if it were.
+    // switch is engaged. Not expected in either mode, and it would silently invalidate the
+    // containment assertions in Observe and the acting ones in Auto.
     await expect(page.getByTestId('effective-mode')).not.toHaveClass(/hp-alarm/);
   });
 

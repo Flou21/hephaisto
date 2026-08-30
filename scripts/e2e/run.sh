@@ -79,6 +79,9 @@ Options:
   --only <phase>       run just this phase against an existing cluster
   --keep-cluster       do not delete the cluster on exit
   --no-judge           skip the LLM root-cause grading
+  --mode <M>      Observe (default), DryRun or Auto. Auto installs the chart able to act,
+                  adds c11 to the fixtures and runs the act phase. Observe asserts the
+                  opposite: that nothing executed.
   --no-ui              skip the Playwright suite
   --yes                do not prompt before pushing an rc tag
   -h, --help           this
@@ -99,6 +102,7 @@ while [ $# -gt 0 ]; do
         --keep-cluster) KEEP_CLUSTER=1; shift ;;
         --no-judge)     RUN_JUDGE=0; shift ;;
         --no-ui)        RUN_UI=0; shift ;;
+        --mode)         E2E_MODE="${2:?--mode needs Observe|DryRun|Auto}"; shift 2 ;;
         --yes)          ASSUME_YES=1; shift ;;
         -h|--help)      usage; exit 0 ;;
         *)              printf 'unknown option: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -108,6 +112,12 @@ done
 # ---------------------------------------------------------------------------------------
 # Run state
 # ---------------------------------------------------------------------------------------
+
+# Observe by default, because the default run is the containment run: it proves the agent
+# does not act when it is not supposed to, which is the property that has to hold on every
+# release. --mode Auto swaps that for the opposite proof and turns on the act phase.
+E2E_MODE="${E2E_MODE:-Observe}"
+export E2E_MODE
 START_TIME=$SECONDS
 FAILED=0
 CURRENT_PHASE=setup
@@ -139,7 +149,7 @@ trap teardown EXIT INT TERM
 # ---------------------------------------------------------------------------------------
 # Phase sequencing
 # ---------------------------------------------------------------------------------------
-PHASES=(build cluster deps deploy chaos validate ui report)
+PHASES=(build cluster deps deploy chaos validate act ui report)
 
 should_run() {
     local p="$1"
@@ -224,6 +234,13 @@ fi
 # --- chaos --------------------------------------------------------------------------------
 CURRENT_PHASE=chaos
 if should_run chaos; then
+    # c11 is the only fixture a restart actually fixes, so an acting run needs it and a
+    # containment run has no use for it.
+    if [ "$E2E_MODE" != "Observe" ] && [ -z "${FIXTURES:-}" ]; then
+        FIXTURES="${DEFAULT_FIXTURES},c11"
+        export FIXTURES
+    fi
+
     phase "6. inject faults"
     chaos_apply
     chaos_await_incidents
@@ -241,6 +258,21 @@ if should_run validate; then
     chaos_assert_annotations
     chaos_assert_no_mutation
     judge_run
+fi
+
+# --- act ----------------------------------------------------------------------------------
+# Only when the harness installed in a mode that can act. Skipped rather than silently absent,
+# so the report says which half of the release this run covered.
+CURRENT_PHASE=act
+if should_run act; then
+    if [ "${E2E_MODE:-Observe}" = "Observe" ]; then
+        phase "7a. acting (skipped)"
+        skip "acting" "installed in Observe; run with --mode Auto to exercise the executor"
+    else
+        phase "7a. acting"
+        chaos_assert_action_executed
+        chaos_assert_verification
+    fi
 fi
 
 # --- ui -----------------------------------------------------------------------------------

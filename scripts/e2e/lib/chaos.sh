@@ -47,6 +47,9 @@ fixture_kind() {
         c7)  echo ConfigError ;;
         c8)  echo ReadinessFlapping ;;
         c10) echo HighErrorRate ;;
+        # Fires the same shipped rule as c2 - it IS a crash loop, it just stops
+        # being one when the pod is replaced. That is the whole fixture.
+        c11) echo CrashLoopBackOff ;;
         *)   echo "" ;;
     esac
 }
@@ -477,15 +480,25 @@ chaos_assert_annotations() {
 chaos_assert_no_mutation() {
     local details="$WORKDIR/details.jsonl"
 
-    # The mode is Observe, so any executed action is a containment failure rather than a bug
-    # in a feature. This is only a meaningful assertion because the agent HOLDS delete on the
-    # chaos namespace - it could have acted and did not.
+    # Containment, and it is now conditional on the mode the harness installed with.
+    #
+    # This used to assert unconditionally that nothing had executed, which was right for every
+    # release in which nothing COULD - and would have made v0.2.0's own e2e fail the moment the
+    # agent did the thing it was built to do. What has to stay true is the pairing: in Observe
+    # nothing may execute, and in Auto something must. An assertion that passes in both
+    # directions is not an assertion.
     local executed
     executed=$(jq -r 'select(.actions | length > 0)
                       | .actions[] | select(.dryRun == false and .executedAt != null) | .id' "$details" | wc -l | tr -d ' ')
-    [ "${executed:-0}" -eq 0 ] \
-        && pass "no action was executed (Observe mode held)" \
-        || fail "$executed action(s) were executed in Observe mode" "this is a containment failure"
+
+    if [ "${E2E_MODE:-Observe}" = "Observe" ]; then
+        # Only meaningful because the agent HOLDS delete on the chaos namespace - it could
+        # have acted and did not.
+        [ "${executed:-0}" -eq 0 ] \
+            && pass "no action was executed (Observe mode held)" \
+            || fail "$executed action(s) were executed in Observe mode" "this is a containment failure"
+    else
+        say "$executed action(s) executed in ${E2E_MODE} mode; containment assertion does not apply"
 
     # No audit, no action: every action that was APPROVED must name who approved it.
     #
@@ -495,6 +508,8 @@ chaos_assert_no_mutation() {
     # refused, correctly carrying a null approvedBy, reported as a failure of the audit trail.
     # Requiring a name there would mean inventing one, which is worse than the gap it claims to
     # close. Proposed, AwaitingApproval, Denied and Expired are all legitimately unapproved.
+    fi
+
     local anonymous
     anonymous=$(jq -r 'select(.actions | length > 0)
                        | .actions[]
@@ -511,6 +526,60 @@ chaos_assert_no_mutation() {
     local survivors
     survivors=$(kc -n "$CHAOS_NS" get deploy -o name 2>/dev/null | wc -l | tr -d ' ')
     say "$survivors chaos workload(s) still present in $CHAOS_NS"
+}
+
+# ---------------------------------------------------------------------------------------
+# The acting half. Only runs when the harness installed in a mode that can act.
+# ---------------------------------------------------------------------------------------
+
+# An action was admitted, executed and recorded against the fixture that needed it.
+chaos_assert_action_executed() {
+    local details="$WORKDIR/details.jsonl"
+    local target; target=$(fixture_target c11)
+
+    local executed
+    executed=$(jq -r --arg t "$target" \
+        'select(.target.name != null and (.target.name | contains($t)))
+         | .actions[]? | select(.executedAt != null and .dryRun == false) | .type' \
+        "$details" 2>/dev/null | wc -l | tr -d ' ')
+
+    [ "${executed:-0}" -ge 1 ] \
+        && pass "c11 was acted on ($executed action(s) executed)" \
+        || fail "c11 was not acted on" "expected at least one executed, non-dry-run action"
+
+    # Every executed action must name an approver. In Auto that is hephaisto/auto; the point
+    # is that "no audit, no action" holds on the path that actually writes to the cluster.
+    local anonymous
+    anonymous=$(jq -r '.actions[]? | select(.executedAt != null) | select((.approvedBy // "") == "") | .id' \
+        "$details" 2>/dev/null | wc -l | tr -d ' ')
+
+    [ "${anonymous:-0}" -eq 0 ] \
+        && pass "every executed action names an approver" \
+        || fail "$anonymous executed action(s) have no approvedBy"
+}
+
+# The fixture is actually healthy afterwards. This is the half that distinguishes "the agent
+# did something" from "the agent fixed it", and it is why c11 exists rather than reusing c8:
+# a fixture that recovers on its own would pass this whatever the agent did.
+chaos_assert_verification() {
+    local ok
+    ok=$(kc -n "$CHAOS_NS" get deploy c11-transient \
+        -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo 0)
+
+    [ "${ok:-0}" -ge 1 ] \
+        && pass "c11 is available after the restart" \
+        || fail "c11 is still not available" "the action ran but the workload did not recover"
+
+    # And the incident says so. Resolved is granted only by hephaisto/verifier, after a
+    # deterministic predicate looked at the cluster - a model may never grant it.
+    local resolved
+    resolved=$(api_array "/api/incidents?state=Resolved&limit=100" \
+        | jq -r '.[] | select(.target.name != null and (.target.name | contains("c11"))) | .id' \
+        2>/dev/null | wc -l | tr -d ' ')
+
+    [ "${resolved:-0}" -ge 1 ] \
+        && pass "c11's incident reached Resolved" \
+        || fail "c11's incident did not reach Resolved" "verification never granted it"
 }
 
 chaos_cleanup() {

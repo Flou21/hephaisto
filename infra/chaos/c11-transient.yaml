@@ -1,0 +1,167 @@
+# =============================================================================
+# C11 - a transient fault that a pod restart actually fixes
+# =============================================================================
+# WHY THIS FIXTURE EXISTS
+#   Every other fixture in this directory is a PERMANENT fault. C2 crash-loops
+#   forever, C4 cannot pull its image, C7 is missing a Secret - restarting the
+#   pod fixes none of them, which is correct, because the agent is supposed to
+#   diagnose rather than percussively maintain.
+#
+#   That leaves v0.2.0's acceptance criterion untestable. "A transiently-failing
+#   pod is auto-restarted, verification passes, and the incident reaches
+#   Resolved" needs a fault where a restart IS the right answer and the cluster
+#   is observably healthy afterwards. C8 is the near miss and is worse than
+#   useless here: it recovers on its own every 60 seconds, so verification would
+#   pass whether or not the agent did anything at all.
+#
+# WHAT IT BREAKS
+#   The first pod of this Deployment fails to start, exits 1, and settles into
+#   CrashLoopBackOff. Any pod after it starts cleanly and stays Ready.
+#
+#   The state lives in two volumes and the pair is the whole trick:
+#
+#     /data  a PVC. Survives everything. Holds a generation counter.
+#     /pod   an emptyDir. Survives CONTAINER restarts, dies with the POD.
+#
+#   A container increments the counter only if /pod/counted is absent - that is,
+#   only on the first container of a given pod. So the kubelet restarting the
+#   container inside the crash loop does NOT advance the generation, and the pod
+#   goes on failing indefinitely. Deleting the POD - which is exactly what
+#   ActionType.RestartPod does, because there is no RESTART verb in the API -
+#   discards the emptyDir, the replacement pod counts itself as generation 2,
+#   and it comes up healthy.
+#
+#   Modelled on a real and boring class of fault: a process that wedged on a
+#   stale lock, a poisoned in-memory cache, a connection pool that will not
+#   recover. The fix is genuinely "turn it off and on again", and the reason it
+#   works is that the badness was in the pod rather than in its configuration.
+#
+# RESETTING IT
+#   The counter is the fixture's memory, so re-running it means deleting the PVC:
+#
+#     kubectl delete -f infra/chaos/c11-transient.yaml
+#     kubectl -n hephaisto-chaos delete pvc c11-transient-state
+#
+#   Deleting the Deployment alone leaves the counter at 2 and the fixture comes
+#   back healthy, which looks like the agent fixed something it never touched.
+#
+# EXPECTED KUBERNETES EVENTS
+#   - Warning  BackOff   Back-off restarting failed container app in pod ...
+#     (until the pod is replaced; then nothing but Pulled/Created/Started)
+#
+# EXPECTED METRIC / PROMQL SIGNAL
+#   kube_pod_container_status_waiting_reason{
+#     namespace="hephaisto-chaos", container="app",
+#     reason="CrashLoopBackOff"} == 1
+#
+#   Fires ChaosPodCrashLooping, the same shipped rule as C2, so this carries
+#   hephaisto_kind: CrashLoopBackOff and gets the crash-loop runbook.
+#
+#   AFTER a restart, and this is what verification checks:
+#     kube_deployment_status_replicas_available{
+#       namespace="hephaisto-chaos", deployment="c11-transient"} == 1
+#
+# EXPECTED LOG SIGNAL
+#   {k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c11-transient"}
+#     |= "FATAL"
+#
+#   Exact expected line:
+#     FATAL: stale lock held by generation 1; this pod cannot recover in place
+#
+#   And after the restart:
+#     recovered: no stale lock at generation 2
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: c11-transient-state
+  namespace: hephaisto-chaos
+  labels:
+    app.kubernetes.io/name: c11-transient
+    hephaisto.chaos/scenario: c11
+spec:
+  accessModes: ["ReadWriteOnce"]
+  # The smallest thing local-path will give us. It holds a single integer.
+  resources:
+    requests:
+      storage: 64Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: c11-transient
+  namespace: hephaisto-chaos
+  labels:
+    app.kubernetes.io/name: c11-transient
+    hephaisto.chaos/scenario: c11
+    hephaisto.chaos/fault: transient
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate. local-path is ReadWriteOnce and single-node, so
+  # a rolling replacement would have the new pod waiting on a volume the old one
+  # still holds - the fixture would look stuck rather than fixed.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: c11-transient
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: c11-transient
+        hephaisto.chaos/scenario: c11
+        hephaisto.chaos/fault: transient
+    spec:
+      terminationGracePeriodSeconds: 1
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: c11-transient-state
+        - name: pod-scope
+          # NOT persistentVolumeClaim, and not medium: Memory either - the point
+          # is only that its lifetime is the POD's. This is what makes a container
+          # restart different from a pod replacement.
+          emptyDir: {}
+      containers:
+        - name: app
+          # busybox:1.37 - linux/arm64 manifest verified.
+          image: busybox:1.37
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: state
+              mountPath: /data
+            - name: pod-scope
+              mountPath: /pod
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              sleep 2
+
+              # Count this POD once. The marker is on the emptyDir, so the kubelet
+              # restarting this container inside the crash loop finds it already
+              # there and the generation does not advance.
+              if [ ! -f /pod/counted ]; then
+                touch /pod/counted
+                n=$(cat /data/generation 2>/dev/null || echo 0)
+                echo $((n + 1)) > /data/generation
+              fi
+
+              gen=$(cat /data/generation)
+
+              if [ "$gen" -lt 2 ]; then
+                echo "FATAL: stale lock held by generation $gen; this pod cannot recover in place"
+                exit 1
+              fi
+
+              echo "recovered: no stale lock at generation $gen"
+
+              # Stay up and Ready. Verification at T+60s, T+5m and T+15m asks the
+              # workload whether it is settled, so this has to outlive all three.
+              while true; do sleep 30; done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
