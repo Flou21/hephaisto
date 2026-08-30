@@ -1408,3 +1408,91 @@ reason naming the first failure rather than asserting and failing them.
 **Size.** S.
 
 
+
+---
+
+## Opened by v0.4.0
+
+### 48. The console suite interacts with a page the circuit has not taken over yet
+
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because
+these numbers and titles are the anchors `roadmap.md` links by.
+
+**Symptom.** `acting.spec.ts:79` (*"approve is disabled until someone says who they are"*) failed
+on every run that got far enough to execute it, with the approve button never enabling:
+
+```
+expect(locator).toBeEnabled() failed
+Locator:  getByTestId('approve')
+Expected: enabled   Received: disabled
+44 × locator resolved to <button disabled ... data-testid="approve">approve</button>
+```
+
+Read at face value this says the approval control in the console is broken — which would have
+been serious, because v0.3.0's entire approval story is a Teams card that deep-links to that
+button, and [#45](#45-nothing-has-been-delivered-from-a-cluster)'s acceptance clause reads
+*"an approval-required incident is approved from the browser via the link in that card"*.
+
+**It is not a product bug.** The control works. The suite was interacting with a page that was
+not interactive yet.
+
+**Evidence.** Driven against a live console on the development cluster, with the circuit's
+websocket frames captured:
+
+```
+h1 visible at            52 ms      <- what open() waited for
+_blazor websocket open   55 ms
+first RenderBatch       102 ms
+a click first lands     629 ms      <- what open() needed to wait for
+```
+
+This is a Blazor **Web App** with `<Routes @rendermode="InteractiveServer" />`, so every
+component renders twice: once as static server-rendered HTML delivered with the document, and
+then again over the SignalR circuit, which replaces that DOM wholesale. Between those two moments
+the page looks completely finished and is completely inert — the elements are present, visible
+and correctly worded, and any event dispatched into them is dropped, because the handlers belong
+to a render that has not happened yet.
+
+Once past the takeover, the same interaction is reliable. Filling the name and watching the wire
+shows the event arriving and the server re-rendering:
+
+```
+OUT  DispatchEventAsync [{"eventHandlerId":19,"eventName":"input","fieldValue":"x"}]
+IN   JS.RenderBatch
+```
+
+**Why it stayed invisible.** Reading static HTML is indistinguishable from reading the
+interactive DOM, so all 34 read-only assertions in this suite passed either way. Only a spec that
+*interacts* could ever have noticed, and there is exactly one — which is also the spec
+[#46](#46-the-console-suite-cannot-pass-in-observe-so-a-green-run-needs---mode-auto) causes to be
+skipped in the default mode. In Observe it skipped and was never reached; in Auto it ran and was
+read as a product defect. The helper's own comment asserted the opposite of the truth — *"The
+nav is server-rendered, so it is not proof of anything. The h1 is rendered by the component
+itself"* — which was correct for Blazor Server as it behaved before .NET 8, and stopped being
+correct without anybody editing the sentence.
+
+**Fixed 2026-08-30.** `helpers.ts`'s `open()` now waits for the circuit's first `RenderBatch`
+frame before asserting anything, so every element a spec goes on to find belongs to the
+interactive tree. Waiting for the websocket to *open* is not sufficient — it opens at ~55ms,
+still before the takeover.
+
+Verified falsifiable rather than assumed: the same interaction, run five times with no sleeps
+anywhere, fails 5/5 against the shipped helper and passes 5/5 against the fixed one.
+
+### 49. The console spec compares a capped API call against an uncapped page
+
+**Symptom.** `console.spec.ts:11` asserts `incident-row` count equals the length of
+`/api/incidents?limit=100`. On any install with more than 100 open incidents that is a guaranteed
+failure — observed on the development cluster as `Expected: 100, Received: 103`.
+
+**Evidence.** The spec caps its own API call at 100 and compares the result to a page that
+applies no such cap.
+
+**Why it is still open.** An e2e run has a handful of incidents, so the gate never trips there.
+It trips on any long-lived install, which is where a human is most likely to run the suite by
+hand and least likely to trust the result afterwards.
+
+**Fix.** Either cap both sides or compare the page against an uncapped count. Capping both is
+the smaller change and keeps the assertion meaningful.
+
+**Size.** S.
