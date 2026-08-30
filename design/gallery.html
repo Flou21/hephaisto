@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1280, initial-scale=1" />
+<title>Hephaisto — component gallery</title>
+
+<!--
+  THE SUBJECT OF THE VISUAL BASELINES, and the page a contributor looks at before touching CSS.
+
+  It links the SHIPPING stylesheet by relative path rather than copying anything out of it, so a
+  change to app.css shows up here and in the baselines on the same run. Nothing here is generated
+  at view time and nothing is fetched: every value is frozen, because a baseline taken against a
+  live console would be comparing model-written prose, real incident ids and a duration column
+  that ticks once a second.
+
+  It is deliberately NOT served by the pod. This is a repository artifact.
+
+  It does not import a theme switcher either. The two themes come from the OS preference that
+  app.css already keys on, and Playwright sets that per project - see design/visual/.
+-->
+<link rel="stylesheet" href="../src/Hephaisto.Agent/wwwroot/app.css" />
+<style>
+  /* Gallery chrome only. Nothing here may style a component - if a rule below is doing visual
+     work for something in a section, the component is under-specified in app.css and that is
+     the finding, not a thing to paper over here. */
+  .g-head { border-bottom: 1px solid var(--border-strong); margin-bottom: 1.4rem; padding-bottom: .7rem; }
+  .g-sec { margin: 0 0 2.2rem; }
+  .g-sec > h2 { font-size: .82rem; letter-spacing: .08em; text-transform: uppercase;
+                 color: var(--fg-dim); border-bottom: 1px solid var(--border); padding-bottom: .3rem; }
+  .g-note { color: var(--fg-dim); max-width: 62ch; margin: .4rem 0 1rem; }
+  .g-strip { display: flex; flex-wrap: wrap; gap: .55rem; align-items: center; }
+  .g-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: .5rem; }
+  .g-swatch { display: flex; align-items: center; gap: .5rem; font-size: .76rem; color: var(--fg-dim); }
+  .g-chip { width: 2.2rem; height: 1.1rem; border: 1px solid var(--border-strong); border-radius: 3px; }
+</style>
+</head>
+<body>
+<div class="hp-shell">
+  <main class="hp-main">
+
+    <div class="g-head">
+      <h1>component gallery</h1>
+      <p class="g-note">
+        Every component the design language has to keep working, rendered from the shipping
+        stylesheet with frozen data. This page is what the visual baselines photograph.
+      </p>
+    </div>
+
+    <section class="g-sec">
+      <h2>Colour tokens</h2>
+      <p class="g-note">
+        The canonical set. A swatch that changes here changes everywhere, which is the point of
+        the token file — and is why this section is photographed in both themes.
+      </p>
+      <div class="g-grid">
+          <div class="g-swatch"><span class="g-chip" style="background:var(--bg)"></span><span class="mono">--bg</span></div>
+          <div class="g-swatch"><span class="g-chip" style="background:var(--bg-raised)"></span><span class="mono">--bg-raised</span></div>
+          <div class="g-swatch"><span class="g-chip" style="background:var(--bg-sunken)"></span><span class="mono">--bg-sunken</span></div>
+          <div class="g-swatch"><span class="g-chip" style="background:var(--bg-hover)"></span><span class="mono">--bg-hover</span></div>
+          <div class="g-swatch"><span class="g-chip" style="background:var(--border)"></span><span class="mono">--border</span></div>
+          <div class="g-swatch"><span class="g-chip" style="background:var(--border-strong)"></span><span class="mono">--border-strong</span></div>
+          <div class="g-swatch"><span class="g-chip" style="background:var(--fg)"></span><span class="mono">--fg</span></div>
+          <div class="g-swatch"><span class="g-chip" style="background:var(--fg-dim)"></span><span class="mono">--fg-dim</span></div>
+          <div class="g-swatch"><span class="g-chip" style="background:var(--fg-faint)"></span><span class="mono">--fg-faint</span></div>
+          <div class="g-swatch"><span class="g-chip" style="background:var(--accent)"></span><span class="mono">--accent</span></div>
+          <div class="g-swatch"><span class="g-chip" style="background:var(--red)"></span><span class="mono">--red</span></div>
+          <div class="g-swatch"><span class="g-chip" style="background:var(--orange)"></span><span class="mono">--orange</span></div>
+          <div class="g-swatch"><span class="g-chip" style="background:var(--yellow)"></span><span class="mono">--yellow</span></div>
+          <div class="g-swatch"><span class="g-chip" style="background:var(--green)"></span><span class="mono">--green</span></div>
+          <div class="g-swatch"><span class="g-chip" style="background:var(--blue)"></span><span class="mono">--blue</span></div>
+          <div class="g-swatch"><span class="g-chip" style="background:var(--purple)"></span><span class="mono">--purple</span></div>
+          <div class="g-swatch"><span class="g-chip" style="background:var(--cyan)"></span><span class="mono">--cyan</span></div>
+      </div>
+    </section>
+
+    <section class="g-sec">
+      <h2>State, severity, risk, decision</h2>
+      <p class="g-note">
+        <strong>State is never colour alone.</strong> Every one of these carries a glyph and a
+        word beside it; colour is the third channel and never the only one. Photographing the
+        whole vocabulary is what makes that rule enforceable rather than aspirational.
+      </p>
+      <div class="g-strip">
+          <span class="hp-state state-detected"><span class="glyph">*</span> detected</span>
+          <span class="hp-state state-triaging"><span class="glyph">?</span> triaging</span>
+          <span class="hp-state state-suppressed"><span class="glyph">-</span> suppressed</span>
+          <span class="hp-state state-investigating"><span class="glyph">~</span> investigating</span>
+          <span class="hp-state state-awaiting"><span class="glyph">!</span> awaiting approval</span>
+          <span class="hp-state state-acting"><span class="glyph">></span> acting</span>
+          <span class="hp-state state-verifying"><span class="glyph">=</span> verifying</span>
+          <span class="hp-state state-resolved"><span class="glyph">+</span> resolved</span>
+          <span class="hp-state state-escalated"><span class="glyph">^</span> escalated</span>
+          <span class="hp-state state-expired"><span class="glyph">.</span> expired</span>
+      </div>
+      <div class="g-strip" style="margin-top:.6rem">
+          <span class="hp-sev sev-critical"><span class="glyph">!!</span> critical</span>
+          <span class="hp-sev sev-warning"><span class="glyph">!</span> warning</span>
+          <span class="hp-sev sev-info"><span class="glyph">i</span> info</span>
+      </div>
+      <div class="g-strip" style="margin-top:.6rem">
+          <span class="hp-risk risk-low">low</span>
+          <span class="hp-risk risk-medium">medium</span>
+          <span class="hp-risk risk-high">high</span>
+          <span class="hp-risk risk-critical">critical</span>
+      </div>
+      <div class="g-strip" style="margin-top:.6rem">
+          <span class="hp-decision dec-allow"><span class="glyph">+</span> allow</span>
+          <span class="hp-decision dec-approval"><span class="glyph">!</span> approval</span>
+          <span class="hp-decision dec-deny"><span class="glyph">x</span> deny</span>
+      </div>
+    </section>
+
+    <section class="g-sec">
+      <h2>Hard component 1 — the incident table row</h2>
+      <p class="g-note">Nine columns, dense, and the row that carries the most state per pixel.</p>
+      <table class="hp-table">
+        <thead><tr>
+          <th class="c-state">state</th><th class="c-sev">sev</th><th class="c-kind">kind</th>
+          <th class="c-target">workload</th><th class="c-title">title</th><th class="c-num">signals</th>
+          <th class="c-diag">diagnosis</th><th class="c-time">opened</th><th class="c-time">duration</th>
+        </tr></thead>
+        <tbody>
+        <tr class="hp-row" data-testid="incident-row" data-kind="CrashLoopBackOff" data-target="api-7d9c4">
+          <td class="c-state"><span class="hp-state st-escalated"><span class="glyph">^</span> escalated</span></td>
+          <td class="c-sev"><span class="hp-sev sev-critical"><span class="glyph">!!</span> critical</span></td>
+          <td class="c-kind mono">CrashLoopBackOff</td>
+          <td class="c-target mono"><span class="hp-ns">prod</span>/Deployment/api-7d9c4</td>
+          <td class="c-title"><a href="#" data-testid="incident-link">CrashLoopBackOff on api-7d9c4 (prod)</a></td>
+          <td class="c-num mono">6</td>
+          <td class="c-diag"><span class="hp-yes"><span class="glyph">+</span> yes</span></td>
+          <td class="c-time mono">2026-08-30 09:14:02Z</td>
+          <td class="c-time mono">4m12s</td>
+        </tr>
+        <tr class="hp-row" data-testid="incident-row" data-kind="OOMKilled" data-target="worker-2f1a">
+          <td class="c-state"><span class="hp-state st-acting"><span class="glyph">></span> acting</span></td>
+          <td class="c-sev"><span class="hp-sev sev-warning"><span class="glyph">!</span> warning</span></td>
+          <td class="c-kind mono">OOMKilled</td>
+          <td class="c-target mono"><span class="hp-ns">prod</span>/Deployment/worker-2f1a</td>
+          <td class="c-title"><a href="#" data-testid="incident-link">OOMKilled on worker-2f1a (prod)</a></td>
+          <td class="c-num mono">3</td>
+          <td class="c-diag"><span class="hp-yes"><span class="glyph">+</span> yes</span></td>
+          <td class="c-time mono">2026-08-30 09:14:02Z</td>
+          <td class="c-time mono">1m03s</td>
+        </tr>
+        <tr class="hp-row" data-testid="incident-row" data-kind="Unschedulable" data-target="batch-88bd">
+          <td class="c-state"><span class="hp-state st-investigating"><span class="glyph">~</span> investigating</span></td>
+          <td class="c-sev"><span class="hp-sev sev-warning"><span class="glyph">!</span> warning</span></td>
+          <td class="c-kind mono">Unschedulable</td>
+          <td class="c-target mono"><span class="hp-ns">staging</span>/Deployment/batch-88bd</td>
+          <td class="c-title"><a href="#" data-testid="incident-link">Unschedulable on batch-88bd (staging)</a></td>
+          <td class="c-num mono">1</td>
+          <td class="c-diag"><span class="hp-running"><span class="glyph">*</span> running</span></td>
+          <td class="c-time mono">2026-08-30 09:14:02Z</td>
+          <td class="c-time mono">0m18s</td>
+        </tr>
+        <tr class="hp-row" data-testid="incident-row" data-kind="ImagePullBackOff" data-target="cache-01c2">
+          <td class="c-state"><span class="hp-state st-resolved"><span class="glyph">+</span> resolved</span></td>
+          <td class="c-sev"><span class="hp-sev sev-info"><span class="glyph">i</span> info</span></td>
+          <td class="c-kind mono">ImagePullBackOff</td>
+          <td class="c-target mono"><span class="hp-ns">staging</span>/Deployment/cache-01c2</td>
+          <td class="c-title"><a href="#" data-testid="incident-link">ImagePullBackOff on cache-01c2 (staging)</a></td>
+          <td class="c-num mono">2</td>
+          <td class="c-diag"><span class="hp-yes"><span class="glyph">+</span> yes</span></td>
+          <td class="c-time mono">2026-08-30 09:14:02Z</td>
+          <td class="c-time mono">12m47s</td>
+        </tr>
+        <tr class="hp-row" data-testid="incident-row" data-kind="ReadinessFlapping" data-target="edge-4410">
+          <td class="c-state"><span class="hp-state st-suppressed"><span class="glyph">-</span> suppressed</span></td>
+          <td class="c-sev"><span class="hp-sev sev-info"><span class="glyph">i</span> info</span></td>
+          <td class="c-kind mono">ReadinessFlapping</td>
+          <td class="c-target mono"><span class="hp-ns">prod</span>/Pod/edge-4410</td>
+          <td class="c-title"><a href="#" data-testid="incident-link">ReadinessFlapping on edge-4410 (prod)</a></td>
+          <td class="c-num mono">9</td>
+          <td class="c-diag"><span class="hp-no"><span class="glyph">-</span> not run</span></td>
+          <td class="c-time mono">2026-08-30 09:14:02Z</td>
+          <td class="c-time mono">31m05s</td>
+        </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="g-sec">
+      <h2>Hard component 2 — a finding with its evidence citation</h2>
+      <p class="g-note">
+        The most important thing on the page. The citation is deliberately loud, and the
+        broken-citation state below it is first-class rather than an error case — a hypothesis
+        whose evidence cannot be found must say so where the claim is made.
+      </p>
+      <article class="hp-finding finding-primary" data-testid="primary-finding">
+        <header>
+          <span class="hp-chip chip-primary" title="The hypothesis the plan is built on">primary</span>
+          <span class="hp-chip mono">scheduling</span>
+          <span class="hp-conf" title="Model's own estimate. Advisory, uncalibrated — not a measured probability.">
+            <span class="hp-conf-track"><span class="hp-conf-fill" style="width:95.0%"></span></span>
+            <span class="mono">0.95</span>
+          </span>
+        </header>
+        <p class="hp-hypothesis" data-testid="hypothesis">
+          Pod batch-88bd is stuck in Pending because Deployment batch requests 500Gi of memory,
+          which exceeds the allocatable memory on every node in the cluster.
+        </p>
+        <ul class="hp-evidence">
+          <li data-testid="evidence">
+            <button type="button" class="hp-cite" title="Jump to the step this quotes">step 6</button>
+            <blockquote class="hp-excerpt mono">app        busybox:1.37  cpu=10m,memory=500Gi  cpu=100m,memory=500Gi</blockquote>
+            <span class="hp-muted mono hp-source">evidence://step/01a04de6-0000-7000-8000-000000000006</span>
+          </li>
+          <li data-testid="evidence">
+            <span class="hp-cite-broken" title="This excerpt does not appear in the step it names"><span class="glyph">!!</span> step 9</span>
+            <blockquote class="hp-excerpt mono">0/1 nodes are available: 1 Insufficient memory.</blockquote>
+            <span class="hp-muted mono hp-source">evidence://step/01a04de6-0000-7000-8000-000000000009</span>
+          </li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="g-sec">
+      <h2>Hard component 3 — the budget meter</h2>
+      <p class="g-note">
+        Thresholds are drawn on the track, not implied by the fill colour. The fill is clamped
+        and the printed number is not: a window sitting at 140% is a different fact from one
+        sitting at 100%.
+      </p>
+        <div class="hp-meter" data-testid="meter-tokens-this-hour">
+          <div class="hp-meter-head">
+            <span class="hp-meter-label">tokens · this hour</span>
+            <span class="mono meter-ok">34.0%</span>
+          </div>
+          <div class="hp-meter-track">
+            <div class="hp-meter-fill meter-ok" style="width:34.0%"></div>
+            <div class="hp-meter-mark mark-warn" style="left:80.0%" title="80.0% — warn threshold"></div>
+            <div class="hp-meter-mark mark-max" style="left:100%" title="100% — new investigations stop here"></div>
+          </div>
+        </div>
+        <div class="hp-meter" data-testid="meter-cost-this-hour">
+          <div class="hp-meter-head">
+            <span class="hp-meter-label">cost · this hour</span>
+            <span class="mono meter-warn">86.4%</span><span class="hp-warn"><span class="glyph">!</span> over the warn line</span>
+          </div>
+          <div class="hp-meter-track">
+            <div class="hp-meter-fill meter-warn" style="width:86.4%"></div>
+            <div class="hp-meter-mark mark-warn" style="left:80.0%" title="80.0% — warn threshold"></div>
+            <div class="hp-meter-mark mark-max" style="left:100%" title="100% — new investigations stop here"></div>
+          </div>
+        </div>
+        <div class="hp-meter" data-testid="meter-cost-today">
+          <div class="hp-meter-head">
+            <span class="hp-meter-label">cost · today</span>
+            <span class="mono meter-exhausted">140.0%</span><span class="hp-error"><span class="glyph">!!</span> exhausted — new investigations stop</span>
+          </div>
+          <div class="hp-meter-track">
+            <div class="hp-meter-fill meter-exhausted" style="width:100.0%"></div>
+            <div class="hp-meter-mark mark-warn" style="left:80.0%" title="80.0% — warn threshold"></div>
+            <div class="hp-meter-mark mark-max" style="left:100%" title="100% — new investigations stop here"></div>
+          </div>
+        </div>
+    </section>
+
+    <section class="g-sec">
+      <h2>Hard component 4 — the code block</h2>
+      <p class="g-note">Monospace, scrolls rather than wraps away, and never quietly truncates.</p>
+      <pre class="hp-code">$ kubectl -n prod describe pod api-7d9c4
+Events:
+  Type     Reason     Age                From     Message
+  ----     ------     ----               ----     -------
+  Warning  BackOff    2m (x12 over 6m)   kubelet  Back-off restarting failed container
+  Warning  Unhealthy  90s (x8 over 5m)   kubelet  Readiness probe failed: connection refused</pre>
+      <blockquote class="hp-excerpt mono">The evidence excerpt, which is a near-duplicate treatment of the block above and a consolidation candidate.</blockquote>
+    </section>
+
+    <section class="g-sec">
+      <h2>Callouts</h2>
+      <div class="hp-callout callout-escalated"><span class="glyph">!!</span> <strong>My alert path is broken.</strong>
+        Until the watchdog returns, an empty incident list means nothing.</div>
+      <div class="hp-callout callout-resolved"><span class="glyph">+</span> <strong>resolved</strong> — the workload recovered and verification closed it.</div>
+      <div class="hp-callout callout-suppressed"><span class="glyph">-</span> <strong>suppressed</strong> — a storm circuit breaker is open.</div>
+      <div class="hp-callout callout-quarantine"><span class="glyph">x</span> <strong>quarantined</strong> — the action was rolled back and the workload isolated.</div>
+      <div class="hp-callout callout-retry"><span class="glyph">~</span> <strong>retrying</strong> — this spends money when pressed.</div>
+      <div class="hp-callout callout-error"><span class="glyph">!!</span> <strong>error</strong> — the investigation could not complete.</div>
+    </section>
+
+  </main>
+</div>
+</body>
+</html>
