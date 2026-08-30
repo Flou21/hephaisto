@@ -267,6 +267,81 @@ public class DesignTokenTests
         broken.Should().BeEmpty("a malformed SVG renders as a broken image and reports nothing");
     }
 
+    /// <summary>
+    /// The website consumes the SAME token file, byte for byte.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the test that makes "one token source, more than one consumer" a fact rather
+    /// than an aspiration. Until the landing page existed there was exactly one consumer, so
+    /// the claim could not be checked and would have decayed the first time somebody adjusted
+    /// a colour on one side.
+    /// </para>
+    /// <para>
+    /// A copy rather than a symlink or a build step, because the site has to be deployable on
+    /// its own and this repo deliberately has no build step for CSS. The copy is safe only
+    /// because this test exists.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheWebsiteConsumesTheSameTokenFile()
+    {
+        File.ReadAllText(WebsiteTokenFile()).Should().Be(
+            File.ReadAllText(TokenFile()),
+            "website/tokens.css is a copy of the canonical set; regenerate it with "
+            + "`cp src/Hephaisto.Agent/wwwroot/tokens.css website/tokens.css` rather than "
+            + "editing it, or the two surfaces drift within one release");
+    }
+
+    /// <summary>The website ships the same font binaries, so the two surfaces set type identically.</summary>
+    [Theory]
+    [InlineData("archivo-latin.woff2")]
+    [InlineData("jetbrains-mono-latin.woff2")]
+    public void TheWebsiteShipsTheSameFonts(string file)
+    {
+        var app = Path.Combine(RepoRoot(), "src", "Hephaisto.Agent", "wwwroot", "fonts", file);
+        var site = Path.Combine(RepoRoot(), "website", "fonts", file);
+
+        File.ReadAllBytes(site).Should().Equal(File.ReadAllBytes(app),
+            $"{file} differs between the console and the landing page, so one of them is "
+            + "setting type in a face the other does not have");
+    }
+
+    /// <summary>
+    /// The theme-color meta tags agree with the background tokens, on both surfaces.
+    /// </summary>
+    /// <remarks>
+    /// theme-color paints the browser's own chrome and is read before any CSS, so it is the one
+    /// place a colour genuinely cannot be a var(). That makes it the one place a colour can go
+    /// stale silently: change --bg and the page still renders correctly while the bar above it
+    /// keeps the old value. This is the only reason those two literals are allowed to exist.
+    /// </remarks>
+    [Theory]
+    [InlineData("src/Hephaisto.Agent/Components/App.razor")]
+    [InlineData("website/index.html")]
+    public void ThemeColourAgreesWithTheBackgroundToken(string relative)
+    {
+        var (dark, light) = Themes();
+        var markup = File.ReadAllText(Path.Combine(RepoRoot(), relative.Replace('/', Path.DirectorySeparatorChar)));
+
+        var declared = Regex.Matches(markup, """<meta name="theme-color" content="(#[0-9a-fA-F]{6})" media="\(prefers-color-scheme: (dark|light)\)" />""")
+            .Cast<Match>()
+            .ToDictionary(m => m.Groups[2].Value, m => m.Groups[1].Value, StringComparer.Ordinal);
+
+        // The array overload, not params: ContainKeys(a, b, "because...") reads the message as a
+        // third key and fails saying it could not find a colour named after the explanation.
+        declared.Should().ContainKeys(
+            new[] { "dark", "light" },
+            "{0} should declare a theme colour for each theme", relative);
+
+        declared["dark"].Should().Be(dark["--bg"],
+            $"{relative}'s dark theme-color has drifted from --bg");
+
+        var effectiveLightBg = light.TryGetValue("--bg", out var lbg) ? lbg : dark["--bg"];
+        declared["light"].Should().Be(effectiveLightBg,
+            $"{relative}'s light theme-color has drifted from --bg");
+    }
+
     // -- the files -------------------------------------------------------------------------
 
     private static string RepoRoot()
@@ -289,7 +364,10 @@ public class DesignTokenTests
     private static IEnumerable<string> ConsumingStylesheets()
     {
         yield return Path.Combine(RepoRoot(), "src", "Hephaisto.Agent", "wwwroot", "app.css");
+        yield return Path.Combine(RepoRoot(), "website", "site.css");
     }
+
+    private static string WebsiteTokenFile() => Path.Combine(RepoRoot(), "website", "tokens.css");
 
     private static string StrippedOfComments(string line)
     {
