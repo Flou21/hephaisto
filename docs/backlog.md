@@ -604,6 +604,8 @@ stack was never registered, which does not happen in any shipped configuration.
 
 ### 33. Alertmanager signals lose their namespace when the alert labels it `k8s_namespace_name`
 
+**Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** Every incident opened from a metric-derived alert has an empty namespace, so the
 incident card tells the model to investigate `Target: `//faulty-service``.
 
@@ -646,6 +648,22 @@ time a metric-derived incident was investigated deliberately rather than inciden
 
 **Size.** S for the label fallback; M to add a test over the real rule labels, which is the part
 that stops it regressing.
+
+**Fixed 2026-08-30, both halves.** `ResolveTarget` falls back through `namespace`,
+`exported_namespace` and now `k8s_namespace_name`.
+
+The half worth more is the test. `ShippedAlertRulesTests` now scans every shipped rule file for
+any identifier that *looks like* it names a namespace and fails if it is not one of the three the
+ingest reads — deliberately broad, because a pattern matching only the known spellings would
+assert nothing about the fourth one somebody adds next year. Verified by appending
+`sum by (pod_namespace_name)` to `slo-rules.yaml` and watching it go red.
+
+It was promoted from "worth fixing" to blocking by v0.3.0: notification routes filter on
+namespace, so an incident that arrives without one is now not merely awkward to investigate but
+impossible to route — it matches no namespace-scoped rule and reaches nobody, while the routing
+table looks entirely correct. `NotificationRouter` reports that case separately
+(`SuppressedByUnknownNamespace`) and the interceptor logs it by incident id, so the two halves
+fail loudly rather than quietly.
 
 ---
 

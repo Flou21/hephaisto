@@ -273,7 +273,22 @@ public static class AlertmanagerEndpoints
     {
         var target = new TargetRef
         {
-            Namespace = Label(labels, "namespace") ?? Label(labels, "exported_namespace") ?? string.Empty,
+            // Three spellings, because the shipped rules genuinely disagree and the incident is
+            // useless without this. kube-state-metrics rules say `namespace`; a recording rule
+            // that has been through a relabel says `exported_namespace`; and the OTel
+            // spanmetrics rules group by `k8s_namespace_name`, which is neither.
+            //
+            // An empty namespace is not cosmetic (backlog #33). It is part of the signal
+            // fingerprint, it is what Policy:AllowedNamespaces is checked against, it is what
+            // every tool call needs as an argument, it is what a notification route filters
+            // on - and it is what made an incident card tell the model to investigate
+            // `//faulty-service`. It also cost two release candidates: the harness matched
+            // fixtures by namespace and reported c10 as having opened no incident across rc3
+            // and rc4 while the incident existed the whole time.
+            Namespace = Label(labels, "namespace")
+                ?? Label(labels, "exported_namespace")
+                ?? Label(labels, "k8s_namespace_name")
+                ?? string.Empty,
             NodeName = Label(labels, "node") ?? Label(labels, "instance"),
         };
 
