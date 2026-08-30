@@ -685,4 +685,17 @@ made it look.
 
 Final state: **9 passed, 0 failed, 0 skipped** against a live kind cluster in the default mode,
 verified by loading the fixed image into the running e2e cluster rather than by inspecting the
-Dockerfile.
+Dockerfile — and then again, properly, from a nightly built out of the fixed Dockerfile:
+
+```
+hephaisto end-to-end: 0.4.0-main.0.24     channel nightly, mode Observe
+  0 failures in any phase
+  PASSED -- 71 assertions, 5 skipped        11m 46s, $0.399 of Gemini
+```
+
+**The nightly was run before the rc deliberately, and it is the reason there is no dead tag.**
+`build_rc` pushes the tag *before* release.yml runs, so cutting an rc first would have minted
+`v0.4.0-rc1` against an image whose console was still a static page — permanently, and for the
+second time in three releases, since v0.3.0's MinVer divergence would have left `v0.2.1-rc1`
+tagged with nothing behind it. Both workflows build from the same `./Dockerfile` with the same
+context, so a green nightly is genuine evidence about the rc's image rather than a rehearsal.

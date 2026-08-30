@@ -1601,12 +1601,20 @@ The console phase failed all nine specs, and behind it were three separate thing
 Final state, against a live kind cluster in the default mode with the fixed image: **9 passed, 0
 failed, 0 skipped.**
 
-**One honest caveat.** That is every phase passing, not one run passing. The nine phases before
-the console ran against the published `0.4.0-main.0.21`; the console phase then passed against the
-same cluster after #53's fix was loaded into it, because the published image predates that fix. A
-single end-to-end green run needs one more nightly build. Nothing is known to be wrong — but "all
-the pieces passed" and "the run is green" are different sentences, and this file is the wrong place
-to blur them.
+**Then the whole run, in one invocation.** The caveat above — that every phase had passed but not
+together, because the published image predated #53's fix — was discharged by a nightly built from
+the fixed Dockerfile:
+
+```
+hephaisto end-to-end: 0.4.0-main.0.24     channel nightly, mode Observe
+  build 4  cluster 3  deps 13  deploy 26  chaos 2  validate 15  notify 7  ui 1
+  0 failures in any phase
+  PASSED -- 71 assertions, 5 skipped        11m 46s, $0.399 of Gemini
+```
+
+The five skips are all conditions the harness states outright: `acting` because Observe installs
+nothing that can execute, unsigned deliveries because `values-e2e` leaves signing off, and three
+diagnosis-shape notes. The console phase reports `expected=9 skipped=0 unexpected=0`.
 
 ### 52. Two components are implemented twice
 
