@@ -997,9 +997,14 @@ reading the code and wondering.
 Everything else fails closed with `outcome=unsupported` and nothing attempted.
 
 For `CordonNode` and `DrainNode` that is the correct permanent answer until someone binds
-their `ClusterRole`, which ships unbound on purpose. `SilenceAlert` needs an outbound HTTP
-client, and there is none anywhere in `src/`; it belongs with v0.3.0's notification stack,
-which introduces one.
+their `ClusterRole`, which ships unbound on purpose. `SilenceAlert` needs an outbound client
+bound to Alertmanager; it belongs with v0.3.0's notification stack.
+
+**Corrected 2026-08-30.** This entry read *"and there is none anywhere in `src/`"*, which was
+already wrong when it was written: `GrafanaAnnotator` has posted to Grafana through a client
+registered with `AddHttpClient` since the annotations landed in `v0.1.0-rc2`. What `SilenceAlert`
+is missing is the Alertmanager binding and the policy gate around it, not the ability to make a
+request. The same false claim was in `roadmap.md` and `README.md` and is corrected in all three.
 
 The two that matter are **`PatchResources` and `RollbackDeployment`**. `PatchResources` is the
 actual remediation for c4 (a bad image tag) and c7 (a missing secret ref) - the two fixtures

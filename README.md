@@ -84,8 +84,8 @@ The executor covers exactly the verbs the write `Role` grants: `RestartPod`,
 `RolloutRestart`, `ScaleWorkload`, `DeleteStuckJob` and `DeleteFailedJobPods`. Anything
 else is **refused before a call is made**, with `outcome=unsupported` and nothing
 attempted — which for `CordonNode` and `DrainNode` is the honest answer, because their
-`ClusterRole` ships deliberately unbound. `SilenceAlert` needs an outbound HTTP client,
-which does not exist anywhere in `src/` yet and arrives with v0.3.0's notification stack.
+`ClusterRole` ships deliberately unbound. `SilenceAlert` needs an outbound client bound to
+Alertmanager, and arrives with v0.3.0's notification stack.
 
 The machinery that *gates* an action was built and tested a full release ahead of the
 action itself, deliberately — the policy engine is the argument that auto-remediation would

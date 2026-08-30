@@ -311,8 +311,10 @@ mode or exceed the deployment's ceiling. It writes `mode.changed` — the first 
   design work, not typing, and rushing it would hand the model the mutating handle the
   three-phase split exists to deny it. Refused before any call is made, so an approved one
   fails visibly rather than doing something unintended.
-- **`SilenceAlert`** — needs an outbound HTTP client, which does not exist in `src/`. It
-  arrives naturally with v0.3.0.
+- **`SilenceAlert`** — needs an outbound client bound to Alertmanager, and a policy gate
+  strict enough for an action whose whole effect is to stop a human being told. It arrives
+  naturally with v0.3.0. (This bullet used to say the outbound HTTP client "does not exist in
+  `src/`". It does — see the v0.3.0 section.)
 - **A closed policy reason code** — [#40](backlog.md#40-policyresult-has-no-closed-reason-code-so-the-metric-cannot-say-why).
   Taking the free text out of the metric labels was urgent and is done; putting a safe
   breakdown back touches every gate in the safety argument and wants its own pass.
@@ -340,11 +342,22 @@ deferred to before v0.4.0 by decision, not by oversight.
 
 ## v0.3.0 — It reaches people
 
-Today **nothing leaves the process.** Escalation is a database state change, an `incident_events`
-row, an audit row, and a nudge to any open browser tab. There is no outbound HTTP anywhere in
-`src/` — no `AddHttpClient`, no `PostAsJsonAsync`, no notification package. The only out-of-band
-path to a human is *your* Alertmanager firing on Hephaisto's self-check rules, and that rule file
-ships disabled.
+Today **nothing leaves the process on an incident's behalf.** Escalation is a database state
+change, an `incident_events` row, an audit row, and a nudge to any open browser tab. The only
+out-of-band path to a human is *your* Alertmanager firing on Hephaisto's self-check rules, and
+that rule file ships disabled.
+
+**There is outbound HTTP in `src/`, and this file said there was not.** `GrafanaAnnotator` posts
+to Grafana's `/api/annotations` through a typed client registered with `AddHttpClient`
+(`Llm/LlmServiceCollectionExtensions.cs:66`), and `ServiceDefaults` applies
+`AddStandardResilienceHandler` to every client the factory builds. What is missing is a
+*notification* stack, not the ability to make a request — and the distinction matters, because
+`GrafanaAnnotator` is the template this milestone should copy rather than a counterexample:
+conditional registration, a `Null*` no-op when unconfigured, a per-call timeout linked to the
+caller's token, a one-line `Describe()` at startup saying whether it is on and why not, and a
+standing rule that nothing in it may fail an investigation. (No `PostAsJsonAsync` — it uses
+`JsonContent.Create` — and no notification package: the two halves of the old claim that were
+true.)
 
 **Scope: two channels — a generic webhook and Microsoft Teams.** Slack, email/SMTP and
 PagerDuty/Opsgenie are deliberately deferred to [Later](#later--a-menu-not-a-queue). Building
