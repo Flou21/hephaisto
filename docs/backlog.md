@@ -2129,3 +2129,71 @@ verbosity — not accuracy and not throughput — is what disqualified the only 
 alternative tested.
 
 **Size.** S.
+
+### 61. A keyless endpoint read as an absent model, and the run still exited 0
+
+**Status: fixed 2026-08-31** — see the end of this entry.
+
+**Symptom.** With `HEPHAISTO_LLM_PROVIDER=openai` pointed at a local Ollama, `deps_secrets` set
+`LLM_AVAILABLE=0` and the harness went on to `skip` every investigation, act, judge and budget
+assertion. The run then exited 0.
+
+**Cause.** `lib/deps.sh` only probed the endpoint when `HEPHAISTO_LLM_API_KEY` was set, and
+treated its absence as "no model". That is true of a hosted provider and false of every local
+one: Ollama and LM Studio serve `/v1/models` with no credential at all, and
+`OpenAiChatClientFactory` already knows this — it sends a placeholder to a local endpoint
+precisely so a keyless server works.
+
+**Why it matters** is the exit code, not the skip. A run that tested detection only is a
+defensible outcome; a run that says so in eight `skip` lines and then reports success is not,
+because nobody reads the middle of a green log. This is the same failure `scripts/ci-test.sh`
+exists to prevent on the unit side — *"a green build that tested nothing is worse than a red one,
+because nobody looks at it again"* — arriving through a door that had no guard on it.
+
+It also lands on the one path this milestone most needed to work: the whole point of running
+`gpt-oss-120b` locally is that the tokens are free, and free tokens come with no API key.
+
+**Fix.** Probe `${endpoint%/}/models` without an `Authorization` header when no key is present
+and believe a 200. The keyed path is unchanged, including its rejection handling. Downstream, a
+reachable keyless endpoint creates an empty `hephaisto-llm` Secret — both chart keys are optional
+since v0.5.0, and `bootstrap-secrets.sh` writes nothing when neither is set, so without this the
+next assertion failed on a Secret that was correctly absent.
+
+**Size.** S.
+
+**Fixed 2026-08-31.** Both arms exercised: a keyless local endpoint reports
+`LLM_AVAILABLE=1`, and an unreachable one still degrades to detection-only rather than aborting.
+
+### 62. The harness proved the model was reachable from the wrong machine
+
+**Status: fixed 2026-08-31** — see the end of this entry.
+
+**Symptom.** The LLM endpoint probe passes, the install succeeds, and then every investigation
+faults — forty minutes into a run whose full-coverage form takes two hours.
+
+**Cause.** `deps_secrets` probes the endpoint with `curl` **from the host**. The agent runs in a
+**pod**. For a hosted provider those are the same network position and the probe is honest; for a
+local model they are not related at all — the endpoint is on this laptop, the cluster is inside
+Rancher Desktop's Lima VM behind kind's own bridge, and `127.0.0.1` means a different machine on
+each side.
+
+Measured while fixing #61: Ollama ships bound to `127.0.0.1` only, so the host probe passes and
+**no pod can reach it**. That is the default state of a fresh install, which makes this the
+expected mistake rather than an exotic one.
+
+**Why it matters** is where the failure lands. An unreachable model surfaces as ten faulted
+investigations, which reads as a broken agent and not as a wrong address — and it costs the whole
+run to find out. The harness already holds the opinion that a check belongs where it is cheap:
+*"Validate the key NOW rather than discovering it is wrong fifteen minutes in, when four
+investigations have failed and the failure looks like a bug in the agent."* This is that same
+sentence, one network hop further out.
+
+**Fix.** `deps_verify_llm_reachable` runs one `curl` from a throwaway pod inside the cluster
+against the configured endpoint, and `fail`s on anything but 200. Deliberately a fail and not a
+warn: continuing would spend two hours proving something about an address.
+
+**Size.** S.
+
+**Fixed 2026-08-31.** The reachable addresses from inside the VM are recorded in
+`scripts/e2e/README.md`; the tailnet address is the documented default because it does not move
+with DHCP or with docker's bridge topology.

@@ -173,26 +173,39 @@ deps_secrets() {
 
         local endpoint="${HEPHAISTO_LLM_ENDPOINT:?HEPHAISTO_LLM_ENDPOINT is required when HEPHAISTO_LLM_PROVIDER=openai}"
 
+        # /v1/models rather than a completion: every OpenAI-compatible server implements it,
+        # it costs nothing, and a 401 here is the same 401 that would otherwise appear on the
+        # fourth investigation of a twelve-minute run.
+        #
+        # A MISSING KEY IS NOT A MISSING MODEL. A local Ollama or LM Studio answers this
+        # endpoint with no credential at all, and OpenAiChatClientFactory already sends a
+        # placeholder to one. Reading keyless as "no LLM" is how this harness exits 0 having
+        # skipped every investigation, act and judge assertion - a green run that tested
+        # nothing, which is the one outcome worse than a red one. So probe unauthenticated
+        # when there is no key, and believe a 200.
+        local probe rejected
         if [ -n "${HEPHAISTO_LLM_API_KEY:-}" ]; then
-            # /v1/models rather than a completion: every OpenAI-compatible server implements
-            # it, it costs nothing, and a 401 here is the same 401 that would otherwise
-            # appear on the fourth investigation of a twelve-minute run.
-            local probe
+            rejected="the LLM key was rejected"
             probe=$(curl -sS --max-time 30 "${endpoint%/}/models" \
                 -H "Authorization: Bearer ${HEPHAISTO_LLM_API_KEY}" \
                 -o /dev/null -w '%{http_code}' 2>/dev/null || echo "000")
-
-            if [ "$probe" = "200" ]; then
-                say "LLM key accepted by $endpoint"
-                LLM_AVAILABLE=1
-            else
-                warn "the LLM key was rejected by $endpoint (HTTP $probe)"
-                warn "continuing without investigations; detection is still exercised"
-                unset HEPHAISTO_LLM_API_KEY
-                LLM_AVAILABLE=0
-            fi
         else
-            warn "no HEPHAISTO_LLM_API_KEY - investigations will be skipped, detection still tested"
+            rejected="an unauthenticated probe was refused"
+            probe=$(curl -sS --max-time 30 "${endpoint%/}/models" \
+                -o /dev/null -w '%{http_code}' 2>/dev/null || echo "000")
+        fi
+
+        if [ "$probe" = "200" ]; then
+            if [ -n "${HEPHAISTO_LLM_API_KEY:-}" ]; then
+                say "LLM key accepted by $endpoint"
+            else
+                say "$endpoint answers without a credential - a local model; investigations are on"
+            fi
+            LLM_AVAILABLE=1
+        else
+            warn "$rejected by $endpoint (HTTP $probe)"
+            warn "continuing without investigations; detection is still exercised"
+            unset HEPHAISTO_LLM_API_KEY
             LLM_AVAILABLE=0
         fi
 
@@ -206,10 +219,17 @@ deps_secrets() {
                 || fail "secret $s missing" "the agent pod will not start"
         done
 
-        if [ "$LLM_AVAILABLE" = "1" ]; then
+        if [ "$LLM_AVAILABLE" = "1" ] && [ -n "${HEPHAISTO_LLM_API_KEY:-}" ]; then
             kc -n "$APP_NS" get secret hephaisto-llm >/dev/null 2>&1 \
                 && pass "secret hephaisto-llm exists" \
                 || fail "secret hephaisto-llm missing" "investigations cannot run"
+        elif [ "$LLM_AVAILABLE" = "1" ]; then
+            # A reachable keyless endpoint. bootstrap-secrets.sh writes nothing when neither
+            # key is set, and both chart keys are optional, so an empty Secret is all the pod
+            # needs to start - it is the endpoint, not a credential, that makes this run work.
+            kc -n "$APP_NS" get secret hephaisto-llm >/dev/null 2>&1 \
+                || kc -n "$APP_NS" create secret generic hephaisto-llm >/dev/null 2>&1 || true
+            pass "secret hephaisto-llm exists (empty; the endpoint needs no credential)"
         else
             # Both chart keys are optional now, so an empty Secret is enough to start the pod.
             kc -n "$APP_NS" create secret generic hephaisto-llm >/dev/null 2>&1 || true
@@ -304,4 +324,38 @@ deps_verify() {
         && pass "kube-state-metrics is producing workload state" \
         || fail "no kube_pod_container_status_waiting_reason series" \
                 "almost every shipped alert rule is built on these"
+
+    deps_verify_llm_reachable
+}
+
+# The probe in deps_secrets runs on the HOST. The agent runs in a POD, and for a local model
+# those are different network positions entirely - the endpoint lives on this laptop while the
+# cluster sits inside a Lima VM, behind kind's own bridge. A host-reachable, pod-unreachable
+# endpoint is therefore the DEFAULT mistake here, not an exotic one, and left undetected it
+# surfaces as every investigation faulting forty minutes into a two-hour run, which reads as a
+# broken agent rather than a wrong address.
+#
+# One curl from inside the cluster, before anything slow starts.
+deps_verify_llm_reachable() {
+    [ "${HEPHAISTO_LLM_PROVIDER:-gemini}" = "openai" ] || return 0
+    [ "${LLM_AVAILABLE:-0}" = "1" ] || return 0
+
+    local endpoint="${HEPHAISTO_LLM_ENDPOINT:-}"
+    [ -n "$endpoint" ] || return 0
+
+    local pod="llm-reachability-$$"
+    local out
+    out=$(kc run "$pod" --image=curlimages/curl:8.11.1 --restart=Never --rm -i --quiet \
+              --command -- curl -s -o /dev/null --max-time 15 -w '%{http_code}' \
+              "${endpoint%/}/models" 2>/dev/null | tr -d '[:space:]')
+
+    if [ "$out" = "200" ]; then
+        pass "the cluster can reach the model at $endpoint"
+    else
+        # Deliberately a fail, not a warn. Continuing would spend two hours proving the
+        # agent cannot investigate, which is a fact about the address.
+        fail "the cluster cannot reach $endpoint (HTTP ${out:-000})" \
+             "the host probe passed, so the endpoint is up but not routable from a pod - a loopback or docker-internal address will do this"
+        kc delete pod "$pod" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    fi
 }
