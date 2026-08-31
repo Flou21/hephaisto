@@ -89,6 +89,18 @@ the tractable three (c1, c5, c8).
 
 **Size.** M.
 
+**Mechanism landed 2026-08-31; the entry closes on the first green run.** `--full` runs
+`c1,c2,c3,c4,c5,c7,c8,c10,c11,c12` — ten, which is the bar's own denominator — and the report now
+states whether the bar was met instead of only printing the ratio, because `7/9` fails on the
+count while reading as a pass on the proportion. The incident deadline was raised to clear c8's
+thirty-minute window, since timing out a fixture that is exactly on schedule would have replaced
+under-coverage with a false failure.
+
+Note what this does **not** claim: c6 and c9 still cannot run, so the coverage is ten of twelve
+and not twelve of twelve. The bar was always written as ten. This reaches it with the fixtures
+that work rather than by replacing either of the two that do not, which is the cheaper half of
+the fix above and leaves the replacement-fixture half open if the count ever needs to be twelve.
+
 ### 3. `hephaisto.human.feedback` is never recorded
 
 **Status: fixed 2026-08-29** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
@@ -1216,6 +1228,9 @@ both directions at once.
 
 ### 41. c11 has never been run against a cluster
 
+**Status: answered 2026-08-31** — the question it asked is settled; the one that replaced it is
+[#66](#66-the-planner-acts-on-half-of-a-fair-fixture). See the end of this entry.
+
 `infra/chaos/c11-transient.yaml` is the fixture v0.2.0's acceptance test is written against,
 and it has been verified only by simulating its container logic locally - the generation
 counter on a PVC, the marker on an emptyDir, and the assertion that container restarts do not
@@ -1382,6 +1397,18 @@ ten scenarios — which makes "does the agent act" measurable rather than theore
 measures is 50%, and a 50% action rate is not something to build the landing page's central claim
 on. That is a planner question now, on a fair fixture, and it is worth reopening as one rather
 than leaving inside an entry about c11.
+
+**Answered 2026-08-31, and split.** This entry asked whether the fixture was unfair or the
+planner under-reading. The answer is *both, separably*: c11 is unfair in a way that is now
+documented rather than argued about — its recovery evidence is not pod-scoped, and 15 of 15
+declines across two independent model families is not a planner that missed something — and c12,
+built to be fair on exactly that axis, is acted on 4 times in 8 with 8 correct diagnoses.
+
+What closes here is the v0.2.0 acceptance criterion's *fixture* problem, and with it this entry's
+own framing. What does not close is the rate, which is why it leaves as #66 rather than as a
+tick. Keeping the two inside one entry is how an answered question keeps a solved problem open,
+and this milestone's rule is that an item leaves by being fixed or by being reclassified with the
+reasoning recorded.
 
 ### 42. Verification predicates are workload-shaped, and two action types are not
 
@@ -2284,3 +2311,43 @@ run inherits someone else's incidents.
 **Size.** S.
 
 **Fixed 2026-08-31.**
+
+### 66. The planner acts on half of a fair fixture
+
+Split out of [#41](#41-c11-has-never-been-run-against-a-cluster), which asked whether that
+fixture was unfair or the planner under-reading and answered *both, separably*. This is the half
+that survived.
+
+**What is measured.** On `c12-stale-lease` — a transient fault whose evidence is entirely
+pod-scoped, built precisely so that declining to restart is not the defensible answer — the agent
+produces a correct diagnosis **8 times in 8** and a `Reasonable` plan **4 times in 8**.
+
+**Why it matters.** It is the only number under the sentence the project leads with. "The agent
+can act" was, until c12 existed, a statement about code: `PlanVerdict.Reasonable` had never once
+been produced by any scenario in three releases, so the claim had no instrument at all. It has
+one now, and what the instrument says is 50%. That is enough to stop calling the acting path
+theoretical and not enough to build a landing page on.
+
+**What it is not.** Not a safety failure — the policy engine never denied anything, because it
+was never offered anything; the four declines are plans that were not produced. Not a diagnosis
+failure either, at 8 of 8. And not a structured-output failure: the local grammar-constrained
+path produces well-formed plans, so [#56](#56)'s disguise is ruled out here rather than assumed.
+
+**Where to look first**, in the order the evidence points:
+
+1. **The confidence gate.** A decline and a low-confidence escalation are indistinguishable in
+   the summary, and #41's four prompt arms moved the diagnosis without moving the plan — which is
+   the shape of a threshold, not of a comprehension gap.
+2. **`terminationReason` is not reported beside the verdict** ([#59](#59)), so a plan missing
+   because the step budget ran out is not separable from one the model chose not to make. That
+   reporting is small and blocks reading this number honestly.
+3. **The 17+N tool surface at planning time.** Phase 2 is deliberately unable to call a tool, so
+   everything it reasons from is what phase 1 chose to write down.
+
+**Deliberately not fixed by lowering the bar.** Grading `MissedAnAction` as a pass, or widening
+`AcceptableActions` until the observed behaviour scores well, would make the number go up without
+moving the agent — and this corpus's whole value is that it was built before the result was
+known.
+
+**Size.** M. **Blocks:** claiming an action rate, which the website and the README both want to
+do.
