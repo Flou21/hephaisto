@@ -25,8 +25,14 @@ deploy_install() {
     local env_i
     env_i=$(deploy_extra_env_count)
 
+    # --set-string, not --set. An environment variable value is always a string, and the
+    # chart's schema says so - but `--set` type-infers, so a numeric value like a step ceiling
+    # arrives as a number and helm refuses the whole install with
+    # "at '/extraEnv/N/value': got number, want string". The install fails, which is at least
+    # loud; the reason it is worth a comment is that it only shows up for values that happen
+    # to look numeric, so it hides until someone adds one.
     env_add() {
-        extra+=(--set "extraEnv[$env_i].name=$1" --set "extraEnv[$env_i].value=$2")
+        extra+=(--set-string "extraEnv[$env_i].name=$1" --set-string "extraEnv[$env_i].value=$2")
         env_i=$((env_i + 1))
     }
 
