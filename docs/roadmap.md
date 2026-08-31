@@ -665,6 +665,105 @@ or given a fresh sentence saying why it is still there. **No new capability ship
 moment it grows a feature it becomes a release that also did some tidying, which is what every
 release so far has been.
 
+### Where it stands — in progress
+
+Scoped by decision to what blocks a claim or what the site would otherwise inherit and have to be
+built twice: #41, #2, #47, #37, #50, #52. The rest of the backlog sweep this section asks for is
+**carried**, and that is recorded here rather than discovered later by somebody reading the file.
+[#39](backlog.md#39-the-executor-covers-five-action-types-three-are-refused) stays out under this
+release's own rule — `PatchResources` is capability, and #41 needs no new action type.
+
+**Closed:** [#47](backlog.md#47-the-act-phase-reports-two-failures-that-are-consequences-of-the-first),
+[#37](backlog.md#37-the-judge-grades-a-different-incident-than-the-one-the-run-asserted-on),
+[#50](backlog.md#50-both-themes-are-first-class-and-neither-can-be-chosen),
+[#52](backlog.md#52-two-components-are-implemented-twice),
+[#54](backlog.md#54-a-depleted-api-budget-is-retried-five-times-as-a-transport-failure) — opened
+and fixed here — and [#13](backlog.md#13-the-retry-path-has-never-been-observed-firing-in-production),
+answered after four releases by the retry path firing on an error it should have refused.
+
+**What #41 turned out to be**, and it is the finding this milestone is actually worth reading for.
+The entry asked whether c11 is unfair or the planner under-reads. Making it reproducible offline —
+a cassette plus the first answer key in the corpus where acting is correct — turned that from an
+argument into a measurement: **twelve replays across four arms declined twelve times out of
+twelve**, and every hypothesis reasoned the same correct way. The state is on a PersistentVolumeClaim,
+PVC contents survive a pod replacement, so replacing the pod cannot help. c11 defeats that because
+the thing that makes a replacement work is a *second* volume, and the model never reconciles the
+two — with `describe_pod`'s output, the `emptyDir` and the entrypoint's own condition all in hand.
+
+Three prompt improvements shipped from that work and none of them moved it: the action vocabulary
+now describes what each action does rather than naming it, `RestartPod` says it deletes the pod,
+and the planner has a positive case and a rule for reading a workload's claims about itself. All
+three are net improvements measured against the whole corpus — **8/8 `CorrectlyDeclined`, zero
+harmful proposals** — which is the assertion that matters more, because a change that talks about
+when to act is exactly the one that could make the agent restart a missing Secret.
+
+**A cheaper provider was pulled forward mid-milestone**, from the bottom of the Later menu, because
+the account ran out of credit and the three remaining measurements all needed a model. It is
+recorded here as the rule-bend it is: this release said *"no new capability ships in it"*, and the
+defence is that a provider seam is infrastructure — no new `ActionType`, no new tool, nothing the
+agent can do that it could not do before.
+
+`Llm:Provider=openai` reaches DeepSeek, OpenRouter and a local Ollama or LM Studio server through
+one factory, at **$0.031 per investigation against $0.080**. Three things that only appeared once
+something other than Gemini ran:
+
+- **The seam had never been able to work.** The embedding registration cast `IChatClientFactory`
+  to the Gemini implementation, so any other provider threw `InvalidCastException` at the first
+  service resolution. Four releases of documented portability, never once exercised.
+- **A provider that cannot enforce a JSON schema diagnosed correctly and never proposed anything**
+  — [#56](backlog.md#56-the-planner-assumed-every-provider-can-enforce-a-json-schema). It reads
+  exactly like a cautious agent, which is the one failure this release is trying to disprove.
+- **The cassette corpus grades the model that recorded it** —
+  [#55](backlog.md#55-the-cassette-corpus-grades-the-model-that-recorded-it). Sound runs scored
+  9/9, unsound runs 11/18; accuracy tracked replay coverage, not model quality. The plan for this
+  work asserted the corpus was provider-neutral because the format is. The format is; the coverage
+  is not.
+
+**And a second model family declines c11 too.** DeepSeek graded it `MissedAnAction` 3 of 3 with a
+correct diagnosis each time — 15 of 15 across two vendors, which removes "this model under-reads"
+as an explanation and leaves the fixture, exactly where #41 suspected it was.
+
+The fixture was deliberately **not** edited to make it pass. c12 was built instead: the same fault
+with one volume and one comparison, verified against a cluster before being relied on, and the act
+phase now names its fixture rather than hardcoding c11.
+
+**c12 is recorded and measured, and it answers half of #41.** Eight replays, all eight
+structurally sound: **c12 proposes the action 4 times in 8, against c11's 0 in 15.** So the
+fixture was the problem, and a fair fixture moves the planner from never to half the time — it did
+not get there by being easy, and the diagnosis was correct in every run of both. `Reasonable` had
+never once been graded across ten scenarios, so "can the agent act" has gone from untestable to
+measured at 50%. That is not a number the landing page's central claim can rest on, and it is now
+a planner question on a fair fixture rather than an argument about a fixture.
+
+**The harness was then made able to run that, and four ways it could have lied were closed.** The
+gate needed a model it could afford to run ten fixtures against, and `gpt-oss-120b` locally is
+free — but nothing in the harness could actually reach it. `deps_secrets` probed the endpoint only
+when an API key was set, so a keyless local server reported no model and every investigation, act,
+judge and budget assertion **skipped while the run exited 0** (#61); and the probe ran on the host
+while the agent runs in a pod, which for a local model is a different machine entirely (#62).
+Alongside those: an acting run dropped the fixture it asserts about whenever fixtures were named,
+which is exactly the shape of `--full` (#63); `DryRun` asserted a condition `DryRun` cannot produce
+and so was unrunnable rather than untested (#64); and a run resumed past `deps` skipped every model
+assertion and still exited 0 (#65).
+
+Three of those five fail as a **pass**, which is the recurring shape here and the reason they are
+written down individually rather than as one tidying commit.
+
+`--full` now runs ten fixtures — the MVP bar's own denominator — with a deadline that clears c8's
+thirty-minute window, and the report states whether the bar was met instead of printing a ratio
+that reads as a pass at `7/9`.
+
+**What is still not done, and why.** The `--mode Auto` run itself. The harness installs a
+**published** artifact from GHCR — that is the point of it, since what nothing else proved was
+that a released build works — so it cannot test a provider that exists only on a feature branch.
+That property was kept rather than worked around: no local-image escape hatch was added, because
+it would dissolve the only thing this harness uniquely proves. It needs this branch pushed and a
+nightly published, and a push is not something this session does on its own.
+
+So: this release has improved the agent's reasoning, proved it broke nothing across two model
+families, made the acting path measurable for the first time, **made the gate able to run at all
+and unable to pass without having run**, and **has still not seen it act on a cluster.**
+
 ---
 
 ## The project track — landing page, docs, and the rest
@@ -780,8 +879,13 @@ Roughly in order of value:
 - **`--enforce-netpol`** tier in the e2e harness — Calico under kind, closing
   [backlog #23](backlog.md#23-networkpolicy-enforcement-is-unproven).
 - Chaos self-testing, natural-language history queries, Pyroscope, multi-cluster.
-- **Cheaper LLM providers**, Gemini Flash is a bit too expensive for rapid development and testing so a cheaper LLM solution should be searched
-- **More expensive LLM providers**, Gemini Flash is pretty solid, but for real production usage a model like Opus or Fable are more appropriate
+- ~~**Cheaper LLM providers**~~ — **pulled into v0.5.0 on 2026-08-31**, when it stopped being a
+  preference and became the blocker: the account ran out of credit with three measurements
+  outstanding. `Llm:Provider=openai` now reaches DeepSeek, OpenRouter and a local Ollama or
+  LM Studio server through one factory. Measured at **$0.031 against $0.080 per investigation**.
+- **More expensive LLM providers**, Gemini Flash is pretty solid, but for real production usage a
+  model like Opus or Fable are more appropriate. Cheaper by the same seam now — a provider is
+  `Llm:Endpoint` plus `Llm:Model` and a price entry, not code.
 
 ### Interactive in-card approval — what it would actually cost
 

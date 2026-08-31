@@ -289,12 +289,26 @@ spec:
             # LLM
             # -------------------------------------------------------------------------
             #   kubectl -n hephaisto create secret generic hephaisto-llm \
-            #     --from-literal=GEMINI_API_KEY=...
+            #     --from-literal=GEMINI_API_KEY=... \
+            #     --from-literal=LLM_API_KEY=...
+            #
+            # Both optional, and which one is needed depends on Llm:Provider: GEMINI_API_KEY
+            # for the gemini provider and for embeddings on any provider, LLM_API_KEY for the
+            # openai-compatible one. A Secret carrying only one is a normal install, so a
+            # missing key must not hold the pod in CreateContainerConfigError - the agent says
+            # which setting it wants, which is the more useful of the two failures.
             - name: GEMINI_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: hephaisto-llm
                   key: GEMINI_API_KEY
+                  optional: true
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hephaisto-llm
+                  key: LLM_API_KEY
+                  optional: true
 
             # Directory, not a file: each ConfigMap key projects as its own file under it
             # (/etc/hephaisto/mode, /etc/hephaisto/killSwitch). Unset outside Kubernetes,

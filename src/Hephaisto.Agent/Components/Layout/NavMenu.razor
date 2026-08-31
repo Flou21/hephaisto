@@ -22,6 +22,19 @@
         </li>
     </ul>
 
+    @* Static markup and a plain onclick, deliberately not an @@onclick handler. A theme is
+       this browser's preference, stored in this browser, and making it a circuit round trip
+       would mean it stops working while the circuit is down - which is exactly when someone
+       is squinting at this page. It ships with no label because app.js writes the one that
+       is true for this reader; a server-rendered label would be wrong for everybody who
+       chose. *@
+    <button type="button"
+            class="hp-theme"
+            data-theme-control
+            data-testid="theme-control"
+            title="Cycle the theme: system, light, dark. Remembered in this browser only."
+            onclick="window.hephaisto.cycleTheme()">theme </button>
+
     @if (_status is { WatchdogStale: true })
     {
         <div class="hp-nav-alarm" title="The AgentWatchdog alert has stopped arriving. Something between Prometheus and this pod is broken.">

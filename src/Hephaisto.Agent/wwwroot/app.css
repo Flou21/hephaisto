@@ -205,6 +205,63 @@ h4 {
     font-weight: 600;
 }
 
+/* The theme control. `margin-left: auto` here rather than on the alarm alone, so the pair
+   sits together at the right end: the first auto margin takes the free space and the alarm
+   follows immediately after it.
+
+   Quiet by design. It is a preference, not a state anyone needs to read at a glance, and it
+   sits in the same chrome as the mode badge - which IS load-bearing and must stay the thing
+   the eye lands on. */
+.hp-theme {
+    margin-left: auto;
+    padding: 0.1rem 0.4rem;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    background: transparent;
+    color: var(--fg-faint);
+    font-family: var(--mono);
+    font-size: var(--text-sm);
+    cursor: pointer;
+}
+
+/* THE LABEL IS CSS, NOT JAVASCRIPT, and that is not a stylistic preference.
+   `<Routes>` renders interactively, so Blazor replaces the body subtree once the circuit takes
+   over - which wiped a label written by app.js on load and left the button reading "theme"
+   with no state at all. Same shape as backlog #48: acting on the static render and being
+   overwritten by the live one.
+
+   `data-theme` lives on <html>, which Blazor does not own, so a rule keyed off it survives
+   every re-render with no re-application and no observer. Absent means system, which is also
+   what an unreadable or unrecognised stored value degrades to. */
+.hp-theme::after {
+    content: "system";
+}
+
+:root[data-theme="light"] .hp-theme::after {
+    content: "light";
+}
+
+:root[data-theme="dark"] .hp-theme::after {
+    content: "dark";
+}
+
+.hp-theme:hover {
+    background: var(--bg-hover);
+    color: var(--fg-dim);
+}
+
+.hp-theme:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+/* When the alarm is present it, not the button, owns the free space - otherwise the alarm
+   would be pushed flush against the button and read as part of it. */
+.hp-nav-alarm + .hp-theme,
+.hp-theme ~ .hp-nav-alarm {
+    margin-left: 0.6rem;
+}
+
 /* ---------------------------------------------------------------- tables */
 
 .hp-table {
@@ -645,19 +702,57 @@ button:disabled {
     border-top: 1px solid var(--border);
 }
 
-.hp-code {
-    font-family: var(--mono);
-    font-size: var(--text-md);
-    line-height: 1.4;
+/* --------------------------------------------------- two shared primitives
+ *
+ * backlog #52: the console had two unrelated implementations of a progress bar and two
+ * near-duplicate treatments of a monospace block. Two implementations of one idea drift, and a
+ * design language exists to stop exactly that.
+ *
+ * What is shared is defined once, here. What differs stays on the individual rules, because it
+ * is CONTEXT rather than accident and flattening it would be the wrong fix:
+ *
+ *   the bar   .hp-meter-* is a page-level budget meter that carries threshold marks, so it is
+ *             taller and needs a positioning context; .hp-conf-* is an inline confidence
+ *             indicator sitting inside a finding, so it is shorter and has a fixed width. One
+ *             height for both would make one of them wrong for where it lives.
+ *   the block .hp-code is a block quotation of program output and is monospace; .hp-excerpt is
+ *             a short inline citation inside a finding and inherits the body face. The padding
+ *             differs for the same reason.
+ *
+ * So this consolidates the implementation without changing the rendering, which is the half the
+ * visual baselines can actually prove. A deliberate visual unification, if anyone wants one,
+ * is then a separate change somebody can review as a design decision rather than a refactor.
+ */
+
+.hp-code,
+.hp-excerpt {
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: var(--radius);
+    font-size: var(--text-md);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.hp-meter-track,
+.hp-conf-track {
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.hp-meter-fill,
+.hp-conf-fill {
+    height: 100%;
+}
+
+.hp-code {
+    font-family: var(--mono);
+    line-height: 1.4;
     padding: 0.4rem 0.55rem;
     margin: 0 0 0.4rem;
     max-height: 22rem;
     overflow: auto;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
 }
 
 .hp-raw-code {
@@ -736,14 +831,10 @@ details > summary {
     width: 7rem;
     height: 0.5rem;
     background: var(--bg);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-sm);
-    overflow: hidden;
 }
 
 .hp-conf-fill {
     display: block;
-    height: 100%;
     background: var(--purple);
 }
 
@@ -780,12 +871,6 @@ details > summary {
 .hp-excerpt {
     margin: 0.2rem 0 0.1rem;
     padding: 0.25rem 0.5rem;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    font-size: var(--text-md);
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
 }
 
 .hp-source {
@@ -996,16 +1081,11 @@ details > summary {
 }
 
 .hp-meter-track {
+    /* The positioning context the threshold marks are absolutely placed against, and the one
+       structural difference from .hp-conf-track that is not merely dimensional. */
     position: relative;
     height: 0.7rem;
     background: var(--bg-sunken);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-sm);
-    overflow: hidden;
-}
-
-.hp-meter-fill {
-    height: 100%;
 }
 
 .meter-ok { color: var(--green); }

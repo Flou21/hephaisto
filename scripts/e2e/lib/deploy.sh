@@ -1,8 +1,74 @@
 #!/usr/bin/env bash
 # Phase 5: install the published chart and assert what the published artifact is.
 
+# The number of entries already in values-e2e.yaml's extraEnv list, so provider settings can
+# be appended rather than written at a hardcoded index. Helm's --set replaces by position, so
+# a fixed index silently overwrites a budget cap the first time somebody adds an entry above
+# it - and a silently-removed cost cap is the failure this harness least wants.
+deploy_extra_env_count() {
+    awk '
+        /^extraEnv:/            { inblock = 1; next }
+        inblock && /^[^[:space:]#]/ { inblock = 0 }
+        inblock && /^[[:space:]]+- name:/ { n++ }
+        END                     { print n + 0 }
+    ' "$E2E_DIR/values-e2e.yaml"
+}
+
 deploy_install() {
     say "installing hephaisto $VERSION from $CHART_REPO"
+
+    local extra=()
+
+    # One counter for every appended entry, advanced by env_add and never recomputed. Helm's
+    # --set replaces by position, so an index derived twice - or inferred from array length -
+    # is how a budget cap gets silently overwritten by the next setting somebody adds.
+    local env_i
+    env_i=$(deploy_extra_env_count)
+
+    # --set-string, not --set. An environment variable value is always a string, and the
+    # chart's schema says so - but `--set` type-infers, so a numeric value like a step ceiling
+    # arrives as a number and helm refuses the whole install with
+    # "at '/extraEnv/N/value': got number, want string". The install fails, which is at least
+    # loud; the reason it is worth a comment is that it only shows up for values that happen
+    # to look numeric, so it hides until someone adds one.
+    env_add() {
+        extra+=(--set-string "extraEnv[$env_i].name=$1" --set-string "extraEnv[$env_i].value=$2")
+        env_i=$((env_i + 1))
+    }
+
+    # An OpenAI-compatible provider is three settings, none of which the chart exposes as a
+    # first-class value - which is what extraEnv is for. Gemini needs none of them, so the
+    # default path is unchanged.
+    if [ "${HEPHAISTO_LLM_PROVIDER:-gemini}" = "openai" ]; then
+        env_add Llm__Provider openai
+        env_add Llm__Endpoint "${HEPHAISTO_LLM_ENDPOINT}"
+        env_add Llm__Model "${HEPHAISTO_LLM_MODEL:?HEPHAISTO_LLM_MODEL is required when HEPHAISTO_LLM_PROVIDER=openai}"
+
+        # Only when asked for. It is the weaker mode - the schema becomes a request rather
+        # than a constraint - so it should never be switched on by inferring a provider's
+        # capability from its name.
+        if [ -n "${HEPHAISTO_LLM_PLANNING_FORMAT:-}" ]; then
+            env_add Llm__PlanningStructuredOutput "${HEPHAISTO_LLM_PLANNING_FORMAT}"
+        fi
+
+        say "provider: openai, model ${HEPHAISTO_LLM_MODEL} at ${HEPHAISTO_LLM_ENDPOINT}"
+    fi
+
+    # The step ceiling, which is a per-model number wearing a global default's clothes.
+    #
+    # backlog #59 measured it: gpt-oss-120b scores 17/30 at MaxSteps=12 and 18/20 at 20, and
+    # ten of those thirty runs terminated StepBudgetExhausted having produced NO finding. A
+    # ceiling tuned for one model does not read as a ceiling when another model hits it - it
+    # reads as that model being worse. So an openai-compatible provider gets 20 by default
+    # and the hosted Gemini path keeps the shipped 12, with an explicit override either way.
+    local steps="${HEPHAISTO_LLM_MAX_STEPS:-}"
+    if [ -z "$steps" ] && [ "${HEPHAISTO_LLM_PROVIDER:-gemini}" = "openai" ]; then
+        steps=20
+    fi
+    if [ -n "$steps" ]; then
+        env_add Llm__Investigation__MaxSteps "$steps"
+        say "investigation step ceiling: $steps"
+    fi
 
     helm_e2e upgrade --install hephaisto "$CHART_REPO/hephaisto" \
         --version "$VERSION" \
@@ -10,6 +76,7 @@ deploy_install() {
         --values "$E2E_DIR/values-e2e.yaml" \
         --set "mode=${E2E_MODE:-Observe}" \
         --set "policy.autoEnabledActionTypes={RestartPod}" \
+        "${extra[@]+"${extra[@]}"}" \
         --wait --timeout 8m \
         || { fail "hephaisto installed" "helm install failed; see kubectl describe"; return 1; }
 

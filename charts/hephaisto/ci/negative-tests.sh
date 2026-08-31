@@ -259,11 +259,15 @@ fi
 # Kubernetes takes the last value for a duplicated env name, so a collision with a
 # chart-managed name does not conflict - it silently wins. Three of these are safety
 # properties, not preferences: shadowing HEPHAISTO_MODE or HEPHAISTO_SWITCHES_DIR disables an
-# arm of the kill switch, and a literal GEMINI_API_KEY is a plaintext credential in
-# `helm get values` forever.
+# arm of the kill switch, and a literal GEMINI_API_KEY or LLM_API_KEY is a plaintext
+# credential in `helm get values` forever.
 # -------------------------------------------------------------------------------------------
 refuses "extraEnv cannot shadow GEMINI_API_KEY" \
     --set 'extraEnv[0].name=GEMINI_API_KEY' --set 'extraEnv[0].value=sk-plaintext'
+# The same hazard, one provider along. Reserving only the key the chart happened to ship
+# first is how the other one ends up pasted in as a literal.
+refuses "extraEnv cannot shadow LLM_API_KEY" \
+    --set 'extraEnv[0].name=LLM_API_KEY' --set 'extraEnv[0].value=sk-plaintext'
 refuses "extraEnv cannot shadow HEPHAISTO_MODE" \
     --set 'extraEnv[0].name=HEPHAISTO_MODE' --set 'extraEnv[0].value=Auto'
 refuses "extraEnv cannot redirect the kill switch's ConfigMap dir" \

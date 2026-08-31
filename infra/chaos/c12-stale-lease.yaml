@@ -1,0 +1,190 @@
+# =============================================================================
+# C12 - a stale lease held by a pod's own name
+# =============================================================================
+# WHY THIS FIXTURE EXISTS
+#   C11 is the other fixture a restart fixes, and v0.5.0 measured that the agent
+#   will not propose one for it. Twelve replays across four prompt arms declined
+#   twelve times, and the transcripts all say the same thing: the state is on a
+#   PersistentVolumeClaim, PVC contents survive a pod replacement, so replacing
+#   the pod cannot help. That reasoning is CORRECT and the rule is one you want
+#   an SRE agent to hold. C11 defeats it because the thing that actually makes a
+#   replacement work is a SECOND volume - an emptyDir marker gating the counter -
+#   and reconciling the two is an inference the model never made. See backlog #41.
+#
+#   So this fixture tests the same capability with one mechanism instead of two.
+#   It is not easier because it hides something; it is easier because there is
+#   only one thing to read.
+#
+# WHAT IT BREAKS
+#   The first pod of this Deployment fails to start, exits 1, and settles into
+#   CrashLoopBackOff. Any pod after it starts cleanly and stays Ready.
+#
+#   ONE volume, ONE comparison:
+#
+#     /data  a PVC. Holds the name of the pod that took the lease.
+#
+#   On start the container reads /data/lease. If it is empty it writes its own
+#   name there. Then it compares: a lease held by THIS pod's own name is a lease
+#   left behind by a previous life of this same pod, and the process refuses to
+#   re-take it.
+#
+#   `hostname` inside the container is the POD name, and it is stable across
+#   container restarts and different for a replacement pod. So the kubelet
+#   restarting the container inside the crash loop changes nothing - same name,
+#   same refusal - and deleting the POD is what breaks the tie, because the
+#   replacement has a different name and the lease is not its own.
+#
+#   The inference the agent has to make is one step from the entrypoint, which
+#   describe_pod returns in full: this compares $(hostname) against a recorded
+#   name, and a different pod has a different name.
+#
+#   Modelled on a real and boring fault: a distributed lock or lease whose holder
+#   died without releasing it, where the record still names an identity the new
+#   process is trying to reuse. The fix is genuinely "come back as someone else",
+#   which for a Deployment pod means being replaced.
+#
+# NOT EDITORIALISING, ON PURPOSE
+#   C11 prints "this pod cannot recover in place". That is precisely true and
+#   thoroughly leading - it is the workload asserting a verdict about its own
+#   recoverability, which a process cannot actually know, and the agent quoted it
+#   back. The line here states the comparison it made and stops. Reaching "a
+#   different pod would not match" is the reader's job, and it is the whole test.
+#
+# RESETTING IT
+#   The lease is the fixture's memory, so re-running it means deleting the PVC:
+#
+#     kubectl delete -f infra/chaos/c12-stale-lease.yaml
+#     kubectl -n hephaisto-chaos delete pvc c12-stale-lease-state
+#
+#   Deleting the Deployment alone leaves the lease naming a pod that no longer
+#   exists, so the fixture comes back healthy immediately and looks like the
+#   agent fixed something it never touched.
+#
+# EXPECTED KUBERNETES EVENTS
+#   - Warning  BackOff   Back-off restarting failed container app in pod ...
+#     (until the pod is replaced; then nothing but Pulled/Created/Started)
+#
+# EXPECTED METRIC / PROMQL SIGNAL
+#   kube_pod_container_status_waiting_reason{
+#     namespace="hephaisto-chaos", container="app",
+#     reason="CrashLoopBackOff"} == 1
+#
+#   Fires ChaosPodCrashLooping, the same shipped rule as C2 and C11, so this
+#   carries hephaisto_kind: CrashLoopBackOff and gets the crash-loop runbook.
+#
+#   AFTER a restart, and this is what verification checks:
+#     kube_deployment_status_replicas_available{
+#       namespace="hephaisto-chaos", deployment="c12-stale-lease"} == 1
+#
+# EXPECTED LOG SIGNAL
+#   {k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c12-stale-lease"}
+#     |= "FATAL"
+#
+#   Exact expected line (the pod name varies):
+#     FATAL: lease at /data/lease is held by c12-stale-lease-xxxxx-yyyyy, which
+#     is this pod's own name; refusing to re-take it
+#
+#   And after the replacement:
+#     lease at /data/lease is held by c12-stale-lease-xxxxx-yyyyy; this pod is
+#     c12-stale-lease-xxxxx-zzzzz; acquired
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: c12-stale-lease-state
+  namespace: hephaisto-chaos
+  labels:
+    app.kubernetes.io/name: c12-stale-lease
+    hephaisto.chaos/scenario: c12
+spec:
+  accessModes: ["ReadWriteOnce"]
+  # The smallest thing local-path will give us. It holds one pod name.
+  resources:
+    requests:
+      storage: 64Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: c12-stale-lease
+  namespace: hephaisto-chaos
+  labels:
+    app.kubernetes.io/name: c12-stale-lease
+    hephaisto.chaos/scenario: c12
+    hephaisto.chaos/fault: transient
+spec:
+  replicas: 1
+
+  # A pod must stay up this long before the Deployment calls it Available.
+  #
+  # Load-bearing, and C11 learned it the hard way. The container has no readiness
+  # probe, so it is Ready the instant it is Running - and while wedged it runs for
+  # two seconds before exiting. Without minReadySeconds the Deployment reports
+  # availableReplicas: 1 for two seconds of every crash cycle, so anything sampling
+  # availability catches a broken workload looking healthy. That is exactly the
+  # false pass the acceptance test exists to prevent.
+  minReadySeconds: 20
+
+  # Recreate, not RollingUpdate. local-path is ReadWriteOnce and single-node, so a
+  # rolling replacement would have the new pod waiting on a volume the old one
+  # still holds - the fixture would look stuck rather than fixed.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: c12-stale-lease
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: c12-stale-lease
+        hephaisto.chaos/scenario: c12
+        hephaisto.chaos/fault: transient
+    spec:
+      terminationGracePeriodSeconds: 1
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: c12-stale-lease-state
+      containers:
+        - name: app
+          # busybox:1.37 - linux/arm64 manifest verified.
+          image: busybox:1.37
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: state
+              mountPath: /data
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              sleep 2
+
+              # hostname inside a container is the POD name. Stable across container
+              # restarts, different for a replacement pod. That is the whole hinge.
+              me=$(hostname)
+              holder=$(cat /data/lease 2>/dev/null || true)
+
+              # First pod ever: take the lease, which is what makes it its own.
+              if [ -z "$holder" ]; then
+                echo "$me" > /data/lease
+                holder=$me
+              fi
+
+              if [ "$holder" = "$me" ]; then
+                echo "FATAL: lease at /data/lease is held by $holder, which is this pod's own name; refusing to re-take it"
+                exit 1
+              fi
+
+              echo "lease at /data/lease is held by $holder; this pod is $me; acquired"
+
+              # Stay up and Ready. Verification at T+60s, T+5m and T+15m asks the
+              # workload whether it is settled, so this has to outlive all three.
+              # Deliberately does NOT rewrite the lease: doing so would make this pod
+              # its own holder, and the next container restart would fail again.
+              while true; do sleep 30; done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi

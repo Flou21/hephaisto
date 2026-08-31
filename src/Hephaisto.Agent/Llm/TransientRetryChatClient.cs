@@ -44,6 +44,57 @@ public sealed class TransientRetryChatClient(
     /// Substrings that mean "ask again". Lowercase; matched case-insensitively against the
     /// whole exception chain.
     /// </summary>
+    /// <summary>
+    /// Message text that means <b>stop</b>, checked before anything else.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// These are permanent until a human does something - visits a billing page, fixes a key,
+    /// enables an API - and none of them is fixed by waiting 1.1 seconds and asking again.
+    /// </para>
+    /// <para>
+    /// They need their own list because of how they arrive. <c>Google.GenAI.ClientError</c>
+    /// surfaces with <b>no HTTP status</b>, and the transport branch below treats a missing
+    /// status as a connection-level failure - correct for DNS and TLS and resets, wrong for
+    /// this. Observed on 2026-08-31: "Your prepayment credits are depleted" retried five times
+    /// per step, on every step, so an investigation stalled slowly while the log insisted the
+    /// problem was transient. The wasted calls cost nothing; being wrong about WHY cost a
+    /// human the one sentence they could have acted on. See <c>docs/backlog.md</c> #54.
+    /// </para>
+    /// </remarks>
+    private static readonly string[] PermanentMarkers =
+    [
+        // Kept narrow on purpose, and each one is a phrase that cannot also describe a
+        // transient condition. A bare "billing" or "disabled" would match a 503 from a billing
+        // service and turn a real hiccup into a hard stop, which is the opposite mistake and a
+        // worse one - this list is checked FIRST, so anything vague here overrules a correct
+        // retry. Daily-quota wording is deliberately absent for the same reason: it is not
+        // reliably distinguishable from a per-minute rate limit, and five retries over ten
+        // seconds costs nothing if it turns out to be one.
+        "credits are depleted",
+        "prepayment credits",
+        "billing account",
+        "api key not valid",
+        "api_key_invalid",
+        "has not been used in project",
+
+        // The OpenAI-compatible providers say it their own way. Same test applied: each of
+        // these names a condition a retry cannot change. DeepSeek answers "Insufficient
+        // Balance", OpenRouter "insufficient credits"; both are a human visiting a billing
+        // page, exactly as Gemini's "prepayment credits" above.
+        "insufficient balance",
+        "insufficient credits",
+        "invalid_api_key",
+        "incorrect api key",
+
+        // Observed 2026-08-31, retried four times a step for the last eight investigations of
+        // a benchmark run: "Your project has exceeded its monthly spending cap." A cap is not
+        // an empty wallet and not a rate limit - it is a number a human chose, and no amount
+        // of backoff moves it before the month does. Same class as the first entry, different
+        // billing page.
+        "spending cap",
+    ];
+
     private static readonly string[] RetryableMarkers =
     [
         "high demand",
@@ -56,6 +107,11 @@ public sealed class TransientRetryChatClient(
         "rate limit",
         "too many requests",
         "deadline exceeded",
+
+        // OpenRouter routes to upstream hosts that can all be busy at once. It reads like a
+        // configuration error and is not one: the next attempt usually lands somewhere else.
+        // "unavailable" above does not match it - the phrase is "no instances available".
+        "no instances available",
     ];
 
     public override async Task<ChatResponse> GetResponseAsync(
@@ -107,6 +163,25 @@ public sealed class TransientRetryChatClient(
     /// <summary>Why this exception is worth repeating, or null if it is not.</summary>
     internal static string? Classify(Exception exception)
     {
+        // Permanent first, and before the status check, because these arrive with no status
+        // and would otherwise be caught by the transport fallback below. Refusing early is the
+        // whole point: the log line a reader gets is the real answer instead of "transient".
+        for (var ex = exception; ex is not null; ex = ex.InnerException)
+        {
+            if (ex.Message is not { Length: > 0 } permanent)
+            {
+                continue;
+            }
+
+            foreach (var marker in PermanentMarkers)
+            {
+                if (permanent.Contains(marker, StringComparison.OrdinalIgnoreCase))
+                {
+                    return null;
+                }
+            }
+        }
+
         for (var ex = exception; ex is not null; ex = ex.InnerException)
         {
             // Never retry our own budget stops or a caller cancellation. Both mean "stop",

@@ -77,13 +77,19 @@ internal static class RunCommand
 
         await using var services = EvalHost.BuildForReplay(configuration);
 
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+        // 180s, not 60. A local model reasons before it answers, and a judge call that times
+        // out is recorded as a failed grade rather than a slow one - which reads as a scenario
+        // nobody could grade instead of a judge nobody waited for.
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(180) };
 
-        var judge = args.Flag("no-judge") ? null : GeminiRootCauseJudge.FromEnvironment(http);
+        var judge = args.Flag("no-judge") ? null : RootCauseJudgeFactory.FromEnvironment(http);
 
         if (judge is null && !args.Flag("no-judge"))
         {
-            Console.WriteLine("note     no HEPHAISTO_GEMINI_API_KEY; scoring deterministically only");
+            Console.WriteLine(
+                "note     no judge configured; scoring deterministically only. Set "
+                + "HEPHAISTO_GEMINI_API_KEY, or JUDGE_PROVIDER=openai with JUDGE_ENDPOINT "
+                + "and JUDGE_MODEL");
         }
 
         var clock = services.GetRequiredService<IClock>();

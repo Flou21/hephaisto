@@ -1,6 +1,6 @@
 # Hephaisto chaos fixtures
 
-Ten hand-written Kubernetes fault-injection fixtures, one per file, all in namespace
+Twelve hand-written Kubernetes fault-injection fixtures, one per file, all in namespace
 `hephaisto-chaos`. They exist to give the Hephaisto agent a stable, reproducible set
 of failures with a **known-correct answer**, so its diagnoses can be regression-tested
 rather than eyeballed.
@@ -68,6 +68,7 @@ MVP-critical: they carry information that exists in **no metric at all**.
 | C9 | Unbounded 4Gi memhog — **node-wide** | `ChaosNodeMemoryPressure` | `kube_node_status_condition{condition="MemoryPressure",status="true"} == 1` | `{k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c9-memhog"} \|= "allocated"` | `Warning NodeHasInsufficientMemory`; `Warning Evicted — The node was low on resource: memory.` |
 | C10 | faulty-service — 15% 500s, 750ms p95, 503 window | `ChaosServiceErrorBudgetBurn` | `sum(rate(traces_spanmetrics_calls_total{service_name="faulty-service",status_code="STATUS_CODE_ERROR"}[5m])) / sum(rate(traces_spanmetrics_calls_total{service_name="faulty-service"}[5m])) > 0.05` | `{k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c10-faulty-service", k8s_container_name="app"} \|= "FAULT"` | *(none — deliberately event-silent; the pod stays Ready)* |
 | C11 | Transient - first pod wedged, any later pod healthy | `ChaosPodCrashLooping` | `kube_pod_container_status_waiting_reason{namespace="hephaisto-chaos",container="app",reason="CrashLoopBackOff"} == 1` (and `kube_deployment_status_replicas_available{deployment="c11-transient"} == 1` once restarted) | `{k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c11-transient"} \|= "FATAL"` | `Warning BackOff` until the pod is replaced |
+| C12 | Stale lease — the lease file on the PVC names the pod's own hostname | `ChaosPodCrashLooping` | `kube_pod_container_status_waiting_reason{namespace="hephaisto-chaos",container="app",reason="CrashLoopBackOff"} == 1` | `{k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c12-stale-lease"} \|= "FATAL"` | `Warning BackOff` until the pod is replaced |
 
 ### Secondary expressions worth asserting
 
@@ -279,6 +280,7 @@ infra/chaos/
 ├── c9-memhog.yaml               Deployment — NO memory limit, 4Gi, ships at replicas: 0
 ├── c10-faulty-service.yaml      Deployment + Service — OTel API + wget load sidecar
 ├── c11-transient.yaml           PVC + Deployment — first pod wedges, a replacement is healthy
+├── c12-stale-lease.yaml         PVC + Deployment — a lease file the pod refuses to re-take
 └── faulty-service/
     ├── Program.cs               ~60-line ASP.NET Core minimal API, OTLP traces+metrics+logs
     ├── faulty-service.csproj    net10.0, inherits repo-root CPM, NOT in Hephaisto.slnx

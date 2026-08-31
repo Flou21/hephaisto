@@ -45,15 +45,10 @@ public sealed class GeminiChatClientFactory : IChatClientFactory, IDisposable
         _loggerFactory = loggerFactory;
         _pricing = new LlmPricing(_options.Pricing, loggerFactory.CreateLogger<LlmPricing>());
 
-        // Config first so a ConfigMap or user-secret can override, then the conventional
-        // environment variable. Failing at construction is deliberate: an agent that boots
-        // without a key looks healthy and then escalates every incident with an obscure
-        // error at 3am, which is strictly worse than not booting.
-        var apiKey = _options.ApiKey
-            ?? configuration["GEMINI_API_KEY"]
-            // Fully qualified: Google.GenAI.Types has its own `Environment` type, and the
-            // `using Google.GenAI.Types` above makes the bare name ambiguous.
-            ?? System.Environment.GetEnvironmentVariable("GEMINI_API_KEY")
+        // Failing at construction is deliberate: an agent that boots without a key looks
+        // healthy and then escalates every incident with an obscure error at 3am, which is
+        // strictly worse than not booting.
+        var apiKey = ResolveApiKey(_options, configuration)
             ?? throw new InvalidOperationException(
                 "No Gemini API key. Set Llm:ApiKey or the GEMINI_API_KEY environment variable.");
 
@@ -70,6 +65,37 @@ public sealed class GeminiChatClientFactory : IChatClientFactory, IDisposable
 
         _client = new Client(apiKey: apiKey, httpOptions: http);
     }
+
+    /// <summary>
+    /// Config first so a ConfigMap or user-secret can override, then the conventional
+    /// environment variable. Null when no key is configured; the caller decides whether that
+    /// is fatal.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Shared with <see cref="GeminiEmbeddingGeneratorFactory"/>, which needs a Gemini key
+    /// even when chat is running on another provider entirely. Two copies of this lookup
+    /// would drift, and a drifted key lookup gives an agent that embeds but cannot
+    /// investigate, or the reverse.
+    /// </para>
+    /// <para>
+    /// <b><c>allowSharedApiKey</c> is why this takes a flag.</b> <see cref="LlmOptions.ApiKey"/>
+    /// belongs to whichever chat provider is selected, so on an OpenAI-compatible provider it
+    /// holds an OpenRouter or DeepSeek key. Handing that to the Gemini embedding endpoint
+    /// would authenticate with the wrong credential and fail per call, which
+    /// <see cref="IncidentEmbedder"/> would then swallow as a routine degradation. Only the
+    /// Gemini chat factory may treat it as its own.
+    /// </para>
+    /// </remarks>
+    internal static string? ResolveApiKey(
+        LlmOptions options,
+        IConfiguration configuration,
+        bool allowSharedApiKey = true) =>
+        (allowSharedApiKey ? options.ApiKey : null)
+            ?? configuration["GEMINI_API_KEY"]
+            // Fully qualified: Google.GenAI.Types has its own `Environment` type, and the
+            // `using Google.GenAI.Types` above makes the bare name ambiguous.
+            ?? System.Environment.GetEnvironmentVariable("GEMINI_API_KEY");
 
     /// <summary>
     /// Builds the SDK transport options, including retry.

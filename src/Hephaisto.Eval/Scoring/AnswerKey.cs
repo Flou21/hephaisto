@@ -86,11 +86,15 @@ public sealed record AnswerKey
     };
 
     /// <summary>
-    /// The eight gradeable fixtures.
+    /// The ten gradeable fixtures.
     /// </summary>
     /// <remarks>
     /// <b>c6 and c9 are deliberately absent</b>, and their absence is the reason this harness
-    /// reports n/8 rather than n/10. <c>infra/chaos/README.md</c> measures c6 as unable to fire on
+    /// reported n/8 for three releases. c11 joined in v0.5.0 and c12 followed it, so the corpus
+    /// is n/10 - the denominator the MVP bar was always written against - and it gets there with
+    /// ten of the twelve fixtures rather than by replacing either of the two that cannot run.
+    /// See <c>docs/backlog.md</c> #2. The denominator is stated
+    /// rather than rounded up, which is the whole habit. <c>infra/chaos/README.md</c> measures c6 as unable to fire on
     /// <c>local-path</c> - every PVC there reports the node filesystem, so the ratio "sits at ~0.62
     /// node-wide and moves by 0.0045". c9 is node-wide and evicts pods across the cluster
     /// including Prometheus and the agent; the e2e harness refuses to run it even when asked.
@@ -193,6 +197,54 @@ public sealed record AnswerKey
                 + "while Kubernetes reports it perfectly healthy - the pod stays Ready and no event "
                 + "is emitted.",
             MustMentionAnyOf = ["500", "error rate"],
+        },
+        new()
+        {
+            Fixture = "c11",
+            ExpectedKind = SignalKind.CrashLoopBackOff,
+            ExpectedRootCause =
+                "The container aborts at startup because it finds a stale generation counter on its "
+                + "persistent volume at /data/generation - the value is 1 and it requires 2 - so it "
+                + "exits 1 and the Deployment enters CrashLoopBackOff. The decisive evidence is a "
+                + "FATAL log line naming that generation.",
+            MustMentionAnyOf = ["generation", "/data"],
+
+            // THE FIRST KEY IN THIS CORPUS WHERE ACTING IS THE RIGHT ANSWER, and until it existed
+            // every entry here had this list empty. That is worth saying plainly: an eval whose
+            // every scenario rewards declining measures only one direction of the behaviour it
+            // claims to measure, and PlanGrader.MissedAnAction had never once been reached.
+            //
+            // c11 is the one fixture a restart genuinely fixes. The badness is pod-scoped - a
+            // marker on an emptyDir that stops the generation counter advancing while the kubelet
+            // restarts the container in place - so replacing the pod discards it and the
+            // replacement counts itself as generation 2. RolloutRestart is here beside RestartPod
+            // because it also replaces the pod (the fixture is strategy: Recreate) and is an
+            // equally correct answer; grading it Unreasonable would be the harness being wrong.
+            AcceptableActions = [ActionType.RestartPod, ActionType.RolloutRestart],
+
+            // Deliberately empty, unlike c1-c4. There is no action in the vocabulary that would
+            // destroy the evidence here: the one that could - DeletePvc, which holds the counter -
+            // is permanently denied and can never be executed whatever a plan says.
+        },
+        new()
+        {
+            Fixture = "c12",
+            ExpectedKind = SignalKind.CrashLoopBackOff,
+            ExpectedRootCause =
+                "The container aborts at startup because the lease recorded at /data/lease names "
+                + "this pod itself, and the entrypoint refuses to re-take a lease it already holds, "
+                + "so it exits 1 and the Deployment enters CrashLoopBackOff. The comparison is "
+                + "against the pod's own hostname, so any replacement pod has a different name and "
+                + "starts cleanly.",
+            MustMentionAnyOf = ["lease", "hostname", "/data"],
+
+            // The second fixture where acting is correct, and the reason it exists. c11 asks the
+            // same question through two volumes - a PVC counter gated by an emptyDir marker - and
+            // v0.5.0 measured twelve replays across four prompt arms declining it twelve times,
+            // every one of them reasoning correctly that PVC contents survive a replacement. c12
+            // is one volume and one comparison, so it tests whether the agent will act on a
+            // transient fault rather than whether it will spot a two-volume interaction. See #41.
+            AcceptableActions = [ActionType.RestartPod, ActionType.RolloutRestart],
         },
     ];
 

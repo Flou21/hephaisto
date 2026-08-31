@@ -23,6 +23,55 @@ window.hephaisto = {
         }
     },
 
+    // --- theme -----------------------------------------------------------------------
+    //
+    // Three states, and "system" is one of them rather than the absence of a choice: an
+    // operator who deliberately follows the OS should see that, not an empty control.
+    //
+    // Pure JS with no circuit involved. A theme preference is this browser's business, it is
+    // stored in this browser, and routing it through SignalR would make it stop working
+    // exactly when the console is least well - while the circuit is down.
+    THEMES: ['system', 'light', 'dark'],
+
+    readTheme() {
+        var t = this.storageGet('hephaisto.theme');
+
+        return this.THEMES.indexOf(t) >= 0 ? t : 'system';
+    },
+
+    applyTheme(theme) {
+        if (theme === 'system') {
+            document.documentElement.removeAttribute('data-theme');
+        } else {
+            document.documentElement.setAttribute('data-theme', theme);
+        }
+
+        // Repaint the browser chrome to match. Read back from the stylesheet rather than
+        // carrying a copy of the hex here: tokens.css is the one place a colour is written,
+        // and a second copy in JavaScript is a second place for it to drift.
+        var bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+
+        if (bg) {
+            document.querySelectorAll('meta[name="theme-color"]').forEach(function (m) {
+                m.setAttribute('content', bg);
+            });
+        }
+
+        // The visible label is a CSS ::after keyed off the attribute above - see app.css for
+        // why. Only the accessible name is set here, and it is re-set on every cycle because
+        // aria-label is the one part a stylesheet cannot express.
+        document.querySelectorAll('[data-theme-control]').forEach(function (el) {
+            el.setAttribute('aria-label', 'Theme: ' + theme + '. Activate to change it.');
+        });
+    },
+
+    cycleTheme() {
+        var next = this.THEMES[(this.THEMES.indexOf(this.readTheme()) + 1) % this.THEMES.length];
+
+        this.storageSet('hephaisto.theme', next);
+        this.applyTheme(next);
+    },
+
     // The other half of the grounding link: clicking a citation must land the reader on the
     // step it quotes, with that step opened. A citation that scrolls to a collapsed
     // <details> looks broken, and the whole point of the link is that it can be followed.
@@ -86,4 +135,20 @@ window.hephaisto = {
         // connection error, which is a worse thing to be looking at than the overlay.
         window.setTimeout(() => window.location.reload(), 1500);
     }).observe(modal, { attributes: true, attributeFilter: ['class'] });
+})();
+
+// Label the control with the theme that is actually in force. The attribute was already
+// stamped in <head>; this only catches the button up, and it is why the button ships with no
+// text of its own - a label rendered server-side would be wrong for every reader who chose.
+(function () {
+    function sync() { window.hephaisto.applyTheme(window.hephaisto.readTheme()); }
+
+    // Not simply an addEventListener: this file is a plain script at the end of <body>, so on
+    // a warm cache it can run AFTER DOMContentLoaded has already fired, and the listener would
+    // then never be called at all.
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', sync);
+    } else {
+        sync();
+    }
 })();

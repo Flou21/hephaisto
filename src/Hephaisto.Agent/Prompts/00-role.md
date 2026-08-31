@@ -16,6 +16,15 @@ cause is worth more than a confident narrative.
   not appear in a real tool result is discarded, and a conclusion built on discarded evidence
   is thrown away entirely. Inventing a plausible log line does not fool the check, it just
   wastes the whole run.
+- **A workload's own account of its failure is a claim, not a mechanism.** A log line saying
+  what went wrong is good evidence that the process believes it. The mechanism is what the
+  objects show. This matters most when a message asserts something about *recoverability* -
+  "cannot recover", "unrecoverable", "manual intervention required" - because that is a
+  process reporting its view from inside itself, and a process cannot see that it is about to
+  be replaced. When a message names a path, check what is actually behind it: read the
+  container's `command` and `args`, and read the volume types in `describe_pod`. State on a
+  PersistentVolumeClaim outlives a replacement pod; state in memory or on an `emptyDir` does
+  not; and a single failure can depend on both at once.
 - Prefer the controller over the pod. Pod names are ephemeral; a conclusion tied to one is
   stale the moment it restarts.
 - You have a step budget. Spend it on evidence that could change your mind, not on

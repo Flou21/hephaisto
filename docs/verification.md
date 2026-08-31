@@ -296,6 +296,7 @@ kind cluster and prints a verdict:
 scripts/e2e/run.sh                    # dispatch a nightly build and test it
 scripts/e2e/run.sh --rc               # cut a real release candidate and test it
 scripts/e2e/run.sh --tag 0.0.1-rc2    # test something already published
+scripts/e2e/run.sh --nightly --full   # the release gate: ten fixtures, about two hours
 ```
 
 It covers steps 1, 2, 5, 6, 9, 11, 12, 14 and 16 above, plus the parts CI cannot reach: that the
@@ -323,9 +324,32 @@ Three things it deliberately does **not** cover, and neither does anything else:
   `infra/chaos/README.md` and reports a score, but never fails on it. The MVP bar — ≥ 7/10 over
   ≥ 10 scenarios — is still a judgement someone makes by reading.
 
-The default fixture set is four; `--fixtures c1,c2,c3,c4,c5,c7,c8,c10` runs every one that can be
-recorded on this hardware, which is the set the 22/24 replay number was measured on and therefore
-the set worth comparing a live run against.
+The default fixture set is four; **`--full`** runs every one that can be recorded on this
+hardware — `c1,c2,c3,c4,c5,c7,c8,c10,c11,c12`, ten of the twelve. That is the denominator the MVP
+bar was always written against, and the report now says whether the bar was met rather than only
+printing the ratio: `7/9` fails it on the count while looking like a pass on the proportion. It
+takes about two hours, because c8's rule needs thirty minutes of evidence before it can fire. The 22/24 replay number was measured on the first eight, so a
+live run compared against it should name the same eight — c11 and c12 are transient faults a
+restart repairs, and folding them into a diagnosis-accuracy figure measured without them would
+change the denominator and the difficulty at once.
+
+`--mode Auto` and `--mode DryRun` both add the acting fixture, whether or not fixtures were
+named explicitly; `ACT_FIXTURE` names it, c12 by default.
+
+**Running it on a local model costs nothing per token**, which is what makes a two-hour gate
+affordable before every release:
+
+```sh
+HEPHAISTO_LLM_PROVIDER=openai HEPHAISTO_LLM_ENDPOINT=http://100.91.41.104:11434/v1 \
+HEPHAISTO_LLM_MODEL=gpt-oss:120b scripts/e2e/run.sh --nightly --full --mode Auto
+```
+
+The endpoint has to be an address the **cluster** can reach — `localhost` from a pod is the pod,
+and Ollama ships bound to loopback — and the harness now proves that from inside the cluster
+during `deps` rather than discovering it as ten faulted investigations. `scripts/e2e/README.md`
+has the addresses and the one Ollama setting. Note what stays remote: the harness installs the
+**published** image by design, so `--nightly` still builds the branch in Actions. Local means the
+cluster and the model, not the artifact.
 
 ---
 
@@ -371,10 +395,101 @@ for something no code did, which is the failure `backlog #20` refused to resolve
 the sentence. It is now built and checked: `chaos_assert_annotations` reads them back from Grafana
 using the agent's own token, so the credential that can see them is the credential that wrote them.
 
-**On the denominator.** Ten is still the target and eight is what runs. c6 does not fire on
-`local-path` and c9 would evict the observability stack, so both need replacement fixtures; until
-they exist the number is reported as n/8 and says which two are missing. Reporting n/10 while
-running eight is the dishonesty the eval harness was built to remove.
+**On the denominator, as of v0.5.0.** Ten is the target and the answer key now has ten entries —
+c11 and c12 joined the eight. c6 still does not fire on `local-path` and c9 would still evict the
+observability stack, and neither has a replacement; what changed is that the two fixtures a
+restart actually repairs are both in the corpus, so the denominator grew without either exclusion
+being papered over. **The count is still reported as what ran, never as what was aimed at.**
+
+**And which instrument produced it, always.** Two things measure this and they are not
+interchangeable. Cassette replay (`hephaisto-eval run`) scores diagnosis and plan against
+`AnswerKey`, needs no cluster, and is the number an experiment arm should move. The e2e harness
+scores a live run against `fixture_truth()` in `scripts/e2e/lib/judge.sh`, which is the canonical
+copy the answer keys are transcribed from — two graders scoring one fixture against differently
+worded truths would produce two incomparable numbers. Say which one a figure came from whenever
+you quote it.
+
+**A number from this corpus is only comparable within one model.** Measured on 2026-08-31 while
+adding a second provider: a cassette records the tool calls the *recording* model chose to make,
+and nothing else. `c5.json` declares 31 tools and records 9 calls across 7 of them, so a model
+that asks a different question is answered "nothing was recorded" — which reads to it as a
+cluster with no deployments and no dashboards, and it digs until its tool-call budget is gone.
+Replaying `deepseek-v4-flash` against the Gemini-recorded corpus put 18 of 27 runs over the
+soundness threshold, and the effect is measurable rather than theoretical:
+
+| | correct | mean miss rate |
+|---|---|---|
+| structurally sound runs | **9 / 9** | 10% |
+| unsound runs | 11 / 18 | 43% |
+
+Accuracy tracked replay coverage, not model quality. The control is `c12.json`, recorded on the
+model that replayed it: **8 of 8 sound at a 4% mean miss.** So the corpus is a within-model
+instrument, which is its designed job — an experiment arm changes the prompt and holds the model
+fixed. Ranking two models on a corpus one of them recorded measures the recording, and adopting a
+new investigating model means re-recording rather than reinterpreting. See
+[backlog #55](backlog.md).
+
+**Cost and accuracy, as measured on 2026-08-31.** Deterministic scoring throughout — the judge is
+hard-wired to Gemini ([#58](backlog.md)) and was left off for every arm so the four are scored
+identically. That makes them comparable to each other and *not* to the judged `22/24` published
+for v0.4.0, which is a laxer grader on eight scenarios rather than ten.
+
+| model | where | overall | excl. c10 | steps/inv | $/inv |
+|---|---|---|---|---|---|
+| `gemini-3.7-flash` | hosted | 20/22 † | **19/19** | 7.1 | $0.109 |
+| `gpt-oss-120b` (MaxSteps 20) | **local** | 18/20 | **18/18** | 11.4 | $0 ‡ |
+| `gpt-oss-120b` (MaxSteps 12) | **local** | 17/30 | 17/27 | 9.6 | $0 ‡ |
+| `deepseek-v4-flash` | hosted | 20/27 | 20/24 | 6.9 | $0.031 |
+
+† Eight of Gemini's thirty runs terminated `Faulted` when the project hit its monthly spending cap
+mid-benchmark, and are excluded as instrument failures rather than wrong answers — they faulted at
+step one with a 0% miss rate. The cap also produced [#54](backlog.md)'s bug a second time, in new
+wording, which is how it was noticed.
+
+‡ Local tokens are free. The `gpt-oss-120b` price entry exists so the budget still binds, and it
+makes the run report a *hosted-equivalent* of $0.005/investigation — useful for comparison, and
+not money spent.
+
+**c10 is excluded in the second column because it is broken for every model**, not because it is
+inconvenient: it carries the highest miss rate in the corpus for all four (45-67%), which is
+[#55](backlog.md) rather than a diagnosis failure. On the nine scenarios the instrument can
+actually carry, the local open-weight model matches the hosted frontier one.
+
+**What to run where, as of 2026-08-31.**
+
+- **Iterating on prompts and budgets: `gpt-oss-120b` locally, `MaxSteps=20`.** It matches the
+  hosted frontier model on the nine scenarios the instrument can carry (18/18 against 19/19) at
+  **zero marginal cost**, so replaying the corpus stops being a spending decision — which is the
+  whole reason the corpus exists. It also gets the *stronger* structured-output mode: llama.cpp
+  constrains generation with a grammar, so `JsonSchema` works locally even where a hosted DeepSeek
+  needs the weakened `JsonObject`. Wall clock is ~82s per investigation, against ~73s for hosted
+  DeepSeek — local is not the slow option.
+- **The e2e harness and CI: `gpt-oss-120b` hosted**, $0.03/$0.17 per million. The same weights, so
+  local results transfer and only latency needs re-checking; and CI cannot reach a laptop's Ollama.
+  A run costs roughly **$0.016** against $0.399 on `gemini-3.7-flash`.
+- **Production: unchanged.** Nothing here argues for moving it. This release measured
+  cheapness for a development loop, not reliability under load, and the frontier model has four
+  releases of history behind it.
+- **`deepseek-v4-flash` is the fallback**, not the choice: 83% against 100% on the same subset, at
+  6x the cost of hosted gpt-oss, and it cannot enforce a JSON schema.
+- **`qwen3-next:80b` was tested and rejected** on verbosity, not accuracy — see
+  [#60](backlog.md#60-a-providers-own-options-cannot-be-reached-through-the-openai-compatible-seam).
+
+**Note what the cheap option bought beyond money.** The Gemini control run hit the project's
+monthly spending cap partway through and lost eight of its thirty investigations. A local model
+has no cap, no quota and no billing page, which is worth something on the day a release depends on
+a measurement.
+
+**The step ceiling has to move with the model.** `gpt-oss-120b` scores 57% at `MaxSteps=12` and
+90% at 20, changing nothing else, because ten of its thirty runs were truncated mid-investigation
+— see [#59](backlog.md#59-the-step-budget-is-tuned-to-one-model-and-silently-caps-anothers-accuracy).
+DeepSeek hit no ceiling in 27 runs, so each model is compared at a budget that binds it equally.
+
+**The exit code stays about the instrument, not the agent.** `hephaisto-eval run` exits non-zero
+when a dangling citation, an out-of-contract category or a replay miss rate says the harness
+slipped, and exits zero when the agent simply did badly. Making it fail below 7/10 would collapse
+"a regression" and "a broken harness" into one signal, which is the distinction the whole design
+exists to keep.
 
 
 ---

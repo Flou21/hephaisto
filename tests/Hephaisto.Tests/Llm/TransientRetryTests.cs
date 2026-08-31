@@ -42,6 +42,82 @@ public class TransientRetryTests
         TransientRetryChatClient.Classify(ex).Should().BeNull();
     }
 
+    [Theory]
+    // The exact wording observed on the development cluster on 2026-08-31, retried five times
+    // per step on every step of every investigation until the run stalled. docs/backlog.md #54.
+    [InlineData("Your prepayment credits are depleted. Please go to AI Studio at "
+        + "https://ai.studio/projects to manage your project and billing.")]
+    [InlineData("API key not valid. Please pass a valid API key.")]
+    [InlineData("Gemini API has not been used in project 12345 before or it is disabled.")]
+    // The same condition as the first case, in each new provider's own words. A cheaper
+    // provider does not make running out of credit any more retryable.
+    [InlineData("Error code: 402 - {'error': {'message': 'Insufficient Balance', "
+        + "'type': 'unknown_error'}}")]
+    [InlineData("Insufficient credits. Add more at https://openrouter.ai/settings/credits")]
+    [InlineData("Incorrect API key provided: sk-or-v1********. You can find your API key at "
+        + "https://openrouter.ai/keys")]
+    // Observed on 2026-08-31 mid-benchmark, and retried four times a step until the run ended.
+    // A cap is a number a human chose; backoff does not move it before the month does.
+    [InlineData("Your project has exceeded its monthly spending cap. Please go to AI Studio at "
+        + "https://ai.studio/spend to manage your project spend cap.")]
+    public void A_permanent_provider_failure_is_not_retried(string message)
+    {
+        // These arrive with NO HTTP status, which is what makes them dangerous: the transport
+        // branch treats a missing status as a connection-level failure - right for DNS and TLS
+        // and resets, wrong for a billing page a human has to visit. Refusing here is not
+        // about saving the calls, which fail instantly; it is so the log says the real thing.
+        TransientRetryChatClient.Classify(new HttpRequestException(message))
+            .Should().BeNull();
+    }
+
+    [Fact]
+    public void A_permanent_cause_overrules_a_retryable_status_it_arrives_with()
+    {
+        // Permanent markers are checked before the status, so this has to be deliberate rather
+        // than incidental - and it is the reason the marker list is kept narrow. A phrase vague
+        // enough to appear in a genuine 503 would turn a real hiccup into a hard stop, which is
+        // the worse of the two mistakes.
+        var ex = new HttpRequestException(
+            "Your prepayment credits are depleted.", null, HttpStatusCode.ServiceUnavailable);
+
+        TransientRetryChatClient.Classify(ex).Should().BeNull();
+    }
+
+    [Theory]
+    // The other arm, and the one that matters more: wording that merely mentions money or keys
+    // must NOT be swept up. Each of these is a transient condition a retry is exactly for.
+    [InlineData("The model is overloaded. Please try again later.")]
+    [InlineData("Resource has been exhausted (e.g. check quota).")]
+    [InlineData("Rate limit exceeded for this project's billing tier")]
+    // Mentions credits, and is not a billing failure: a request larger than the remaining
+    // balance is retryable the moment a shorter turn fits. The permanent markers have to be
+    // narrow enough to let this through.
+    [InlineData("This request requires more credits than your remaining balance affords.")]
+    public void Transient_wording_survives_the_permanent_check(string message)
+    {
+        TransientRetryChatClient.Classify(new HttpRequestException(message))
+            .Should().NotBeNull();
+    }
+
+    /// <summary>
+    /// A router with every upstream busy reads like a configuration error and is not one.
+    /// </summary>
+    /// <remarks>
+    /// Given a 404 deliberately: that status is not retryable, so this passes only if the
+    /// prose marker is doing the work. "unavailable" does not match it - OpenRouter's phrase
+    /// is "no instances available", which contains "available" and not its negation.
+    /// </remarks>
+    [Fact]
+    public void An_exhausted_upstream_pool_is_retried_despite_an_unretryable_status()
+    {
+        var ex = new HttpRequestException(
+            "No instances available for openai/gpt-oss-120b",
+            null,
+            HttpStatusCode.NotFound);
+
+        TransientRetryChatClient.Classify(ex).Should().NotBeNull();
+    }
+
     [Fact]
     public void A_transport_failure_with_no_status_is_retried()
     {

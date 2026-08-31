@@ -183,7 +183,71 @@ public class PromptComposerTests
         // Listed so that naming one is recorded and refused with a reason, rather than
         // failing to deserialise into an unknown value and producing "no plan" silently.
         prompt.Should().Contain("DeletePvc");
-        prompt.Should().Contain("permanently denied");
+        prompt.Should().Contain("Permanently denied");
+    }
+
+    [Fact]
+    public void Every_action_the_model_is_offered_is_described_to_it()
+    {
+        // The bare name was the bug. This vocabulary rendered ten lines of "- `RestartPod`"
+        // with no explanation, while the seventeen read tools each carry a paragraph written
+        // for the model on the reasoning that "a tool it does not understand is a tool it
+        // calls at the wrong moment and then reasons from". Same standard, both surfaces -
+        // and this fails the day a new ActionType is added without one.
+        var prompt = Composer().ComposePlanningPrompt(IncidentOf(SignalKind.OomKilled), []);
+
+        foreach (var type in Enum.GetValues<ActionType>().Where(t => t != ActionType.None))
+        {
+            var line = prompt.Split('\n').FirstOrDefault(l => l.StartsWith($"- `{type}`", StringComparison.Ordinal));
+
+            line.Should().NotBeNull($"{type} must appear in the vocabulary");
+            line!.Length.Should().BeGreaterThan($"- `{type}` — ".Length + 40,
+                $"{type} is listed but not described");
+        }
+    }
+
+    [Fact]
+    public void Restart_pod_tells_the_model_the_pod_is_replaced_not_restarted_in_place()
+    {
+        // docs/backlog.md #41 in one assertion. The agent diagnosed c11 correctly - state on a
+        // volume, a container that cannot recover in place - and then proposed nothing, which
+        // is right reasoning from the wrong vocabulary: a restart that replaces the pod DOES
+        // clear pod-scoped state, and nothing anywhere said so.
+        var prompt = Composer().ComposePlanningPrompt(IncidentOf(SignalKind.OomKilled), []);
+
+        prompt.Should().Contain("Deletes one pod");
+        prompt.Should().Contain("emptyDir");
+        prompt.Should().Contain("PersistentVolumeClaim");
+    }
+
+    [Fact]
+    public void Actions_this_build_cannot_perform_say_so_in_the_vocabulary()
+    {
+        // Previously only the permanently-denied pair was marked, so a model could propose a
+        // RollbackDeployment, policy could admit it, and a human could be paged to approve
+        // something the executor then refused with outcome=unsupported.
+        var prompt = Composer().ComposePlanningPrompt(IncidentOf(SignalKind.OomKilled), []);
+
+        foreach (var type in Enum.GetValues<ActionType>()
+                     .Where(t => t != ActionType.None)
+                     .Where(t => !ActionCapability.IsImplemented(t))
+                     .Where(t => !ActionCapability.IsPermanentlyDenied(t)))
+        {
+            var line = prompt.Split('\n').Single(l => l.StartsWith($"- `{type}`", StringComparison.Ordinal));
+
+            line.Should().Contain("Not available in this build", $"{type} is refused at execution");
+        }
+
+        // And the ones it can perform must not carry that claim.
+        prompt.Split('\n').Single(l => l.StartsWith("- `RestartPod`", StringComparison.Ordinal))
+            .Should().NotContain("Not available in this build");
+
+        // The marker is explained exactly once rather than under every entry - four copies of
+        // the same paragraph is four copies of the same tokens on every planning call, and step
+        // budget is the binding constraint on accuracy here.
+        System.Text.RegularExpressions.Regex
+            .Matches(prompt, "recorded and then refused at execution")
+            .Should().HaveCount(1);
     }
 
     [Fact]

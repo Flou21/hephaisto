@@ -41,10 +41,14 @@ public static class LlmServiceCollectionExtensions
         {
             "gemini" => ActivatorUtilities.CreateInstance<GeminiChatClientFactory>(sp),
 
+            // Not a vendor but a wire format: DeepSeek, OpenRouter and a local Ollama or
+            // LM Studio server are all reached through this one, selected by Llm:Endpoint.
+            "openai" => ActivatorUtilities.CreateInstance<OpenAiChatClientFactory>(sp),
+
             // Loud on purpose. A typo here would otherwise fall back to a default and produce
             // an agent quietly investigating with the wrong model.
             _ => throw new InvalidOperationException(
-                $"Unknown Llm:Provider '{provider}'. The only implementation is 'gemini'."),
+                $"Unknown Llm:Provider '{provider}'. Implementations are 'gemini' and 'openai'."),
         });
 
         services.AddSingleton<GrafanaMcpToolProvider>();
@@ -74,18 +78,16 @@ public static class LlmServiceCollectionExtensions
         // the chat spans. Failure degrades - IncidentEmbedder saves a null embedding and
         // search falls back to its lexical arm - so this never needs a resilience policy that
         // could turn one slow call into a stalled resolution.
-        services.AddSingleton<IEmbeddingGenerator<string, Embedding<float>>>(sp =>
-        {
-            var factory = (GeminiChatClientFactory)sp.GetRequiredService<IChatClientFactory>();
-            var options = sp.GetRequiredService<IOptions<LlmOptions>>().Value;
+        //
+        // It owns its own SDK client rather than borrowing the chat factory's. This used to
+        // cast IChatClientFactory to GeminiChatClientFactory, which made any other chat
+        // provider an InvalidCastException at the first service resolution - embeddings and
+        // investigation are separate decisions and are now wired as such.
+        services.AddSingleton<GeminiEmbeddingGeneratorFactory>();
 
-            return new EmbeddingGeneratorBuilder<string, Embedding<float>>(
-                    factory.Client.AsIEmbeddingGenerator(
-                        options.EmbeddingModel,
-                        options.EmbeddingDimensions))
-                .UseOpenTelemetry(sourceName: HephaistoTelemetry.ExtensionsAiSourceName)
-                .Build(sp);
-        });
+        services.AddSingleton<IEmbeddingGenerator<string, Embedding<float>>>(sp =>
+            sp.GetRequiredService<GeminiEmbeddingGeneratorFactory>().Create(sp)
+                ?? new UnconfiguredEmbeddingGenerator());
 
         services.AddSingleton<IncidentEmbedder>();
 

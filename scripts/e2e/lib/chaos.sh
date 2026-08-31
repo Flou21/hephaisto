@@ -35,6 +35,17 @@
 # be deleted before it can be re-applied.
 DEFAULT_FIXTURES="c2,c3,c4,c7"
 
+# --full. Every fixture that can run on this hardware, which is ten of the twelve: c6 and c9
+# are excluded for the stated reasons above and no flag overrides that, because neither is a
+# scheduling choice - c6 cannot fire on local-path and c9 evicts the observability stack it
+# would be measured by.
+#
+# This is the release gate, not the inner loop. It is slow on purpose: c8 alone needs a
+# 30-minute window and c10 sits behind 5-minute rate windows, so budget about two hours. The
+# four-fixture default stays the thing you run while working, because a two-hour gate that
+# nobody runs is worth less than a five-minute one that everybody does.
+FULL_FIXTURES="c1,c2,c3,c4,c5,c7,c8,c10,c11,c12"
+
 # Fixture -> the SignalKind the shipped rules attach via hephaisto_kind.
 # A case statement rather than `declare -A`, for the bash 3.2 reason in common.sh.
 fixture_kind() {
@@ -50,6 +61,9 @@ fixture_kind() {
         # Fires the same shipped rule as c2 - it IS a crash loop, it just stops
         # being one when the pod is replaced. That is the whole fixture.
         c11) echo CrashLoopBackOff ;;
+        # Same rule again, and the same reason. c12 is c11's mechanism with one
+        # volume instead of two - see infra/chaos/c12-stale-lease.yaml and #41.
+        c12) echo CrashLoopBackOff ;;
         *)   echo "" ;;
     esac
 }
@@ -105,6 +119,26 @@ fixture_target() {
         *)   echo "$1" ;;
     esac
 }
+
+# The Deployment name a fixture creates, which is not the fixture id. Needed by the act
+# phase, which asks the cluster directly rather than asking the API about an incident.
+fixture_workload() {
+    case "$1" in
+        c11) echo c11-transient ;;
+        c12) echo c12-stale-lease ;;
+        *)   echo "" ;;
+    esac
+}
+
+# THE FIXTURE THE ACT PHASE ACTS ON.
+#
+# c12 by default, and c11 is still selectable with ACT_FIXTURE=c11. Both are faults a pod
+# replacement repairs; they differ in how many inferences that takes. v0.5.0 measured that
+# c11 takes two - reconciling a PVC against an emptyDir marker - and that the agent does not
+# make the second one, over twelve replays and four prompt arms (#41). Resting v0.2.0's
+# acceptance criterion on the harder of the two was not a decision anyone made; it was the
+# only transient fixture that existed.
+ACT_FIXTURE="${ACT_FIXTURE:-c12}"
 
 chaos_apply() {
     local fixtures="${FIXTURES:-$DEFAULT_FIXTURES}"
@@ -184,7 +218,21 @@ chaos_await_incidents() {
     # actually time out: 46 assertions passed and the remaining forty never ran, so one slow
     # fixture cost every other answer. The per-fixture check below reports precisely which one
     # is missing, which is the useful output.
-    wait_for "an incident for each of: $APPLIED" "${INCIDENT_TIMEOUT:-$(( 600 + 150 * want ))}" \
+    # The count term models contention: more fixtures, more to evaluate, more to wait for. It
+    # does not model a fixture whose rule cannot be true sooner than a fixed wall-clock window
+    # no matter how idle the cluster is. c8 needs changes(...)[30m] >= 4 - thirty minutes of
+    # evidence before the expression can evaluate true at all - and c10 sits behind two
+    # 5-minute rate windows and a 5-minute `for:`. At the ten fixtures of --full the count term
+    # yields 2100s, which is UNDER c8's floor, so the gate would time out on a fixture that was
+    # exactly on schedule. A timeout reads as a broken harness rather than as a bad diagnosis,
+    # which is the one confusion this file spends the most comments trying to prevent.
+    local derived=$(( 600 + 150 * want ))
+    local floor; floor=$(chaos_incident_floor)
+    if [ "$floor" -gt "$derived" ]; then
+        derived="$floor"
+    fi
+
+    wait_for "an incident for each of: $APPLIED" "${INCIDENT_TIMEOUT:-$derived}" \
         bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents?limit=100' | jq -e --argjson want '$want_json' 'type == \"array\" and (. as \$inc | \$want | all(. as \$t | \$inc | any(.targetName // \"\" | startswith(\$t))))' >/dev/null" \
         || warn "not every fixture opened an incident within the deadline; see the per-fixture results below"
 
@@ -196,6 +244,24 @@ chaos_await_incidents() {
                 "check Alertmanager: curl 127.0.0.1:$PF_PORT_ALERT/api/v2/alerts"
 }
 
+# The wall-clock a fixture needs before its alert rule can fire at all, regardless of how many
+# other fixtures are running. Only the slow ones appear here; everything else is covered by the
+# count-based term. These are read off the shipped rule windows, not guessed.
+chaos_incident_floor() {
+    local f need floor=0
+    for f in $APPLIED; do
+        case "$f" in
+            c8)  need=2400 ;;   # changes(...)[30m] >= 4, plus evaluation lag behind the window
+            c10) need=1200 ;;   # two 5-minute rate windows and a 5-minute for:
+            *)   need=0 ;;
+        esac
+        if [ "$need" -gt "$floor" ]; then
+            floor="$need"
+        fi
+    done
+    echo "$floor"
+}
+
 # ---------------------------------------------------------------------------------------
 # Detection
 # ---------------------------------------------------------------------------------------
@@ -203,6 +269,16 @@ chaos_assert_detection() {
     local incidents
     incidents=$(api_array "/api/incidents?limit=100")
     printf '%s' "$incidents" > "$WORKDIR/incidents.json"
+
+    # Fixture -> incident, resolved ONCE and written down for every later reader.
+    #
+    # judge.sh used to redo this mapping itself, and did it differently: it matched the raw
+    # fixture id against target.name, while this function matches fixture_target. For c10
+    # those are not the same string - its incident opens on `faulty-service` with no namespace
+    # (#33) - so the judge matched nothing and reported "no primary finding" for an incident
+    # that had one. Two resolutions of one question is how a run asserts on one incident and
+    # grades another, which makes the denominator quietly smaller than the corpus.
+    : > "$WORKDIR/fixture-incidents.tsv"
 
     local f kind found
     for f in $APPLIED; do
@@ -215,6 +291,14 @@ chaos_assert_detection() {
 
         found=$(jq --arg t "$target" '[.[] | select(.targetName // "" | startswith($t))] | length' \
                 <<<"$incidents")
+
+        # Every match, in the order the API returned them - not just the one whose kind is
+        # checked below. One fixture routinely opens two incidents, and a reader that takes
+        # only the first has no way to tell "this fixture produced no diagnosis" from "the
+        # row I happened to pick did not carry it".
+        jq -r --arg f "$f" --arg t "$target" \
+            '.[] | select(.targetName // "" | startswith($t)) | "\($f)\t\(.id)"' \
+            <<<"$incidents" >> "$WORKDIR/fixture-incidents.tsv"
 
         if [ "${found:-0}" -ge 1 ]; then
             local got_kind
@@ -250,7 +334,7 @@ chaos_assert_detection() {
 # ---------------------------------------------------------------------------------------
 chaos_await_investigations() {
     if [ "${LLM_AVAILABLE:-0}" != "1" ]; then
-        skip "investigations" "no Gemini key; detection was still exercised"
+        skip "investigations" "no reachable model; detection was still exercised"
         return 0
     fi
 
@@ -259,9 +343,26 @@ chaos_await_investigations() {
     # Waiting on hasDiagnosis rather than on state, because an incident reaches a terminal
     # state on several paths that are not "it was investigated" - suppressed as a flap,
     # escalated on budget - and this phase is about the model actually running.
-    # Investigations are serialised, so this one scales with the count for a plainer reason:
-    # the agent works through them one at a time at roughly a minute each.
-    wait_for "investigations to conclude (expecting $want)" "${INVESTIGATION_TIMEOUT:-$(( 600 + 180 * want ))}" \
+    #
+    # The deadline scales with the QUEUE, not with the fixtures being waited for. Investigations
+    # are serialised, so a diagnosis for the ten fixture incidents means working through every
+    # other open incident ahead of them in arrival order - and a full-corpus run opens about
+    # three times as many as it applies, because the observability stack and the agent's own
+    # self-checks alert too. Deriving from `want` measured the wrong queue: the first --full run
+    # timed out at 2400s having concluded 18 of 37, with nothing wrong except the arithmetic.
+    local queue
+    queue=$(api_array "/api/incidents" | jq 'length' 2>/dev/null || echo 0)
+    if [ "${queue:-0}" -lt "$want" ]; then
+        queue="$want"
+    fi
+
+    # 180s an incident is comfortable for a hosted model and about right for a local one at
+    # MaxSteps=20, where each step is a full round trip through a single-instance server that
+    # is also the bottleneck for every other investigation in the queue.
+    local deadline="${INVESTIGATION_TIMEOUT:-$(( 600 + 180 * queue ))}"
+    say "investigation deadline: ${deadline}s for a queue of $queue (waiting on $want)"
+
+    wait_for "investigations to conclude (expecting $want)" "$deadline" \
         bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents' | jq -e 'type == \"array\" and ([.[] | select(.hasDiagnosis)] | length) >= $want' >/dev/null"
 
     local done_count
@@ -538,16 +639,29 @@ _something_executed() {
     chaos_collect_details >/dev/null 2>&1 || return 1
 
     local n
-    n=$(jq -r '[.actions[]? | select(.executedAt != null and .dryRun == false)] | length' \
+    n=$(jq -r --argjson dry "$(chaos_expected_dryrun)" \
+        '[.actions[]? | select(.executedAt != null and .dryRun == $dry)] | length' \
         "$WORKDIR/details.jsonl" 2>/dev/null | awk '{t += $1} END {print t + 0}')
 
     [ "${n:-0}" -ge 1 ]
 }
 
+# What an executed action should look like in this mode. DryRun's whole purpose is to run the
+# plan without mutating anything, so it records executions with dryRun=true - and asserting
+# dryRun=false against it, as this harness did, is a condition DryRun cannot satisfy by
+# definition. The mode was unrunnable rather than failing: three phases would pass and then the
+# act phase would report the agent had not acted, which was never a claim about the agent.
+chaos_expected_dryrun() {
+    case "${E2E_MODE:-Observe}" in
+        DryRun) echo true ;;
+        *)      echo false ;;
+    esac
+}
+
 # An action was admitted, executed and recorded against the fixture that needed it.
 chaos_assert_action_executed() {
     local details="$WORKDIR/details.jsonl"
-    local target; target=$(fixture_target c11)
+    local target; target=$(fixture_target "$ACT_FIXTURE")
 
     # details.jsonl was collected during `validate`, BEFORE anything acted - the action
     # happens once the investigation concludes, which is after that snapshot was taken. So
@@ -558,15 +672,36 @@ chaos_assert_action_executed() {
 
     chaos_collect_details
 
+    local dry; dry=$(chaos_expected_dryrun)
     local executed
-    executed=$(jq -r --arg t "$target" \
+    executed=$(jq -r --arg t "$target" --argjson dry "$dry" \
         'select(.target.name != null and (.target.name | contains($t)))
-         | .actions[]? | select(.executedAt != null and .dryRun == false) | .type' \
+         | .actions[]? | select(.executedAt != null and .dryRun == $dry) | .type' \
         "$details" 2>/dev/null | wc -l | tr -d ' ')
 
-    [ "${executed:-0}" -ge 1 ] \
-        && pass "c11 was acted on ($executed action(s) executed)" \
-        || fail "c11 was not acted on" "expected at least one executed, non-dry-run action"
+    # Recorded, not just reported. chaos_assert_verification asks two questions that only have
+    # a subject if something ran, and answering them anyway is how a report ends up confidently
+    # wrong about why - see the comment there.
+    local shape="non-dry-run"; [ "$dry" = "true" ] && shape="dry-run"
+
+    if [ "${executed:-0}" -ge 1 ]; then
+        ACT_EXECUTED=1
+        pass "$ACT_FIXTURE was acted on ($executed $shape action(s) executed)"
+    else
+        ACT_EXECUTED=0
+        fail "$ACT_FIXTURE was not acted on" "expected at least one executed, $shape action"
+    fi
+
+    # DryRun's other half, and the one worth more: it planned, and it still changed nothing.
+    # Without this the mode only proves the plan existed, which Observe already proves.
+    if [ "$dry" = "true" ]; then
+        local mutated
+        mutated=$(jq -r '[.actions[]? | select(.executedAt != null and .dryRun == false)] | length' \
+            "$details" 2>/dev/null | awk '{t += $1} END {print t + 0}')
+        [ "${mutated:-0}" -eq 0 ] \
+            && pass "nothing was executed for real (DryRun held)" \
+            || fail "$mutated action(s) executed for real in DryRun" "this is a containment failure"
+    fi
 
     # Every executed action must name an approver. In Auto that is hephaisto/auto; the point
     # is that "no audit, no action" holds on the path that actually writes to the cluster.
@@ -579,10 +714,11 @@ chaos_assert_action_executed() {
         || fail "$anonymous executed action(s) have no approvedBy"
 }
 
-# True once c11's incident has been closed by the verifier.
-_c11_resolved() {
+# True once the acting fixture's incident has been closed by the verifier.
+_act_resolved() {
     [ "$(api_array "/api/incidents?state=Resolved&limit=100" \
-        | jq -r '[.[] | select(.target.name != null and (.target.name | contains("c11")))] | length' \
+        | jq -r --arg t "$(fixture_target "$ACT_FIXTURE")" \
+            '[.[] | select(.target.name != null and (.target.name | contains($t)))] | length' \
         2>/dev/null || echo 0)" -ge 1 ]
 }
 
@@ -591,17 +727,38 @@ _c11_resolved() {
 # the Deployment duly reports one available replica for part of every crash cycle. The fixture
 # now carries minReadySeconds to close that, and this asserts the pod is genuinely Ready too -
 # belt and braces, because a false pass here would report a broken workload as fixed.
-_c11_available() {
-    [ "$(kc -n "$CHAOS_NS" get deploy c11-transient \
+_act_available() {
+    local w; w=$(fixture_workload "$ACT_FIXTURE")
+
+    [ "$(kc -n "$CHAOS_NS" get deploy "$w" \
         -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo 0)" -ge 1 ] \
-        && [ "$(kc -n "$CHAOS_NS" get pods -l app.kubernetes.io/name=c11-transient \
+        && [ "$(kc -n "$CHAOS_NS" get pods -l "app.kubernetes.io/name=$w" \
             -o jsonpath='{.items[*].status.containerStatuses[*].ready}' 2>/dev/null)" = "true" ]
 }
 
 # The fixture is actually healthy afterwards. This is the half that distinguishes "the agent
-# did something" from "the agent fixed it", and it is why c11 exists rather than reusing c8:
+# did something" from "the agent fixed it", and it is why c11 and c12 exist rather than c8:
 # a fixture that recovers on its own would pass this whatever the agent did.
 chaos_assert_verification() {
+    # NOTHING RAN MEANS THERE IS NOTHING TO VERIFY, and saying so is the whole point.
+    #
+    # Both assertions below carry an explanation of their own failure - "the action ran but the
+    # workload did not recover", "the workload recovered but verification never closed the
+    # incident". When no action was executed, neither sentence is true: no action ran and
+    # nothing recovered. They are the first failure restated as downstream symptoms with
+    # confident and incorrect causes attached, and they cost eight minutes of wall clock
+    # burning two 240s timeouts to produce. A reader then goes looking for a broken restart
+    # and a broken verifier when the actual finding is that nothing was proposed.
+    #
+    # So: skip, naming the assertion that actually failed. A report that is wrong about why is
+    # worse than one that is merely incomplete.
+    if [ "${ACT_EXECUTED:-0}" != "1" ]; then
+        local because="nothing was executed - see '$ACT_FIXTURE was not acted on'; there is no action to verify"
+        skip "$ACT_FIXTURE is available after the restart" "$because"
+        skip "$ACT_FIXTURE's incident reached Resolved" "$because"
+        return 0
+    fi
+
     # WAIT, do not sample. The first verification is not due until T+60s and the scheduler
     # polls every 10s, so an assertion made the moment the action returns is asking a question
     # the system has not been given time to answer - and it would report a healthy agent as a
@@ -611,15 +768,15 @@ chaos_assert_verification() {
     # 4 minutes covers the T+60s check plus scheduler poll, pod recreation and image pull, and
     # stops short of the T+5m second attempt - if the first check did not settle it, waiting
     # for the second would be measuring something else.
-    wait_for "c11 to become available again" 240 _c11_available \
-        && pass "c11 is available after the restart" \
-        || fail "c11 is still not available" "the action ran but the workload did not recover"
+    wait_for "$ACT_FIXTURE to become available again" 240 _act_available \
+        && pass "$ACT_FIXTURE is available after the restart" \
+        || fail "$ACT_FIXTURE is still not available" "the action ran but the workload did not recover"
 
     # And the incident says so. Resolved is granted only by hephaisto/verifier, after a
     # deterministic predicate looked at the cluster - a model may never grant it.
-    wait_for "c11's incident to reach Resolved" 240 _c11_resolved \
-        && pass "c11's incident reached Resolved" \
-        || fail "c11's incident did not reach Resolved" \
+    wait_for "$ACT_FIXTURE's incident to reach Resolved" 240 _act_resolved \
+        && pass "$ACT_FIXTURE's incident reached Resolved" \
+        || fail "$ACT_FIXTURE's incident did not reach Resolved" \
                "the workload recovered but verification never closed the incident"
 }
 

@@ -68,6 +68,16 @@ Excluded by default: **c9 is node-wide** and would evict Prometheus and the agen
 harness refuses it even if asked); c6 does not fire on `local-path`; c1's OOM event is
 unreliable on containerd; c8 needs 30 minutes; c10 needs a local image build.
 
+**`--full` is the release gate**: `c1,c2,c3,c4,c5,c7,c8,c10,c11,c12` — every fixture that can
+run on this hardware, which is ten of the twelve and the denominator the MVP bar was always
+written against. c6 and c9 stay out and no flag overrides that; neither is a scheduling choice.
+
+Budget **about two hours**. c8 alone cannot open an incident sooner than thirty minutes, because
+its rule needs `changes(...)[30m] >= 4` — thirty minutes of evidence before the expression can
+be true at all — and the incident deadline is raised to match rather than timing out a fixture
+that is exactly on schedule. The four-fixture default stays the thing to run while working: a
+two-hour gate nobody runs is worth less than a five-minute one everybody does.
+
 ## Reusing the real values files
 
 The observability stack is installed from `infra/observability/*.values.yaml` **byte for byte
@@ -96,3 +106,66 @@ no associative arrays, no `brew install bash`.
 `HEPHAISTO_GEMINI_API_KEY`, or a real key in `secrets/hephaisto-llm.secret.yaml`. Without one
 the run still exercises detection end to end and reports the investigation assertions as
 skipped rather than failing them.
+
+### Running against a cheaper provider
+
+Any OpenAI-compatible server — DeepSeek, OpenRouter, or a local Ollama or LM Studio — with four
+environment variables. The key is validated against `/v1/models` before the run starts, for the
+same reason the Gemini key is: a 401 discovered on the fourth investigation of a twelve-minute
+run looks like a bug in the agent.
+
+```sh
+HEPHAISTO_LLM_PROVIDER=openai \
+HEPHAISTO_LLM_ENDPOINT=https://api.deepseek.com/v1 \
+HEPHAISTO_LLM_MODEL=deepseek-v4-flash \
+HEPHAISTO_LLM_PLANNING_FORMAT=JsonObject \
+HEPHAISTO_LLM_API_KEY=... \
+    scripts/e2e/run.sh --mode Auto
+```
+
+`HEPHAISTO_LLM_PLANNING_FORMAT=JsonObject` is required for DeepSeek and wrong for most others:
+it is a provider *capability*, not a preference, and it is the weaker of the two modes. Without
+it DeepSeek answers `400` to every planning call, and because phase 1 is unaffected the run
+reports correct diagnoses and no plans — which looks like an agent declining to act. A local
+Ollama server needs no such setting: llama.cpp constrains generation with a grammar, so strict
+schemas work there even on small models.
+
+**The key is not put on the command line.** It is read from the environment, or from
+`LLM_API_KEY` in `secrets/hephaisto-llm.secret.yaml`, which is gitignored twice over.
+
+### Running against a local model, which is free
+
+`gpt-oss-120b` on Ollama matches the hosted frontier model on the scenarios the corpus can carry
+and costs nothing per token, which is what makes a two-hour ten-fixture gate affordable to run
+before every release. No key is involved:
+
+```sh
+HEPHAISTO_LLM_PROVIDER=openai \
+HEPHAISTO_LLM_ENDPOINT=http://100.91.41.104:11434/v1 \
+HEPHAISTO_LLM_MODEL=gpt-oss:120b \
+    scripts/e2e/run.sh --nightly --full --mode Auto
+```
+
+Two things have to be true, and both were false on a fresh install:
+
+**The endpoint must be an address the CLUSTER can reach.** `localhost` is the mistake, and it is
+not an obvious one: from a pod, `127.0.0.1` is the pod. The agent runs in kind, kind runs in
+Rancher Desktop's Lima VM, and the model runs on macOS outside all of it. Measured from inside
+the VM, all of `192.168.2.77` (LAN), `100.91.41.104` (tailnet), `host.docker.internal` and
+`192.168.5.2` (the Lima gateway) reach the host. **Prefer the tailnet address**: it does not
+move with DHCP or with docker's bridge topology, and it is the same address the rest of this
+machine's tooling already uses. The harness verifies this from a pod during `deps` and fails
+there rather than forty minutes later.
+
+**Ollama must be listening off loopback.** It ships bound to `127.0.0.1` only. The macOS app has
+an *expose to the network* setting; without it the host probe passes and no pod can connect.
+Check with `lsof -nP -iTCP:11434 -sTCP:LISTEN` — it should say `*:11434`, not `127.0.0.1:11434`.
+
+No `HEPHAISTO_LLM_PLANNING_FORMAT` is needed: llama.cpp constrains generation with a grammar, so
+the strict schema mode works locally even where a hosted DeepSeek needs the weakened one. The
+step ceiling is raised to 20 automatically for any openai-compatible provider — see backlog #59
+for what happens when it is not — and `HEPHAISTO_LLM_MAX_STEPS` overrides it either way.
+
+**A local model does not make the image local.** The harness installs the *published* artifact
+from GHCR by design, so `--nightly` still pushes the branch and builds it in Actions. What is
+local, and free, is the cluster and the model.

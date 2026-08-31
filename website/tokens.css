@@ -169,9 +169,26 @@
 
 /* Light mode was "a courtesy, not the design target" for three releases. It is not any more:
    both themes are contrast-checked and both are photographed by the visual baselines. A
-   component is not done until it is correct in both. */
+   component is not done until it is correct in both.
+
+   THREE STATES, TWO PALETTES. `:root` above is the dark one and stays the default, so only
+   light is written twice - once for an operating system that asked for it, once for a reader
+   who asked for it explicitly. The :not([data-theme="dark"]) guard is what makes those two
+   compose instead of fight, and it is why there is no [data-theme="dark"] block at all:
+   `:root` is already dark, so an explicit dark choice only has to stop the query applying.
+
+   All six combinations, because a theme system that is right in four of them is the usual bug:
+
+     system + dark OS   -> :root                                     dark
+     system + light OS  -> query matches, guard passes               light
+     dark   + dark OS   -> :root, query does not match               dark
+     dark   + light OS  -> query matches, guard REFUSES it           dark
+     light  + dark OS   -> query does not match, explicit rule does  light
+     light  + light OS  -> both apply, both light                    light
+
+   The two light blocks are identical by assertion rather than by care - DesignTokenTests. */
 @media (prefers-color-scheme: light) {
-    :root {
+    :root:not([data-theme="dark"]) {
         --bg: #faf8f5;
         --bg-raised: #ffffff;
         --bg-sunken: #f2ede6;
@@ -196,6 +213,33 @@
         --scrim: rgb(28 26 23 / 55%);
         --shadow-modal: 0 12px 40px rgb(60 48 34 / 20%);
     }
+}
+
+/* An explicit light choice, which must beat a dark operating system. */
+:root[data-theme="light"] {
+    --bg: #faf8f5;
+    --bg-raised: #ffffff;
+    --bg-sunken: #f2ede6;
+    --bg-hover: #ece5db;
+    --border: #e0d9cf;
+    --border-strong: #c3b9ab;
+
+    --fg: #1c1a17;
+    --fg-dim: #5f5850;
+    --fg-faint: #7a7266;
+
+    --accent: #b8500a;
+    --red: #8e1a12;
+    --orange: #6d420c;
+    --yellow: #5c4300;
+    --green: #0d6f5a;
+    --blue: #2f5c9e;
+    --purple: #6d3fb0;
+    --cyan: #0e6d78;
+
+    --on-alert: #ffffff;
+    --scrim: rgb(28 26 23 / 55%);
+    --shadow-modal: 0 12px 40px rgb(60 48 34 / 20%);
 }
 
 

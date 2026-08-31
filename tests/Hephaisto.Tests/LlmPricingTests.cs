@@ -75,4 +75,42 @@ public class LlmPricingTests
     [Fact]
     public void Embedding_dimensions_match_the_pgvector_column() =>
         Defaults.EmbeddingDimensions.Should().Be(768);
+
+    /// <summary>
+    /// The ids an OpenAI-compatible provider actually returns must resolve to a price.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="BudgetGuardChatClient"/> prices <c>response.ModelId</c> before the
+    /// configured id, so what matters is the string the provider sends back - and the same
+    /// weights are named differently by each host: OpenRouter answers
+    /// <c>openai/gpt-oss-120b</c>, Ollama answers <c>gpt-oss:120b</c>. A price list keyed on
+    /// the tidy name would resolve none of them.
+    /// </para>
+    /// <para>
+    /// This is the one failure in this area that looks like success. Nothing errors: the run
+    /// completes, the cost cap never binds because every window multiplies by zero, and the
+    /// console reports 0.0% utilisation the whole way.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("openai/gpt-oss-120b")]        // OpenRouter
+    [InlineData("openai/gpt-oss-120b:free")]   // OpenRouter, suffixed variant
+    [InlineData("gpt-oss:120b")]               // Ollama
+    [InlineData("gpt-oss-120b")]               // bare, several hosts
+    [InlineData("deepseek-v4-flash")]
+    [InlineData("deepseek-v4-flash-vision-exp")]
+    [InlineData("deepseek-v4-pro")]
+    public void Provider_returned_model_ids_resolve_to_a_non_zero_price(string modelId)
+    {
+        var pricing = new LlmPricing(Defaults.Pricing);
+
+        pricing.CostOf(modelId, inputTokens: 1_000_000, outputTokens: 1_000_000)
+            .Should()
+            .BeGreaterThan(
+                0m,
+                "an id that does not resolve is charged at zero, which switches the cost "
+                + "budget off rather than making it approximate");
+    }
+
 }

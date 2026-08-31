@@ -133,6 +133,69 @@ public class InvestigationRunnerTests
 
     // ------------------------------------------------------------------
 
+    /// <summary>
+    /// Phase 2 constrains the plan's shape with a real schema wherever the provider allows it.
+    /// </summary>
+    [Fact]
+    public async Task Planning_constrains_the_shape_with_a_schema_by_default()
+    {
+        var planning = new FakeChatClient((_, _) => FakeChatClient.Text(PlanJson(noAction: true)));
+
+        var outcome = await Runner(new FakeChatClientFactory(FreePricing, ConcludingClient(), planning))
+            .RunAsync(NewIncident(), CancellationToken.None);
+
+        outcome.Plan.Should().NotBeNull();
+
+        var format = planning.ReceivedOptions.Should().ContainSingle().Subject!.ResponseFormat;
+        format.Should().BeOfType<ChatResponseFormatJson>()
+            .Which.Schema.Should().NotBeNull("the default path enforces the shape rather than asking for it");
+
+        // The schema is the wire contract here, so it has no business also being in the prompt.
+        LastUserText(planning).Should().NotContain("no_action_required");
+    }
+
+    /// <summary>
+    /// A provider that cannot enforce a schema is told the shape instead, and still plans.
+    /// </summary>
+    /// <remarks>
+    /// DeepSeek answers <c>400 "This response_format type is unavailable now"</c> to a
+    /// json_schema response format. Measured on 2026-08-31: every planning call failed, across
+    /// all nine cassettes, while the investigation phase kept working - so the agent diagnosed
+    /// correctly and proposed nothing, which reads as a cautious agent rather than a broken
+    /// one. That is the failure this mode exists to remove.
+    /// </remarks>
+    [Fact]
+    public async Task Planning_carries_the_schema_in_the_prompt_when_the_provider_cannot_enforce_one()
+    {
+        var planning = new FakeChatClient((_, _) => FakeChatClient.Text(PlanJson(noAction: true)));
+        var llm = new LlmOptions { PlanningStructuredOutput = StructuredOutputMode.JsonObject };
+
+        var outcome = await Runner(
+                new FakeChatClientFactory(FreePricing, ConcludingClient(), planning), llm: llm)
+            .RunAsync(NewIncident(), CancellationToken.None);
+
+        var format = planning.ReceivedOptions.Should().ContainSingle().Subject!.ResponseFormat;
+        format.Should().BeOfType<ChatResponseFormatJson>()
+            .Which.Schema.Should().BeNull("json_object mode carries no schema on the wire");
+
+        // Derived from the same CLR type the reply is parsed against, so the two cannot drift.
+        LastUserText(planning).Should().Contain("no_action_required").And.Contain("evidence_finding_ids");
+
+        outcome.Plan.Should().NotBeNull("a plan must still be produced when the shape is only requested");
+        outcome.Plan!.NoActionRequired.Should().BeTrue();
+    }
+
+    private static FakeChatClient ConcludingClient() => new(
+        (_, _) => FakeChatClient.CallsTool("c1", "get_pod_logs", new Dictionary<string, object?> { ["pod"] = "api" }),
+        (_, conversation) => FakeChatClient.CallsTool("c2", "conclude", ConcludeArgs(conversation, LogLine)),
+        (_, _) => FakeChatClient.Text("Concluded."));
+
+    private static string LastUserText(FakeChatClient client) =>
+        string.Concat(
+            client.Received[^1]
+                .Where(m => m.Role == ChatRole.User)
+                .Select(m => m.Text));
+
     [Fact]
     public async Task Concludes_grounds_the_evidence_and_plans()
     {

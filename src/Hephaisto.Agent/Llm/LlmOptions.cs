@@ -11,10 +11,22 @@ public sealed class LlmOptions
     public const string SectionName = "Llm";
 
     /// <summary>
-    /// Selects the <see cref="IChatClientFactory"/> implementation. Only <c>gemini</c> ships
-    /// today; the indirection exists so swapping provider is a ConfigMap edit rather than a
-    /// code change, which matters when a provider is the outage.
+    /// Selects the <see cref="IChatClientFactory"/> implementation: <c>gemini</c> or
+    /// <c>openai</c>.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>openai</c> means the OpenAI wire format rather than the vendor, and it is how every
+    /// non-Gemini provider is reached: DeepSeek, OpenRouter, and a local Ollama or LM Studio
+    /// server all speak it. Which one is in use is <see cref="Endpoint"/> plus
+    /// <see cref="Model"/>, so adding a provider is a ConfigMap edit and not a code change -
+    /// which matters both for cost and for the case where a provider is itself the outage.
+    /// </para>
+    /// <para>
+    /// <b>Changing this needs a pod restart, not just a ConfigMap edit.</b> The factory is a
+    /// singleton and captures the provider, endpoint and model id at construction.
+    /// </para>
+    /// </remarks>
     public string Provider { get; set; } = "gemini";
 
     /// <summary>The investigating model. Tool-calling quality dominates here.</summary>
@@ -51,19 +63,68 @@ public sealed class LlmOptions
     public int EmbeddingDimensions { get; set; } = 768;
 
     /// <summary>
-    /// Read from config first, then <c>GEMINI_API_KEY</c>. Never logged and never put on a
-    /// span: <see cref="SafeToolDecorator"/> redacts arguments, but the key never travels
-    /// through a tool argument in the first place.
+    /// The chat provider's key. Read from config first, then the provider's conventional
+    /// environment variable - <c>GEMINI_API_KEY</c> for <c>gemini</c>, <c>LLM_API_KEY</c> or
+    /// <c>OPENAI_API_KEY</c> for <c>openai</c>. Never logged and never put on a span:
+    /// <see cref="SafeToolDecorator"/> redacts arguments, but the key never travels through a
+    /// tool argument in the first place.
     /// </summary>
+    /// <remarks>
+    /// <b>This belongs to whichever provider <see cref="Provider"/> selects</b>, so it is not
+    /// reused for embeddings unless that provider is Gemini. See
+    /// <see cref="EmbeddingApiKey"/>.
+    /// </remarks>
     public string? ApiKey { get; set; }
+
+    /// <summary>
+    /// The embedding key, when it differs from <see cref="ApiKey"/>. Falls back to
+    /// <c>GEMINI_API_KEY</c>.
+    /// </summary>
+    /// <remarks>
+    /// Embeddings stay on Gemini regardless of which provider answers chat, because they are
+    /// not on the investigation path and the cheap-provider decision is about the
+    /// investigation loop. Running chat on an OpenAI-compatible provider therefore needs two
+    /// keys, or none at all if losing the search index's semantic arm is acceptable - a
+    /// missing key degrades rather than failing to boot.
+    /// </remarks>
+    public string? EmbeddingApiKey { get; set; }
 
     /// <summary>
     /// Overrides the provider endpoint - a local gateway, a proxy, or a record/replay server
     /// for the eval harness. Null means the SDK default.
     /// </summary>
+    /// <remarks>
+    /// <b>This does not change the wire format, only the address.</b> Under
+    /// <c>Provider=gemini</c> it retargets <c>Google.GenAI</c>'s own transport, so pointing it
+    /// at an OpenAI-compatible URL sends Gemini-shaped requests there and fails. Reaching
+    /// DeepSeek, OpenRouter or a local server means <c>Provider=openai</c> as well. Providers
+    /// publish this including the version segment
+    /// (<c>https://openrouter.ai/api/v1</c>, <c>http://localhost:11434/v1</c>).
+    /// </remarks>
     public string? Endpoint { get; set; }
 
     public string? ApiVersion { get; set; }
+
+    /// <summary>
+    /// How phase 2 constrains the plan's shape. <c>JsonSchema</c> unless the provider cannot
+    /// do it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A provider capability, not a preference. Gemini, OpenAI and Ollama accept a strict
+    /// schema; DeepSeek answers <c>400 "This response_format type is unavailable now"</c> and
+    /// every planning call fails, which surfaces as an agent that diagnoses correctly and
+    /// then never proposes anything - a symptom easily mistaken for caution.
+    /// </para>
+    /// <para>
+    /// <c>JsonObject</c> asks for plain JSON and moves the schema into the prompt instead.
+    /// That is weaker: the shape becomes a request rather than a constraint. It is safe here
+    /// only because nothing downstream trusts it - the draft is parsed leniently, every cited
+    /// finding id is checked by <c>GroundingVerifier</c>, and any action missing a namespace,
+    /// kind or name is dropped before it can reach an executor.
+    /// </para>
+    /// </remarks>
+    public StructuredOutputMode PlanningStructuredOutput { get; set; } = StructuredOutputMode.JsonSchema;
 
     public double Temperature { get; set; } = 0.2;
 
@@ -150,9 +211,51 @@ public sealed class LlmOptions
 
         ["gemini-embedding-001"] = new() { InputPerMillionUsd = 0.15m, OutputPerMillionUsd = 0m },
         ["gemini-embedding-2"] = new() { InputPerMillionUsd = 0.20m, OutputPerMillionUsd = 0m },
+
+        // Reached through Provider=openai. Verified 2026-08-31.
+        //
+        // KEYED ON WHAT THE PROVIDER RETURNS, not on what Llm:Model was set to.
+        // BudgetGuardChatClient prices `response.ModelId ?? configured id`, so the id that
+        // arrives back is the one that has to resolve - and the same weights are named
+        // differently by each host. Resolution is exact match then longest prefix, so
+        // "openai/gpt-oss-120b" also covers a suffixed variant like ":free", and
+        // "deepseek-v4-flash" covers "deepseek-v4-flash-vision-exp", which is priced the same.
+        // Get this wrong and the model is charged at zero: the cost budget stops binding
+        // while the console reports a comfortable 0.0% utilisation.
+        ["gpt-oss-120b"] = new() { InputPerMillionUsd = 0.03m, OutputPerMillionUsd = 0.17m },
+        ["openai/gpt-oss-120b"] = new() { InputPerMillionUsd = 0.03m, OutputPerMillionUsd = 0.17m },
+        ["gpt-oss:120b"] = new() { InputPerMillionUsd = 0.03m, OutputPerMillionUsd = 0.17m },
+        ["gpt-oss-20b"] = new() { InputPerMillionUsd = 0.03m, OutputPerMillionUsd = 0.15m },
+        ["openai/gpt-oss-20b"] = new() { InputPerMillionUsd = 0.03m, OutputPerMillionUsd = 0.15m },
+        ["gpt-oss:20b"] = new() { InputPerMillionUsd = 0.03m, OutputPerMillionUsd = 0.15m },
+
+        // NOTE the time-of-day pricing, which is this provider's version of the promotion
+        // landmine above. These are the OFF-PEAK rates. Peak is DOUBLE, and peak is
+        // 01:00-04:00 and 06:00-10:00 UTC on weekdays - so a European afternoon is off-peak
+        // and an overnight batch is not. Nothing here knows the clock, so a run inside those
+        // windows under-counts by 2x and every cost cap reads twice as tight as it binds.
+        ["deepseek-v4-flash"] = new() { InputPerMillionUsd = 0.22m, OutputPerMillionUsd = 0.66m },
+        ["deepseek-v4-pro"] = new() { InputPerMillionUsd = 0.66m, OutputPerMillionUsd = 1.98m },
+
+        // No entry for a locally served model, deliberately. Zero is its true price, but a
+        // zero entry and a missing entry produce identical arithmetic, and the guard in
+        // LlmPricingTests that every listed model costs something is worth more than the
+        // tidiness of naming this one. A local model takes the unpriced-model warning
+        // instead, which correctly says the cost budget will not bind - the step, token and
+        // wall-clock budgets still do.
     };
 
     public string PlanningModelId => string.IsNullOrWhiteSpace(PlanningModel) ? Model : PlanningModel;
+}
+
+/// <summary>How a provider is asked to constrain a structured response.</summary>
+public enum StructuredOutputMode
+{
+    /// <summary>Strict schema enforcement, when the provider supports it.</summary>
+    JsonSchema,
+
+    /// <summary>Plain JSON mode, with the schema carried in the prompt instead.</summary>
+    JsonObject,
 }
 
 public sealed class ModelPrice
@@ -205,6 +308,15 @@ public sealed class InvestigationBudgetOptions
     /// the sum grows quadratically in the number of steps - which is the failure mode this
     /// number exists to bound.
     /// </summary>
+    /// <remarks>
+    /// <b>Cumulative is why this is not a context-window setting</b>, and the distinction
+    /// matters when moving to a model with a smaller window: 400,000 here is spread across up
+    /// to <see cref="MaxSteps"/> turns, so it does not imply any single call carrying 400,000
+    /// tokens, and it does not need lowering to run a 131k-context model. What bounds the
+    /// largest single turn is the digester's context cap. Lowering this to match a window
+    /// would instead cut the investigation short several steps early, for a limit the
+    /// provider was never going to hit.
+    /// </remarks>
     public long MaxInputTokens { get; set; } = 400_000;
 
     public decimal MaxCostUsd { get; set; } = 0.50m;

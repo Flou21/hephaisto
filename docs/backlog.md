@@ -89,6 +89,18 @@ the tractable three (c1, c5, c8).
 
 **Size.** M.
 
+**Mechanism landed 2026-08-31; the entry closes on the first green run.** `--full` runs
+`c1,c2,c3,c4,c5,c7,c8,c10,c11,c12` — ten, which is the bar's own denominator — and the report now
+states whether the bar was met instead of only printing the ratio, because `7/9` fails on the
+count while reading as a pass on the proportion. The incident deadline was raised to clear c8's
+thirty-minute window, since timing out a fixture that is exactly on schedule would have replaced
+under-coverage with a false failure.
+
+Note what this does **not** claim: c6 and c9 still cannot run, so the coverage is ten of twelve
+and not twelve of twelve. The bar was always written as ten. This reaches it with the fixtures
+that work rather than by replacing either of the two that do not, which is the cheaper half of
+the fix above and leaves the replacement-fixture half open if the count ever needs to be twelve.
+
 ### 3. `hephaisto.human.feedback` is never recorded
 
 **Status: fixed 2026-08-29** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
@@ -578,12 +590,25 @@ on `PolicyResult` - filed as its own item rather than bodged with string matchin
 
 ### 13. The retry path has never been observed firing in production
 
+**Status: answered 2026-08-31** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** `TransientRetryChatClient` is unit-tested nine ways and the overload it exists for has
 not recurred since it was written. That is the difference between "tested" and "proven".
 
 **Fix.** A fault-injecting `IChatClient` behind a dev-only flag would settle it once.
 
 **Size.** S.
+
+**Answered 2026-08-31, by the overload finally recurring — as something else.** The retry path
+fired in production for the first time: it backed off as designed, five attempts with jitter, and
+did not discard the investigation. So the mechanism is proven rather than merely unit-tested,
+which is what this entry asked for.
+
+It fired on an error it should have refused. "Your prepayment credits are depleted" arrives with
+no HTTP status, so `Classify` took the transport branch and retried a billing page five times per
+step — see [#54](#54-a-depleted-api-budget-is-retried-five-times-as-a-transport-failure), fixed in
+the same release. A first observation that finds a defect is worth more than one that confirms
+what was assumed.
 
 ### 14. `EscalateOnlyInvestigator` does not escalate
 
@@ -904,6 +929,8 @@ card is for.
 
 ### 37. The judge grades a different incident than the one the run asserted on
 
+**Status: fixed 2026-08-31** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** On the eight-fixture run the harness asserted `8 incident(s) have a primary
 finding`, and the judge then skipped c5, c8 and c10 with *"no primary finding"*. Both statements
 cannot be true of the same incidents.
@@ -923,6 +950,18 @@ the corpus. That is the same class of dishonesty the eval harness was built to r
 the detection assertion already matched.
 
 **Size.** S.
+
+**Fixed 2026-08-31.** Resolution happens once, in `chaos_assert_detection`, and is written to
+`$WORKDIR/fixture-incidents.tsv` for every later reader. It records *every* incident matched
+rather than only the one whose kind is checked, so the judge takes the first carrying a primary
+finding and says when it passed over an empty one — a fixture routinely opens two and only one
+holds the diagnosis.
+
+Reproduced on synthetic details before being fixed: the old resolution reports c10 as
+*"no primary finding"* while its diagnosis exists, because it matched the raw fixture id against
+`target.name` while detection matches `fixture_target`, and for c10 those are different strings
+(#33). "Detection matched no incident" and "none of its incidents carried a finding" were the
+same sentence and are now two.
 
 ### 38. `approval_source` reads `Ui` on actions nobody approved
 
@@ -1189,6 +1228,9 @@ both directions at once.
 
 ### 41. c11 has never been run against a cluster
 
+**Status: answered 2026-08-31** — the question it asked is settled; the one that replaced it is
+[#66](#66-the-planner-acts-on-half-of-a-fair-fixture). See the end of this entry.
+
 `infra/chaos/c11-transient.yaml` is the fixture v0.2.0's acceptance test is written against,
 and it has been verified only by simulating its container logic locally - the generation
 counter on a PVC, the marker on an emptyDir, and the assertion that container restarts do not
@@ -1250,6 +1292,123 @@ the fixture, for being counter-intuitive, or the planner, for not reading the en
 
 **Size.** S to run; M now that there is something to fix. **Blocks:** claiming the v0.2.0
 acceptance criterion is met.
+
+**Made reproducible offline on 2026-08-30, and then measured four ways.** The first thing v0.5.0
+did was stop paying a cluster to ask this question. `cassettes/c11.json` records one real
+investigation's tool surface, and `AnswerKey` gained a c11 entry — the **first in the corpus with
+a non-empty `AcceptableActions`**, which means `PlanGrader.MissedAnAction` had never once been
+reachable by any scenario in three releases of eval. An eval where declining is always correct
+measures one direction of a two-directional behaviour.
+
+With that in place the question costs cents instead of twelve minutes:
+
+| arm | what changed | plan verdict, 3 replays |
+|---|---|---|
+| before | the shipped vocabulary: bare enum names | `MissedAnAction` ×3 |
+| described | every action described; `RestartPod` says it **deletes** the pod | `MissedAnAction` ×3 |
+| positive case | `30-planning.md` gains "when an action *is* the answer" | `MissedAnAction` ×3 |
+| claim rule | `00-role.md`: a workload's account of itself is a claim, not a mechanism | `MissedAnAction` ×3 |
+
+**Twelve replays, twelve declines, on identical evidence.** The transcripts say why, and it is
+not what this entry assumed. Every hypothesis in all twelve anchors on the same phrase —
+*persistent volume*:
+
+> `/data/generation` on the persistent volume (PVC c11-transient-state) holds generation 1,
+> which fails the startup check
+
+That reasoning is **correct, and the rule it applies is the right one**: state on a PVC survives
+a pod replacement, so replacing the pod does not repair it. What makes c11 different is a
+*second* volume — the `/pod/counted` marker on an `emptyDir`, which is what stops the counter
+advancing while the kubelet restarts the container in place. The model never reconciles the two.
+
+**And it is not an evidence gap, which is what this entry previously suspected.** `describe_pod`
+was called during recording and its output is in the cassette: `emptyDir` and `/pod/counted` both
+appear, available to every replay. By the fourth arm the hypotheses quote the entrypoint's own
+`[ "$gen" -lt 2 ]` condition. It reads the script, reads the volumes, and still answers from the
+one the FATAL line names.
+
+**So the open question resolves toward the fixture rather than the planner.** c11's mechanism
+requires holding two volumes and their interaction in mind at once, and the log line it prints —
+*"this pod cannot recover in place"* — is precisely true and thoroughly leading. Three separate
+prompt improvements do not overcome it, and the positive-case change makes the decline *more*
+principled rather than less, because it hands the model the durable-state rule explicitly.
+
+**Deliberately not fixed by editing the fixture.** Dropping the `; this pod cannot recover in
+place` clause would very likely turn this green, and that is the reason not to reach for it
+first: it is how a test gets quietly made easier. The ordering — vocabulary, then prompt, then
+fixture, replaying between each — is what makes "the fixture is unfair" a measurement rather
+than a rationalisation. **The remaining decision is whose problem this is**, and it wants a human:
+
+- **The fixture is unfair.** Trim the editorial half of the FATAL line so it reports a symptom
+  rather than a verdict about its own recoverability. Defensible — real workloads do not
+  editorialise — but it is still making the test easier, and it should be recorded as that.
+- **The corpus needs a fairer transient fixture.** One whose pod-scoped state is the *only*
+  state, so a restart is the answer without a two-volume inference. c11 stays as the hard case
+  and stops being the one thing v0.2.0's acceptance criterion rests on.
+- **The agent should get there and does not.** Then the fix is in investigation rather than
+  planning, and it is more than a prompt clause.
+
+**What did ship**, and it is worth separating from what did not: the three changes are net
+improvements measured against the whole corpus — **8/8 `CorrectlyDeclined`, zero harmful
+proposals**. A change that talks about when to act is exactly the change that could make the
+agent restart a missing Secret, and it did not.
+
+**One live run, for the record, and read it with suspicion.** A fresh c11 on the development
+cluster on 2026-08-30 did propose `RolloutRestart`, with the mechanism named exactly — *"a new
+ReplicaSet is created with incremented generation, replacing the stuck pod ... and the
+replacement pod reaches Ready status without crash-looping"*. Policy denied it on a real gate
+(*"youngest pod is 41s old, below the 120s minimum"*). That is one sample against twelve, on
+different evidence, and it is recorded here because it is the only observation pointing the
+other way — not because it settles anything.
+
+**A second model family declines it too, 2026-08-31.** `deepseek-v4-flash` replayed the corpus
+three times: **c11 graded `MissedAnAction` 3 of 3**, with a correct root-cause diagnosis every
+time. Gemini declined 12 of 12 across four prompt arms; that is now **15 of 15 across two
+independent model families**, one of which had never seen a Hephaisto prompt before.
+
+This is the strongest evidence yet for the first branch above — that the fixture, not the
+planner, is what needs replacing — because it removes "this particular model under-reads" as an
+explanation. Two models with different training, different tokenizers and different vendors reach
+the same defensible conclusion from the same two-volume premise. It also independently justifies
+building c12 rather than continuing to edit prompts against c11: a third prompt arm was never
+going to move something that is not prompt-shaped.
+
+Worth noting what did *not* happen. Across all 27 DeepSeek runs there were **zero wrong findings
+and zero harmful proposals** — the `MustNotPropose` guard held on a model the prompts were never
+tuned for, which is a stronger test of it than the one it was written against.
+
+**c12 measured, 2026-08-31: the fixture was the problem, and it is not the whole problem.**
+Eight replays of the new c12 cassette on `deepseek-v4-flash`, **all eight structurally sound**
+(4% mean miss, because the cassette was recorded on the model replaying it):
+
+| fixture | proposes the action | diagnosis |
+|---|---|---|
+| c11 | **0 of 15** (12 Gemini across four prompt arms, 3 DeepSeek) | correct throughout |
+| c12 | **4 of 8 — `Reasonable`** | 8 of 8 correct |
+
+The first half is settled. A fixture whose pod-scoped state is the only state moves the planner
+from never to half the time, and the diagnosis was never the difficulty in either case. c12 was
+not made easy to get there: it still asks the model to work out that the lease comparison is
+against the pod's own hostname, and it declines that half the time.
+
+**So this entry's own first branch is answered and a new question replaces it.** The corpus can
+now grade an action at all — `Reasonable` had never once been produced before c12 existed, across
+ten scenarios — which makes "does the agent act" measurable rather than theoretical. What it
+measures is 50%, and a 50% action rate is not something to build the landing page's central claim
+on. That is a planner question now, on a fair fixture, and it is worth reopening as one rather
+than leaving inside an entry about c11.
+
+**Answered 2026-08-31, and split.** This entry asked whether the fixture was unfair or the
+planner under-reading. The answer is *both, separably*: c11 is unfair in a way that is now
+documented rather than argued about — its recovery evidence is not pod-scoped, and 15 of 15
+declines across two independent model families is not a planner that missed something — and c12,
+built to be fair on exactly that axis, is acted on 4 times in 8 with 8 correct diagnoses.
+
+What closes here is the v0.2.0 acceptance criterion's *fixture* problem, and with it this entry's
+own framing. What does not close is the rate, which is why it leaves as #66 rather than as a
+tick. Keeping the two inside one entry is how an answered question keeps a solved problem open,
+and this milestone's rule is that an item leaves by being fixed or by being reclassified with the
+reasoning recorded.
 
 ### 42. Verification predicates are workload-shaped, and two action types are not
 
@@ -1411,6 +1570,8 @@ either: see [#48](#48-the-console-suite-interacts-with-a-page-the-circuit-has-no
 
 ### 47. The act phase reports two failures that are consequences of the first
 
+**Status: fixed 2026-08-31** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** When nothing is acted on, the run reports three failures, and two of them describe
 something that did not happen:
 
@@ -1439,6 +1600,12 @@ reason naming the first failure rather than asserting and failing them.
 ---
 
 ## Opened by v0.4.0
+
+**Fixed 2026-08-31.** `chaos_assert_action_executed` records whether anything ran, and
+`chaos_assert_verification` skips both assertions naming the one that actually failed rather than
+asserting them into two 240s timeouts. Checked in both directions against a stubbed harness: the
+skip fires only when nothing executed, and an action that ran and did not recover still fails
+exactly as before — an assertion that holds in both directions is not an assertion.
 
 ### 48. The console suite interacts with a page the circuit has not taken over yet
 
@@ -1526,6 +1693,8 @@ the smaller change and keeps the assertion meaningful.
 
 ### 50. Both themes are first-class, and neither can be chosen
 
+**Status: fixed 2026-08-31** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** Light mode stopped being "a courtesy, not the design target" in v0.4.0 — it is
 contrast-asserted and photographed like the dark theme. A reader still cannot select it. Theme
 follows the operating system through `prefers-color-scheme` and there is no control anywhere.
@@ -1547,6 +1716,28 @@ the feedback submitter's name — and `tokens.css` would need its light block du
 `[data-theme="light"]` selector.
 
 **Size.** S.
+
+**Fixed 2026-08-31.** `data-theme` on the root, three states, persisted through the interop that
+already existed. Two palettes rather than three: `:root` is dark and stays the default, so only
+light is written twice — once for an OS that asked and once for a reader who did — and the
+`:not([data-theme="dark"])` guard is what makes those compose instead of fight. All six
+combinations of choice and OS are worked through in `tokens.css`, because a theme system that is
+right in four of them is the usual bug.
+
+**Two mistakes worth keeping**, both found by driving the live console rather than by reading.
+The label was written by `app.js` on load, and `<Routes>` renders interactively — so Blazor
+replaced the body subtree and left the button reading "theme" with no state, which is
+[#48](#48-the-console-suite-interacts-with-a-page-the-circuit-has-not-taken-over-yet) wearing
+different clothes. The label is now a CSS `::after` keyed off the attribute on `<html>`, where
+Blazor does not reach. And `app.js` is a plain script at the end of `<body>`, so on a warm cache
+it can run *after* `DOMContentLoaded` and the listener would never fire at all.
+
+Verified in a real browser against the live console, including the case the media query cannot
+serve — a **light** operating system with dark chosen: stamped before paint, dark background,
+`theme-color` following, surviving navigation. Six cascade combinations are asserted in
+`design/visual/tests/theme.spec.ts` under both projects and verified falsifiable: removing the
+explicit-light rule fails it under `[dark]` and still passes under `[light]`, which is precisely
+the case that rule exists for.
 
 ### 51. `run.sh` has not been re-run on a kind cluster since the suite was fixed
 
@@ -1618,6 +1809,8 @@ diagnosis-shape notes. The console phase reports `expected=9 skipped=0 unexpecte
 
 ### 52. Two components are implemented twice
 
+**Status: fixed 2026-08-31** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** The console has two unrelated implementations of a progress bar and two
 near-duplicate treatments of a monospace block.
 
@@ -1635,6 +1828,22 @@ stop exactly that. Both are now photographed by the visual baselines, so the con
 change somebody can actually verify.
 
 **Size.** S.
+
+**Fixed 2026-08-31, and with no visual change — which this entry did not expect.** It assumed
+consolidating would change the rendering of both and deferred the work on that basis. What was
+shared is now defined once; what differs stayed, because it is context rather than accident. The
+budget meter is a page-level element carrying threshold marks, so it is taller and needs a
+positioning context; the confidence bar is inline in a finding and has a fixed width. One height
+for both would make one of them wrong for where it lives.
+
+So the implementation is consolidated and the rendering is untouched, which is the half the
+baselines can prove. A deliberate visual unification stays available as a design decision
+somebody reviews rather than a refactor nobody can see.
+
+Proven both ways: all 34 baselines pass unchanged at `maxDiffPixels: 0` and the gallery genuinely
+renders all four components; then changing the **one** shared bar rule fails the finding shot and
+the budget-meter shot in both themes — six failures from a single declaration, which is what "one
+implementation" means when it is true.
 
 ### 53. The console was never interactive in any released image
 
@@ -1686,3 +1895,691 @@ NuGet cache, so the restore the publish now performs downloads nothing.
 Verified end to end rather than by inspection: the fixed image was loaded into the live e2e kind
 cluster, the deployment repointed at it, and the console suite run against it — **9 passed, 0
 failed, 0 skipped**, where the same suite against the published image failed all nine.
+
+---
+
+## Opened by v0.5.0
+
+### 54. A depleted API budget is retried five times as a transport failure
+
+**Status: fixed 2026-08-31** — see the end of this entry. The heading is left as it was, because
+these numbers and titles are the anchors `roadmap.md` links by.
+
+**Symptom.** Every investigation stalls, slowly, and the log says the provider failed
+*transiently*. It did not. The account is out of credit, which is as permanent as a failure gets
+until a human visits a billing page.
+
+**Evidence.** Observed on the development cluster on 2026-08-31, on every step of every
+investigation:
+
+```
+Provider call failed transiently (transport); retrying in 00:00:01.10 (attempt 1 of 5).
+Google.GenAI.ClientError: Your prepayment credits are depleted.
+```
+
+**Cause.** `TransientRetryChatClient.Classify` walks the exception chain for an
+`HttpRequestException` and returns `"transport"` when `StatusCode is null`, on the stated
+reasoning that *"no status at all is a transport failure - DNS, connection reset, TLS - and is
+exactly what a retry is for."* That reasoning is right about the cases it names and wrong about
+this one: `Google.GenAI.ClientError` arrives with no status, so a billing exhaustion takes the
+transport branch.
+
+**Why it matters.** Not the wasted calls — those fail immediately and cost nothing. It is that
+the failure is *reported as the wrong kind*. A run that says "transient, retrying" five times per
+step, on every step, produces a slow opaque stall where the true answer is one sentence a human
+can act on in a minute. The same shape as [#47](#47-the-act-phase-reports-two-failures-that-are-consequences-of-the-first):
+a report that is confidently wrong about why is worse than one that is merely incomplete.
+
+**Fix.** Classify on the message as well as the status. `RetryableMarkers` already exists for
+exactly this - matching message text when a status is absent - so the change is its mirror: a
+small set of *non*-retryable markers checked before the transport fallback, and a distinct log
+line saying the budget is gone rather than that the network hiccupped. Getting the provider's
+own error type out of the `HttpRequestException` shape would be better still, and is more work.
+
+**It also answers [#13](#13-the-retry-path-has-never-been-observed-firing-in-production).** That
+entry says the retry path *"is unit-tested nine ways and the overload it exists for has not
+recurred since it was written - the difference between tested and proven."* It is now proven: it
+fires, it backs off as designed, and it does not lose the investigation. It fired on an error it
+should have refused, which is a better first observation than never having seen it at all.
+
+**Size.** S.
+
+**Blocks:** recording a c12 cassette, replaying anything, and the `--mode Auto` cluster run —
+every one of which needs the model. Nothing in v0.5.0 that touches the agent's reasoning can be
+measured until the account has credit.
+
+**Fixed 2026-08-31, in the release that opened it.** `PermanentMarkers` are checked first, before
+the status, because these arrive without one. Kept deliberately narrow: each phrase is one that
+cannot also describe a transient condition, since this list *overrules* a correct retry and a
+bare "billing" or "disabled" would match a 503 from a billing service and turn a real hiccup into
+a hard stop — the worse of the two mistakes. Daily-quota wording is left out for the same reason;
+it is not reliably distinguishable from a per-minute rate limit, and five retries over ten seconds
+costs nothing if it turns out to be one.
+
+Both arms tested and verified falsifiable: removing the check fails the four new permanent-error
+assertions, while `"Rate limit exceeded for this project's billing tier"` — which contains the
+word this list is most tempted to match on — still retries.
+
+### 55. The cassette corpus grades the model that recorded it
+
+**Symptom.** Replaying the nine-scenario corpus against `deepseek-v4-flash` on 2026-08-31
+reported **6 of 9 runs structurally unsound**, with replay miss rates from 14% to 65%. The same
+cassette replayed three times gave 14%, 38% and 50%.
+
+**Cause.** A cassette records the tool calls the *recording* model chose to make, and nothing
+else. `c5.json` declares **31 tools** to the model and records **9 calls across 7 of them**. Of
+the six tools DeepSeek missed on, five — `grafana_api_request`, `list_datasources`,
+`list_deployments`, `list_statefulsets`, `search_dashboards` — have **zero** recorded calls,
+because Gemini never asked those questions. The sixth, `get_pod_logs`, has three recorded calls,
+which disables `ReplayToolset`'s fuzzy arm (it resolves only when exactly one call to that tool
+was recorded), so any argument difference is a miss too.
+
+**Why it matters.** A miss is not a neutral absence. `ReplayToolset` answers "nothing was
+recorded", which to the model reads as a cluster with no deployments and no dashboards — so it
+digs further, spends its `MaxToolCalls` budget, and can exhaust the run. Replay does not merely
+fail to help an unfamiliar model, it actively misleads it.
+
+So the corpus is a **within-model** instrument. For its designed job — measuring a prompt or
+budget change on a fixed model — it is sound, and the recorded evidence matches because the model
+asks roughly the same questions. As a **cross-model** benchmark it is biased toward whichever
+model recorded it, and the `sound` count is the guard that says so rather than a nuisance.
+
+This was not understood when the provider work started; the plan for it asserted the corpus was
+provider-neutral because the *format* is. The format is. The coverage is not.
+
+**Consequence for a provider switch.** Adopting a new investigating model invalidates the corpus
+as a baseline for it, and re-recording is part of the switch rather than an optional follow-up.
+Note the direction of the bias before discounting a result: DeepSeek scored 8/9 while being fed
+"nothing was recorded" for a third of its calls, so that is a floor and not an inflated number.
+
+**Options, none of them free.**
+- Re-record the corpus per candidate model. Sound, and costs a cluster run per fixture per model.
+- Record with a deliberately exhaustive tool sweep, so a cassette covers more of the surface than
+  one model happened to want. Larger cassettes, one recording, and it never covers everything.
+- Report `sound` as a first-class number beside accuracy, and refuse to rank models on a corpus
+  they did not record. Cheapest, and honest about what the instrument can carry.
+
+**Size.** M for the first, S for the third.
+
+### 56. The planner assumed every provider can enforce a JSON schema
+
+**Status: fixed 2026-08-31** — see the end of this entry.
+
+**Symptom.** On `deepseek-v4-flash`, all nine cassettes produced a correct diagnosis and
+`NoPlan`. The agent looked like it was declining to act.
+
+**Cause.** Phase 2 sets `ResponseFormat = ChatResponseFormat.ForJsonSchema<ActionPlanDraft>`.
+DeepSeek answers `HTTP 400 invalid_request_error: This response_format type is unavailable now`.
+Confirmed against the API directly rather than inferred: `json_schema` 400s, `json_object`
+answers.
+
+**Why it matters** is the disguise, not the outage. Phase 1 is untouched, so the agent
+investigates well and proposes nothing — and `NoPlan` is not distinguishable, in a run summary,
+from a considered `CorrectlyDeclined`. "The agent can diagnose but never acts" is the exact claim
+[v0.2.0's acceptance criterion](roadmap.md) exists to disprove, and it must not be able to hide
+inside a verdict that reads as judgement.
+
+It also cost an hour of misdiagnosis: the first inference was that the low-confidence escalation
+gate was skipping phase 2, because the planning error was invisible — a log filter had been
+swallowing the line, since the exception detail renders on the same line as the message.
+
+**Fix.** `Llm:PlanningStructuredOutput=JsonObject` asks for plain JSON and moves the schema into
+the prompt. Both branches derive it from `ActionPlanDraft` through the same
+`ChatResponseFormat.ForJsonSchema` call, so what the model is shown and what the reply is parsed
+against cannot drift.
+
+Off by default, and deliberately the weaker mode: the shape becomes a request rather than a
+constraint. That is safe only because nothing downstream takes the model's word for it — the
+draft is parsed leniently, every cited finding id is checked by `GroundingVerifier`, and an
+action missing a namespace, kind or name is dropped before an executor sees it. A model that
+ignores the requested shape produces no plan, not a wrong one.
+
+**Size.** S.
+
+**Fixed 2026-08-31.** Verified on c3 and c4, the two cassettes that replay soundly for this
+model: `CorrectlyDeclined` on both, at the default confidence gate.
+
+### 57. Production needs a Google API key so the search box has a semantic arm
+
+**Symptom.** Embeddings are the one part of the stack with no alternative provider.
+`GeminiEmbeddingGeneratorFactory` is the only implementation, and `Llm:EmbeddingDimensions=768`
+is pinned to the `vector(768)` column in `incident_digests`.
+
+**Why it matters.** For a self-hosted Kubernetes agent, requiring an external API account so
+that one arm of the console's hybrid search works is a deployment tax out of proportion to what
+it buys. It is not a cost problem — `gemini-embedding-001` is $0.15/M on short, hash-deduped text
+— and not a correctness problem, since `IncidentEmbedder.EmbedAsync` already returns null on any
+failure and `IncidentSearch` falls back to its lexical arm. It is a dependency problem.
+
+**Candidate.** `EmbeddingGemma-300m`: 622 MB, **768 dimensions natively so the column is
+unchanged**, MTEB English v2 69.67, and it runs on CPU as an in-cluster Deployment.
+`Qwen3-Embedding-0.6B` scores higher (70.70) but is 1024-dimensional, so it needs Matryoshka
+truncation or a migration.
+
+**Blocked on a measurement that does not exist.** Nothing in this repo scores search quality, so
+a change here could only be justified by someone else's benchmark. Building that measurement is
+the first half of the work, and without it this would be an unevidenced swap bundled next to
+measured ones — which is the habit the eval harness exists to break. Existing digests also need
+re-embedding: a data backfill, not a schema migration.
+
+**Size.** M, of which the measurement is most of it.
+
+### 58. The eval judge bypasses the provider seam
+
+**Status: fixed 2026-08-31** — see the end of this entry.
+
+**Symptom.** `Scoring/RootCauseJudge.cs` posts directly to
+`generativelanguage.googleapis.com/v1beta/models/{model}:generateContent` with an
+`x-goog-api-key` header and its own `HEPHAISTO_GEMINI_API_KEY` lookup. It never touches
+`IChatClientFactory`.
+
+**Why it matters, and why it is small.** It fails soft — returns null, and the run scores
+deterministically — so it blocks nothing, and every bake-off so far has simply run `--no-judge`.
+But it means a provider switch is complete everywhere except the instrument that grades it, and a
+judge on a different model from the agent is a defensible choice that should be *chosen* rather
+than inherited from where the code happened to be written.
+
+**Consequence today.** With no Gemini credit the judge cannot run at all, so comparisons are
+deterministic-only and not directly comparable to the published `22/24`, which was judged.
+
+**Size.** S.
+
+**Fixed 2026-08-31.** Both judges are now provider-selectable and both read the same variables,
+so the shell harness and `hephaisto-eval` stay configured identically: `JUDGE_PROVIDER`, then
+`JUDGE_ENDPOINT` / `JUDGE_MODEL` / `JUDGE_API_KEY`, each falling back to the agent's own setting.
+`OpenAiRootCauseJudge` joins `GeminiRootCauseJudge` behind `IRootCauseJudge`, and
+`RootCauseJudgeFactory` picks between them. The prompt was extracted to one shared builder rather
+than copied a third time — a second provider must not become a second question, which is the same
+reason it was copied verbatim from `judge.sh` in the first place. Three tests pin that invariant.
+
+Verified against a local `gpt-oss:120b`, and verified *falsifiable*: a real cause grades
+`correct: true`, and a bare restatement of the symptom grades `correct: false` — which is the one
+distinction the prompt exists to draw.
+
+**What this does not fix, and now says out loud.** Pointing the judge at the model the agent ran
+on is self-assessment. The harness warns when the two match and marks the score `SELF-GRADED` in
+the recorded note; it is weaker than two independent models, though not worthless, since the grade
+is against a fixed answer key rather than against the agent's own reasoning. Set `JUDGE_ENDPOINT`
+and `JUDGE_MODEL` to a second model when one is available.
+
+### 59. The step budget is tuned to one model and silently caps another's accuracy
+
+**Symptom.** `gpt-oss-120b` scored **17/30** on the corpus. Raising `Llm:Investigation:MaxSteps`
+from 12 to 20 — changing nothing else — scored **18/20**, and **18/18** excluding the one cassette
+the harness already reports unsound. Measured locally on 2026-08-31.
+
+**Cause.** `MaxSteps = 12` was chosen against a measured Gemini mean of 7.5 steps, so it sits at
+roughly 1.6× the behaviour it was calibrated on. `gpt-oss-120b` averages 9.6 steps and
+`deepseek-v4-flash` 6.9, so the same ceiling is generous for one model, comfortable for another
+and binding for a third. **10 of 30 gpt-oss runs terminated `StepBudgetExhausted`, and every one
+produced no finding** — several at a 0% replay miss rate, so the evidence was in hand and the run
+simply ran out of turns.
+
+**Why it matters.** It does not look like a budget. It looks like a weaker model: the verdict is
+`NoFinding`, which is the same verdict a model that genuinely failed to diagnose would produce.
+Comparing two models under one ceiling therefore measures *how closely each matches the model the
+ceiling was calibrated against*, and reports the difference as accuracy. That is the same class of
+error as [#55](#55-the-cassette-corpus-grades-the-model-that-recorded-it), one layer down: the
+corpus biases toward the model that recorded it, and the budget biases toward the model it was
+tuned on.
+
+DeepSeek is the control that makes this a finding rather than a guess: **0 of 27 runs hit any
+ceiling**, so raising it could not have helped, and the two models are fairly compared at their own
+natural budgets rather than at a shared one.
+
+**Why it is not just "raise the default".** The ceiling is a cost control, and step count is what
+it controls. Twenty steps on a hosted provider is roughly 60% more spend per investigation; on a
+local model the tokens are free and the only cost is wall-clock. So the right value is a property
+of the model *and* of how it is paid for, which is an argument for making it a documented
+per-model setting rather than one number that is wrong for everything except Gemini.
+
+**Fix, in order of cost.** Report `terminationReason` beside the verdict in the eval summary, so a
+budget-truncated run is never read as a wrong answer — that is small and worth doing regardless.
+Then record a recommended `MaxSteps` alongside each model's price entry, since the two are already
+a pair: what a model costs and how many turns it needs are the same decision.
+
+**Size.** S for the reporting, M for per-model budgets.
+
+**A second ceiling, measured on a cluster 2026-08-31.** The first full-corpus run against a local
+`gpt-oss-120b` reported `1 Cancelled, 2 WallClockExhausted (of 12 investigations)`. So it is not
+only `MaxSteps`: `MaxWallClock` (10 minutes) is also a hosted-model number, and a local model at
+`MaxSteps=20` runs close enough to it that a fifth of investigations end on a clock rather than on
+a conclusion. Measured throughput was ~6.7 minutes per investigation, serialised.
+
+That matters for the same reason the step ceiling does — a run truncated by a limit is not
+distinguishable, in a summary, from a model that had nothing to say — and it is the concrete
+argument for `terminationReason` being reported beside the verdict, which is the small half of the
+fix below and still not done.
+
+**Partly addressed 2026-08-31, in the harness only.** `scripts/e2e/lib/deploy.sh` now sets
+`Llm__Investigation__MaxSteps=20` whenever the provider is openai-compatible, overridable with
+`HEPHAISTO_LLM_MAX_STEPS`, so a full-coverage e2e run does not measure this ceiling and call the
+result a model. The hosted Gemini path keeps the shipped 12. **The entry stays open**: this is one
+number in one script, not the per-model setting beside the price entry that the fix above asks
+for, and the eval summary still does not report `terminationReason`.
+
+### 60. A provider's own options cannot be reached through the OpenAI-compatible seam
+
+**Symptom.** `qwen3-next:80b` was benchmarked and abandoned: it emits **3,559 output tokens for a
+single agentic turn** (15,721 characters of reasoning) against a few hundred for
+`gpt-oss-120b`, which makes an investigation take 5-12 minutes instead of 82 seconds. The model
+is otherwise healthy — 100% GPU-resident, 893 tok/s prefill and 61 tok/s generation, both *better*
+than gpt-oss, with prompt-prefix caching working (0.1s on a repeated 26k-token prompt).
+
+**It is not fixable from here, and that is the actual entry.** Ollama can turn the reasoning off;
+the seam cannot ask it to. Three routes were tried on 2026-08-31:
+
+| route | result |
+|---|---|
+| `/no_think` in the system prompt | ignored — 3,295 tokens, reasoning intact |
+| `"think": false` on `/v1/chat/completions` | ignored, **and the tool call was lost** |
+| `PARAMETER think false` in a Modelfile | `Error: unknown parameter 'think'` |
+| `"think": false` on native `/api/chat` | **works** — reasoning length 0 |
+
+So the switch exists and sits on the one endpoint the seam deliberately does not use.
+
+**Why not just add it.** `OpenAiChatClientFactory` exists so that DeepSeek, OpenRouter, Ollama and
+LM Studio are one implementation. Reaching Ollama's native API means an Ollama-specific client,
+which is the thing the seam was built to avoid — and the same problem recurs per provider, since
+every one has options outside the OpenAI schema (Gemini's thinking budget, OpenRouter's provider
+routing, gpt-oss's `reasoning_effort`).
+
+The proportionate shape is a passthrough: a dictionary of provider-specific request properties on
+`LlmOptions`, injected via `ChatOptions.RawRepresentationFactory`, which `Microsoft.Extensions.AI`
+already provides for exactly this. One seam, provider-shaped extras, no second client. That also
+covers `reasoning_effort` for gpt-oss, which is a live tuning knob rather than a hypothetical one.
+
+**Until then, a model whose defaults do not suit an agentic loop cannot be tuned to fit it**, and
+verbosity — not accuracy and not throughput — is what disqualified the only open-weight
+alternative tested.
+
+**Size.** S.
+
+### 61. A keyless endpoint read as an absent model, and the run still exited 0
+
+**Status: fixed 2026-08-31** — see the end of this entry.
+
+**Symptom.** With `HEPHAISTO_LLM_PROVIDER=openai` pointed at a local Ollama, `deps_secrets` set
+`LLM_AVAILABLE=0` and the harness went on to `skip` every investigation, act, judge and budget
+assertion. The run then exited 0.
+
+**Cause.** `lib/deps.sh` only probed the endpoint when `HEPHAISTO_LLM_API_KEY` was set, and
+treated its absence as "no model". That is true of a hosted provider and false of every local
+one: Ollama and LM Studio serve `/v1/models` with no credential at all, and
+`OpenAiChatClientFactory` already knows this — it sends a placeholder to a local endpoint
+precisely so a keyless server works.
+
+**Why it matters** is the exit code, not the skip. A run that tested detection only is a
+defensible outcome; a run that says so in eight `skip` lines and then reports success is not,
+because nobody reads the middle of a green log. This is the same failure `scripts/ci-test.sh`
+exists to prevent on the unit side — *"a green build that tested nothing is worse than a red one,
+because nobody looks at it again"* — arriving through a door that had no guard on it.
+
+It also lands on the one path this milestone most needed to work: the whole point of running
+`gpt-oss-120b` locally is that the tokens are free, and free tokens come with no API key.
+
+**Fix.** Probe `${endpoint%/}/models` without an `Authorization` header when no key is present
+and believe a 200. The keyed path is unchanged, including its rejection handling. Downstream, a
+reachable keyless endpoint creates an empty `hephaisto-llm` Secret — both chart keys are optional
+since v0.5.0, and `bootstrap-secrets.sh` writes nothing when neither is set, so without this the
+next assertion failed on a Secret that was correctly absent.
+
+**Size.** S.
+
+**Fixed 2026-08-31.** Both arms exercised: a keyless local endpoint reports
+`LLM_AVAILABLE=1`, and an unreachable one still degrades to detection-only rather than aborting.
+
+### 62. The harness proved the model was reachable from the wrong machine
+
+**Status: fixed 2026-08-31** — see the end of this entry.
+
+**Symptom.** The LLM endpoint probe passes, the install succeeds, and then every investigation
+faults — forty minutes into a run whose full-coverage form takes two hours.
+
+**Cause.** `deps_secrets` probes the endpoint with `curl` **from the host**. The agent runs in a
+**pod**. For a hosted provider those are the same network position and the probe is honest; for a
+local model they are not related at all — the endpoint is on this laptop, the cluster is inside
+Rancher Desktop's Lima VM behind kind's own bridge, and `127.0.0.1` means a different machine on
+each side.
+
+Measured while fixing #61: Ollama ships bound to `127.0.0.1` only, so the host probe passes and
+**no pod can reach it**. That is the default state of a fresh install, which makes this the
+expected mistake rather than an exotic one.
+
+**Why it matters** is where the failure lands. An unreachable model surfaces as ten faulted
+investigations, which reads as a broken agent and not as a wrong address — and it costs the whole
+run to find out. The harness already holds the opinion that a check belongs where it is cheap:
+*"Validate the key NOW rather than discovering it is wrong fifteen minutes in, when four
+investigations have failed and the failure looks like a bug in the agent."* This is that same
+sentence, one network hop further out.
+
+**Fix.** `deps_verify_llm_reachable` runs one `curl` from a throwaway pod inside the cluster
+against the configured endpoint, and `fail`s on anything but 200. Deliberately a fail and not a
+warn: continuing would spend two hours proving something about an address.
+
+**Size.** S.
+
+**Fixed 2026-08-31.** The reachable addresses from inside the VM are recorded in
+`scripts/e2e/README.md`; the tailnet address is the documented default because it does not move
+with DHCP or with docker's bridge topology.
+
+### 63. An acting run could be told to skip the fixture it asserts about
+
+**Status: fixed 2026-08-31** — see the end of this entry.
+
+**Symptom.** `--mode Auto --fixtures <list>` fails the act phase with *"c12 was not acted on"*.
+
+**Cause.** `run.sh` appended `ACT_FIXTURE` only when `FIXTURES` was empty, so naming fixtures
+explicitly replaced the act fixture instead of being joined by it. The act phase then asserted
+against a fixture that had never been applied.
+
+**Why it matters** is which claim it fakes. The failure is indistinguishable in the report from
+the agent declining to act — the exact thing [#41](#41-c11-has-never-been-run-against-a-cluster)
+spent three attempts and twelve replays investigating. A harness that can manufacture that
+symptom is a harness that can send somebody looking for a planner bug that does not exist.
+
+It also lands precisely on the release gate: `--full` names its fixtures, so `--mode Auto --full`
+— the run this milestone needs — was the shape that broke.
+
+**Fix.** In `DryRun` and `Auto`, ensure `ACT_FIXTURE` is in the list however that list was
+chosen, materialising the default first and skipping the append when it is already present.
+
+**Size.** S.
+
+**Fixed 2026-08-31.** Seven cases exercised: empty, explicit, `--full`, act-fixture-only,
+act-fixture-mid-list, and both acting modes. No duplicate, no drop.
+
+### 64. DryRun asserted a condition DryRun cannot produce
+
+**Status: fixed 2026-08-31** — see the end of this entry.
+
+**Symptom.** `--mode DryRun` always failed the act phase.
+
+**Cause.** `chaos_assert_action_executed` selected actions with `.dryRun == false`. In DryRun
+every executed action is `dryRun: true` by definition, so the assertion could never be satisfied.
+The mode was not merely untested; it was **unrunnable**, and had been since it was added.
+
+**Why it matters.** DryRun is the middle rung of the safety ladder — the mode that says "plan it,
+then change nothing" — and it is the one an operator is most likely to trial before enabling
+`Auto`. Shipping a mode whose own harness cannot express a pass is a claim without an instrument.
+
+**Fix.** `chaos_expected_dryrun` derives the expected shape from `E2E_MODE`, and DryRun gains the
+half that is actually worth asserting: a plan was produced **and** nothing executed for real.
+Without that second check the mode only proves a plan existed, which Observe already proves.
+
+While here: `--mode` is now validated at parse time rather than passed through to `--set mode=`,
+where an invalid value was rejected by the chart's enum only after a cluster had been built and
+the observability stack installed; and `Off` no longer runs the act assertions, which it could
+never satisfy either.
+
+**Size.** S.
+
+**Fixed 2026-08-31.**
+
+### 65. A resumed run skipped every model assertion and still exited 0
+
+**Status: fixed 2026-08-31** — see the end of this entry.
+
+**Symptom.** `--from deploy` or `--only validate` reports investigations, budget, judge and act
+as `skip`, then exits 0 — with a working key and a reachable model.
+
+**Cause.** `LLM_AVAILABLE` is set inside `deps_secrets` and nowhere else. Any `--from`/`--only`
+that starts after the deps phase carries the initialising `0`.
+
+**Why it matters** is the same shape as [#61](#61) and worth stating once more because the
+harness keeps rediscovering it: the failure is a **pass**. A resumed run is also when somebody is
+least likely to reread the middle of the log, because they resumed precisely to skip the part
+they had already watched.
+
+**Fix.** Refuse rather than guess. Resuming past `deps` into a phase that needs the model now
+requires `HEPHAISTO_E2E_ASSUME_LLM=1` (or `0`) — a claim the caller is entitled to make from
+having watched the earlier run, and the harness is not entitled to make on its own.
+
+While here, `chaos_cleanup` no longer hangs off `should_run chaos`: an `--only ui` run never
+enters that phase but still finds fixtures on the cluster, and leaving them there is how the next
+run inherits someone else's incidents.
+
+**Size.** S.
+
+**Fixed 2026-08-31.**
+
+### 66. The planner acts on half of a fair fixture
+
+Split out of [#41](#41-c11-has-never-been-run-against-a-cluster), which asked whether that
+fixture was unfair or the planner under-reading and answered *both, separably*. This is the half
+that survived.
+
+**What is measured.** On `c12-stale-lease` — a transient fault whose evidence is entirely
+pod-scoped, built precisely so that declining to restart is not the defensible answer — the agent
+produces a correct diagnosis **8 times in 8** and a `Reasonable` plan **4 times in 8**.
+
+**Why it matters.** It is the only number under the sentence the project leads with. "The agent
+can act" was, until c12 existed, a statement about code: `PlanVerdict.Reasonable` had never once
+been produced by any scenario in three releases, so the claim had no instrument at all. It has
+one now, and what the instrument says is 50%. That is enough to stop calling the acting path
+theoretical and not enough to build a landing page on.
+
+**What it is not.** Not a safety failure — the policy engine never denied anything, because it
+was never offered anything; the four declines are plans that were not produced. Not a diagnosis
+failure either, at 8 of 8. And not a structured-output failure: the local grammar-constrained
+path produces well-formed plans, so [#56](#56)'s disguise is ruled out here rather than assumed.
+
+**Where to look first**, in the order the evidence points:
+
+1. **The confidence gate.** A decline and a low-confidence escalation are indistinguishable in
+   the summary, and #41's four prompt arms moved the diagnosis without moving the plan — which is
+   the shape of a threshold, not of a comprehension gap.
+2. **`terminationReason` is not reported beside the verdict** ([#59](#59)), so a plan missing
+   because the step budget ran out is not separable from one the model chose not to make. That
+   reporting is small and blocks reading this number honestly.
+3. **The 17+N tool surface at planning time.** Phase 2 is deliberately unable to call a tool, so
+   everything it reasons from is what phase 1 chose to write down.
+
+**Deliberately not fixed by lowering the bar.** Grading `MissedAnAction` as a pass, or widening
+`AcceptableActions` until the observed behaviour scores well, would make the number go up without
+moving the agent — and this corpus's whole value is that it was built before the result was
+known.
+
+**Size.** M. **Blocks:** claiming an action rate, which the website and the README both want to
+do.
+
+---
+
+## The v0.5.0 carry, reviewed 2026-08-31
+
+v0.5.0's rule is that *"an item leaves `backlog.md` by being fixed, or by being reclassified as a
+deliberate limitation and written down somewhere permanent. It does not leave by being ignored."*
+Its exit criterion asks that every remaining entry be looked at once and given a fresh sentence
+saying why it is still there. This is that pass, in one place rather than seventeen, so the shape
+of what is being carried is visible at a glance instead of only per-entry.
+
+Seven open entries are not listed here because this milestone already re-argued them in their own
+text: [#2](#2), [#55](#55), [#57](#57), [#58](#58), [#59](#59), [#60](#60) and the newly split
+[#66](#66).
+
+**Blocked on something outside the repository — carried, not deferred by choice:**
+
+- **[#31](#31) Tempo tools.** Still blocked on grafana-mcp, which exposes no trace tools; nothing
+  in this repo can make c10's five-hop trail reachable. The cheap half — making the absence loud
+  rather than silent — was not done because c10 now runs in `--full` and reports the gap itself.
+- **[#23](#23) NetworkPolicy enforcement.** Unprovable here: kind's CNI accepts the objects and
+  ignores them, so the harness's own report names this as not covered on every run. It needs a
+  cluster whose CNI enforces, which is a `--enforce-netpol` tier on the Later menu.
+- **[#30](#30) The pre-purge `grafana.db` tarball.** A file on one machine, not a state of the
+  repository; it closes by someone deleting it, and no code change can.
+
+**Correct as designed; the entry exists so the tradeoff stays visible:**
+
+- **[#24](#24) `values-dev.yaml` opens the webhook CIDR.** Still the price of kubelet probes on a
+  single-tenant node, and still recorded rather than fixed, because fixing it properly is the
+  same work as [#23](#23).
+- **[#25](#25) The orphaned `data-postgres-0` PVC.** Deliberately left after the data was dumped
+  and restored; it is one `kubectl delete` whenever the dev cluster is next rebuilt.
+- **[#29](#29) The `CS0618` suppression.** KubernetesClient 19 still ships no replacement for the
+  typed watch operations, so the suppression is still the only option and still deliberate.
+- **[#34](#34) c1 produces `CrashLoopBackOff`, not `OomKilled`.** Unchanged and now *measured
+  rather than argued*: c1 runs in `--full`, and its answer key still expects the kind the node
+  cannot produce, so the disagreement shows up as a graded result instead of a footnote.
+
+**Real, small, and simply not reached — the honest category:**
+
+- **[#15](#15) Duplicate instrument registrations.** Two meters still disagree on type and unit.
+  Untouched this milestone; it costs a dashboard reading wrongly, not an agent behaving wrongly.
+- **[#21](#21) The stale "workflows have never run" line.** The correction is recorded; what
+  remains is the wider docs restructure it was filed under, which is L and was never in scope.
+- **[#22](#22) Budget values are write-only.** `extraEnv` still works and the harness still relies
+  on it, so this is discoverability rather than capability — and this milestone leaned on it
+  again, in `deploy.sh`, which is an argument for promoting them rather than against.
+- **[#26](#26) The `k8s_events` receiver duplicates on a second node.** Still one `kubectl` away
+  from being real, and still not real, because this cluster has one node.
+- **[#27](#27) `AddHephaistoLlmWithoutPersistence` has no call sites.** Still dead, and now
+  slightly more so: the provider seam grew a second implementation without anything needing it.
+- **[#28](#28) `list_alert_rules` returns empty.** The prompt caveat still carries it. Worth
+  noting the caveat is now read by two model families rather than one, and neither has tripped
+  over it.
+- **[#42](#42) Workload-shaped verification predicates.** Untouched, and still gated behind the
+  Job action types being proposable at all, which is [#39](#39).
+- **[#44](#44) Nothing sweeps `AwaitingApproval`.** Untouched. It is first in the Later menu's own
+  ordering for interactive approvals, so it is queued rather than forgotten.
+- **[#49](#49) The console spec's capped comparison.** Untouched; it cannot fire below 100 open
+  incidents, and the e2e console suite runs against a cluster with ten.
+
+**Excluded by this release's own rule:**
+
+- **[#39](#39) Three refused action types.** `PatchResources` is capability, and this release
+  said no new capability ships in it. It is named here because it is the reason c4 and c7 are
+  permanently "diagnose correctly, propose nothing" — the corpus cannot grade the action that is
+  actually right for them.
+
+### 67. A missing line in a secrets file aborted the run before it probed anything
+
+**Status: fixed 2026-08-31** — see the end of this entry.
+
+**Symptom.** The first `--full` run ever attempted died 8 minutes in, immediately after
+`bootstrapping secrets`, with **no output at all** and exit 1. The report read `ABORTED`, `13
+assertions passed`, `fixtures none`, and — misleadingly — *"Investigations did not run at all: no
+model was reachable"*, when the model was reachable and had never been asked.
+
+**Cause.** `deps_secrets` resolves a key from `secrets/hephaisto-llm.secret.yaml` with
+
+```sh
+from_file=$(grep -oE 'LLM_API_KEY:...' "$llm_secret" | head -1 | sed ... | tr -d ...)
+```
+
+That file carries `GEMINI_API_KEY` and no `LLM_API_KEY`, so `grep` exits 1, `set -o pipefail`
+propagates it to the assignment, and `set -Eeuo pipefail` kills the function. Silently: the abort
+happens before the first `say` in that branch. The same shape sits in the Gemini arm and was only
+ever dormant because that key was usually already exported.
+
+**Why it matters** is that it is invisible and it is on the new path. Selecting a local model was
+the one configuration that reached this branch with the key absent, so the feature added to make
+the gate affordable could not run — and it failed as a *silence*, not as an error.
+
+**Fix.** `|| true` on both pipelines: a file with no matching line means "no key here", not "stop".
+
+A sweep for the same hazard class across the harness — `[ cond ] && var=value` followed by more
+statements, which returns 1 and aborts when the condition is false — found **three more, all
+introduced the same day**, in the new timeout floor and the new judge's auth header. Two of them
+fire on the *common* path: the floor comparison is false for the default four-fixture set, and the
+auth header is absent exactly when the model is local and keyless. All are now `if` blocks. The one
+surviving instance, in `should_run`, is safe because every call site is an `if` condition, where
+`set -e` is suspended — verified rather than assumed.
+
+**Size.** S to fix, and the reason it is written down is the class rather than the instance: this
+is the third time this repo has been bitten by `set -e` turning a false test into a dead run.
+
+### 68. A stack check that passed only while the cluster was unhealthy
+
+**Status: fixed 2026-08-31** — see the end of this entry.
+
+**Symptom.** `deps_verify` failed with *"no `kube_pod_container_status_waiting_reason` series"* on
+a cluster where every single pod was `Running`.
+
+**Cause.** That metric only has series while a container is **actually waiting**. The assertion
+therefore passes when something is broken and fails when nothing is — the inverse of what it
+reads as. It survived because a freshly created kind cluster always has something in
+`ContainerCreating` when deps runs, so the check had never been asked the question on a warm
+cluster. The first run to reuse one failed it, and the run before that had passed it only because
+`grafana-mcp` happened to be stuck in `CreateContainerConfigError`.
+
+**Why it matters** beyond the false failure: the check's stated purpose is *"kube-state-metrics is
+producing workload state"*, and it was not measuring that. A green result meant "KSM is up **and**
+something is currently broken", which is two claims welded together, one of them accidental.
+
+**Fix.** Query `kube_pod_status_phase`, which carries one series per pod at all times and comes
+from the same exporter. Same question, answerable without requiring a fault to exist.
+
+**Size.** S.
+
+**Fixed 2026-08-31.**
+
+### 69. The in-cluster model probe read a healthy endpoint as unreachable
+
+**Status: fixed 2026-08-31** — see the end of this entry.
+
+**Symptom.** `the cluster cannot reach http://…:11434/v1 (HTTP 200200)`. The endpoint was up, the
+pod could reach it, and the check said it could not.
+
+**Cause.** `kubectl run --rm -i` can emit the container's output twice — once from the attach
+stream, once when it collects the final logs — and `curl -w '%{http_code}'` writes no trailing
+newline, so two successes concatenate into `200200`, which is not `200`.
+
+**Why it matters** is the direction of the error. This check exists to fail a run early rather than
+let it discover an unreachable model forty minutes in ([#62](#62)), so a **false negative** in it
+is worse than not having it: it blocks a configuration that works, and it blames the thing that is
+fine. A guard that cries wolf gets deleted, and then #62 comes back.
+
+**Fix.** Keep the last three digits of whatever comes back, which is the status code however many
+times kubectl chose to print it. Verified against `200200`, `200`, `404404`, `000` and empty.
+
+**Size.** S.
+
+**Fixed 2026-08-31.**
+
+### 70. A generic rule with a shorter `for:` permanently mislabels two fixtures
+
+**Symptom.** In the first full-corpus run, 7 of 10 fixtures classified correctly and two were
+wrong in the same direction:
+
+```
+skip  c3 classified as ReadinessFlapping, expected Unschedulable
+skip  c4 classified as ReadinessFlapping, expected ImagePullBackOff
+```
+
+(The third, c1 → `CrashLoopBackOff`, is [#34](#34) and expected on this node.)
+
+**Cause.** `charts/hephaisto/files/alerts/kubernetes-rules.yaml` carries a "pod has been
+non-ready for >2m" rule whose expression is
+
+```promql
+kube_pod_status_phase{phase=~"Pending|Unknown", namespace=~"hephaisto.*"}
+```
+
+labelled `hephaisto_kind: ReadinessFlapping`. Its own comment says *"Pending is precisely the
+state the C3 unschedulable fixture sits in, and it must alert"* — so the rule was written
+knowing it catches C3, and then labels it as flapping. An ImagePullBackOff pod is also `Pending`,
+so it takes C4 too.
+
+**The label contradicts the rule.** Flapping means intermittent; this fires on a pod that is
+*persistently* stuck. The genuine flap detector is `TargetFlapping` further down the same file,
+whose description says in as many words *"This is INTERMITTENT, not down."* Two rules share one
+`hephaisto_kind` and only one of them means it.
+
+**Why it did not show up before.** c3 and c4 are both in the default four-fixture set, so this
+path has been exercised for months. What changed is timing: with ten fixtures and seventeen
+incidents the generic rule's `for: 2m` beats the specific `ChaosPodUnschedulable` and
+`ChaosImagePullFailure` rules, opens the incident first, and classification is first-rule-wins.
+**So the real finding is not the label, it is that a race decides an incident's kind** — and load
+changes who wins. That is why a full-corpus run finds things a four-fixture one cannot.
+
+**Consequence.** `SignalKind` drives runbook selection, so c3 and c4 investigations are handed the
+ReadinessFlapping runbook. That is wrong information, and only accidentally harmless: the flap
+runbook says restarting will not help, which happens to be true for both.
+
+**Deliberately not fixed in v0.5.0.** Changing what an alert rule means is a detection-semantics
+change, it is not what this milestone is for, and the harness records these as `skip` rather than
+`fail`, so the gate is not blocked on it. Fixing it wants a decision about whether the generic
+rule should carry a distinct kind (`Unschedulable`, or a new `PodNotReady`) and whether
+classification should prefer the most specific matching rule rather than the first.
+
+**Size.** M — S for the label, M for the first-rule-wins question behind it.

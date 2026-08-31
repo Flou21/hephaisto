@@ -89,16 +89,27 @@ public sealed class GeminiRootCauseJudge(HttpClient http, string apiKey, string 
         return text.Length <= 4000 ? text : text[..4000];
     }
 
+    /// <summary>
+    /// The grading prompt, shared by every judge implementation.
+    /// </summary>
+    /// <remarks>
+    /// Shared rather than duplicated for the same reason it is copied verbatim from
+    /// <c>judge.sh</c>: two graders scoring the same fixture with differently worded prompts
+    /// produce two numbers that cannot be compared. A second provider must not become a second
+    /// question.
+    /// </remarks>
+    internal static string BuildPrompt(string truth, string diagnosis) =>
+        "You are grading an SRE agent's incident diagnosis against a known-correct answer.\n\n"
+        + "KNOWN CORRECT ANSWER:\n" + truth + "\n\n"
+        + "THE AGENT SAID:\n" + diagnosis + "\n\n"
+        + "Did the agent identify the same underlying root cause? Judge the CAUSE, not the wording, "
+        + "and not whether it restated the Kubernetes symptom. Restating the symptom "
+        + "(\"the pod is in CrashLoopBackOff\") without identifying why is NOT correct. "
+        + "Answer strictly as JSON: {\"correct\": true|false, \"reason\": \"<one sentence>\"}";
+
     public async Task<JudgeVerdict?> AskAsync(string truth, string diagnosis, CancellationToken ct)
     {
-        var prompt =
-            "You are grading an SRE agent's incident diagnosis against a known-correct answer.\n\n"
-            + "KNOWN CORRECT ANSWER:\n" + truth + "\n\n"
-            + "THE AGENT SAID:\n" + diagnosis + "\n\n"
-            + "Did the agent identify the same underlying root cause? Judge the CAUSE, not the wording, "
-            + "and not whether it restated the Kubernetes symptom. Restating the symptom "
-            + "(\"the pod is in CrashLoopBackOff\") without identifying why is NOT correct. "
-            + "Answer strictly as JSON: {\"correct\": true|false, \"reason\": \"<one sentence>\"}";
+        var prompt = BuildPrompt(truth, diagnosis);
 
         var payload = new
         {
@@ -187,5 +198,125 @@ public sealed class GeminiRootCauseJudge(HttpClient http, string apiKey, string 
     {
         [JsonPropertyName("text")]
         public string? Text { get; init; }
+    }
+}
+
+/// <summary>
+/// The same judge against any OpenAI-compatible server - hosted, or a local Ollama.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Added because the Gemini-only judge had a consequence that only showed up when it mattered:
+/// with no Gemini credit the judge could not run at all, so a comparison between two models was
+/// scored deterministically and was quietly <b>not comparable</b> to the published 22/24, which
+/// was judged. A grading instrument reachable through exactly one vendor disappears at the moment
+/// you switch vendors, which is the moment you most need to grade something.
+/// </para>
+/// <para>
+/// <b>The self-assessment caveat still applies and gets sharper here.</b> Pointing this at the
+/// same endpoint and model the agent ran on makes the judge the agent marking its own homework.
+/// That is weaker than two independent models, though not worthless - the grade is against a
+/// fixed answer key rather than against the agent's own reasoning. Set <c>JUDGE_ENDPOINT</c> and
+/// <c>JUDGE_MODEL</c> to something else when a second model is available.
+/// </para>
+/// </remarks>
+public sealed class OpenAiRootCauseJudge(HttpClient http, string endpoint, string? apiKey, string model)
+    : IRootCauseJudge
+{
+    public async Task<JudgeVerdict?> AskAsync(string truth, string diagnosis, CancellationToken ct)
+    {
+        var payload = new
+        {
+            model,
+            messages = new[]
+            {
+                new { role = "user", content = GeminiRootCauseJudge.BuildPrompt(truth, diagnosis) },
+            },
+            temperature = 0,
+            response_format = new { type = "json_object" },
+        };
+
+        try
+        {
+            using var request = new HttpRequestMessage(
+                HttpMethod.Post,
+                $"{endpoint.TrimEnd('/')}/chat/completions")
+            {
+                Content = JsonContent.Create(payload),
+            };
+
+            // A local server needs no credential, and sending an empty bearer token is worse
+            // than sending none: some gateways reject it outright rather than ignoring it.
+            if (!string.IsNullOrWhiteSpace(apiKey))
+            {
+                request.Headers.Add("Authorization", $"Bearer {apiKey}");
+            }
+
+            using var response = await http.SendAsync(request, ct).ConfigureAwait(false);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var body = await response.Content.ReadFromJsonAsync<OpenAiResponse>(ct).ConfigureAwait(false);
+            var text = body?.Choices?.FirstOrDefault()?.Message?.Content;
+
+            return string.IsNullOrWhiteSpace(text) ? null : GeminiRootCauseJudge.Parse(text);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            // Same contract as the Gemini arm: a judge that cannot be reached says nothing, and
+            // must never be recorded as a verdict of "incorrect".
+            return null;
+        }
+    }
+
+    private sealed record OpenAiResponse(
+        [property: JsonPropertyName("choices")] IReadOnlyList<OpenAiChoice>? Choices);
+
+    private sealed record OpenAiChoice(
+        [property: JsonPropertyName("message")] OpenAiMessage? Message);
+
+    private sealed record OpenAiMessage(
+        [property: JsonPropertyName("content")] string? Content);
+}
+
+/// <summary>
+/// Picks the judge from the environment, mirroring <c>scripts/e2e/lib/judge.sh</c> exactly so the
+/// two harnesses are configured the same way and their numbers stay comparable.
+/// </summary>
+/// <remarks>
+/// Returns null when nothing is reachable. That is a missing instrument, not a bad agent, and the
+/// caller scores deterministically rather than failing.
+/// </remarks>
+public static class RootCauseJudgeFactory
+{
+    public static IRootCauseJudge? FromEnvironment(HttpClient http)
+    {
+        var provider = Environment.GetEnvironmentVariable("JUDGE_PROVIDER")
+            ?? Environment.GetEnvironmentVariable("LLM_PROVIDER")
+            ?? Environment.GetEnvironmentVariable("HEPHAISTO_LLM_PROVIDER");
+
+        if (string.Equals(provider, "openai", StringComparison.OrdinalIgnoreCase))
+        {
+            var endpoint = Environment.GetEnvironmentVariable("JUDGE_ENDPOINT")
+                ?? Environment.GetEnvironmentVariable("HEPHAISTO_LLM_ENDPOINT");
+
+            var model = Environment.GetEnvironmentVariable("JUDGE_MODEL")
+                ?? Environment.GetEnvironmentVariable("HEPHAISTO_LLM_MODEL");
+
+            if (string.IsNullOrWhiteSpace(endpoint) || string.IsNullOrWhiteSpace(model))
+            {
+                return null;
+            }
+
+            var key = Environment.GetEnvironmentVariable("JUDGE_API_KEY")
+                ?? Environment.GetEnvironmentVariable("HEPHAISTO_LLM_API_KEY");
+
+            return new OpenAiRootCauseJudge(http, endpoint, key, model);
+        }
+
+        return GeminiRootCauseJudge.FromEnvironment(http);
     }
 }

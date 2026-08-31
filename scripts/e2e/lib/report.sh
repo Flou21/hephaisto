@@ -25,7 +25,8 @@ report_render() {
     printf '  fixtures         %s\n' "${APPLIED:-none}"
     printf '  wall clock       %dm %ds\n' $(( elapsed / 60 )) $(( elapsed % 60 ))
     [ -n "${TOTAL_COST:-}" ] && printf '  llm spend        $%s\n' "$TOTAL_COST"
-    [ -n "${JUDGE_SCORE:-}" ] && printf '  root cause       %s correct (reported, not gating)\n' "$JUDGE_SCORE"
+    [ -n "${JUDGE_SCORE:-}" ] && printf '  root cause       %s correct (reported, not gating) -- %s\n' \
+        "$JUDGE_SCORE" "$(report_mvp_bar "$JUDGE_SCORE")"
     printf '\n'
 
     # Per-phase tally, in the order the phases ran.
@@ -96,7 +97,7 @@ report_render() {
     printf '      and that policy is the Alertmanager webhook'"'"'s entire authentication.\n'
     printf '    Root cause quality gates nothing -- only the deterministic assertions above do.\n'
     [ "${LLM_AVAILABLE:-0}" = "1" ] || \
-    printf '    Investigations did not run at all -- no Gemini key was available.\n'
+    printf '    Investigations did not run at all -- no model was reachable.\n'
     printf '\n'
 
     printf '  full results: %s\n' "$RESULTS"
@@ -118,6 +119,28 @@ report_render() {
     report_markdown
 }
 
+# The MVP bar is ">= 7/10 over >= 10 scenarios", and until --full existed no run had ever
+# produced ten - so the bar could be quoted but not checked, and quoting an unmet denominator
+# as though it were a score is the habit this repo keeps calling out in itself.
+#
+# Still reported, never gating: the bar is a judgement someone makes by reading, and wiring it
+# to the exit code would collapse "a regression" and "a broken harness" into one signal. What
+# it does now is say which of the two numbers is short, because "7/9" fails the bar on the
+# denominator while looking like a pass on the ratio.
+report_mvp_bar() {
+    local correct="${1%%/*}" scored="${1##*/}"
+    case "$scored" in ''|*[!0-9]*) echo "not scored"; return ;; esac
+    case "$correct" in ''|*[!0-9]*) echo "not scored"; return ;; esac
+
+    if [ "$scored" -lt 10 ]; then
+        printf 'MVP bar not applicable: %s scenarios scored, the bar needs 10' "$scored"
+    elif [ $(( correct * 10 )) -ge $(( scored * 7 )) ]; then
+        printf 'MVP bar met (>= 7/10 over >= 10 scenarios)'
+    else
+        printf 'MVP bar NOT met (>= 7/10 over >= 10 scenarios)'
+    fi
+}
+
 # A markdown copy alongside the terminal output, because comparing two runs means reading two
 # of these side by side and terminal scrollback is a poor place to keep them.
 report_markdown() {
@@ -130,7 +153,8 @@ report_markdown() {
         printf '| fixtures | %s |\n' "${APPLIED:-none}"
         printf '| wall clock | %dm %ds |\n' $(( (SECONDS - START_TIME) / 60 )) $(( (SECONDS - START_TIME) % 60 ))
         [ -n "${TOTAL_COST:-}" ]  && printf '| llm spend | $%s |\n' "$TOTAL_COST"
-        [ -n "${JUDGE_SCORE:-}" ] && printf '| root cause | %s (reported, not gating) |\n' "$JUDGE_SCORE"
+        [ -n "${JUDGE_SCORE:-}" ] && printf '| root cause | %s (reported, not gating) -- %s |\n' \
+            "$JUDGE_SCORE" "$(report_mvp_bar "$JUDGE_SCORE")"
         printf '\n## Assertions\n\n| status | phase | assertion | detail |\n|---|---|---|---|\n'
         jq -r '"| \(.status) | \(.phase) | \(.name) | \(.detail) |"' "$RESULTS"
 
