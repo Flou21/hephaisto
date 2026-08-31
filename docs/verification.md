@@ -296,6 +296,7 @@ kind cluster and prints a verdict:
 scripts/e2e/run.sh                    # dispatch a nightly build and test it
 scripts/e2e/run.sh --rc               # cut a real release candidate and test it
 scripts/e2e/run.sh --tag 0.0.1-rc2    # test something already published
+scripts/e2e/run.sh --nightly --full   # the release gate: ten fixtures, about two hours
 ```
 
 It covers steps 1, 2, 5, 6, 9, 11, 12, 14 and 16 above, plus the parts CI cannot reach: that the
@@ -323,13 +324,32 @@ Three things it deliberately does **not** cover, and neither does anything else:
   `infra/chaos/README.md` and reports a score, but never fails on it. The MVP bar — ≥ 7/10 over
   ≥ 10 scenarios — is still a judgement someone makes by reading.
 
-The default fixture set is four; `--fixtures c1,c2,c3,c4,c5,c7,c8,c10,c11,c12` runs every one that
-can be recorded on this hardware. The 22/24 replay number was measured on the first eight, so a
+The default fixture set is four; **`--full`** runs every one that can be recorded on this
+hardware — `c1,c2,c3,c4,c5,c7,c8,c10,c11,c12`, ten of the twelve. That is the denominator the MVP
+bar was always written against, and the report now says whether the bar was met rather than only
+printing the ratio: `7/9` fails it on the count while looking like a pass on the proportion. It
+takes about two hours, because c8's rule needs thirty minutes of evidence before it can fire. The 22/24 replay number was measured on the first eight, so a
 live run compared against it should name the same eight — c11 and c12 are transient faults a
 restart repairs, and folding them into a diagnosis-accuracy figure measured without them would
 change the denominator and the difficulty at once.
 
-`--mode Auto` adds the acting fixture on its own; `ACT_FIXTURE` names it, c12 by default.
+`--mode Auto` and `--mode DryRun` both add the acting fixture, whether or not fixtures were
+named explicitly; `ACT_FIXTURE` names it, c12 by default.
+
+**Running it on a local model costs nothing per token**, which is what makes a two-hour gate
+affordable before every release:
+
+```sh
+HEPHAISTO_LLM_PROVIDER=openai HEPHAISTO_LLM_ENDPOINT=http://100.91.41.104:11434/v1 \
+HEPHAISTO_LLM_MODEL=gpt-oss:120b scripts/e2e/run.sh --nightly --full --mode Auto
+```
+
+The endpoint has to be an address the **cluster** can reach — `localhost` from a pod is the pod,
+and Ollama ships bound to loopback — and the harness now proves that from inside the cluster
+during `deps` rather than discovering it as ten faulted investigations. `scripts/e2e/README.md`
+has the addresses and the one Ollama setting. Note what stays remote: the harness installs the
+**published** image by design, so `--nightly` still builds the branch in Actions. Local means the
+cluster and the model, not the artifact.
 
 ---
 
