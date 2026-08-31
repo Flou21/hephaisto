@@ -105,6 +105,27 @@ public sealed class LlmOptions
 
     public string? ApiVersion { get; set; }
 
+    /// <summary>
+    /// How phase 2 constrains the plan's shape. <c>JsonSchema</c> unless the provider cannot
+    /// do it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A provider capability, not a preference. Gemini, OpenAI and Ollama accept a strict
+    /// schema; DeepSeek answers <c>400 "This response_format type is unavailable now"</c> and
+    /// every planning call fails, which surfaces as an agent that diagnoses correctly and
+    /// then never proposes anything - a symptom easily mistaken for caution.
+    /// </para>
+    /// <para>
+    /// <c>JsonObject</c> asks for plain JSON and moves the schema into the prompt instead.
+    /// That is weaker: the shape becomes a request rather than a constraint. It is safe here
+    /// only because nothing downstream trusts it - the draft is parsed leniently, every cited
+    /// finding id is checked by <c>GroundingVerifier</c>, and any action missing a namespace,
+    /// kind or name is dropped before it can reach an executor.
+    /// </para>
+    /// </remarks>
+    public StructuredOutputMode PlanningStructuredOutput { get; set; } = StructuredOutputMode.JsonSchema;
+
     public double Temperature { get; set; } = 0.2;
 
     public int? MaxOutputTokens { get; set; } = 8192;
@@ -225,6 +246,16 @@ public sealed class LlmOptions
     };
 
     public string PlanningModelId => string.IsNullOrWhiteSpace(PlanningModel) ? Model : PlanningModel;
+}
+
+/// <summary>How a provider is asked to constrain a structured response.</summary>
+public enum StructuredOutputMode
+{
+    /// <summary>Strict schema enforcement, when the provider supports it.</summary>
+    JsonSchema,
+
+    /// <summary>Plain JSON mode, with the schema carried in the prompt instead.</summary>
+    JsonObject,
 }
 
 public sealed class ModelPrice

@@ -464,19 +464,34 @@ public sealed class InvestigationRunner(
         {
             using var chat = clients.CreatePlanningClient(planBudget, recorder, incident.Id);
 
+            // Derived from the CLR type either way, so the schema the model is shown and the
+            // schema the response is parsed against cannot drift apart.
+            var schema = ChatResponseFormat.ForJsonSchema<ActionPlanDraft>(PlanJson);
+            var carrySchemaInPrompt =
+                llmOptions.CurrentValue.PlanningStructuredOutput == StructuredOutputMode.JsonObject;
+
             var chatOptions = new ChatOptions
             {
                 // No Tools, and the client has no function-invocation link anyway. Two
                 // independent reasons phase 2 cannot call anything, because one of them is a
                 // property of a config object that somebody could edit by accident.
-                ResponseFormat = ChatResponseFormat.ForJsonSchema<ActionPlanDraft>(PlanJson),
+                ResponseFormat = carrySchemaInPrompt ? ChatResponseFormat.Json : schema,
                 Temperature = 0f,
             };
+
+            // A provider that cannot enforce a schema is told the shape instead. Weaker, and
+            // deliberately so: the reply is still parsed leniently, still grounded against the
+            // findings, and still stripped of any action missing a target, so a model that
+            // ignores the shape produces no plan rather than a wrong one.
+            var instruction = carrySchemaInPrompt
+                ? "Decide whether anything should be done. Respond only with JSON conforming "
+                    + $"exactly to this JSON Schema:{Environment.NewLine}{Environment.NewLine}{schema.Schema}"
+                : "Decide whether anything should be done. Respond only with the JSON structure.";
 
             var messages = new List<ChatMessage>
             {
                 new(ChatRole.System, prompts.ComposePlanningPrompt(incident, findings, summary)),
-                new(ChatRole.User, "Decide whether anything should be done. Respond only with the JSON structure."),
+                new(ChatRole.User, instruction),
             };
 
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
