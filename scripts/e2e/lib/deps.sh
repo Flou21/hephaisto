@@ -126,8 +126,9 @@ deps_secrets() {
         local secret_file="$REPO/secrets/hephaisto-llm.secret.yaml"
         if [ -f "$secret_file" ]; then
             local from_file
+            # Same hazard as the LLM arm below - see the comment there.
             from_file=$(grep -oE 'GEMINI_API_KEY:[[:space:]]*.*' "$secret_file" 2>/dev/null \
-                        | head -1 | sed 's/GEMINI_API_KEY:[[:space:]]*//' | tr -d '"'"'" )
+                        | head -1 | sed 's/GEMINI_API_KEY:[[:space:]]*//' | tr -d '"'"'" || true)
             # A base64 `data:` value rather than a plaintext `stringData:` one.
             if grep -q '^data:' "$secret_file" 2>/dev/null && [ -n "$from_file" ]; then
                 from_file=$(printf '%s' "$from_file" | base64 -d 2>/dev/null || true)
@@ -156,8 +157,13 @@ deps_secrets() {
             local llm_secret="$REPO/secrets/hephaisto-llm.secret.yaml"
             if [ -f "$llm_secret" ]; then
                 local from_file
+                # `|| true` is load-bearing. A file with no LLM_API_KEY line makes grep exit 1,
+                # pipefail propagates it to the assignment, and `set -e` then kills the whole
+                # run right here - silently, with no output after "bootstrapping secrets".
+                # That is exactly what happened: the repo's secret file carries GEMINI_API_KEY
+                # and no LLM_API_KEY, so selecting a local model aborted before it was probed.
                 from_file=$(grep -oE 'LLM_API_KEY:[[:space:]]*.*' "$llm_secret" 2>/dev/null \
-                            | head -1 | sed 's/LLM_API_KEY:[[:space:]]*//' | tr -d '"'"'" )
+                            | head -1 | sed 's/LLM_API_KEY:[[:space:]]*//' | tr -d '"'"'" || true)
                 if grep -q '^data:' "$llm_secret" 2>/dev/null && [ -n "$from_file" ]; then
                     from_file=$(printf '%s' "$from_file" | base64 -d 2>/dev/null || true)
                 fi

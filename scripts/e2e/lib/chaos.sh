@@ -228,7 +228,9 @@ chaos_await_incidents() {
     # which is the one confusion this file spends the most comments trying to prevent.
     local derived=$(( 600 + 150 * want ))
     local floor; floor=$(chaos_incident_floor)
-    [ "$floor" -gt "$derived" ] && derived="$floor"
+    if [ "$floor" -gt "$derived" ]; then
+        derived="$floor"
+    fi
 
     wait_for "an incident for each of: $APPLIED" "${INCIDENT_TIMEOUT:-$derived}" \
         bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents?limit=100' | jq -e --argjson want '$want_json' 'type == \"array\" and (. as \$inc | \$want | all(. as \$t | \$inc | any(.targetName // \"\" | startswith(\$t))))' >/dev/null" \
@@ -253,7 +255,9 @@ chaos_incident_floor() {
             c10) need=1200 ;;   # two 5-minute rate windows and a 5-minute for:
             *)   need=0 ;;
         esac
-        [ "$need" -gt "$floor" ] && floor="$need"
+        if [ "$need" -gt "$floor" ]; then
+            floor="$need"
+        fi
     done
     echo "$floor"
 }

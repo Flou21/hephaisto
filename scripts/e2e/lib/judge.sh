@@ -44,6 +44,19 @@ judge_run() {
         return 0
     fi
 
+    # A judge that is the same model reasoning about its own output is closer to
+    # self-assessment than to review, and that is worth saying out loud in the run it applies
+    # to rather than only in a comment. It does not invalidate the number - the grade is still
+    # against a fixed answer key, not against the agent's own reasoning - but it is a weaker
+    # instrument than two independent models, and the report should not let that pass silently.
+    if [ "$(judge_model)" = "${HEPHAISTO_LLM_MODEL:-}" ] && [ "$(judge_provider)" = "openai" ]; then
+        warn "the judge is the same model as the agent ($(judge_model)); this is self-assessment"
+        warn "set JUDGE_ENDPOINT/JUDGE_MODEL to a second model for an independent grade"
+        JUDGE_SELF=1
+    else
+        JUDGE_SELF=0
+    fi
+
     local details="$WORKDIR/details.jsonl"
     local scored=0 correct=0
 
@@ -134,35 +147,103 @@ judge_run() {
 
     # Reported, never gating. Recorded as a pass at any score so that a run is not failed by
     # a second model's opinion; the number is in the summary for a human to read.
-    record pass "$CURRENT_PHASE" "root cause graded $correct/$scored" \
-        "reported only - the MVP bar is >= 7/10 over >= 10 scenarios"
+    local note="reported only - the MVP bar is >= 7/10 over >= 10 scenarios"
+    # An `if`, not `[ ... ] && ...`: the && form returns 1 when the test is false, and under
+    # `set -e` that aborts the run at the last moment before the score is recorded.
+    if [ "${JUDGE_SELF:-0}" = "1" ]; then
+        note="$note; SELF-GRADED - judge and agent are the same model"
+    fi
+
+    record pass "$CURRENT_PHASE" "root cause graded $correct/$scored" "$note"
 
     say "root cause: $correct of $scored correct (repo target is >= 7/10 across >= 10 scenarios)"
 }
 
-# One Gemini call, structured output, no tools. Deliberately a different and cheaper model
-# than the agent's: a judge that is the same model reasoning about its own output is closer to
-# self-assessment than to review.
+# The judge's provider, defaulting to the agent's own. This used to be Gemini and only Gemini
+# (#58), which had a consequence worth stating: with no Gemini credit the judge could not run
+# at all, so a model comparison scored deterministically and was quietly NOT comparable to the
+# published 22/24, which was judged. A grading instrument reachable through one vendor is an
+# instrument that disappears exactly when you switch vendors and most need it.
+judge_provider() { echo "${JUDGE_PROVIDER:-${HEPHAISTO_LLM_PROVIDER:-gemini}}"; }
+
+judge_endpoint() { echo "${JUDGE_ENDPOINT:-${HEPHAISTO_LLM_ENDPOINT:-}}"; }
+
+judge_model() {
+    if [ -n "${JUDGE_MODEL:-}" ]; then echo "$JUDGE_MODEL"; return 0; fi
+    case "$(judge_provider)" in
+        openai) echo "${HEPHAISTO_LLM_MODEL:-}" ;;
+        *)      echo "gemini-3.7-flash" ;;
+    esac
+}
+
+# Built once and handed to whichever arm runs, so the two providers cannot be asked subtly
+# different questions. Hephaisto.Eval's RootCauseJudge copies this wording verbatim; if it
+# changes here it has to change there, or the two instruments stop being comparable.
+judge_prompt() {
+    jq -rn --arg t "$1" --arg d "$2" '
+        "You are grading an SRE agent\u0027s incident diagnosis against a known-correct answer.\n\n" +
+        "KNOWN CORRECT ANSWER:\n" + $t + "\n\n" +
+        "THE AGENT SAID:\n" + $d + "\n\n" +
+        "Did the agent identify the same underlying root cause? Judge the CAUSE, not the wording, " +
+        "and not whether it restated the Kubernetes symptom. Restating the symptom " +
+        "(\"the pod is in CrashLoopBackOff\") without identifying why is NOT correct. " +
+        "Answer strictly as JSON: {\"correct\": true|false, \"reason\": \"<one sentence>\"}"
+    '
+}
+
+# Structured output, no tools, temperature 0.
 judge_ask() {
-    local truth="$1" diagnosis="$2"
-    local model="${JUDGE_MODEL:-gemini-3.7-flash}"
+    local prompt
+    prompt=$(judge_prompt "$1" "$2") || return 1
+
+    case "$(judge_provider)" in
+        openai) judge_ask_openai "$prompt" ;;
+        *)      judge_ask_gemini "$prompt" ;;
+    esac
+}
+
+judge_ask_openai() {
+    local endpoint model
+    endpoint=$(judge_endpoint)
+    model=$(judge_model)
+    [ -n "$endpoint" ] && [ -n "$model" ] || return 1
 
     local payload
-    payload=$(jq -n --arg t "$truth" --arg d "$diagnosis" '{
-        contents: [{
-            role: "user",
-            parts: [{ text: (
-                "You are grading an SRE agent'"'"'s incident diagnosis against a known-correct answer.\n\n" +
-                "KNOWN CORRECT ANSWER:\n" + $t + "\n\n" +
-                "THE AGENT SAID:\n" + $d + "\n\n" +
-                "Did the agent identify the same underlying root cause? Judge the CAUSE, not the wording, " +
-                "and not whether it restated the Kubernetes symptom. Restating the symptom " +
-                "(\"the pod is in CrashLoopBackOff\") without identifying why is NOT correct. " +
-                "Answer strictly as JSON: {\"correct\": true|false, \"reason\": \"<one sentence>\"}"
-            )}]
-        }],
+    payload=$(jq -n --arg m "$model" --arg p "$1" '{
+        model: $m,
+        messages: [{ role: "user", content: $p }],
+        temperature: 0,
+        response_format: { type: "json_object" }
+    }') || return 1
+
+    # A local server needs no credential and must not be sent an empty bearer token, which
+    # some gateways reject outright rather than ignoring.
+    local key="${JUDGE_API_KEY:-${HEPHAISTO_LLM_API_KEY:-}}"
+    local auth=()
+    if [ -n "$key" ]; then
+        auth=(-H "Authorization: Bearer $key")
+    fi
+
+    # Longer than the Gemini arm's 60s on purpose: a local model reasons before it answers,
+    # and a judge call that times out is recorded as a failed grade rather than a slow one.
+    local response
+    response=$(curl -sS --max-time 180 "${endpoint%/}/chat/completions" \
+        -H 'Content-Type: application/json' \
+        "${auth[@]+"${auth[@]}"}" \
+        -d "$payload" 2>/dev/null) || return 1
+
+    jq -r '.choices[0].message.content // empty' <<<"$response" 2>/dev/null
+}
+
+judge_ask_gemini() {
+    local model; model=$(judge_model)
+    [ -n "${HEPHAISTO_GEMINI_API_KEY:-}" ] || return 1
+
+    local payload
+    payload=$(jq -n --arg p "$1" '{
+        contents: [{ role: "user", parts: [{ text: $p }] }],
         generationConfig: { temperature: 0, responseMimeType: "application/json" }
-    }')
+    }') || return 1
 
     local response
     response=$(curl -sS --max-time 60 \

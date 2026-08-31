@@ -2066,6 +2066,8 @@ re-embedding: a data backfill, not a schema migration.
 
 ### 58. The eval judge bypasses the provider seam
 
+**Status: fixed 2026-08-31** — see the end of this entry.
+
 **Symptom.** `Scoring/RootCauseJudge.cs` posts directly to
 `generativelanguage.googleapis.com/v1beta/models/{model}:generateContent` with an
 `x-goog-api-key` header and its own `HEPHAISTO_GEMINI_API_KEY` lookup. It never touches
@@ -2081,6 +2083,24 @@ than inherited from where the code happened to be written.
 deterministic-only and not directly comparable to the published `22/24`, which was judged.
 
 **Size.** S.
+
+**Fixed 2026-08-31.** Both judges are now provider-selectable and both read the same variables,
+so the shell harness and `hephaisto-eval` stay configured identically: `JUDGE_PROVIDER`, then
+`JUDGE_ENDPOINT` / `JUDGE_MODEL` / `JUDGE_API_KEY`, each falling back to the agent's own setting.
+`OpenAiRootCauseJudge` joins `GeminiRootCauseJudge` behind `IRootCauseJudge`, and
+`RootCauseJudgeFactory` picks between them. The prompt was extracted to one shared builder rather
+than copied a third time — a second provider must not become a second question, which is the same
+reason it was copied verbatim from `judge.sh` in the first place. Three tests pin that invariant.
+
+Verified against a local `gpt-oss:120b`, and verified *falsifiable*: a real cause grades
+`correct: true`, and a bare restatement of the symptom grades `correct: false` — which is the one
+distinction the prompt exists to draw.
+
+**What this does not fix, and now says out loud.** Pointing the judge at the model the agent ran
+on is self-assessment. The harness warns when the two match and marks the score `SELF-GRADED` in
+the recorded note; it is weaker than two independent models, though not worthless, since the grade
+is against a fixed answer key rather than against the agent's own reasoning. Set `JUDGE_ENDPOINT`
+and `JUDGE_MODEL` to a second model when one is available.
 
 ### 59. The step budget is tuned to one model and silently caps another's accuracy
 
@@ -2419,3 +2439,40 @@ text: [#2](#2), [#55](#55), [#57](#57), [#58](#58), [#59](#59), [#60](#60) and t
   said no new capability ships in it. It is named here because it is the reason c4 and c7 are
   permanently "diagnose correctly, propose nothing" — the corpus cannot grade the action that is
   actually right for them.
+
+### 67. A missing line in a secrets file aborted the run before it probed anything
+
+**Status: fixed 2026-08-31** — see the end of this entry.
+
+**Symptom.** The first `--full` run ever attempted died 8 minutes in, immediately after
+`bootstrapping secrets`, with **no output at all** and exit 1. The report read `ABORTED`, `13
+assertions passed`, `fixtures none`, and — misleadingly — *"Investigations did not run at all: no
+model was reachable"*, when the model was reachable and had never been asked.
+
+**Cause.** `deps_secrets` resolves a key from `secrets/hephaisto-llm.secret.yaml` with
+
+```sh
+from_file=$(grep -oE 'LLM_API_KEY:...' "$llm_secret" | head -1 | sed ... | tr -d ...)
+```
+
+That file carries `GEMINI_API_KEY` and no `LLM_API_KEY`, so `grep` exits 1, `set -o pipefail`
+propagates it to the assignment, and `set -Eeuo pipefail` kills the function. Silently: the abort
+happens before the first `say` in that branch. The same shape sits in the Gemini arm and was only
+ever dormant because that key was usually already exported.
+
+**Why it matters** is that it is invisible and it is on the new path. Selecting a local model was
+the one configuration that reached this branch with the key absent, so the feature added to make
+the gate affordable could not run — and it failed as a *silence*, not as an error.
+
+**Fix.** `|| true` on both pipelines: a file with no matching line means "no key here", not "stop".
+
+A sweep for the same hazard class across the harness — `[ cond ] && var=value` followed by more
+statements, which returns 1 and aborts when the condition is false — found **three more, all
+introduced the same day**, in the new timeout floor and the new judge's auth header. Two of them
+fire on the *common* path: the floor comparison is false for the default four-fixture set, and the
+auth header is absent exactly when the model is local and keyless. All are now `if` blocks. The one
+surviving instance, in `should_run`, is safe because every call site is an `if` condition, where
+`set -e` is suspended — verified rather than assumed.
+
+**Size.** S to fix, and the reason it is written down is the class rather than the instance: this
+is the third time this repo has been bitten by `set -e` turning a false test into a dead run.

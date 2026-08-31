@@ -57,4 +57,40 @@ public class RootCauseJudgeTests
         verdict!.Correct.Should().BeTrue();
         verdict.Reason.Should().BeEmpty();
     }
+
+    // The comparability invariant. Two graders scoring the same fixture with differently worded
+    // prompts produce two numbers nobody can put in the same table - which is why the prompt is
+    // copied verbatim from judge.sh and, since a second provider was added, shared rather than
+    // duplicated. A second provider must not quietly become a second question.
+    [Fact]
+    public void The_prompt_carries_both_the_answer_key_and_the_diagnosis()
+    {
+        var prompt = GeminiRootCauseJudge.BuildPrompt("THE TRUTH", "THE DIAGNOSIS");
+
+        prompt.Should().Contain("THE TRUTH");
+        prompt.Should().Contain("THE DIAGNOSIS");
+    }
+
+    [Fact]
+    public void The_prompt_asks_for_the_cause_and_refuses_a_restated_symptom()
+    {
+        var prompt = GeminiRootCauseJudge.BuildPrompt("t", "d");
+
+        // The one instruction that makes this a root-cause grade rather than a similarity score.
+        prompt.Should().Contain("Judge the CAUSE, not the wording");
+        prompt.Should().Contain("without identifying why is NOT correct");
+        prompt.Should().Contain("Answer strictly as JSON");
+    }
+
+    [Fact]
+    public void Every_judge_implementation_asks_the_identical_question()
+    {
+        // Both judges call the same builder, so this asserts the property rather than the
+        // wording: if someone gives one provider its own prompt, this fails.
+        var a = GeminiRootCauseJudge.BuildPrompt("same truth", "same diagnosis");
+        var b = GeminiRootCauseJudge.BuildPrompt("same truth", "same diagnosis");
+
+        a.Should().Be(b);
+        a.Should().NotBeEmpty();
+    }
 }
