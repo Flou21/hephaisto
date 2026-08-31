@@ -1362,6 +1362,27 @@ Worth noting what did *not* happen. Across all 27 DeepSeek runs there were **zer
 and zero harmful proposals** — the `MustNotPropose` guard held on a model the prompts were never
 tuned for, which is a stronger test of it than the one it was written against.
 
+**c12 measured, 2026-08-31: the fixture was the problem, and it is not the whole problem.**
+Eight replays of the new c12 cassette on `deepseek-v4-flash`, **all eight structurally sound**
+(4% mean miss, because the cassette was recorded on the model replaying it):
+
+| fixture | proposes the action | diagnosis |
+|---|---|---|
+| c11 | **0 of 15** (12 Gemini across four prompt arms, 3 DeepSeek) | correct throughout |
+| c12 | **4 of 8 — `Reasonable`** | 8 of 8 correct |
+
+The first half is settled. A fixture whose pod-scoped state is the only state moves the planner
+from never to half the time, and the diagnosis was never the difficulty in either case. c12 was
+not made easy to get there: it still asks the model to work out that the lease comparison is
+against the pod's own hostname, and it declines that half the time.
+
+**So this entry's own first branch is answered and a new question replaces it.** The corpus can
+now grade an action at all — `Reasonable` had never once been produced before c12 existed, across
+ten scenarios — which makes "does the agent act" measurable rather than theoretical. What it
+measures is 50%, and a 50% action rate is not something to build the landing page's central claim
+on. That is a planner question now, on a fair fixture, and it is worth reopening as one rather
+than leaving inside an entry about c11.
+
 ### 42. Verification predicates are workload-shaped, and two action types are not
 
 `VerificationChecks` answers "is the owning workload settled and Ready" for everything except
