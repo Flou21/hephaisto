@@ -311,6 +311,18 @@ if should_run chaos; then
     chaos_await_incidents
 fi
 
+# A resumed run never entered chaos_apply, so APPLIED is empty - and an empty APPLIED does not
+# fail loudly, it makes every per-fixture assertion loop zero times and the wait for
+# investigations report "waiting on 0" and pass trivially. A resumed validate then reports a
+# tidy green having asserted nothing about any fixture, which is the same false-green this
+# harness has now produced in four different costumes.
+#
+# The fixtures are still on the cluster; the selection is still known. Reconstruct it.
+if ! should_run chaos && should_run validate && [ -z "$APPLIED" ]; then
+    APPLIED=$(printf '%s' "${FIXTURES:-$DEFAULT_FIXTURES}" | tr ',' ' ')
+    say "resumed: asserting against fixtures $APPLIED"
+fi
+
 # --- validate -----------------------------------------------------------------------------
 CURRENT_PHASE=validate
 if should_run validate; then

@@ -2140,6 +2140,17 @@ a pair: what a model costs and how many turns it needs are the same decision.
 
 **Size.** S for the reporting, M for per-model budgets.
 
+**A second ceiling, measured on a cluster 2026-08-31.** The first full-corpus run against a local
+`gpt-oss-120b` reported `1 Cancelled, 2 WallClockExhausted (of 12 investigations)`. So it is not
+only `MaxSteps`: `MaxWallClock` (10 minutes) is also a hosted-model number, and a local model at
+`MaxSteps=20` runs close enough to it that a fifth of investigations end on a clock rather than on
+a conclusion. Measured throughput was ~6.7 minutes per investigation, serialised.
+
+That matters for the same reason the step ceiling does — a run truncated by a limit is not
+distinguishable, in a summary, from a model that had nothing to say — and it is the concrete
+argument for `terminationReason` being reported beside the verdict, which is the small half of the
+fix below and still not done.
+
 **Partly addressed 2026-08-31, in the harness only.** `scripts/e2e/lib/deploy.sh` now sets
 `Llm__Investigation__MaxSteps=20` whenever the provider is openai-compatible, overridable with
 `HEPHAISTO_LLM_MAX_STEPS`, so a full-coverage e2e run does not measure this ceiling and call the
