@@ -2583,3 +2583,49 @@ rule should carry a distinct kind (`Unschedulable`, or a new `PodNotReady`) and 
 classification should prefer the most specific matching rule rather than the first.
 
 **Size.** M — S for the label, M for the first-rule-wins question behind it.
+
+### 71. An auto-executed action leaves `ApprovedBy` null, against its own documented invariant
+
+**Symptom.** The first `--mode Auto` run ever observed on a cluster executed one `RestartPod`
+against `c12-stale-lease` and the harness failed it:
+
+```
+1 action(s) executed in Auto mode; containment assertion does not apply
+FAIL  1 approved action(s) have no approvedBy
+```
+
+The record is otherwise complete and correct:
+
+```json
+"type": "RestartPod", "risk": "Low", "decision": "Allow",
+"decisionReasons": ["RestartPod is a low-risk, single-object action"],
+"dryRun": false, "modeAtExecution": "Auto", "outcome": "applied",
+"approvedBy": null, "approvalSource": "NotApplicable"
+```
+
+**Cause.** `ApprovedBy` is never populated for an auto-executed action. Three places in `Core`
+say it should be: `ActionPlan.cs:76` — *"Always populated, including for automatic actions
+(`hephaisto/auto`)"*; `Enums.cs:204` — *"Executed by policy under L3 autonomy. ApprovedBy is
+`hephaisto/auto`"*; and `Audit.cs:27` names `hephaisto/auto` as one of the three actor forms.
+
+**What is NOT wrong, and should be said first.** The audit trail is intact.
+`ActionExecutor.cs:316` and `ActionRepository.cs:429` both write
+`action.ApprovedBy ?? "hephaisto/auto"`, so the audit row names the actor and *"who did this"*
+is answerable. This is not "no audit, no action" being violated — it is the **action projection**
+contradicting its documented invariant while the audit record behind it is correct.
+
+**Why it matters anyway.** Two write sites independently coalesce the same default, which is the
+shape of a defaulted-at-the-edges invariant rather than an enforced one: a third consumer that
+forgets the `??` reads null and reports an unattributed action. `Enums.cs:181` states the goal
+plainly — *"so 'who did this' is answerable uniformly"* — and uniformly is exactly what it is not.
+
+**Why it took until now.** Nothing had ever executed an action on a cluster. The assertion has
+existed since v0.2.0 and had no subject to run against, so an invariant three doc comments assert
+was never once checked against behaviour. This is the single clearest argument for the `--mode
+Auto` run that has been outstanding across three releases.
+
+**Fix.** Set `ApprovedBy` to `hephaisto/auto` where the policy engine admits an action under L3,
+so the two `??` coalesces become redundant rather than load-bearing, and delete them or leave
+them as belt-and-braces deliberately.
+
+**Size.** S.
