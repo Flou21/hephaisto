@@ -2054,3 +2054,41 @@ than inherited from where the code happened to be written.
 deterministic-only and not directly comparable to the published `22/24`, which was judged.
 
 **Size.** S.
+
+### 59. The step budget is tuned to one model and silently caps another's accuracy
+
+**Symptom.** `gpt-oss-120b` scored **17/30** on the corpus. Raising `Llm:Investigation:MaxSteps`
+from 12 to 20 — changing nothing else — scored **18/20**, and **18/18** excluding the one cassette
+the harness already reports unsound. Measured locally on 2026-08-31.
+
+**Cause.** `MaxSteps = 12` was chosen against a measured Gemini mean of 7.5 steps, so it sits at
+roughly 1.6× the behaviour it was calibrated on. `gpt-oss-120b` averages 9.6 steps and
+`deepseek-v4-flash` 6.9, so the same ceiling is generous for one model, comfortable for another
+and binding for a third. **10 of 30 gpt-oss runs terminated `StepBudgetExhausted`, and every one
+produced no finding** — several at a 0% replay miss rate, so the evidence was in hand and the run
+simply ran out of turns.
+
+**Why it matters.** It does not look like a budget. It looks like a weaker model: the verdict is
+`NoFinding`, which is the same verdict a model that genuinely failed to diagnose would produce.
+Comparing two models under one ceiling therefore measures *how closely each matches the model the
+ceiling was calibrated against*, and reports the difference as accuracy. That is the same class of
+error as [#55](#55-the-cassette-corpus-grades-the-model-that-recorded-it), one layer down: the
+corpus biases toward the model that recorded it, and the budget biases toward the model it was
+tuned on.
+
+DeepSeek is the control that makes this a finding rather than a guess: **0 of 27 runs hit any
+ceiling**, so raising it could not have helped, and the two models are fairly compared at their own
+natural budgets rather than at a shared one.
+
+**Why it is not just "raise the default".** The ceiling is a cost control, and step count is what
+it controls. Twenty steps on a hosted provider is roughly 60% more spend per investigation; on a
+local model the tokens are free and the only cost is wall-clock. So the right value is a property
+of the model *and* of how it is paid for, which is an argument for making it a documented
+per-model setting rather than one number that is wrong for everything except Gemini.
+
+**Fix, in order of cost.** Report `terminationReason` beside the verdict in the eval summary, so a
+budget-truncated run is never read as a wrong answer — that is small and worth doing regardless.
+Then record a recommended `MaxSteps` alongside each model's price entry, since the two are already
+a pair: what a model costs and how many turns it needs are the same decision.
+
+**Size.** S for the reporting, M for per-model budgets.
