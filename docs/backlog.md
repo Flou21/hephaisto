@@ -2629,3 +2629,74 @@ so the two `??` coalesces become redundant rather than load-bearing, and delete 
 them as belt-and-braces deliberately.
 
 **Size.** S.
+
+### 72. An incident that was successfully acted on sits in `Verifying` forever
+
+**Symptom.** The first `--mode Auto` cluster run executed a `RestartPod` against `c12`, the
+restart worked, and the harness still failed:
+
+```
+FAIL  c12's incident did not reach Resolved
+      the workload recovered but verification never closed the incident
+```
+
+Queried well after the run, the incident is still `state=Verifying`, `escalationReason=None` —
+not escalated, not resolved, not stuck on a budget. Just open.
+
+**Cause.** `Verifying` appears to have no sweeper. The action executes, the incident moves to
+`Verifying`, the workload becomes healthy — and nothing subsequently re-checks the predicate and
+closes it. This is the same shape as [#44](#44): a state whose exit transition has no producer,
+so anything that lands there stays there.
+
+**Why it matters** is what it does to the claim. v0.2.0's acceptance criterion is that the agent
+can act; this run proved it can diagnose, plan, get admitted by policy, write to the cluster and
+*fix the fault*. Then the loop does not close. An operator watching the console sees a fixed
+workload and an open incident, which is precisely the state that makes people stop trusting an
+automation and go look themselves — and it means "the agent resolved it" is still not a sentence
+this project can say.
+
+It also silently weakens the safety story in the other direction: `VerificationChecks` exists so
+an action that did *not* work gets noticed. A verification path that never concludes cannot
+distinguish "it worked" from "it did not", because it reports neither.
+
+**Not the same as [#42](#42).** That entry is about the predicate being workload-shaped for two
+action types. This is about the predicate never being evaluated again at all, for the action type
+that works.
+
+**Why it took until now.** Nothing had ever executed an action on a cluster, so the
+post-execution half of the state machine had never run outside unit tests.
+
+**Size.** M. **Blocks:** claiming the agent resolves incidents, which is the natural next
+sentence after "the agent can act".
+
+### 73. Every red run was reported as ABORTED, including the ones that finished
+
+**Status: fixed 2026-08-31** — see the end of this entry.
+
+**Symptom.** A run that completed all ten phases and recorded four failures printed:
+
+```
+ABORTED -- the run exited 1 before finishing.
+77 assertions passed before it stopped; the rest never ran.
+```
+
+Nothing stopped, and everything ran.
+
+**Cause.** `run.sh` ends with `[ "$FAILED" -eq 0 ] || exit 1`, so a completed-but-red run exits
+non-zero — and `report_render` tested `aborted != 0` first. The `FAILED` branch below it was
+therefore **unreachable on the normal path**, and the three outcomes collapsed to two.
+
+**Why it matters.** This file's own comment explains the intent: *"Three outcomes, not two.
+'Nothing recorded a failure' is not the same as 'everything was checked': a run that died before
+its last phase has an empty failure list and a perfectly clean tally, and calling that PASSED is
+how a release gate lies."* The implementation inverted it — it never lied about a pass, it lied
+about a **failure**, telling the reader that assertions had not run when they all had. On a
+release gate, "we never checked" and "we checked and it failed" are different decisions.
+
+**Fix.** `run.sh` sets `RUN_COMPLETED=1` on the only line that proves it reached the end, and
+ABORTED now requires a non-zero exit **and** not having completed. Verified across all three:
+died-early → `ABORTED`, completed-with-failures → `FAILED`, completed-clean → `PASSED`.
+
+**Size.** S.
+
+**Fixed 2026-08-31.**

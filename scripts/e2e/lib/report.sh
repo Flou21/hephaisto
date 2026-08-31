@@ -106,7 +106,13 @@ report_render() {
     # Three outcomes, not two. "Nothing recorded a failure" is not the same as "everything
     # was checked": a run that died before its last phase has an empty failure list and a
     # perfectly clean tally, and calling that PASSED is how a release gate lies.
-    if [ "$aborted" != "0" ]; then
+    # ABORTED is about not finishing, NOT about the exit code - run.sh exits 1 whenever an
+    # assertion failed, so testing the code alone made this branch swallow every red run and
+    # the FAILED branch below unreachable. A completed run with failures then reported
+    # "N assertions passed before it stopped; the rest never ran" about a run where nothing
+    # stopped and everything ran, which is the reporter lying in the one direction this file
+    # exists to prevent.
+    if [ "$aborted" != "0" ] && [ "${RUN_COMPLETED:-0}" != "1" ]; then
         printf '%s  ABORTED -- the run exited %s before finishing.%s\n' "$C_RED" "$aborted" "$C_RESET"
         printf '%s  %d assertions passed before it stopped; the rest never ran.%s\n\n' \
             "$C_RED" "$passed" "$C_RESET"

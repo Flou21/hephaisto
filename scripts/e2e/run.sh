@@ -147,6 +147,7 @@ if [ "$FULL" = "1" ] && [ -z "$FIXTURES" ]; then
 fi
 START_TIME=$SECONDS
 FAILED=0
+RUN_COMPLETED=0
 CURRENT_PHASE=setup
 LLM_AVAILABLE=0
 
@@ -415,6 +416,12 @@ CURRENT_PHASE=report
 # phase but still finds fixtures on the cluster from the run that applied them, and leaving
 # them there is how the next run inherits somebody else's incidents.
 chaos_cleanup
+
+# Reaching this line is the only proof the run completed rather than died somewhere in the
+# middle, and the reporter needs that as a fact rather than as an inference from the exit
+# code: a completed-but-red run and a run that died both exit non-zero, and calling the first
+# one ABORTED tells the reader "the rest never ran" about assertions that all ran.
+RUN_COMPLETED=1
 
 # teardown (the EXIT trap) renders the report and preserves this exit status.
 [ "$FAILED" -eq 0 ] || exit 1
