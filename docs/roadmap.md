@@ -665,6 +665,48 @@ or given a fresh sentence saying why it is still there. **No new capability ship
 moment it grows a feature it becomes a release that also did some tidying, which is what every
 release so far has been.
 
+### Where it stands — in progress
+
+Scoped by decision to what blocks a claim or what the site would otherwise inherit and have to be
+built twice: #41, #2, #47, #37, #50, #52. The rest of the backlog sweep this section asks for is
+**carried**, and that is recorded here rather than discovered later by somebody reading the file.
+[#39](backlog.md#39-the-executor-covers-five-action-types-three-are-refused) stays out under this
+release's own rule — `PatchResources` is capability, and #41 needs no new action type.
+
+**Closed:** [#47](backlog.md#47-the-act-phase-reports-two-failures-that-are-consequences-of-the-first),
+[#37](backlog.md#37-the-judge-grades-a-different-incident-than-the-one-the-run-asserted-on),
+[#50](backlog.md#50-both-themes-are-first-class-and-neither-can-be-chosen),
+[#52](backlog.md#52-two-components-are-implemented-twice),
+[#54](backlog.md#54-a-depleted-api-budget-is-retried-five-times-as-a-transport-failure) — opened
+and fixed here — and [#13](backlog.md#13-the-retry-path-has-never-been-observed-firing-in-production),
+answered after four releases by the retry path firing on an error it should have refused.
+
+**What #41 turned out to be**, and it is the finding this milestone is actually worth reading for.
+The entry asked whether c11 is unfair or the planner under-reads. Making it reproducible offline —
+a cassette plus the first answer key in the corpus where acting is correct — turned that from an
+argument into a measurement: **twelve replays across four arms declined twelve times out of
+twelve**, and every hypothesis reasoned the same correct way. The state is on a PersistentVolumeClaim,
+PVC contents survive a pod replacement, so replacing the pod cannot help. c11 defeats that because
+the thing that makes a replacement work is a *second* volume, and the model never reconciles the
+two — with `describe_pod`'s output, the `emptyDir` and the entrypoint's own condition all in hand.
+
+Three prompt improvements shipped from that work and none of them moved it: the action vocabulary
+now describes what each action does rather than naming it, `RestartPod` says it deletes the pod,
+and the planner has a positive case and a rule for reading a workload's claims about itself. All
+three are net improvements measured against the whole corpus — **8/8 `CorrectlyDeclined`, zero
+harmful proposals** — which is the assertion that matters more, because a change that talks about
+when to act is exactly the one that could make the agent restart a missing Secret.
+
+The fixture was deliberately **not** edited to make it pass. c12 was built instead: the same fault
+with one volume and one comparison, verified against a cluster before being relied on, and the act
+phase now names its fixture rather than hardcoding c11.
+
+**What is not done, and why.** The measurement that would close #41 — recording c12 and replaying
+it — and the `--mode Auto` run that would finally observe the acting path both need the model, and
+the API account is out of credit. #2 has its answer key at ten and its reporting fixed; its last
+half is the same recording. Until those run, this release has improved the agent's reasoning and
+proved it broke nothing, and **has still not seen it act.**
+
 ---
 
 ## The project track — landing page, docs, and the rest
