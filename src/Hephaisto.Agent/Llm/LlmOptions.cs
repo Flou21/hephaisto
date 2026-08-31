@@ -190,6 +190,38 @@ public sealed class LlmOptions
 
         ["gemini-embedding-001"] = new() { InputPerMillionUsd = 0.15m, OutputPerMillionUsd = 0m },
         ["gemini-embedding-2"] = new() { InputPerMillionUsd = 0.20m, OutputPerMillionUsd = 0m },
+
+        // Reached through Provider=openai. Verified 2026-08-31.
+        //
+        // KEYED ON WHAT THE PROVIDER RETURNS, not on what Llm:Model was set to.
+        // BudgetGuardChatClient prices `response.ModelId ?? configured id`, so the id that
+        // arrives back is the one that has to resolve - and the same weights are named
+        // differently by each host. Resolution is exact match then longest prefix, so
+        // "openai/gpt-oss-120b" also covers a suffixed variant like ":free", and
+        // "deepseek-v4-flash" covers "deepseek-v4-flash-vision-exp", which is priced the same.
+        // Get this wrong and the model is charged at zero: the cost budget stops binding
+        // while the console reports a comfortable 0.0% utilisation.
+        ["gpt-oss-120b"] = new() { InputPerMillionUsd = 0.03m, OutputPerMillionUsd = 0.17m },
+        ["openai/gpt-oss-120b"] = new() { InputPerMillionUsd = 0.03m, OutputPerMillionUsd = 0.17m },
+        ["gpt-oss:120b"] = new() { InputPerMillionUsd = 0.03m, OutputPerMillionUsd = 0.17m },
+        ["gpt-oss-20b"] = new() { InputPerMillionUsd = 0.03m, OutputPerMillionUsd = 0.15m },
+        ["openai/gpt-oss-20b"] = new() { InputPerMillionUsd = 0.03m, OutputPerMillionUsd = 0.15m },
+        ["gpt-oss:20b"] = new() { InputPerMillionUsd = 0.03m, OutputPerMillionUsd = 0.15m },
+
+        // NOTE the time-of-day pricing, which is this provider's version of the promotion
+        // landmine above. These are the OFF-PEAK rates. Peak is DOUBLE, and peak is
+        // 01:00-04:00 and 06:00-10:00 UTC on weekdays - so a European afternoon is off-peak
+        // and an overnight batch is not. Nothing here knows the clock, so a run inside those
+        // windows under-counts by 2x and every cost cap reads twice as tight as it binds.
+        ["deepseek-v4-flash"] = new() { InputPerMillionUsd = 0.22m, OutputPerMillionUsd = 0.66m },
+        ["deepseek-v4-pro"] = new() { InputPerMillionUsd = 0.66m, OutputPerMillionUsd = 1.98m },
+
+        // No entry for a locally served model, deliberately. Zero is its true price, but a
+        // zero entry and a missing entry produce identical arithmetic, and the guard in
+        // LlmPricingTests that every listed model costs something is worth more than the
+        // tidiness of naming this one. A local model takes the unpriced-model warning
+        // instead, which correctly says the cost budget will not bind - the step, token and
+        // wall-clock budgets still do.
     };
 
     public string PlanningModelId => string.IsNullOrWhiteSpace(PlanningModel) ? Model : PlanningModel;
