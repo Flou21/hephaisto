@@ -30,6 +30,29 @@
     <meta name="theme-color" content="#131519" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#faf8f5" media="(prefers-color-scheme: light)" />
     <meta name="color-scheme" content="dark light" />
+
+    @* Stamps a remembered theme onto <html> BEFORE the first paint.
+
+       Inline and synchronous, which is the whole point: app.js is loaded at the end of <body>,
+       so a reader who chose light would get a full paint of the dark theme and then a flip.
+       That flash is worse than not offering the choice.
+
+       Guarded because localStorage THROWS outright in some privacy modes rather than returning
+       null, and a convenience must never be able to take the console down. No value, or a
+       value this does not recognise, means "system" - the OS decides through the media query,
+       which is what every release before v0.5.0 did. *@
+    <script>
+        (function () {
+            try {
+                var t = window.localStorage.getItem('hephaisto.theme');
+                if (t === 'light' || t === 'dark') {
+                    document.documentElement.setAttribute('data-theme', t);
+                }
+            } catch (e) {
+                /* Private window, disabled storage. Fall through to the OS. */
+            }
+        })();
+    </script>
     <meta name="description" content="Hephaisto investigates Kubernetes incidents, acts only where it is allowed to, and escalates to a human when it cannot prove a fix." />
     <HeadOutlet @rendermode="InteractiveServer" />
 </head>
