@@ -578,12 +578,25 @@ on `PolicyResult` - filed as its own item rather than bodged with string matchin
 
 ### 13. The retry path has never been observed firing in production
 
+**Status: answered 2026-08-31** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** `TransientRetryChatClient` is unit-tested nine ways and the overload it exists for has
 not recurred since it was written. That is the difference between "tested" and "proven".
 
 **Fix.** A fault-injecting `IChatClient` behind a dev-only flag would settle it once.
 
 **Size.** S.
+
+**Answered 2026-08-31, by the overload finally recurring — as something else.** The retry path
+fired in production for the first time: it backed off as designed, five attempts with jitter, and
+did not discard the investigation. So the mechanism is proven rather than merely unit-tested,
+which is what this entry asked for.
+
+It fired on an error it should have refused. "Your prepayment credits are depleted" arrives with
+no HTTP status, so `Classify` took the transport branch and retried a billing page five times per
+step — see [#54](#54-a-depleted-api-budget-is-retried-five-times-as-a-transport-failure), fixed in
+the same release. A first observation that finds a defect is worth more than one that confirms
+what was assumed.
 
 ### 14. `EscalateOnlyInvestigator` does not escalate
 
@@ -904,6 +917,8 @@ card is for.
 
 ### 37. The judge grades a different incident than the one the run asserted on
 
+**Status: fixed 2026-08-31** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** On the eight-fixture run the harness asserted `8 incident(s) have a primary
 finding`, and the judge then skipped c5, c8 and c10 with *"no primary finding"*. Both statements
 cannot be true of the same incidents.
@@ -923,6 +938,18 @@ the corpus. That is the same class of dishonesty the eval harness was built to r
 the detection assertion already matched.
 
 **Size.** S.
+
+**Fixed 2026-08-31.** Resolution happens once, in `chaos_assert_detection`, and is written to
+`$WORKDIR/fixture-incidents.tsv` for every later reader. It records *every* incident matched
+rather than only the one whose kind is checked, so the judge takes the first carrying a primary
+finding and says when it passed over an empty one — a fixture routinely opens two and only one
+holds the diagnosis.
+
+Reproduced on synthetic details before being fixed: the old resolution reports c10 as
+*"no primary finding"* while its diagnosis exists, because it matched the raw fixture id against
+`target.name` while detection matches `fixture_target`, and for c10 those are different strings
+(#33). "Detection matched no incident" and "none of its incidents carried a finding" were the
+same sentence and are now two.
 
 ### 38. `approval_source` reads `Ui` on actions nobody approved
 
@@ -1479,6 +1506,8 @@ either: see [#48](#48-the-console-suite-interacts-with-a-page-the-circuit-has-no
 
 ### 47. The act phase reports two failures that are consequences of the first
 
+**Status: fixed 2026-08-31** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** When nothing is acted on, the run reports three failures, and two of them describe
 something that did not happen:
 
@@ -1507,6 +1536,12 @@ reason naming the first failure rather than asserting and failing them.
 ---
 
 ## Opened by v0.4.0
+
+**Fixed 2026-08-31.** `chaos_assert_action_executed` records whether anything ran, and
+`chaos_assert_verification` skips both assertions naming the one that actually failed rather than
+asserting them into two 240s timeouts. Checked in both directions against a stubbed harness: the
+skip fires only when nothing executed, and an action that ran and did not recover still fails
+exactly as before — an assertion that holds in both directions is not an assertion.
 
 ### 48. The console suite interacts with a page the circuit has not taken over yet
 
@@ -1594,6 +1629,8 @@ the smaller change and keeps the assertion meaningful.
 
 ### 50. Both themes are first-class, and neither can be chosen
 
+**Status: fixed 2026-08-31** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** Light mode stopped being "a courtesy, not the design target" in v0.4.0 — it is
 contrast-asserted and photographed like the dark theme. A reader still cannot select it. Theme
 follows the operating system through `prefers-color-scheme` and there is no control anywhere.
@@ -1615,6 +1652,28 @@ the feedback submitter's name — and `tokens.css` would need its light block du
 `[data-theme="light"]` selector.
 
 **Size.** S.
+
+**Fixed 2026-08-31.** `data-theme` on the root, three states, persisted through the interop that
+already existed. Two palettes rather than three: `:root` is dark and stays the default, so only
+light is written twice — once for an OS that asked and once for a reader who did — and the
+`:not([data-theme="dark"])` guard is what makes those compose instead of fight. All six
+combinations of choice and OS are worked through in `tokens.css`, because a theme system that is
+right in four of them is the usual bug.
+
+**Two mistakes worth keeping**, both found by driving the live console rather than by reading.
+The label was written by `app.js` on load, and `<Routes>` renders interactively — so Blazor
+replaced the body subtree and left the button reading "theme" with no state, which is
+[#48](#48-the-console-suite-interacts-with-a-page-the-circuit-has-not-taken-over-yet) wearing
+different clothes. The label is now a CSS `::after` keyed off the attribute on `<html>`, where
+Blazor does not reach. And `app.js` is a plain script at the end of `<body>`, so on a warm cache
+it can run *after* `DOMContentLoaded` and the listener would never fire at all.
+
+Verified in a real browser against the live console, including the case the media query cannot
+serve — a **light** operating system with dark chosen: stamped before paint, dark background,
+`theme-color` following, surviving navigation. Six cascade combinations are asserted in
+`design/visual/tests/theme.spec.ts` under both projects and verified falsifiable: removing the
+explicit-light rule fails it under `[dark]` and still passes under `[light]`, which is precisely
+the case that rule exists for.
 
 ### 51. `run.sh` has not been re-run on a kind cluster since the suite was fixed
 
@@ -1686,6 +1745,8 @@ diagnosis-shape notes. The console phase reports `expected=9 skipped=0 unexpecte
 
 ### 52. Two components are implemented twice
 
+**Status: fixed 2026-08-31** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** The console has two unrelated implementations of a progress bar and two
 near-duplicate treatments of a monospace block.
 
@@ -1703,6 +1764,22 @@ stop exactly that. Both are now photographed by the visual baselines, so the con
 change somebody can actually verify.
 
 **Size.** S.
+
+**Fixed 2026-08-31, and with no visual change — which this entry did not expect.** It assumed
+consolidating would change the rendering of both and deferred the work on that basis. What was
+shared is now defined once; what differs stayed, because it is context rather than accident. The
+budget meter is a page-level element carrying threshold marks, so it is taller and needs a
+positioning context; the confidence bar is inline in a finding and has a fixed width. One height
+for both would make one of them wrong for where it lives.
+
+So the implementation is consolidated and the rendering is untouched, which is the half the
+baselines can prove. A deliberate visual unification stays available as a design decision
+somebody reviews rather than a refactor nobody can see.
+
+Proven both ways: all 34 baselines pass unchanged at `maxDiffPixels: 0` and the gallery genuinely
+renders all four components; then changing the **one** shared bar rule fails the finding shot and
+the budget-meter shot in both themes — six failures from a single declaration, which is what "one
+implementation" means when it is true.
 
 ### 53. The console was never interactive in any released image
 
@@ -1761,6 +1838,9 @@ failed, 0 skipped**, where the same suite against the published image failed all
 
 ### 54. A depleted API budget is retried five times as a transport failure
 
+**Status: fixed 2026-08-31** — see the end of this entry. The heading is left as it was, because
+these numbers and titles are the anchors `roadmap.md` links by.
+
 **Symptom.** Every investigation stalls, slowly, and the log says the provider failed
 *transiently*. It did not. The account is out of credit, which is as permanent as a failure gets
 until a human visits a billing page.
@@ -1803,3 +1883,15 @@ should have refused, which is a better first observation than never having seen 
 **Blocks:** recording a c12 cassette, replaying anything, and the `--mode Auto` cluster run —
 every one of which needs the model. Nothing in v0.5.0 that touches the agent's reasoning can be
 measured until the account has credit.
+
+**Fixed 2026-08-31, in the release that opened it.** `PermanentMarkers` are checked first, before
+the status, because these arrive without one. Kept deliberately narrow: each phrase is one that
+cannot also describe a transient condition, since this list *overrules* a correct retry and a
+bare "billing" or "disabled" would match a 503 from a billing service and turn a real hiccup into
+a hard stop — the worse of the two mistakes. Daily-quota wording is left out for the same reason;
+it is not reliably distinguishable from a per-minute rate limit, and five retries over ten seconds
+costs nothing if it turns out to be one.
+
+Both arms tested and verified falsifiable: removing the check fails the four new permanent-error
+assertions, while `"Rate limit exceeded for this project's billing tier"` — which contains the
+word this list is most tempted to match on — still retries.

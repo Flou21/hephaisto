@@ -323,9 +323,13 @@ Three things it deliberately does **not** cover, and neither does anything else:
   `infra/chaos/README.md` and reports a score, but never fails on it. The MVP bar — ≥ 7/10 over
   ≥ 10 scenarios — is still a judgement someone makes by reading.
 
-The default fixture set is four; `--fixtures c1,c2,c3,c4,c5,c7,c8,c10` runs every one that can be
-recorded on this hardware, which is the set the 22/24 replay number was measured on and therefore
-the set worth comparing a live run against.
+The default fixture set is four; `--fixtures c1,c2,c3,c4,c5,c7,c8,c10,c11,c12` runs every one that
+can be recorded on this hardware. The 22/24 replay number was measured on the first eight, so a
+live run compared against it should name the same eight — c11 and c12 are transient faults a
+restart repairs, and folding them into a diagnosis-accuracy figure measured without them would
+change the denominator and the difficulty at once.
+
+`--mode Auto` adds the acting fixture on its own; `ACT_FIXTURE` names it, c12 by default.
 
 ---
 
@@ -371,10 +375,25 @@ for something no code did, which is the failure `backlog #20` refused to resolve
 the sentence. It is now built and checked: `chaos_assert_annotations` reads them back from Grafana
 using the agent's own token, so the credential that can see them is the credential that wrote them.
 
-**On the denominator.** Ten is still the target and eight is what runs. c6 does not fire on
-`local-path` and c9 would evict the observability stack, so both need replacement fixtures; until
-they exist the number is reported as n/8 and says which two are missing. Reporting n/10 while
-running eight is the dishonesty the eval harness was built to remove.
+**On the denominator, as of v0.5.0.** Ten is the target and the answer key now has ten entries —
+c11 and c12 joined the eight. c6 still does not fire on `local-path` and c9 would still evict the
+observability stack, and neither has a replacement; what changed is that the two fixtures a
+restart actually repairs are both in the corpus, so the denominator grew without either exclusion
+being papered over. **The count is still reported as what ran, never as what was aimed at.**
+
+**And which instrument produced it, always.** Two things measure this and they are not
+interchangeable. Cassette replay (`hephaisto-eval run`) scores diagnosis and plan against
+`AnswerKey`, needs no cluster, and is the number an experiment arm should move. The e2e harness
+scores a live run against `fixture_truth()` in `scripts/e2e/lib/judge.sh`, which is the canonical
+copy the answer keys are transcribed from — two graders scoring one fixture against differently
+worded truths would produce two incomparable numbers. Say which one a figure came from whenever
+you quote it.
+
+**The exit code stays about the instrument, not the agent.** `hephaisto-eval run` exits non-zero
+when a dangling citation, an out-of-contract category or a replay miss rate says the harness
+slipped, and exits zero when the agent simply did badly. Making it fail below 7/10 would collapse
+"a regression" and "a broken harness" into one signal, which is the distinction the whole design
+exists to keep.
 
 
 ---
