@@ -735,15 +735,34 @@ never once been graded across ten scenarios, so "can the agent act" has gone fro
 measured at 50%. That is not a number the landing page's central claim can rest on, and it is now
 a planner question on a fair fixture rather than an argument about a fixture.
 
-**What is still not done, and why.** The `--mode Auto` run that would observe the acting path on a
-cluster. The harness installs a **published** artifact from GHCR — that is the point of it, since
-what nothing else proved was that a released build works — so it cannot test a provider that
-exists only on a feature branch. It needs this branch pushed and an image published, and neither
-is something this session does on its own.
+**The harness was then made able to run that, and four ways it could have lied were closed.** The
+gate needed a model it could afford to run ten fixtures against, and `gpt-oss-120b` locally is
+free — but nothing in the harness could actually reach it. `deps_secrets` probed the endpoint only
+when an API key was set, so a keyless local server reported no model and every investigation, act,
+judge and budget assertion **skipped while the run exited 0** (#61); and the probe ran on the host
+while the agent runs in a pod, which for a local model is a different machine entirely (#62).
+Alongside those: an acting run dropped the fixture it asserts about whenever fixtures were named,
+which is exactly the shape of `--full` (#63); `DryRun` asserted a condition `DryRun` cannot produce
+and so was unrunnable rather than untested (#64); and a run resumed past `deps` skipped every model
+assertion and still exited 0 (#65).
+
+Three of those five fail as a **pass**, which is the recurring shape here and the reason they are
+written down individually rather than as one tidying commit.
+
+`--full` now runs ten fixtures — the MVP bar's own denominator — with a deadline that clears c8's
+thirty-minute window, and the report states whether the bar was met instead of printing a ratio
+that reads as a pass at `7/9`.
+
+**What is still not done, and why.** The `--mode Auto` run itself. The harness installs a
+**published** artifact from GHCR — that is the point of it, since what nothing else proved was
+that a released build works — so it cannot test a provider that exists only on a feature branch.
+That property was kept rather than worked around: no local-image escape hatch was added, because
+it would dissolve the only thing this harness uniquely proves. It needs this branch pushed and a
+nightly published, and a push is not something this session does on its own.
 
 So: this release has improved the agent's reasoning, proved it broke nothing across two model
-families, made the acting path measurable for the first time, and **has still not seen it act on a
-cluster.**
+families, made the acting path measurable for the first time, **made the gate able to run at all
+and unable to pass without having run**, and **has still not seen it act on a cluster.**
 
 ---
 
