@@ -11,10 +11,22 @@ public sealed class LlmOptions
     public const string SectionName = "Llm";
 
     /// <summary>
-    /// Selects the <see cref="IChatClientFactory"/> implementation. Only <c>gemini</c> ships
-    /// today; the indirection exists so swapping provider is a ConfigMap edit rather than a
-    /// code change, which matters when a provider is the outage.
+    /// Selects the <see cref="IChatClientFactory"/> implementation: <c>gemini</c> or
+    /// <c>openai</c>.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>openai</c> means the OpenAI wire format rather than the vendor, and it is how every
+    /// non-Gemini provider is reached: DeepSeek, OpenRouter, and a local Ollama or LM Studio
+    /// server all speak it. Which one is in use is <see cref="Endpoint"/> plus
+    /// <see cref="Model"/>, so adding a provider is a ConfigMap edit and not a code change -
+    /// which matters both for cost and for the case where a provider is itself the outage.
+    /// </para>
+    /// <para>
+    /// <b>Changing this needs a pod restart, not just a ConfigMap edit.</b> The factory is a
+    /// singleton and captures the provider, endpoint and model id at construction.
+    /// </para>
+    /// </remarks>
     public string Provider { get; set; } = "gemini";
 
     /// <summary>The investigating model. Tool-calling quality dominates here.</summary>
@@ -51,16 +63,44 @@ public sealed class LlmOptions
     public int EmbeddingDimensions { get; set; } = 768;
 
     /// <summary>
-    /// Read from config first, then <c>GEMINI_API_KEY</c>. Never logged and never put on a
-    /// span: <see cref="SafeToolDecorator"/> redacts arguments, but the key never travels
-    /// through a tool argument in the first place.
+    /// The chat provider's key. Read from config first, then the provider's conventional
+    /// environment variable - <c>GEMINI_API_KEY</c> for <c>gemini</c>, <c>LLM_API_KEY</c> or
+    /// <c>OPENAI_API_KEY</c> for <c>openai</c>. Never logged and never put on a span:
+    /// <see cref="SafeToolDecorator"/> redacts arguments, but the key never travels through a
+    /// tool argument in the first place.
     /// </summary>
+    /// <remarks>
+    /// <b>This belongs to whichever provider <see cref="Provider"/> selects</b>, so it is not
+    /// reused for embeddings unless that provider is Gemini. See
+    /// <see cref="EmbeddingApiKey"/>.
+    /// </remarks>
     public string? ApiKey { get; set; }
+
+    /// <summary>
+    /// The embedding key, when it differs from <see cref="ApiKey"/>. Falls back to
+    /// <c>GEMINI_API_KEY</c>.
+    /// </summary>
+    /// <remarks>
+    /// Embeddings stay on Gemini regardless of which provider answers chat, because they are
+    /// not on the investigation path and the cheap-provider decision is about the
+    /// investigation loop. Running chat on an OpenAI-compatible provider therefore needs two
+    /// keys, or none at all if losing the search index's semantic arm is acceptable - a
+    /// missing key degrades rather than failing to boot.
+    /// </remarks>
+    public string? EmbeddingApiKey { get; set; }
 
     /// <summary>
     /// Overrides the provider endpoint - a local gateway, a proxy, or a record/replay server
     /// for the eval harness. Null means the SDK default.
     /// </summary>
+    /// <remarks>
+    /// <b>This does not change the wire format, only the address.</b> Under
+    /// <c>Provider=gemini</c> it retargets <c>Google.GenAI</c>'s own transport, so pointing it
+    /// at an OpenAI-compatible URL sends Gemini-shaped requests there and fails. Reaching
+    /// DeepSeek, OpenRouter or a local server means <c>Provider=openai</c> as well. Providers
+    /// publish this including the version segment
+    /// (<c>https://openrouter.ai/api/v1</c>, <c>http://localhost:11434/v1</c>).
+    /// </remarks>
     public string? Endpoint { get; set; }
 
     public string? ApiVersion { get; set; }
