@@ -169,7 +169,9 @@ blocker.
 
 - A Kubernetes cluster and a Prometheus/Alertmanager stack that can POST to a webhook
 - **PostgreSQL 17 with `pgvector`** — the agent fails fast without it, on purpose
-- A Gemini API key (the provider is pluggable via `Llm:Provider`; only `gemini` ships today)
+- A model API key. `Llm:Provider` selects `gemini` or `openai` — the latter being the wire
+  format rather than the vendor, so DeepSeek, OpenRouter and a local Ollama or LM Studio
+  server are all reached through it by setting `Llm:Endpoint`
 - Optionally Grafana + `grafana-mcp`, which is what gives the agent PromQL and LogQL tools.
   Without it the agent degrades to Kubernetes-only reads and says so in its logs.
 
@@ -212,6 +214,9 @@ kubectl -n hephaisto create secret generic hephaisto-postgres \
   --from-literal=POSTGRES_USER=hephaisto \
   --from-literal=POSTGRES_PASSWORD="$(openssl rand -base64 24)" \
   --from-literal=POSTGRES_DB=hephaisto
+# Both keys are optional; which one you need depends on Llm:Provider. GEMINI_API_KEY serves
+# the gemini provider and, on any provider, the embedding generator. LLM_API_KEY serves the
+# openai-compatible one.
 kubectl -n hephaisto create secret generic hephaisto-llm --from-literal=GEMINI_API_KEY=...
 
 helm install hephaisto ./charts/hephaisto -n hephaisto \
@@ -255,7 +260,10 @@ for `:`.
 | Section | What it holds |
 |---|---|
 | `Persistence:ConnectionString` | Postgres. Required — startup fails without it. |
-| `Llm:Provider`, `Llm:Model` | Provider selection and the investigating model |
+| `Llm:Provider`, `Llm:Model` | `gemini` or `openai`, and the investigating model. Changing either needs a pod restart, not just a ConfigMap edit — the factory captures them at construction. |
+| `Llm:Endpoint` | Which OpenAI-compatible server `Provider=openai` talks to. Address only, not wire format: setting it under `Provider=gemini` retargets the Gemini transport rather than switching protocol. |
+| `Llm:PlanningStructuredOutput` | `JsonSchema` (default) or `JsonObject`. A provider capability, not a preference — see below. |
+| `Llm:Pricing` | Model id to price. **An unpriced model is charged at zero**, which switches the cost budget off rather than approximating it. Ship a price with the model, always. |
 | `Llm:Budget` | Global rolling token/cost windows, counted in Postgres |
 | `Investigation` | Per-run step, token, cost and wall-clock budgets |
 | `Policy` | `AllowedNamespaces`, protected namespaces and labels, rate caps |
@@ -263,6 +271,15 @@ for `:`.
 | `Notifications` | Outbound delivery: channels, routing rules, the outbox's retry schedule |
 | `Alertmanager:Url` | Write-only, and the only thing written is a silence |
 | `KillSwitch` | Arm configuration; env arm defaults to `HEPHAISTO_MODE` |
+
+**On `Llm:PlanningStructuredOutput`.** Phase 2 asks the provider to constrain the plan to a JSON
+schema. Not every provider can: DeepSeek answers `400 "This response_format type is unavailable
+now"`, and because phase 1 is unaffected the agent then diagnoses correctly and proposes nothing —
+which is indistinguishable, in a run summary, from an agent that considered acting and declined.
+Set `JsonObject` for such a provider and the schema moves into the prompt instead. It is the
+weaker mode and stays off by default: the shape becomes a request rather than a constraint, which
+is safe only because nothing downstream takes the model's word for it — every cited finding id is
+verified, and an action missing a namespace, kind or name is dropped before an executor sees it.
 
 `Policy:AllowedNamespaces` defaults to **empty**, which means the agent may act nowhere.
 `Policy:ProtectedNamespaces` is never actionable whatever the allowlist says, and includes
