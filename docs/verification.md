@@ -389,6 +389,38 @@ copy the answer keys are transcribed from — two graders scoring one fixture ag
 worded truths would produce two incomparable numbers. Say which one a figure came from whenever
 you quote it.
 
+**A number from this corpus is only comparable within one model.** Measured on 2026-08-31 while
+adding a second provider: a cassette records the tool calls the *recording* model chose to make,
+and nothing else. `c5.json` declares 31 tools and records 9 calls across 7 of them, so a model
+that asks a different question is answered "nothing was recorded" — which reads to it as a
+cluster with no deployments and no dashboards, and it digs until its tool-call budget is gone.
+Replaying `deepseek-v4-flash` against the Gemini-recorded corpus put 18 of 27 runs over the
+soundness threshold, and the effect is measurable rather than theoretical:
+
+| | correct | mean miss rate |
+|---|---|---|
+| structurally sound runs | **9 / 9** | 10% |
+| unsound runs | 11 / 18 | 43% |
+
+Accuracy tracked replay coverage, not model quality. The control is `c12.json`, recorded on the
+model that replayed it: **8 of 8 sound at a 4% mean miss.** So the corpus is a within-model
+instrument, which is its designed job — an experiment arm changes the prompt and holds the model
+fixed. Ranking two models on a corpus one of them recorded measures the recording, and adopting a
+new investigating model means re-recording rather than reinterpreting. See
+[backlog #55](backlog.md).
+
+**Cost and accuracy, as measured, with the caveat attached.** Three passes each, deterministic
+scoring only — the judge is hard-wired to Gemini ([#58](backlog.md)) and could not run without
+credit, so neither figure is comparable to the judged `22/24` published for v0.4.0.
+
+| model | correct | sound | steps / investigation | $ / investigation |
+|---|---|---|---|---|
+| `gemini-3.7-flash` (recorded the corpus) | 22/24 *(judged, v0.4.0)* | — | 7.5 | **$0.080** |
+| `deepseek-v4-flash` | 20/27 | 9/27 | 6.85 | **$0.031** |
+
+DeepSeek's 20/27 is a floor, not a like-for-like: it was scored against a corpus recorded by the
+other model, and every one of its failures fell in a run the harness had already flagged unsound.
+
 **The exit code stays about the instrument, not the agent.** `hephaisto-eval run` exits non-zero
 when a dangling citation, an out-of-contract category or a replay miss rate says the harness
 slipped, and exits zero when the agent simply did badly. Making it fail below 7/10 would collapse
