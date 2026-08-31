@@ -2093,6 +2093,13 @@ a pair: what a model costs and how many turns it needs are the same decision.
 
 **Size.** S for the reporting, M for per-model budgets.
 
+**Partly addressed 2026-08-31, in the harness only.** `scripts/e2e/lib/deploy.sh` now sets
+`Llm__Investigation__MaxSteps=20` whenever the provider is openai-compatible, overridable with
+`HEPHAISTO_LLM_MAX_STEPS`, so a full-coverage e2e run does not measure this ceiling and call the
+result a model. The hosted Gemini path keeps the shipped 12. **The entry stays open**: this is one
+number in one script, not the per-model setting beside the price entry that the fix above asks
+for, and the eval summary still does not report `terminationReason`.
+
 ### 60. A provider's own options cannot be reached through the OpenAI-compatible seam
 
 **Symptom.** `qwen3-next:80b` was benchmarked and abandoned: it emits **3,559 output tokens for a
