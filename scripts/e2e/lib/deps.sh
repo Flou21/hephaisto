@@ -145,6 +145,80 @@ deps_secrets() {
         fi
     fi
 
+    # ---------------------------------------------------------------------------------
+    # An OpenAI-compatible provider instead of Gemini, selected by HEPHAISTO_LLM_PROVIDER.
+    # ---------------------------------------------------------------------------------
+    # Same contract as the Gemini arm below: resolve a key, prove it works with one cheap
+    # call, and degrade to a detection-only run rather than failing, because a run that
+    # exercises detection is worth more than no run at all.
+    if [ "${HEPHAISTO_LLM_PROVIDER:-gemini}" = "openai" ]; then
+        if [ -z "${HEPHAISTO_LLM_API_KEY:-}" ]; then
+            local llm_secret="$REPO/secrets/hephaisto-llm.secret.yaml"
+            if [ -f "$llm_secret" ]; then
+                local from_file
+                from_file=$(grep -oE 'LLM_API_KEY:[[:space:]]*.*' "$llm_secret" 2>/dev/null \
+                            | head -1 | sed 's/LLM_API_KEY:[[:space:]]*//' | tr -d '"'"'" )
+                if grep -q '^data:' "$llm_secret" 2>/dev/null && [ -n "$from_file" ]; then
+                    from_file=$(printf '%s' "$from_file" | base64 -d 2>/dev/null || true)
+                fi
+                case "$from_file" in
+                    REPLACE*|CHANGE*|YOUR_*|"") from_file="" ;;
+                esac
+                if [ -n "$from_file" ]; then
+                    export HEPHAISTO_LLM_API_KEY="$from_file"
+                    say "using the LLM key from secrets/hephaisto-llm.secret.yaml"
+                fi
+            fi
+        fi
+
+        local endpoint="${HEPHAISTO_LLM_ENDPOINT:?HEPHAISTO_LLM_ENDPOINT is required when HEPHAISTO_LLM_PROVIDER=openai}"
+
+        if [ -n "${HEPHAISTO_LLM_API_KEY:-}" ]; then
+            # /v1/models rather than a completion: every OpenAI-compatible server implements
+            # it, it costs nothing, and a 401 here is the same 401 that would otherwise
+            # appear on the fourth investigation of a twelve-minute run.
+            local probe
+            probe=$(curl -sS --max-time 30 "${endpoint%/}/models" \
+                -H "Authorization: Bearer ${HEPHAISTO_LLM_API_KEY}" \
+                -o /dev/null -w '%{http_code}' 2>/dev/null || echo "000")
+
+            if [ "$probe" = "200" ]; then
+                say "LLM key accepted by $endpoint"
+                LLM_AVAILABLE=1
+            else
+                warn "the LLM key was rejected by $endpoint (HTTP $probe)"
+                warn "continuing without investigations; detection is still exercised"
+                unset HEPHAISTO_LLM_API_KEY
+                LLM_AVAILABLE=0
+            fi
+        else
+            warn "no HEPHAISTO_LLM_API_KEY - investigations will be skipped, detection still tested"
+            LLM_AVAILABLE=0
+        fi
+
+        KUBECONFIG="$E2E_KUBECONFIG" CONTEXT_REQUIRED="$E2E_CONTEXT" \
+            "$REPO/scripts/bootstrap-secrets.sh" 2>&1 | sed 's/^/    /' \
+            || { fail "secrets bootstrapped" "bootstrap-secrets.sh failed"; return 1; }
+
+        for s in hephaisto-postgres grafana-mcp-caller-token; do
+            kc -n "$APP_NS" get secret "$s" >/dev/null 2>&1 \
+                && pass "secret $s exists" \
+                || fail "secret $s missing" "the agent pod will not start"
+        done
+
+        if [ "$LLM_AVAILABLE" = "1" ]; then
+            kc -n "$APP_NS" get secret hephaisto-llm >/dev/null 2>&1 \
+                && pass "secret hephaisto-llm exists" \
+                || fail "secret hephaisto-llm missing" "investigations cannot run"
+        else
+            # Both chart keys are optional now, so an empty Secret is enough to start the pod.
+            kc -n "$APP_NS" create secret generic hephaisto-llm >/dev/null 2>&1 || true
+            skip "secret hephaisto-llm" "placeholder only, no key available"
+        fi
+
+        return 0
+    fi
+
     # Validate the key NOW rather than discovering it is wrong fifteen minutes in, when four
     # investigations have failed and the failure looks like a bug in the agent. One cheap call.
     if [ -n "${HEPHAISTO_GEMINI_API_KEY:-}" ]; then

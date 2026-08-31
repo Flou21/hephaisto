@@ -1,8 +1,48 @@
 #!/usr/bin/env bash
 # Phase 5: install the published chart and assert what the published artifact is.
 
+# The number of entries already in values-e2e.yaml's extraEnv list, so provider settings can
+# be appended rather than written at a hardcoded index. Helm's --set replaces by position, so
+# a fixed index silently overwrites a budget cap the first time somebody adds an entry above
+# it - and a silently-removed cost cap is the failure this harness least wants.
+deploy_extra_env_count() {
+    awk '
+        /^extraEnv:/            { inblock = 1; next }
+        inblock && /^[^[:space:]#]/ { inblock = 0 }
+        inblock && /^[[:space:]]+- name:/ { n++ }
+        END                     { print n + 0 }
+    ' "$E2E_DIR/values-e2e.yaml"
+}
+
 deploy_install() {
     say "installing hephaisto $VERSION from $CHART_REPO"
+
+    local extra=()
+
+    # An OpenAI-compatible provider is four settings, none of which the chart exposes as a
+    # first-class value - which is what extraEnv is for. Gemini needs none of them, so the
+    # default path is unchanged.
+    if [ "${HEPHAISTO_LLM_PROVIDER:-gemini}" = "openai" ]; then
+        local i
+        i=$(deploy_extra_env_count)
+
+        extra+=(--set "extraEnv[$i].name=Llm__Provider"   --set "extraEnv[$i].value=openai")
+        i=$((i + 1))
+        extra+=(--set "extraEnv[$i].name=Llm__Endpoint"   --set "extraEnv[$i].value=${HEPHAISTO_LLM_ENDPOINT}")
+        i=$((i + 1))
+        extra+=(--set "extraEnv[$i].name=Llm__Model"      --set "extraEnv[$i].value=${HEPHAISTO_LLM_MODEL:?HEPHAISTO_LLM_MODEL is required when HEPHAISTO_LLM_PROVIDER=openai}")
+
+        # Only when asked for. It is the weaker mode - the schema becomes a request rather
+        # than a constraint - so it should never be switched on by inferring a provider's
+        # capability from its name.
+        if [ -n "${HEPHAISTO_LLM_PLANNING_FORMAT:-}" ]; then
+            i=$((i + 1))
+            extra+=(--set "extraEnv[$i].name=Llm__PlanningStructuredOutput"
+                    --set "extraEnv[$i].value=${HEPHAISTO_LLM_PLANNING_FORMAT}")
+        fi
+
+        say "provider: openai, model ${HEPHAISTO_LLM_MODEL} at ${HEPHAISTO_LLM_ENDPOINT}"
+    fi
 
     helm_e2e upgrade --install hephaisto "$CHART_REPO/hephaisto" \
         --version "$VERSION" \
@@ -10,6 +50,7 @@ deploy_install() {
         --values "$E2E_DIR/values-e2e.yaml" \
         --set "mode=${E2E_MODE:-Observe}" \
         --set "policy.autoEnabledActionTypes={RestartPod}" \
+        "${extra[@]+"${extra[@]}"}" \
         --wait --timeout 8m \
         || { fail "hephaisto installed" "helm install failed; see kubectl describe"; return 1; }
 

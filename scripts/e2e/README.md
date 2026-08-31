@@ -96,3 +96,29 @@ no associative arrays, no `brew install bash`.
 `HEPHAISTO_GEMINI_API_KEY`, or a real key in `secrets/hephaisto-llm.secret.yaml`. Without one
 the run still exercises detection end to end and reports the investigation assertions as
 skipped rather than failing them.
+
+### Running against a cheaper provider
+
+Any OpenAI-compatible server — DeepSeek, OpenRouter, or a local Ollama or LM Studio — with four
+environment variables. The key is validated against `/v1/models` before the run starts, for the
+same reason the Gemini key is: a 401 discovered on the fourth investigation of a twelve-minute
+run looks like a bug in the agent.
+
+```sh
+HEPHAISTO_LLM_PROVIDER=openai \
+HEPHAISTO_LLM_ENDPOINT=https://api.deepseek.com/v1 \
+HEPHAISTO_LLM_MODEL=deepseek-v4-flash \
+HEPHAISTO_LLM_PLANNING_FORMAT=JsonObject \
+HEPHAISTO_LLM_API_KEY=... \
+    scripts/e2e/run.sh --mode Auto
+```
+
+`HEPHAISTO_LLM_PLANNING_FORMAT=JsonObject` is required for DeepSeek and wrong for most others:
+it is a provider *capability*, not a preference, and it is the weaker of the two modes. Without
+it DeepSeek answers `400` to every planning call, and because phase 1 is unaffected the run
+reports correct diagnoses and no plans — which looks like an agent declining to act. A local
+Ollama server needs no such setting: llama.cpp constrains generation with a grammar, so strict
+schemas work there even on small models.
+
+**The key is not put on the command line.** It is read from the environment, or from
+`LLM_API_KEY` in `secrets/hephaisto-llm.secret.yaml`, which is gitignored twice over.
