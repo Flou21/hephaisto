@@ -42,6 +42,48 @@ public class TransientRetryTests
         TransientRetryChatClient.Classify(ex).Should().BeNull();
     }
 
+    [Theory]
+    // The exact wording observed on the development cluster on 2026-08-31, retried five times
+    // per step on every step of every investigation until the run stalled. docs/backlog.md #54.
+    [InlineData("Your prepayment credits are depleted. Please go to AI Studio at "
+        + "https://ai.studio/projects to manage your project and billing.")]
+    [InlineData("API key not valid. Please pass a valid API key.")]
+    [InlineData("Gemini API has not been used in project 12345 before or it is disabled.")]
+    public void A_permanent_provider_failure_is_not_retried(string message)
+    {
+        // These arrive with NO HTTP status, which is what makes them dangerous: the transport
+        // branch treats a missing status as a connection-level failure - right for DNS and TLS
+        // and resets, wrong for a billing page a human has to visit. Refusing here is not
+        // about saving the calls, which fail instantly; it is so the log says the real thing.
+        TransientRetryChatClient.Classify(new HttpRequestException(message))
+            .Should().BeNull();
+    }
+
+    [Fact]
+    public void A_permanent_cause_overrules_a_retryable_status_it_arrives_with()
+    {
+        // Permanent markers are checked before the status, so this has to be deliberate rather
+        // than incidental - and it is the reason the marker list is kept narrow. A phrase vague
+        // enough to appear in a genuine 503 would turn a real hiccup into a hard stop, which is
+        // the worse of the two mistakes.
+        var ex = new HttpRequestException(
+            "Your prepayment credits are depleted.", null, HttpStatusCode.ServiceUnavailable);
+
+        TransientRetryChatClient.Classify(ex).Should().BeNull();
+    }
+
+    [Theory]
+    // The other arm, and the one that matters more: wording that merely mentions money or keys
+    // must NOT be swept up. Each of these is a transient condition a retry is exactly for.
+    [InlineData("The model is overloaded. Please try again later.")]
+    [InlineData("Resource has been exhausted (e.g. check quota).")]
+    [InlineData("Rate limit exceeded for this project's billing tier")]
+    public void Transient_wording_survives_the_permanent_check(string message)
+    {
+        TransientRetryChatClient.Classify(new HttpRequestException(message))
+            .Should().NotBeNull();
+    }
+
     [Fact]
     public void A_transport_failure_with_no_status_is_retried()
     {
