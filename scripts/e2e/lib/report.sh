@@ -96,7 +96,7 @@ report_render() {
     printf '      and that policy is the Alertmanager webhook'"'"'s entire authentication.\n'
     printf '    Root cause quality gates nothing -- only the deterministic assertions above do.\n'
     [ "${LLM_AVAILABLE:-0}" = "1" ] || \
-    printf '    Investigations did not run at all -- no Gemini key was available.\n'
+    printf '    Investigations did not run at all -- no model was reachable.\n'
     printf '\n'
 
     printf '  full results: %s\n' "$RESULTS"

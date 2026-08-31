@@ -56,6 +56,7 @@ source "$E2E_DIR/lib/report.sh"
 CHANNEL=nightly
 VERSION=""
 FIXTURES=""
+FULL=0
 KEEP_CLUSTER=0
 RUN_JUDGE=1
 RUN_UI=1
@@ -75,19 +76,27 @@ Options:
   --rc                 cut the next release candidate, publish it, test it (prompts)
   --tag <version>      test a version that is already published, e.g. 0.0.1-rc2
   --fixtures <list>    comma-separated chaos fixtures (default: c2,c3,c4,c7)
+  --full               every fixture that can run here: c1,c2,c3,c4,c5,c7,c8,c10,c11,c12.
+                       The release gate. About two hours - c8 alone needs a 30-minute
+                       window. c6 and c9 are excluded and no flag overrides that.
   --k8s <version>      Kubernetes version for the kind node (default: 1.36.4)
   --from <phase>       start at this phase, reusing an existing cluster
   --only <phase>       run just this phase against an existing cluster
   --keep-cluster       do not delete the cluster on exit
   --no-judge           skip the LLM root-cause grading
-  --mode <M>      Observe (default), DryRun or Auto. Auto installs the chart able to act,
-                  adds $ACT_FIXTURE (c12 by default) to the fixtures and runs the act phase.
-                  Observe asserts the opposite: that nothing executed.
+  --mode <M>           Off, Observe (default), DryRun or Auto. Auto installs the chart able
+                       to act and asserts that it did; DryRun asserts it planned and still
+                       changed nothing; Observe and Off assert the opposite, that nothing
+                       executed. DryRun and Auto both add $ACT_FIXTURE (c12 by default) to
+                       whatever fixtures were selected.
   --no-ui              skip the Playwright suite
   --yes                do not prompt before pushing an rc tag
   -h, --help           this
 
 Phases: build, cluster, deps, deploy, chaos, validate, act, notify, ui, report
+
+A local model, which is free: set HEPHAISTO_LLM_PROVIDER=openai with an endpoint the CLUSTER
+can reach - not localhost, which from a pod is a different machine. See scripts/e2e/README.md.
 EOF
 }
 
@@ -97,6 +106,7 @@ while [ $# -gt 0 ]; do
         --rc)           CHANNEL=rc; shift ;;
         --tag)          CHANNEL=existing; VERSION="${2:?--tag needs a version}"; shift 2 ;;
         --fixtures)     FIXTURES="${2:?--fixtures needs a list}"; shift 2 ;;
+        --full)         FULL=1; shift ;;
         --k8s)          E2E_K8S_VERSION="${2:?--k8s needs a version}"; shift 2 ;;
         --from)         FROM_PHASE="${2:?--from needs a phase}"; shift 2 ;;
         --only)         ONLY_PHASE="${2:?--only needs a phase}"; shift 2 ;;
@@ -119,6 +129,22 @@ done
 # release. --mode Auto swaps that for the opposite proof and turns on the act phase.
 E2E_MODE="${E2E_MODE:-Observe}"
 export E2E_MODE
+
+# Validate rather than pass through. The mode is handed straight to --set mode=, and the chart
+# enum would reject it - but only after a cluster has been built and the dependencies
+# installed, which is ten minutes spent to learn about a typo.
+case "$E2E_MODE" in
+    Off|Observe|DryRun|Auto) ;;
+    *) die "--mode must be Off, Observe, DryRun or Auto (got '$E2E_MODE')" ;;
+esac
+
+# --full is the release gate: every fixture that can run here. An explicit --fixtures wins,
+# so the flag is a shorthand and not an override of something the caller asked for.
+if [ "$FULL" = "1" ] && [ -z "$FIXTURES" ]; then
+    FIXTURES="$FULL_FIXTURES"
+    say "--full: $FIXTURES"
+    say "this is the release gate and takes about two hours; c8 alone needs a 30-minute window"
+fi
 START_TIME=$SECONDS
 FAILED=0
 CURRENT_PHASE=setup
@@ -220,6 +246,23 @@ if should_run deps; then
     notify_install || true
 fi
 
+# LLM_AVAILABLE is set inside deps_secrets and nowhere else, so a run that starts after the
+# deps phase carries the initial 0 - and every investigation, act, judge and budget assertion
+# then reports skip while the run exits 0. That is a false green, and a resumed run is exactly
+# when somebody is least likely to reread the middle of the log.
+#
+# Refuse rather than guess. HEPHAISTO_E2E_ASSUME_LLM=1 says "the key was good when deps ran",
+# which is a claim the caller is entitled to make and the harness is not.
+if ! should_run deps && should_run validate; then
+    case "${HEPHAISTO_E2E_ASSUME_LLM:-}" in
+        1) LLM_AVAILABLE=1
+           say "assuming the model is reachable (HEPHAISTO_E2E_ASSUME_LLM=1)" ;;
+        0) LLM_AVAILABLE=0
+           warn "assuming NO model (HEPHAISTO_E2E_ASSUME_LLM=0); investigations will skip" ;;
+        *) die "resuming past 'deps' cannot know whether the model is reachable, and would skip every investigation while still exiting 0. Set HEPHAISTO_E2E_ASSUME_LLM=1 (or 0), or resume with --from deps" ;;
+    esac
+fi
+
 port_forward receiver "$OBS_NS" svc/notification-receiver "$PF_PORT_RECEIVER" 8080 || true
 
 # --- deploy -------------------------------------------------------------------------------
@@ -246,10 +289,22 @@ if should_run chaos; then
     # for one. ACT_FIXTURE names it (c12 by default, c11 with ACT_FIXTURE=c11), and adding it
     # here rather than naming a fixture twice keeps the thing injected and the thing asserted
     # from drifting apart.
-    if [ "$E2E_MODE" != "Observe" ] && [ -z "${FIXTURES:-}" ]; then
-        FIXTURES="${DEFAULT_FIXTURES},${ACT_FIXTURE}"
-        export FIXTURES
-    fi
+    # This has to hold however the fixture list was chosen. It used to apply only when
+    # FIXTURES was empty, so `--mode Auto --fixtures ...` - and therefore `--mode Auto --full`
+    # - dropped the act fixture silently and then failed the act phase against a fixture that
+    # had never been applied. That failure reads as the agent refusing to act, which is the
+    # single claim this harness exists to test and the last one it should be able to fake.
+    case "$E2E_MODE" in
+        DryRun|Auto)
+            FIXTURES="${FIXTURES:-$DEFAULT_FIXTURES}"
+            case ",$FIXTURES," in
+                *",$ACT_FIXTURE,"*) ;;
+                *) FIXTURES="${FIXTURES},${ACT_FIXTURE}"
+                   say "acting mode: added $ACT_FIXTURE" ;;
+            esac
+            export FIXTURES
+            ;;
+    esac
 
     phase "6. inject faults"
     chaos_apply
@@ -275,9 +330,9 @@ fi
 # so the report says which half of the release this run covered.
 CURRENT_PHASE=act
 if should_run act; then
-    if [ "${E2E_MODE:-Observe}" = "Observe" ]; then
+    if [ "${E2E_MODE:-Observe}" = "Observe" ] || [ "${E2E_MODE:-Observe}" = "Off" ]; then
         phase "7a. acting (skipped)"
-        skip "acting" "installed in Observe; run with --mode Auto to exercise the executor"
+        skip "acting" "installed in ${E2E_MODE:-Observe}; run with --mode Auto to exercise the executor"
     elif [ "${LLM_AVAILABLE:-0}" != "1" ]; then
         # No key means no investigation, which means no plan, which means there was never
         # going to be an action. Asserting anyway would spend eleven minutes waiting and then
@@ -285,7 +340,7 @@ if should_run act; then
         # than anything about the agent, and is the exact failure this harness has now made
         # five times in different clothes.
         phase "7a. acting (skipped)"
-        skip "acting" "no Gemini key, so nothing investigated and nothing could be proposed"
+        skip "acting" "no reachable model, so nothing investigated and nothing could be proposed"
     else
         phase "7a. acting"
         chaos_assert_action_executed
@@ -344,9 +399,10 @@ fi
 
 # --- done ---------------------------------------------------------------------------------
 CURRENT_PHASE=report
-if should_run chaos; then
-    chaos_cleanup
-fi
+# Not gated on `should_run chaos`. An --only ui or --from validate run never enters that
+# phase but still finds fixtures on the cluster from the run that applied them, and leaving
+# them there is how the next run inherits somebody else's incidents.
+chaos_cleanup
 
 # teardown (the EXIT trap) renders the report and preserves this exit status.
 [ "$FAILED" -eq 0 ] || exit 1

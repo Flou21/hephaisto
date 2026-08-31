@@ -2204,3 +2204,83 @@ warn: continuing would spend two hours proving something about an address.
 **Fixed 2026-08-31.** The reachable addresses from inside the VM are recorded in
 `scripts/e2e/README.md`; the tailnet address is the documented default because it does not move
 with DHCP or with docker's bridge topology.
+
+### 63. An acting run could be told to skip the fixture it asserts about
+
+**Status: fixed 2026-08-31** — see the end of this entry.
+
+**Symptom.** `--mode Auto --fixtures <list>` fails the act phase with *"c12 was not acted on"*.
+
+**Cause.** `run.sh` appended `ACT_FIXTURE` only when `FIXTURES` was empty, so naming fixtures
+explicitly replaced the act fixture instead of being joined by it. The act phase then asserted
+against a fixture that had never been applied.
+
+**Why it matters** is which claim it fakes. The failure is indistinguishable in the report from
+the agent declining to act — the exact thing [#41](#41-c11-has-never-been-run-against-a-cluster)
+spent three attempts and twelve replays investigating. A harness that can manufacture that
+symptom is a harness that can send somebody looking for a planner bug that does not exist.
+
+It also lands precisely on the release gate: `--full` names its fixtures, so `--mode Auto --full`
+— the run this milestone needs — was the shape that broke.
+
+**Fix.** In `DryRun` and `Auto`, ensure `ACT_FIXTURE` is in the list however that list was
+chosen, materialising the default first and skipping the append when it is already present.
+
+**Size.** S.
+
+**Fixed 2026-08-31.** Seven cases exercised: empty, explicit, `--full`, act-fixture-only,
+act-fixture-mid-list, and both acting modes. No duplicate, no drop.
+
+### 64. DryRun asserted a condition DryRun cannot produce
+
+**Status: fixed 2026-08-31** — see the end of this entry.
+
+**Symptom.** `--mode DryRun` always failed the act phase.
+
+**Cause.** `chaos_assert_action_executed` selected actions with `.dryRun == false`. In DryRun
+every executed action is `dryRun: true` by definition, so the assertion could never be satisfied.
+The mode was not merely untested; it was **unrunnable**, and had been since it was added.
+
+**Why it matters.** DryRun is the middle rung of the safety ladder — the mode that says "plan it,
+then change nothing" — and it is the one an operator is most likely to trial before enabling
+`Auto`. Shipping a mode whose own harness cannot express a pass is a claim without an instrument.
+
+**Fix.** `chaos_expected_dryrun` derives the expected shape from `E2E_MODE`, and DryRun gains the
+half that is actually worth asserting: a plan was produced **and** nothing executed for real.
+Without that second check the mode only proves a plan existed, which Observe already proves.
+
+While here: `--mode` is now validated at parse time rather than passed through to `--set mode=`,
+where an invalid value was rejected by the chart's enum only after a cluster had been built and
+the observability stack installed; and `Off` no longer runs the act assertions, which it could
+never satisfy either.
+
+**Size.** S.
+
+**Fixed 2026-08-31.**
+
+### 65. A resumed run skipped every model assertion and still exited 0
+
+**Status: fixed 2026-08-31** — see the end of this entry.
+
+**Symptom.** `--from deploy` or `--only validate` reports investigations, budget, judge and act
+as `skip`, then exits 0 — with a working key and a reachable model.
+
+**Cause.** `LLM_AVAILABLE` is set inside `deps_secrets` and nowhere else. Any `--from`/`--only`
+that starts after the deps phase carries the initialising `0`.
+
+**Why it matters** is the same shape as [#61](#61) and worth stating once more because the
+harness keeps rediscovering it: the failure is a **pass**. A resumed run is also when somebody is
+least likely to reread the middle of the log, because they resumed precisely to skip the part
+they had already watched.
+
+**Fix.** Refuse rather than guess. Resuming past `deps` into a phase that needs the model now
+requires `HEPHAISTO_E2E_ASSUME_LLM=1` (or `0`) — a claim the caller is entitled to make from
+having watched the earlier run, and the harness is not entitled to make on its own.
+
+While here, `chaos_cleanup` no longer hangs off `should_run chaos`: an `--only ui` run never
+enters that phase but still finds fixtures on the cluster, and leaving them there is how the next
+run inherits someone else's incidents.
+
+**Size.** S.
+
+**Fixed 2026-08-31.**

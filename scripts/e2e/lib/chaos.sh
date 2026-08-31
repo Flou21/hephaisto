@@ -35,6 +35,17 @@
 # be deleted before it can be re-applied.
 DEFAULT_FIXTURES="c2,c3,c4,c7"
 
+# --full. Every fixture that can run on this hardware, which is ten of the twelve: c6 and c9
+# are excluded for the stated reasons above and no flag overrides that, because neither is a
+# scheduling choice - c6 cannot fire on local-path and c9 evicts the observability stack it
+# would be measured by.
+#
+# This is the release gate, not the inner loop. It is slow on purpose: c8 alone needs a
+# 30-minute window and c10 sits behind 5-minute rate windows, so budget about two hours. The
+# four-fixture default stays the thing you run while working, because a two-hour gate that
+# nobody runs is worth less than a five-minute one that everybody does.
+FULL_FIXTURES="c1,c2,c3,c4,c5,c7,c8,c10,c11,c12"
+
 # Fixture -> the SignalKind the shipped rules attach via hephaisto_kind.
 # A case statement rather than `declare -A`, for the bash 3.2 reason in common.sh.
 fixture_kind() {
@@ -291,7 +302,7 @@ chaos_assert_detection() {
 # ---------------------------------------------------------------------------------------
 chaos_await_investigations() {
     if [ "${LLM_AVAILABLE:-0}" != "1" ]; then
-        skip "investigations" "no Gemini key; detection was still exercised"
+        skip "investigations" "no reachable model; detection was still exercised"
         return 0
     fi
 
@@ -579,10 +590,23 @@ _something_executed() {
     chaos_collect_details >/dev/null 2>&1 || return 1
 
     local n
-    n=$(jq -r '[.actions[]? | select(.executedAt != null and .dryRun == false)] | length' \
+    n=$(jq -r --argjson dry "$(chaos_expected_dryrun)" \
+        '[.actions[]? | select(.executedAt != null and .dryRun == $dry)] | length' \
         "$WORKDIR/details.jsonl" 2>/dev/null | awk '{t += $1} END {print t + 0}')
 
     [ "${n:-0}" -ge 1 ]
+}
+
+# What an executed action should look like in this mode. DryRun's whole purpose is to run the
+# plan without mutating anything, so it records executions with dryRun=true - and asserting
+# dryRun=false against it, as this harness did, is a condition DryRun cannot satisfy by
+# definition. The mode was unrunnable rather than failing: three phases would pass and then the
+# act phase would report the agent had not acted, which was never a claim about the agent.
+chaos_expected_dryrun() {
+    case "${E2E_MODE:-Observe}" in
+        DryRun) echo true ;;
+        *)      echo false ;;
+    esac
 }
 
 # An action was admitted, executed and recorded against the fixture that needed it.
@@ -599,21 +623,35 @@ chaos_assert_action_executed() {
 
     chaos_collect_details
 
+    local dry; dry=$(chaos_expected_dryrun)
     local executed
-    executed=$(jq -r --arg t "$target" \
+    executed=$(jq -r --arg t "$target" --argjson dry "$dry" \
         'select(.target.name != null and (.target.name | contains($t)))
-         | .actions[]? | select(.executedAt != null and .dryRun == false) | .type' \
+         | .actions[]? | select(.executedAt != null and .dryRun == $dry) | .type' \
         "$details" 2>/dev/null | wc -l | tr -d ' ')
 
     # Recorded, not just reported. chaos_assert_verification asks two questions that only have
     # a subject if something ran, and answering them anyway is how a report ends up confidently
     # wrong about why - see the comment there.
+    local shape="non-dry-run"; [ "$dry" = "true" ] && shape="dry-run"
+
     if [ "${executed:-0}" -ge 1 ]; then
         ACT_EXECUTED=1
-        pass "$ACT_FIXTURE was acted on ($executed action(s) executed)"
+        pass "$ACT_FIXTURE was acted on ($executed $shape action(s) executed)"
     else
         ACT_EXECUTED=0
-        fail "$ACT_FIXTURE was not acted on" "expected at least one executed, non-dry-run action"
+        fail "$ACT_FIXTURE was not acted on" "expected at least one executed, $shape action"
+    fi
+
+    # DryRun's other half, and the one worth more: it planned, and it still changed nothing.
+    # Without this the mode only proves the plan existed, which Observe already proves.
+    if [ "$dry" = "true" ]; then
+        local mutated
+        mutated=$(jq -r '[.actions[]? | select(.executedAt != null and .dryRun == false)] | length' \
+            "$details" 2>/dev/null | awk '{t += $1} END {print t + 0}')
+        [ "${mutated:-0}" -eq 0 ] \
+            && pass "nothing was executed for real (DryRun held)" \
+            || fail "$mutated action(s) executed for real in DryRun" "this is a containment failure"
     fi
 
     # Every executed action must name an approver. In Auto that is hephaisto/auto; the point
