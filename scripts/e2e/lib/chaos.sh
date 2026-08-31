@@ -343,9 +343,26 @@ chaos_await_investigations() {
     # Waiting on hasDiagnosis rather than on state, because an incident reaches a terminal
     # state on several paths that are not "it was investigated" - suppressed as a flap,
     # escalated on budget - and this phase is about the model actually running.
-    # Investigations are serialised, so this one scales with the count for a plainer reason:
-    # the agent works through them one at a time at roughly a minute each.
-    wait_for "investigations to conclude (expecting $want)" "${INVESTIGATION_TIMEOUT:-$(( 600 + 180 * want ))}" \
+    #
+    # The deadline scales with the QUEUE, not with the fixtures being waited for. Investigations
+    # are serialised, so a diagnosis for the ten fixture incidents means working through every
+    # other open incident ahead of them in arrival order - and a full-corpus run opens about
+    # three times as many as it applies, because the observability stack and the agent's own
+    # self-checks alert too. Deriving from `want` measured the wrong queue: the first --full run
+    # timed out at 2400s having concluded 18 of 37, with nothing wrong except the arithmetic.
+    local queue
+    queue=$(api_array "/api/incidents" | jq 'length' 2>/dev/null || echo 0)
+    if [ "${queue:-0}" -lt "$want" ]; then
+        queue="$want"
+    fi
+
+    # 180s an incident is comfortable for a hosted model and about right for a local one at
+    # MaxSteps=20, where each step is a full round trip through a single-instance server that
+    # is also the bottleneck for every other investigation in the queue.
+    local deadline="${INVESTIGATION_TIMEOUT:-$(( 600 + 180 * queue ))}"
+    say "investigation deadline: ${deadline}s for a queue of $queue (waiting on $want)"
+
+    wait_for "investigations to conclude (expecting $want)" "$deadline" \
         bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents' | jq -e 'type == \"array\" and ([.[] | select(.hasDiagnosis)] | length) >= $want' >/dev/null"
 
     local done_count
