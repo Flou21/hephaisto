@@ -1346,6 +1346,22 @@ replacement pod reaches Ready status without crash-looping"*. Policy denied it o
 different evidence, and it is recorded here because it is the only observation pointing the
 other way — not because it settles anything.
 
+**A second model family declines it too, 2026-08-31.** `deepseek-v4-flash` replayed the corpus
+three times: **c11 graded `MissedAnAction` 3 of 3**, with a correct root-cause diagnosis every
+time. Gemini declined 12 of 12 across four prompt arms; that is now **15 of 15 across two
+independent model families**, one of which had never seen a Hephaisto prompt before.
+
+This is the strongest evidence yet for the first branch above — that the fixture, not the
+planner, is what needs replacing — because it removes "this particular model under-reads" as an
+explanation. Two models with different training, different tokenizers and different vendors reach
+the same defensible conclusion from the same two-volume premise. It also independently justifies
+building c12 rather than continuing to edit prompts against c11: a third prompt arm was never
+going to move something that is not prompt-shaped.
+
+Worth noting what did *not* happen. Across all 27 DeepSeek runs there were **zero wrong findings
+and zero harmful proposals** — the `MustNotPropose` guard held on a model the prompts were never
+tuned for, which is a stronger test of it than the one it was written against.
+
 ### 42. Verification predicates are workload-shaped, and two action types are not
 
 `VerificationChecks` answers "is the owning workload settled and Ready" for everything except
@@ -1895,3 +1911,125 @@ costs nothing if it turns out to be one.
 Both arms tested and verified falsifiable: removing the check fails the four new permanent-error
 assertions, while `"Rate limit exceeded for this project's billing tier"` — which contains the
 word this list is most tempted to match on — still retries.
+
+### 55. The cassette corpus grades the model that recorded it
+
+**Symptom.** Replaying the nine-scenario corpus against `deepseek-v4-flash` on 2026-08-31
+reported **6 of 9 runs structurally unsound**, with replay miss rates from 14% to 65%. The same
+cassette replayed three times gave 14%, 38% and 50%.
+
+**Cause.** A cassette records the tool calls the *recording* model chose to make, and nothing
+else. `c5.json` declares **31 tools** to the model and records **9 calls across 7 of them**. Of
+the six tools DeepSeek missed on, five — `grafana_api_request`, `list_datasources`,
+`list_deployments`, `list_statefulsets`, `search_dashboards` — have **zero** recorded calls,
+because Gemini never asked those questions. The sixth, `get_pod_logs`, has three recorded calls,
+which disables `ReplayToolset`'s fuzzy arm (it resolves only when exactly one call to that tool
+was recorded), so any argument difference is a miss too.
+
+**Why it matters.** A miss is not a neutral absence. `ReplayToolset` answers "nothing was
+recorded", which to the model reads as a cluster with no deployments and no dashboards — so it
+digs further, spends its `MaxToolCalls` budget, and can exhaust the run. Replay does not merely
+fail to help an unfamiliar model, it actively misleads it.
+
+So the corpus is a **within-model** instrument. For its designed job — measuring a prompt or
+budget change on a fixed model — it is sound, and the recorded evidence matches because the model
+asks roughly the same questions. As a **cross-model** benchmark it is biased toward whichever
+model recorded it, and the `sound` count is the guard that says so rather than a nuisance.
+
+This was not understood when the provider work started; the plan for it asserted the corpus was
+provider-neutral because the *format* is. The format is. The coverage is not.
+
+**Consequence for a provider switch.** Adopting a new investigating model invalidates the corpus
+as a baseline for it, and re-recording is part of the switch rather than an optional follow-up.
+Note the direction of the bias before discounting a result: DeepSeek scored 8/9 while being fed
+"nothing was recorded" for a third of its calls, so that is a floor and not an inflated number.
+
+**Options, none of them free.**
+- Re-record the corpus per candidate model. Sound, and costs a cluster run per fixture per model.
+- Record with a deliberately exhaustive tool sweep, so a cassette covers more of the surface than
+  one model happened to want. Larger cassettes, one recording, and it never covers everything.
+- Report `sound` as a first-class number beside accuracy, and refuse to rank models on a corpus
+  they did not record. Cheapest, and honest about what the instrument can carry.
+
+**Size.** M for the first, S for the third.
+
+### 56. The planner assumed every provider can enforce a JSON schema
+
+**Status: fixed 2026-08-31** — see the end of this entry.
+
+**Symptom.** On `deepseek-v4-flash`, all nine cassettes produced a correct diagnosis and
+`NoPlan`. The agent looked like it was declining to act.
+
+**Cause.** Phase 2 sets `ResponseFormat = ChatResponseFormat.ForJsonSchema<ActionPlanDraft>`.
+DeepSeek answers `HTTP 400 invalid_request_error: This response_format type is unavailable now`.
+Confirmed against the API directly rather than inferred: `json_schema` 400s, `json_object`
+answers.
+
+**Why it matters** is the disguise, not the outage. Phase 1 is untouched, so the agent
+investigates well and proposes nothing — and `NoPlan` is not distinguishable, in a run summary,
+from a considered `CorrectlyDeclined`. "The agent can diagnose but never acts" is the exact claim
+[v0.2.0's acceptance criterion](roadmap.md) exists to disprove, and it must not be able to hide
+inside a verdict that reads as judgement.
+
+It also cost an hour of misdiagnosis: the first inference was that the low-confidence escalation
+gate was skipping phase 2, because the planning error was invisible — a log filter had been
+swallowing the line, since the exception detail renders on the same line as the message.
+
+**Fix.** `Llm:PlanningStructuredOutput=JsonObject` asks for plain JSON and moves the schema into
+the prompt. Both branches derive it from `ActionPlanDraft` through the same
+`ChatResponseFormat.ForJsonSchema` call, so what the model is shown and what the reply is parsed
+against cannot drift.
+
+Off by default, and deliberately the weaker mode: the shape becomes a request rather than a
+constraint. That is safe only because nothing downstream takes the model's word for it — the
+draft is parsed leniently, every cited finding id is checked by `GroundingVerifier`, and an
+action missing a namespace, kind or name is dropped before an executor sees it. A model that
+ignores the requested shape produces no plan, not a wrong one.
+
+**Size.** S.
+
+**Fixed 2026-08-31.** Verified on c3 and c4, the two cassettes that replay soundly for this
+model: `CorrectlyDeclined` on both, at the default confidence gate.
+
+### 57. Production needs a Google API key so the search box has a semantic arm
+
+**Symptom.** Embeddings are the one part of the stack with no alternative provider.
+`GeminiEmbeddingGeneratorFactory` is the only implementation, and `Llm:EmbeddingDimensions=768`
+is pinned to the `vector(768)` column in `incident_digests`.
+
+**Why it matters.** For a self-hosted Kubernetes agent, requiring an external API account so
+that one arm of the console's hybrid search works is a deployment tax out of proportion to what
+it buys. It is not a cost problem — `gemini-embedding-001` is $0.15/M on short, hash-deduped text
+— and not a correctness problem, since `IncidentEmbedder.EmbedAsync` already returns null on any
+failure and `IncidentSearch` falls back to its lexical arm. It is a dependency problem.
+
+**Candidate.** `EmbeddingGemma-300m`: 622 MB, **768 dimensions natively so the column is
+unchanged**, MTEB English v2 69.67, and it runs on CPU as an in-cluster Deployment.
+`Qwen3-Embedding-0.6B` scores higher (70.70) but is 1024-dimensional, so it needs Matryoshka
+truncation or a migration.
+
+**Blocked on a measurement that does not exist.** Nothing in this repo scores search quality, so
+a change here could only be justified by someone else's benchmark. Building that measurement is
+the first half of the work, and without it this would be an unevidenced swap bundled next to
+measured ones — which is the habit the eval harness exists to break. Existing digests also need
+re-embedding: a data backfill, not a schema migration.
+
+**Size.** M, of which the measurement is most of it.
+
+### 58. The eval judge bypasses the provider seam
+
+**Symptom.** `Scoring/RootCauseJudge.cs` posts directly to
+`generativelanguage.googleapis.com/v1beta/models/{model}:generateContent` with an
+`x-goog-api-key` header and its own `HEPHAISTO_GEMINI_API_KEY` lookup. It never touches
+`IChatClientFactory`.
+
+**Why it matters, and why it is small.** It fails soft — returns null, and the run scores
+deterministically — so it blocks nothing, and every bake-off so far has simply run `--no-judge`.
+But it means a provider switch is complete everywhere except the instrument that grades it, and a
+judge on a different model from the agent is a defensible choice that should be *chosen* rather
+than inherited from where the code happened to be written.
+
+**Consequence today.** With no Gemini credit the judge cannot run at all, so comparisons are
+deterministic-only and not directly comparable to the published `22/24`, which was judged.
+
+**Size.** S.
