@@ -86,12 +86,14 @@ public sealed record AnswerKey
     };
 
     /// <summary>
-    /// The nine gradeable fixtures.
+    /// The ten gradeable fixtures.
     /// </summary>
     /// <remarks>
     /// <b>c6 and c9 are deliberately absent</b>, and their absence is the reason this harness
-    /// reported n/8 for three releases. c11 joined in v0.5.0, so it is n/9 until a replacement
-    /// for one of those two exists - see <c>docs/backlog.md</c> #2. The denominator is stated
+    /// reported n/8 for three releases. c11 joined in v0.5.0 and c12 followed it, so the corpus
+    /// is n/10 - the denominator the MVP bar was always written against - and it gets there with
+    /// ten of the twelve fixtures rather than by replacing either of the two that cannot run.
+    /// See <c>docs/backlog.md</c> #2. The denominator is stated
     /// rather than rounded up, which is the whole habit. <c>infra/chaos/README.md</c> measures c6 as unable to fire on
     /// <c>local-path</c> - every PVC there reports the node filesystem, so the ratio "sits at ~0.62
     /// node-wide and moves by 0.0045". c9 is node-wide and evicts pods across the cluster
