@@ -56,6 +56,10 @@ public class TransientRetryTests
     [InlineData("Insufficient credits. Add more at https://openrouter.ai/settings/credits")]
     [InlineData("Incorrect API key provided: sk-or-v1********. You can find your API key at "
         + "https://openrouter.ai/keys")]
+    // Observed on 2026-08-31 mid-benchmark, and retried four times a step until the run ended.
+    // A cap is a number a human chose; backoff does not move it before the month does.
+    [InlineData("Your project has exceeded its monthly spending cap. Please go to AI Studio at "
+        + "https://ai.studio/spend to manage your project spend cap.")]
     public void A_permanent_provider_failure_is_not_retried(string message)
     {
         // These arrive with NO HTTP status, which is what makes them dangerous: the transport

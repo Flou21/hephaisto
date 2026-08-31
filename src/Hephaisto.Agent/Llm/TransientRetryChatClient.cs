@@ -86,6 +86,13 @@ public sealed class TransientRetryChatClient(
         "insufficient credits",
         "invalid_api_key",
         "incorrect api key",
+
+        // Observed 2026-08-31, retried four times a step for the last eight investigations of
+        // a benchmark run: "Your project has exceeded its monthly spending cap." A cap is not
+        // an empty wallet and not a rate limit - it is a number a human chose, and no amount
+        // of backoff moves it before the month does. Same class as the first entry, different
+        // billing page.
+        "spending cap",
     ];
 
     private static readonly string[] RetryableMarkers =
