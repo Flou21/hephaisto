@@ -218,7 +218,19 @@ chaos_await_incidents() {
     # actually time out: 46 assertions passed and the remaining forty never ran, so one slow
     # fixture cost every other answer. The per-fixture check below reports precisely which one
     # is missing, which is the useful output.
-    wait_for "an incident for each of: $APPLIED" "${INCIDENT_TIMEOUT:-$(( 600 + 150 * want ))}" \
+    # The count term models contention: more fixtures, more to evaluate, more to wait for. It
+    # does not model a fixture whose rule cannot be true sooner than a fixed wall-clock window
+    # no matter how idle the cluster is. c8 needs changes(...)[30m] >= 4 - thirty minutes of
+    # evidence before the expression can evaluate true at all - and c10 sits behind two
+    # 5-minute rate windows and a 5-minute `for:`. At the ten fixtures of --full the count term
+    # yields 2100s, which is UNDER c8's floor, so the gate would time out on a fixture that was
+    # exactly on schedule. A timeout reads as a broken harness rather than as a bad diagnosis,
+    # which is the one confusion this file spends the most comments trying to prevent.
+    local derived=$(( 600 + 150 * want ))
+    local floor; floor=$(chaos_incident_floor)
+    [ "$floor" -gt "$derived" ] && derived="$floor"
+
+    wait_for "an incident for each of: $APPLIED" "${INCIDENT_TIMEOUT:-$derived}" \
         bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents?limit=100' | jq -e --argjson want '$want_json' 'type == \"array\" and (. as \$inc | \$want | all(. as \$t | \$inc | any(.targetName // \"\" | startswith(\$t))))' >/dev/null" \
         || warn "not every fixture opened an incident within the deadline; see the per-fixture results below"
 
@@ -228,6 +240,22 @@ chaos_await_incidents() {
         && pass "$got incident(s) opened in $CHAOS_NS from $want fixture(s)" \
         || fail "only ${got:-0} incident(s) in $CHAOS_NS, expected $want" \
                 "check Alertmanager: curl 127.0.0.1:$PF_PORT_ALERT/api/v2/alerts"
+}
+
+# The wall-clock a fixture needs before its alert rule can fire at all, regardless of how many
+# other fixtures are running. Only the slow ones appear here; everything else is covered by the
+# count-based term. These are read off the shipped rule windows, not guessed.
+chaos_incident_floor() {
+    local f need floor=0
+    for f in $APPLIED; do
+        case "$f" in
+            c8)  need=2400 ;;   # changes(...)[30m] >= 4, plus evaluation lag behind the window
+            c10) need=1200 ;;   # two 5-minute rate windows and a 5-minute for:
+            *)   need=0 ;;
+        esac
+        [ "$need" -gt "$floor" ] && floor="$need"
+    done
+    echo "$floor"
 }
 
 # ---------------------------------------------------------------------------------------
