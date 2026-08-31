@@ -50,6 +50,9 @@ fixture_kind() {
         # Fires the same shipped rule as c2 - it IS a crash loop, it just stops
         # being one when the pod is replaced. That is the whole fixture.
         c11) echo CrashLoopBackOff ;;
+        # Same rule again, and the same reason. c12 is c11's mechanism with one
+        # volume instead of two - see infra/chaos/c12-stale-lease.yaml and #41.
+        c12) echo CrashLoopBackOff ;;
         *)   echo "" ;;
     esac
 }
@@ -105,6 +108,26 @@ fixture_target() {
         *)   echo "$1" ;;
     esac
 }
+
+# The Deployment name a fixture creates, which is not the fixture id. Needed by the act
+# phase, which asks the cluster directly rather than asking the API about an incident.
+fixture_workload() {
+    case "$1" in
+        c11) echo c11-transient ;;
+        c12) echo c12-stale-lease ;;
+        *)   echo "" ;;
+    esac
+}
+
+# THE FIXTURE THE ACT PHASE ACTS ON.
+#
+# c12 by default, and c11 is still selectable with ACT_FIXTURE=c11. Both are faults a pod
+# replacement repairs; they differ in how many inferences that takes. v0.5.0 measured that
+# c11 takes two - reconciling a PVC against an emptyDir marker - and that the agent does not
+# make the second one, over twelve replays and four prompt arms (#41). Resting v0.2.0's
+# acceptance criterion on the harder of the two was not a decision anyone made; it was the
+# only transient fixture that existed.
+ACT_FIXTURE="${ACT_FIXTURE:-c12}"
 
 chaos_apply() {
     local fixtures="${FIXTURES:-$DEFAULT_FIXTURES}"
@@ -565,7 +588,7 @@ _something_executed() {
 # An action was admitted, executed and recorded against the fixture that needed it.
 chaos_assert_action_executed() {
     local details="$WORKDIR/details.jsonl"
-    local target; target=$(fixture_target c11)
+    local target; target=$(fixture_target "$ACT_FIXTURE")
 
     # details.jsonl was collected during `validate`, BEFORE anything acted - the action
     # happens once the investigation concludes, which is after that snapshot was taken. So
@@ -586,11 +609,11 @@ chaos_assert_action_executed() {
     # a subject if something ran, and answering them anyway is how a report ends up confidently
     # wrong about why - see the comment there.
     if [ "${executed:-0}" -ge 1 ]; then
-        C11_EXECUTED=1
-        pass "c11 was acted on ($executed action(s) executed)"
+        ACT_EXECUTED=1
+        pass "$ACT_FIXTURE was acted on ($executed action(s) executed)"
     else
-        C11_EXECUTED=0
-        fail "c11 was not acted on" "expected at least one executed, non-dry-run action"
+        ACT_EXECUTED=0
+        fail "$ACT_FIXTURE was not acted on" "expected at least one executed, non-dry-run action"
     fi
 
     # Every executed action must name an approver. In Auto that is hephaisto/auto; the point
@@ -604,10 +627,11 @@ chaos_assert_action_executed() {
         || fail "$anonymous executed action(s) have no approvedBy"
 }
 
-# True once c11's incident has been closed by the verifier.
-_c11_resolved() {
+# True once the acting fixture's incident has been closed by the verifier.
+_act_resolved() {
     [ "$(api_array "/api/incidents?state=Resolved&limit=100" \
-        | jq -r '[.[] | select(.target.name != null and (.target.name | contains("c11")))] | length' \
+        | jq -r --arg t "$(fixture_target "$ACT_FIXTURE")" \
+            '[.[] | select(.target.name != null and (.target.name | contains($t)))] | length' \
         2>/dev/null || echo 0)" -ge 1 ]
 }
 
@@ -616,15 +640,17 @@ _c11_resolved() {
 # the Deployment duly reports one available replica for part of every crash cycle. The fixture
 # now carries minReadySeconds to close that, and this asserts the pod is genuinely Ready too -
 # belt and braces, because a false pass here would report a broken workload as fixed.
-_c11_available() {
-    [ "$(kc -n "$CHAOS_NS" get deploy c11-transient \
+_act_available() {
+    local w; w=$(fixture_workload "$ACT_FIXTURE")
+
+    [ "$(kc -n "$CHAOS_NS" get deploy "$w" \
         -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo 0)" -ge 1 ] \
-        && [ "$(kc -n "$CHAOS_NS" get pods -l app.kubernetes.io/name=c11-transient \
+        && [ "$(kc -n "$CHAOS_NS" get pods -l "app.kubernetes.io/name=$w" \
             -o jsonpath='{.items[*].status.containerStatuses[*].ready}' 2>/dev/null)" = "true" ]
 }
 
 # The fixture is actually healthy afterwards. This is the half that distinguishes "the agent
-# did something" from "the agent fixed it", and it is why c11 exists rather than reusing c8:
+# did something" from "the agent fixed it", and it is why c11 and c12 exist rather than c8:
 # a fixture that recovers on its own would pass this whatever the agent did.
 chaos_assert_verification() {
     # NOTHING RAN MEANS THERE IS NOTHING TO VERIFY, and saying so is the whole point.
@@ -639,10 +665,10 @@ chaos_assert_verification() {
     #
     # So: skip, naming the assertion that actually failed. A report that is wrong about why is
     # worse than one that is merely incomplete.
-    if [ "${C11_EXECUTED:-0}" != "1" ]; then
-        local because="nothing was executed - see 'c11 was not acted on'; there is no action to verify"
-        skip "c11 is available after the restart" "$because"
-        skip "c11's incident reached Resolved" "$because"
+    if [ "${ACT_EXECUTED:-0}" != "1" ]; then
+        local because="nothing was executed - see '$ACT_FIXTURE was not acted on'; there is no action to verify"
+        skip "$ACT_FIXTURE is available after the restart" "$because"
+        skip "$ACT_FIXTURE's incident reached Resolved" "$because"
         return 0
     fi
 
@@ -655,15 +681,15 @@ chaos_assert_verification() {
     # 4 minutes covers the T+60s check plus scheduler poll, pod recreation and image pull, and
     # stops short of the T+5m second attempt - if the first check did not settle it, waiting
     # for the second would be measuring something else.
-    wait_for "c11 to become available again" 240 _c11_available \
-        && pass "c11 is available after the restart" \
-        || fail "c11 is still not available" "the action ran but the workload did not recover"
+    wait_for "$ACT_FIXTURE to become available again" 240 _act_available \
+        && pass "$ACT_FIXTURE is available after the restart" \
+        || fail "$ACT_FIXTURE is still not available" "the action ran but the workload did not recover"
 
     # And the incident says so. Resolved is granted only by hephaisto/verifier, after a
     # deterministic predicate looked at the cluster - a model may never grant it.
-    wait_for "c11's incident to reach Resolved" 240 _c11_resolved \
-        && pass "c11's incident reached Resolved" \
-        || fail "c11's incident did not reach Resolved" \
+    wait_for "$ACT_FIXTURE's incident to reach Resolved" 240 _act_resolved \
+        && pass "$ACT_FIXTURE's incident reached Resolved" \
+        || fail "$ACT_FIXTURE's incident did not reach Resolved" \
                "the workload recovered but verification never closed the incident"
 }
 

@@ -224,6 +224,26 @@ public sealed record AnswerKey
             // destroy the evidence here: the one that could - DeletePvc, which holds the counter -
             // is permanently denied and can never be executed whatever a plan says.
         },
+        new()
+        {
+            Fixture = "c12",
+            ExpectedKind = SignalKind.CrashLoopBackOff,
+            ExpectedRootCause =
+                "The container aborts at startup because the lease recorded at /data/lease names "
+                + "this pod itself, and the entrypoint refuses to re-take a lease it already holds, "
+                + "so it exits 1 and the Deployment enters CrashLoopBackOff. The comparison is "
+                + "against the pod's own hostname, so any replacement pod has a different name and "
+                + "starts cleanly.",
+            MustMentionAnyOf = ["lease", "hostname", "/data"],
+
+            // The second fixture where acting is correct, and the reason it exists. c11 asks the
+            // same question through two volumes - a PVC counter gated by an emptyDir marker - and
+            // v0.5.0 measured twelve replays across four prompt arms declining it twelve times,
+            // every one of them reasoning correctly that PVC contents survive a replacement. c12
+            // is one volume and one comparison, so it tests whether the agent will act on a
+            // transient fault rather than whether it will spot a two-volume interaction. See #41.
+            AcceptableActions = [ActionType.RestartPod, ActionType.RolloutRestart],
+        },
     ];
 
     public static AnswerKey? For(string fixture) =>

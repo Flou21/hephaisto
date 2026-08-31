@@ -81,8 +81,8 @@ Options:
   --keep-cluster       do not delete the cluster on exit
   --no-judge           skip the LLM root-cause grading
   --mode <M>      Observe (default), DryRun or Auto. Auto installs the chart able to act,
-                  adds c11 to the fixtures and runs the act phase. Observe asserts the
-                  opposite: that nothing executed.
+                  adds $ACT_FIXTURE (c12 by default) to the fixtures and runs the act phase.
+                  Observe asserts the opposite: that nothing executed.
   --no-ui              skip the Playwright suite
   --yes                do not prompt before pushing an rc tag
   -h, --help           this
@@ -242,10 +242,12 @@ fi
 # --- chaos --------------------------------------------------------------------------------
 CURRENT_PHASE=chaos
 if should_run chaos; then
-    # c11 is the only fixture a restart actually fixes, so an acting run needs it and a
-    # containment run has no use for it.
+    # An acting run needs a fixture a restart actually fixes; a containment run has no use
+    # for one. ACT_FIXTURE names it (c12 by default, c11 with ACT_FIXTURE=c11), and adding it
+    # here rather than naming a fixture twice keeps the thing injected and the thing asserted
+    # from drifting apart.
     if [ "$E2E_MODE" != "Observe" ] && [ -z "${FIXTURES:-}" ]; then
-        FIXTURES="${DEFAULT_FIXTURES},c11"
+        FIXTURES="${DEFAULT_FIXTURES},${ACT_FIXTURE}"
         export FIXTURES
     fi
 
