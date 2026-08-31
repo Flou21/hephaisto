@@ -702,19 +702,57 @@ button:disabled {
     border-top: 1px solid var(--border);
 }
 
-.hp-code {
-    font-family: var(--mono);
-    font-size: var(--text-md);
-    line-height: 1.4;
+/* --------------------------------------------------- two shared primitives
+ *
+ * backlog #52: the console had two unrelated implementations of a progress bar and two
+ * near-duplicate treatments of a monospace block. Two implementations of one idea drift, and a
+ * design language exists to stop exactly that.
+ *
+ * What is shared is defined once, here. What differs stays on the individual rules, because it
+ * is CONTEXT rather than accident and flattening it would be the wrong fix:
+ *
+ *   the bar   .hp-meter-* is a page-level budget meter that carries threshold marks, so it is
+ *             taller and needs a positioning context; .hp-conf-* is an inline confidence
+ *             indicator sitting inside a finding, so it is shorter and has a fixed width. One
+ *             height for both would make one of them wrong for where it lives.
+ *   the block .hp-code is a block quotation of program output and is monospace; .hp-excerpt is
+ *             a short inline citation inside a finding and inherits the body face. The padding
+ *             differs for the same reason.
+ *
+ * So this consolidates the implementation without changing the rendering, which is the half the
+ * visual baselines can actually prove. A deliberate visual unification, if anyone wants one,
+ * is then a separate change somebody can review as a design decision rather than a refactor.
+ */
+
+.hp-code,
+.hp-excerpt {
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: var(--radius);
+    font-size: var(--text-md);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.hp-meter-track,
+.hp-conf-track {
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.hp-meter-fill,
+.hp-conf-fill {
+    height: 100%;
+}
+
+.hp-code {
+    font-family: var(--mono);
+    line-height: 1.4;
     padding: 0.4rem 0.55rem;
     margin: 0 0 0.4rem;
     max-height: 22rem;
     overflow: auto;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
 }
 
 .hp-raw-code {
@@ -793,14 +831,10 @@ details > summary {
     width: 7rem;
     height: 0.5rem;
     background: var(--bg);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-sm);
-    overflow: hidden;
 }
 
 .hp-conf-fill {
     display: block;
-    height: 100%;
     background: var(--purple);
 }
 
@@ -837,12 +871,6 @@ details > summary {
 .hp-excerpt {
     margin: 0.2rem 0 0.1rem;
     padding: 0.25rem 0.5rem;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    font-size: var(--text-md);
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
 }
 
 .hp-source {
@@ -1053,16 +1081,11 @@ details > summary {
 }
 
 .hp-meter-track {
+    /* The positioning context the threshold marks are absolutely placed against, and the one
+       structural difference from .hp-conf-track that is not merely dimensional. */
     position: relative;
     height: 0.7rem;
     background: var(--bg-sunken);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-sm);
-    overflow: hidden;
-}
-
-.hp-meter-fill {
-    height: 100%;
 }
 
 .meter-ok { color: var(--green); }
