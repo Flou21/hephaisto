@@ -77,6 +77,15 @@ public sealed class TransientRetryChatClient(
         "api key not valid",
         "api_key_invalid",
         "has not been used in project",
+
+        // The OpenAI-compatible providers say it their own way. Same test applied: each of
+        // these names a condition a retry cannot change. DeepSeek answers "Insufficient
+        // Balance", OpenRouter "insufficient credits"; both are a human visiting a billing
+        // page, exactly as Gemini's "prepayment credits" above.
+        "insufficient balance",
+        "insufficient credits",
+        "invalid_api_key",
+        "incorrect api key",
     ];
 
     private static readonly string[] RetryableMarkers =
@@ -91,6 +100,11 @@ public sealed class TransientRetryChatClient(
         "rate limit",
         "too many requests",
         "deadline exceeded",
+
+        // OpenRouter routes to upstream hosts that can all be busy at once. It reads like a
+        // configuration error and is not one: the next attempt usually lands somewhere else.
+        // "unavailable" above does not match it - the phrase is "no instances available".
+        "no instances available",
     ];
 
     public override async Task<ChatResponse> GetResponseAsync(

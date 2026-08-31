@@ -49,6 +49,13 @@ public class TransientRetryTests
         + "https://ai.studio/projects to manage your project and billing.")]
     [InlineData("API key not valid. Please pass a valid API key.")]
     [InlineData("Gemini API has not been used in project 12345 before or it is disabled.")]
+    // The same condition as the first case, in each new provider's own words. A cheaper
+    // provider does not make running out of credit any more retryable.
+    [InlineData("Error code: 402 - {'error': {'message': 'Insufficient Balance', "
+        + "'type': 'unknown_error'}}")]
+    [InlineData("Insufficient credits. Add more at https://openrouter.ai/settings/credits")]
+    [InlineData("Incorrect API key provided: sk-or-v1********. You can find your API key at "
+        + "https://openrouter.ai/keys")]
     public void A_permanent_provider_failure_is_not_retried(string message)
     {
         // These arrive with NO HTTP status, which is what makes them dangerous: the transport
@@ -78,10 +85,33 @@ public class TransientRetryTests
     [InlineData("The model is overloaded. Please try again later.")]
     [InlineData("Resource has been exhausted (e.g. check quota).")]
     [InlineData("Rate limit exceeded for this project's billing tier")]
+    // Mentions credits, and is not a billing failure: a request larger than the remaining
+    // balance is retryable the moment a shorter turn fits. The permanent markers have to be
+    // narrow enough to let this through.
+    [InlineData("This request requires more credits than your remaining balance affords.")]
     public void Transient_wording_survives_the_permanent_check(string message)
     {
         TransientRetryChatClient.Classify(new HttpRequestException(message))
             .Should().NotBeNull();
+    }
+
+    /// <summary>
+    /// A router with every upstream busy reads like a configuration error and is not one.
+    /// </summary>
+    /// <remarks>
+    /// Given a 404 deliberately: that status is not retryable, so this passes only if the
+    /// prose marker is doing the work. "unavailable" does not match it - OpenRouter's phrase
+    /// is "no instances available", which contains "available" and not its negation.
+    /// </remarks>
+    [Fact]
+    public void An_exhausted_upstream_pool_is_retried_despite_an_unretryable_status()
+    {
+        var ex = new HttpRequestException(
+            "No instances available for openai/gpt-oss-120b",
+            null,
+            HttpStatusCode.NotFound);
+
+        TransientRetryChatClient.Classify(ex).Should().NotBeNull();
     }
 
     [Fact]
