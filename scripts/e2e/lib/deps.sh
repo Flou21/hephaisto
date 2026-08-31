@@ -322,14 +322,23 @@ deps_verify() {
         && pass "prometheus has $targets healthy targets" \
         || fail "prometheus has only ${targets:-0} healthy targets"
 
+    # kube_pod_container_status_waiting_reason only has series while a container is ACTUALLY
+    # waiting, so asserting on it means the check passes when the cluster is unhealthy and
+    # fails when it is fine. It passed for a year because a fresh cluster always has something
+    # in ContainerCreating; it failed the first time this ran against a warm one, where every
+    # pod was Running - which is the state a green cluster is supposed to be in.
+    #
+    # kube_pod_status_phase carries one series per pod at all times and comes from the same
+    # exporter, so it answers the question actually being asked - is kube-state-metrics
+    # producing workload state - without requiring something to be broken to say yes.
     local ksm
     ksm=$(curl -sS --max-time 15 \
-          "http://127.0.0.1:$PF_PORT_PROM/api/v1/query?query=kube_pod_container_status_waiting_reason" \
+          "http://127.0.0.1:$PF_PORT_PROM/api/v1/query?query=kube_pod_status_phase" \
           | jq -r '.data.result | length')
     [ "${ksm:-0}" -gt 0 ] \
-        && pass "kube-state-metrics is producing workload state" \
-        || fail "no kube_pod_container_status_waiting_reason series" \
-                "almost every shipped alert rule is built on these"
+        && pass "kube-state-metrics is producing workload state ($ksm pod series)" \
+        || fail "no kube_pod_status_phase series" \
+                "almost every shipped alert rule is built on kube-state-metrics"
 
     deps_verify_llm_reachable
 }
@@ -350,10 +359,18 @@ deps_verify_llm_reachable() {
     [ -n "$endpoint" ] || return 0
 
     local pod="llm-reachability-$$"
-    local out
-    out=$(kc run "$pod" --image=curlimages/curl:8.11.1 --restart=Never --rm -i --quiet \
+    local raw out
+    raw=$(kc run "$pod" --image=curlimages/curl:8.11.1 --restart=Never --rm -i --quiet \
               --command -- curl -s -o /dev/null --max-time 15 -w '%{http_code}' \
-              "${endpoint%/}/models" 2>/dev/null | tr -d '[:space:]')
+              "${endpoint%/}/models" 2>/dev/null)
+
+    # `kubectl run --rm -i` can emit the container's output TWICE - once from the attach
+    # stream and once when it collects the final logs - and curl's -w writes no trailing
+    # newline, so a perfectly healthy probe comes back as "200200" and a naive comparison
+    # against "200" reports the endpoint unreachable. A false negative here is worse than no
+    # check at all: it blocks a setup that works. Keep the last three digits of whatever came
+    # back, which is the status code however many times kubectl decided to print it.
+    out=$(printf '%s' "$raw" | tr -cd '0-9' | tail -c 3)
 
     if [ "$out" = "200" ]; then
         pass "the cluster can reach the model at $endpoint"

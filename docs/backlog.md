@@ -2476,3 +2476,51 @@ surviving instance, in `should_run`, is safe because every call site is an `if` 
 
 **Size.** S to fix, and the reason it is written down is the class rather than the instance: this
 is the third time this repo has been bitten by `set -e` turning a false test into a dead run.
+
+### 68. A stack check that passed only while the cluster was unhealthy
+
+**Status: fixed 2026-08-31** — see the end of this entry.
+
+**Symptom.** `deps_verify` failed with *"no `kube_pod_container_status_waiting_reason` series"* on
+a cluster where every single pod was `Running`.
+
+**Cause.** That metric only has series while a container is **actually waiting**. The assertion
+therefore passes when something is broken and fails when nothing is — the inverse of what it
+reads as. It survived because a freshly created kind cluster always has something in
+`ContainerCreating` when deps runs, so the check had never been asked the question on a warm
+cluster. The first run to reuse one failed it, and the run before that had passed it only because
+`grafana-mcp` happened to be stuck in `CreateContainerConfigError`.
+
+**Why it matters** beyond the false failure: the check's stated purpose is *"kube-state-metrics is
+producing workload state"*, and it was not measuring that. A green result meant "KSM is up **and**
+something is currently broken", which is two claims welded together, one of them accidental.
+
+**Fix.** Query `kube_pod_status_phase`, which carries one series per pod at all times and comes
+from the same exporter. Same question, answerable without requiring a fault to exist.
+
+**Size.** S.
+
+**Fixed 2026-08-31.**
+
+### 69. The in-cluster model probe read a healthy endpoint as unreachable
+
+**Status: fixed 2026-08-31** — see the end of this entry.
+
+**Symptom.** `the cluster cannot reach http://…:11434/v1 (HTTP 200200)`. The endpoint was up, the
+pod could reach it, and the check said it could not.
+
+**Cause.** `kubectl run --rm -i` can emit the container's output twice — once from the attach
+stream, once when it collects the final logs — and `curl -w '%{http_code}'` writes no trailing
+newline, so two successes concatenate into `200200`, which is not `200`.
+
+**Why it matters** is the direction of the error. This check exists to fail a run early rather than
+let it discover an unreachable model forty minutes in ([#62](#62)), so a **false negative** in it
+is worse than not having it: it blocks a configuration that works, and it blames the thing that is
+fine. A guard that cries wolf gets deleted, and then #62 comes back.
+
+**Fix.** Keep the last three digits of whatever comes back, which is the status code however many
+times kubectl chose to print it. Verified against `200200`, `200`, `404404`, `000` and empty.
+
+**Size.** S.
+
+**Fixed 2026-08-31.**
