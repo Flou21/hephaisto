@@ -1754,3 +1754,52 @@ NuGet cache, so the restore the publish now performs downloads nothing.
 Verified end to end rather than by inspection: the fixed image was loaded into the live e2e kind
 cluster, the deployment repointed at it, and the console suite run against it — **9 passed, 0
 failed, 0 skipped**, where the same suite against the published image failed all nine.
+
+---
+
+## Opened by v0.5.0
+
+### 54. A depleted API budget is retried five times as a transport failure
+
+**Symptom.** Every investigation stalls, slowly, and the log says the provider failed
+*transiently*. It did not. The account is out of credit, which is as permanent as a failure gets
+until a human visits a billing page.
+
+**Evidence.** Observed on the development cluster on 2026-08-31, on every step of every
+investigation:
+
+```
+Provider call failed transiently (transport); retrying in 00:00:01.10 (attempt 1 of 5).
+Google.GenAI.ClientError: Your prepayment credits are depleted.
+```
+
+**Cause.** `TransientRetryChatClient.Classify` walks the exception chain for an
+`HttpRequestException` and returns `"transport"` when `StatusCode is null`, on the stated
+reasoning that *"no status at all is a transport failure - DNS, connection reset, TLS - and is
+exactly what a retry is for."* That reasoning is right about the cases it names and wrong about
+this one: `Google.GenAI.ClientError` arrives with no status, so a billing exhaustion takes the
+transport branch.
+
+**Why it matters.** Not the wasted calls — those fail immediately and cost nothing. It is that
+the failure is *reported as the wrong kind*. A run that says "transient, retrying" five times per
+step, on every step, produces a slow opaque stall where the true answer is one sentence a human
+can act on in a minute. The same shape as [#47](#47-the-act-phase-reports-two-failures-that-are-consequences-of-the-first):
+a report that is confidently wrong about why is worse than one that is merely incomplete.
+
+**Fix.** Classify on the message as well as the status. `RetryableMarkers` already exists for
+exactly this - matching message text when a status is absent - so the change is its mirror: a
+small set of *non*-retryable markers checked before the transport fallback, and a distinct log
+line saying the budget is gone rather than that the network hiccupped. Getting the provider's
+own error type out of the `HttpRequestException` shape would be better still, and is more work.
+
+**It also answers [#13](#13-the-retry-path-has-never-been-observed-firing-in-production).** That
+entry says the retry path *"is unit-tested nine ways and the overload it exists for has not
+recurred since it was written - the difference between tested and proven."* It is now proven: it
+fires, it backs off as designed, and it does not lose the investigation. It fired on an error it
+should have refused, which is a better first observation than never having seen it at all.
+
+**Size.** S.
+
+**Blocks:** recording a c12 cassette, replaying anything, and the `--mode Auto` cluster run —
+every one of which needs the model. Nothing in v0.5.0 that touches the agent's reasoning can be
+measured until the account has credit.
