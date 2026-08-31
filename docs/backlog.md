@@ -2092,3 +2092,40 @@ Then record a recommended `MaxSteps` alongside each model's price entry, since t
 a pair: what a model costs and how many turns it needs are the same decision.
 
 **Size.** S for the reporting, M for per-model budgets.
+
+### 60. A provider's own options cannot be reached through the OpenAI-compatible seam
+
+**Symptom.** `qwen3-next:80b` was benchmarked and abandoned: it emits **3,559 output tokens for a
+single agentic turn** (15,721 characters of reasoning) against a few hundred for
+`gpt-oss-120b`, which makes an investigation take 5-12 minutes instead of 82 seconds. The model
+is otherwise healthy — 100% GPU-resident, 893 tok/s prefill and 61 tok/s generation, both *better*
+than gpt-oss, with prompt-prefix caching working (0.1s on a repeated 26k-token prompt).
+
+**It is not fixable from here, and that is the actual entry.** Ollama can turn the reasoning off;
+the seam cannot ask it to. Three routes were tried on 2026-08-31:
+
+| route | result |
+|---|---|
+| `/no_think` in the system prompt | ignored — 3,295 tokens, reasoning intact |
+| `"think": false` on `/v1/chat/completions` | ignored, **and the tool call was lost** |
+| `PARAMETER think false` in a Modelfile | `Error: unknown parameter 'think'` |
+| `"think": false` on native `/api/chat` | **works** — reasoning length 0 |
+
+So the switch exists and sits on the one endpoint the seam deliberately does not use.
+
+**Why not just add it.** `OpenAiChatClientFactory` exists so that DeepSeek, OpenRouter, Ollama and
+LM Studio are one implementation. Reaching Ollama's native API means an Ollama-specific client,
+which is the thing the seam was built to avoid — and the same problem recurs per provider, since
+every one has options outside the OpenAI schema (Gemini's thinking budget, OpenRouter's provider
+routing, gpt-oss's `reasoning_effort`).
+
+The proportionate shape is a passthrough: a dictionary of provider-specific request properties on
+`LlmOptions`, injected via `ChatOptions.RawRepresentationFactory`, which `Microsoft.Extensions.AI`
+already provides for exactly this. One seam, provider-shaped extras, no second client. That also
+covers `reasoning_effort` for gpt-oss, which is a live tuning knob rather than a hypothetical one.
+
+**Until then, a model whose defaults do not suit an agentic loop cannot be tuned to fit it**, and
+verbosity — not accuracy and not throughput — is what disqualified the only open-weight
+alternative tested.
+
+**Size.** S.
