@@ -435,6 +435,31 @@ inconvenient: it carries the highest miss rate in the corpus for all four (45-67
 [#55](backlog.md) rather than a diagnosis failure. On the nine scenarios the instrument can
 actually carry, the local open-weight model matches the hosted frontier one.
 
+**What to run where, as of 2026-08-31.**
+
+- **Iterating on prompts and budgets: `gpt-oss-120b` locally, `MaxSteps=20`.** It matches the
+  hosted frontier model on the nine scenarios the instrument can carry (18/18 against 19/19) at
+  **zero marginal cost**, so replaying the corpus stops being a spending decision — which is the
+  whole reason the corpus exists. It also gets the *stronger* structured-output mode: llama.cpp
+  constrains generation with a grammar, so `JsonSchema` works locally even where a hosted DeepSeek
+  needs the weakened `JsonObject`. Wall clock is ~82s per investigation, against ~73s for hosted
+  DeepSeek — local is not the slow option.
+- **The e2e harness and CI: `gpt-oss-120b` hosted**, $0.03/$0.17 per million. The same weights, so
+  local results transfer and only latency needs re-checking; and CI cannot reach a laptop's Ollama.
+  A run costs roughly **$0.016** against $0.399 on `gemini-3.7-flash`.
+- **Production: unchanged.** Nothing here argues for moving it. This release measured
+  cheapness for a development loop, not reliability under load, and the frontier model has four
+  releases of history behind it.
+- **`deepseek-v4-flash` is the fallback**, not the choice: 83% against 100% on the same subset, at
+  6x the cost of hosted gpt-oss, and it cannot enforce a JSON schema.
+- **`qwen3-next:80b` was tested and rejected** on verbosity, not accuracy — see
+  [#60](backlog.md#60-a-providers-own-options-cannot-be-reached-through-the-openai-compatible-seam).
+
+**Note what the cheap option bought beyond money.** The Gemini control run hit the project's
+monthly spending cap partway through and lost eight of its thirty investigations. A local model
+has no cap, no quota and no billing page, which is worth something on the day a release depends on
+a measurement.
+
 **The step ceiling has to move with the model.** `gpt-oss-120b` scores 57% at `MaxSteps=12` and
 90% at 20, changing nothing else, because ten of its thirty runs were truncated mid-investigation
 — see [#59](backlog.md#59-the-step-budget-is-tuned-to-one-model-and-silently-caps-anothers-accuracy).
