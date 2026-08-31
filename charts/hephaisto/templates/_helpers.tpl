@@ -98,14 +98,17 @@ Three of these are safety properties rather than settings:
                           read an empty directory - and an unreadable switch is a switch that
                           is not there
   GEMINI_API_KEY          a literal here is a plaintext credential in `helm get values`, in
-                          the release Secret and in the git repo holding your Application,
-                          forever. That is precisely what `secrets.llm` exists to avoid.
+  LLM_API_KEY             the release Secret and in the git repo holding your Application,
+                          forever. That is precisely what `secrets.llm` exists to avoid. Both
+                          are listed because which one an install uses depends on
+                          Llm:Provider, and the one nobody remembered to reserve is the one
+                          that gets pasted in as a literal.
 
 Every reserved name already has a value that sets it properly, so refusing costs nothing.
 */}}
 {{- define "hephaisto.validateExtraEnv" -}}
 {{- $reserved := list
-      "GEMINI_API_KEY" "HEPHAISTO_MODE" "HEPHAISTO_SWITCHES_DIR"
+      "GEMINI_API_KEY" "LLM_API_KEY" "HEPHAISTO_MODE" "HEPHAISTO_SWITCHES_DIR"
       "ConnectionStrings__hephaisto" "ASPNETCORE_URLS"
       "Grafana__McpUrl" "Grafana__ServiceAccountToken" -}}
 {{- range .Values.extraEnv -}}

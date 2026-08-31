@@ -342,11 +342,28 @@ spec:
             # ---------------------------------------------------------------------------
             # LLM
             # ---------------------------------------------------------------------------
+            # Two keys, both optional, because which one is needed depends on Llm:Provider
+            # and an install legitimately carries only one. GEMINI_API_KEY serves the gemini
+            # provider and, whatever answers chat, the embedding generator; LLM_API_KEY serves
+            # the openai-compatible provider - DeepSeek, OpenRouter, a local server.
+            #
+            # `optional: true` moves the missing-key failure from the kubelet to the app,
+            # which is an improvement rather than a relaxation: CreateContainerConfigError on
+            # a pod nobody is watching says less than the agent refusing to start with the
+            # name of the setting it wants. The Secret itself is still `required` - a dangling
+            # reference is a different mistake and stays fatal at template time.
             - name: GEMINI_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ required "secrets.llm is required: the chart never creates a Secret, it only references one." .Values.secrets.llm }}
                   key: GEMINI_API_KEY
+                  optional: true
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secrets.llm is required: the chart never creates a Secret, it only references one." .Values.secrets.llm }}
+                  key: LLM_API_KEY
+                  optional: true
 
             # A DIRECTORY, not a file: each ConfigMap key projects as its own file under it.
             # Unset outside Kubernetes, which makes the ConfigMap arm silent rather than
@@ -373,8 +390,8 @@ spec:
             # Position matters: Kubernetes takes the LAST value for a duplicated env name, so
             # appending here means an operator can override a chart-set variable. That is the
             # point, and it is also why negative-tests.sh asserts you cannot quietly displace
-            # GEMINI_API_KEY with a literal - a plaintext key in `helm get values` forever is
-            # exactly what `secrets.llm` exists to prevent.
+            # GEMINI_API_KEY or LLM_API_KEY with a literal - a plaintext key in
+            # `helm get values` forever is exactly what `secrets.llm` exists to prevent.
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

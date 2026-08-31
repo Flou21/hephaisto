@@ -79,20 +79,37 @@ else
 fi
 
 # ---------------------------------------------------------------------------------------
-# 3. Gemini API key
+# 3. Model API keys
 # ---------------------------------------------------------------------------------------
-# Set HEPHAISTO_GEMINI_API_KEY in the environment, or this step is skipped and the agent
-# runs with no model - it still detects, dedups, correlates and serves the UI, it just
-# cannot investigate. That is a legible degraded state rather than a crash.
+# Two keys, either or both. HEPHAISTO_GEMINI_API_KEY serves the gemini provider and, on any
+# provider, the embedding generator; HEPHAISTO_LLM_API_KEY serves the openai-compatible one
+# (DeepSeek, OpenRouter, a local server). With neither, this step is skipped and the agent
+# runs with no model - it still detects, dedups, correlates and serves the UI, it just cannot
+# investigate. That is a legible degraded state rather than a crash.
 if have "$APP_NS" hephaisto-llm; then
   echo "hephaisto-llm: already present, leaving alone"
-elif [ -n "${HEPHAISTO_GEMINI_API_KEY:-}" ]; then
-  kubectl -n "$APP_NS" create secret generic hephaisto-llm \
-    --from-literal=GEMINI_API_KEY="$HEPHAISTO_GEMINI_API_KEY" >/dev/null
-  echo "hephaisto-llm: created"
+elif [ -n "${HEPHAISTO_GEMINI_API_KEY:-}" ] || [ -n "${HEPHAISTO_LLM_API_KEY:-}" ]; then
+  # Built as a list so an install carrying only one key does not get an empty literal for
+  # the other - an empty value is present-but-blank, which reads as configured and is not.
+  #
+  # Written as `if` rather than `[ ... ] && ...` deliberately: this file runs under
+  # `set -e`, where a test that is simply false is the last command of the statement and
+  # takes the whole script down with it.
+  literals=()
+
+  if [ -n "${HEPHAISTO_GEMINI_API_KEY:-}" ]; then
+    literals+=(--from-literal=GEMINI_API_KEY="$HEPHAISTO_GEMINI_API_KEY")
+  fi
+
+  if [ -n "${HEPHAISTO_LLM_API_KEY:-}" ]; then
+    literals+=(--from-literal=LLM_API_KEY="$HEPHAISTO_LLM_API_KEY")
+  fi
+
+  kubectl -n "$APP_NS" create secret generic hephaisto-llm "${literals[@]}" >/dev/null
+  echo "hephaisto-llm: created with ${#literals[@]} key(s)"
 else
-  echo "hephaisto-llm: SKIPPED - no HEPHAISTO_GEMINI_API_KEY set."
-  echo "  Either export it and re-run, or edit the placeholder in"
+  echo "hephaisto-llm: SKIPPED - neither HEPHAISTO_GEMINI_API_KEY nor HEPHAISTO_LLM_API_KEY set."
+  echo "  Either export one and re-run, or edit the placeholder in"
   echo "    secrets/hephaisto-llm.secret.yaml"
   echo "  and apply it:  kubectl apply -f secrets/hephaisto-llm.secret.yaml"
 fi

@@ -277,6 +277,15 @@ public sealed class InvestigationBudgetOptions
     /// the sum grows quadratically in the number of steps - which is the failure mode this
     /// number exists to bound.
     /// </summary>
+    /// <remarks>
+    /// <b>Cumulative is why this is not a context-window setting</b>, and the distinction
+    /// matters when moving to a model with a smaller window: 400,000 here is spread across up
+    /// to <see cref="MaxSteps"/> turns, so it does not imply any single call carrying 400,000
+    /// tokens, and it does not need lowering to run a 131k-context model. What bounds the
+    /// largest single turn is the digester's context cap. Lowering this to match a window
+    /// would instead cut the investigation short several steps early, for a limit the
+    /// provider was never going to hit.
+    /// </remarks>
     public long MaxInputTokens { get; set; } = 400_000;
 
     public decimal MaxCostUsd { get; set; } = 0.50m;
