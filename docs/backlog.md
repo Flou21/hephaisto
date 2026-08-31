@@ -2351,3 +2351,71 @@ known.
 
 **Size.** M. **Blocks:** claiming an action rate, which the website and the README both want to
 do.
+
+---
+
+## The v0.5.0 carry, reviewed 2026-08-31
+
+v0.5.0's rule is that *"an item leaves `backlog.md` by being fixed, or by being reclassified as a
+deliberate limitation and written down somewhere permanent. It does not leave by being ignored."*
+Its exit criterion asks that every remaining entry be looked at once and given a fresh sentence
+saying why it is still there. This is that pass, in one place rather than seventeen, so the shape
+of what is being carried is visible at a glance instead of only per-entry.
+
+Seven open entries are not listed here because this milestone already re-argued them in their own
+text: [#2](#2), [#55](#55), [#57](#57), [#58](#58), [#59](#59), [#60](#60) and the newly split
+[#66](#66).
+
+**Blocked on something outside the repository — carried, not deferred by choice:**
+
+- **[#31](#31) Tempo tools.** Still blocked on grafana-mcp, which exposes no trace tools; nothing
+  in this repo can make c10's five-hop trail reachable. The cheap half — making the absence loud
+  rather than silent — was not done because c10 now runs in `--full` and reports the gap itself.
+- **[#23](#23) NetworkPolicy enforcement.** Unprovable here: kind's CNI accepts the objects and
+  ignores them, so the harness's own report names this as not covered on every run. It needs a
+  cluster whose CNI enforces, which is a `--enforce-netpol` tier on the Later menu.
+- **[#30](#30) The pre-purge `grafana.db` tarball.** A file on one machine, not a state of the
+  repository; it closes by someone deleting it, and no code change can.
+
+**Correct as designed; the entry exists so the tradeoff stays visible:**
+
+- **[#24](#24) `values-dev.yaml` opens the webhook CIDR.** Still the price of kubelet probes on a
+  single-tenant node, and still recorded rather than fixed, because fixing it properly is the
+  same work as [#23](#23).
+- **[#25](#25) The orphaned `data-postgres-0` PVC.** Deliberately left after the data was dumped
+  and restored; it is one `kubectl delete` whenever the dev cluster is next rebuilt.
+- **[#29](#29) The `CS0618` suppression.** KubernetesClient 19 still ships no replacement for the
+  typed watch operations, so the suppression is still the only option and still deliberate.
+- **[#34](#34) c1 produces `CrashLoopBackOff`, not `OomKilled`.** Unchanged and now *measured
+  rather than argued*: c1 runs in `--full`, and its answer key still expects the kind the node
+  cannot produce, so the disagreement shows up as a graded result instead of a footnote.
+
+**Real, small, and simply not reached — the honest category:**
+
+- **[#15](#15) Duplicate instrument registrations.** Two meters still disagree on type and unit.
+  Untouched this milestone; it costs a dashboard reading wrongly, not an agent behaving wrongly.
+- **[#21](#21) The stale "workflows have never run" line.** The correction is recorded; what
+  remains is the wider docs restructure it was filed under, which is L and was never in scope.
+- **[#22](#22) Budget values are write-only.** `extraEnv` still works and the harness still relies
+  on it, so this is discoverability rather than capability — and this milestone leaned on it
+  again, in `deploy.sh`, which is an argument for promoting them rather than against.
+- **[#26](#26) The `k8s_events` receiver duplicates on a second node.** Still one `kubectl` away
+  from being real, and still not real, because this cluster has one node.
+- **[#27](#27) `AddHephaistoLlmWithoutPersistence` has no call sites.** Still dead, and now
+  slightly more so: the provider seam grew a second implementation without anything needing it.
+- **[#28](#28) `list_alert_rules` returns empty.** The prompt caveat still carries it. Worth
+  noting the caveat is now read by two model families rather than one, and neither has tripped
+  over it.
+- **[#42](#42) Workload-shaped verification predicates.** Untouched, and still gated behind the
+  Job action types being proposable at all, which is [#39](#39).
+- **[#44](#44) Nothing sweeps `AwaitingApproval`.** Untouched. It is first in the Later menu's own
+  ordering for interactive approvals, so it is queued rather than forgotten.
+- **[#49](#49) The console spec's capped comparison.** Untouched; it cannot fire below 100 open
+  incidents, and the e2e console suite runs against a cluster with ten.
+
+**Excluded by this release's own rule:**
+
+- **[#39](#39) Three refused action types.** `PatchResources` is capability, and this release
+  said no new capability ships in it. It is named here because it is the reason c4 and c7 are
+  permanently "diagnose correctly, propose nothing" — the corpus cannot grade the action that is
+  actually right for them.
