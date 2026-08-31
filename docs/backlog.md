@@ -2524,3 +2524,51 @@ times kubectl chose to print it. Verified against `200200`, `200`, `404404`, `00
 **Size.** S.
 
 **Fixed 2026-08-31.**
+
+### 70. A generic rule with a shorter `for:` permanently mislabels two fixtures
+
+**Symptom.** In the first full-corpus run, 7 of 10 fixtures classified correctly and two were
+wrong in the same direction:
+
+```
+skip  c3 classified as ReadinessFlapping, expected Unschedulable
+skip  c4 classified as ReadinessFlapping, expected ImagePullBackOff
+```
+
+(The third, c1 → `CrashLoopBackOff`, is [#34](#34) and expected on this node.)
+
+**Cause.** `charts/hephaisto/files/alerts/kubernetes-rules.yaml` carries a "pod has been
+non-ready for >2m" rule whose expression is
+
+```promql
+kube_pod_status_phase{phase=~"Pending|Unknown", namespace=~"hephaisto.*"}
+```
+
+labelled `hephaisto_kind: ReadinessFlapping`. Its own comment says *"Pending is precisely the
+state the C3 unschedulable fixture sits in, and it must alert"* — so the rule was written
+knowing it catches C3, and then labels it as flapping. An ImagePullBackOff pod is also `Pending`,
+so it takes C4 too.
+
+**The label contradicts the rule.** Flapping means intermittent; this fires on a pod that is
+*persistently* stuck. The genuine flap detector is `TargetFlapping` further down the same file,
+whose description says in as many words *"This is INTERMITTENT, not down."* Two rules share one
+`hephaisto_kind` and only one of them means it.
+
+**Why it did not show up before.** c3 and c4 are both in the default four-fixture set, so this
+path has been exercised for months. What changed is timing: with ten fixtures and seventeen
+incidents the generic rule's `for: 2m` beats the specific `ChaosPodUnschedulable` and
+`ChaosImagePullFailure` rules, opens the incident first, and classification is first-rule-wins.
+**So the real finding is not the label, it is that a race decides an incident's kind** — and load
+changes who wins. That is why a full-corpus run finds things a four-fixture one cannot.
+
+**Consequence.** `SignalKind` drives runbook selection, so c3 and c4 investigations are handed the
+ReadinessFlapping runbook. That is wrong information, and only accidentally harmless: the flap
+runbook says restarting will not help, which happens to be true for both.
+
+**Deliberately not fixed in v0.5.0.** Changing what an alert rule means is a detection-semantics
+change, it is not what this milestone is for, and the harness records these as `skip` rather than
+`fail`, so the gate is not blocked on it. Fixing it wants a decision about whether the generic
+rule should carry a distinct kind (`Unschedulable`, or a new `PodNotReady`) and whether
+classification should prefer the most specific matching rule rather than the first.
+
+**Size.** M — S for the label, M for the first-rule-wins question behind it.
