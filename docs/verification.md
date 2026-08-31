@@ -409,17 +409,36 @@ fixed. Ranking two models on a corpus one of them recorded measures the recordin
 new investigating model means re-recording rather than reinterpreting. See
 [backlog #55](backlog.md).
 
-**Cost and accuracy, as measured, with the caveat attached.** Three passes each, deterministic
-scoring only — the judge is hard-wired to Gemini ([#58](backlog.md)) and could not run without
-credit, so neither figure is comparable to the judged `22/24` published for v0.4.0.
+**Cost and accuracy, as measured on 2026-08-31.** Deterministic scoring throughout — the judge is
+hard-wired to Gemini ([#58](backlog.md)) and was left off for every arm so the four are scored
+identically. That makes them comparable to each other and *not* to the judged `22/24` published
+for v0.4.0, which is a laxer grader on eight scenarios rather than ten.
 
-| model | correct | sound | steps / investigation | $ / investigation |
-|---|---|---|---|---|
-| `gemini-3.7-flash` (recorded the corpus) | 22/24 *(judged, v0.4.0)* | — | 7.5 | **$0.080** |
-| `deepseek-v4-flash` | 20/27 | 9/27 | 6.85 | **$0.031** |
+| model | where | overall | excl. c10 | steps/inv | $/inv |
+|---|---|---|---|---|---|
+| `gemini-3.7-flash` | hosted | 20/22 † | **19/19** | 7.1 | $0.109 |
+| `gpt-oss-120b` (MaxSteps 20) | **local** | 18/20 | **18/18** | 11.4 | $0 ‡ |
+| `gpt-oss-120b` (MaxSteps 12) | **local** | 17/30 | 17/27 | 9.6 | $0 ‡ |
+| `deepseek-v4-flash` | hosted | 20/27 | 20/24 | 6.9 | $0.031 |
 
-DeepSeek's 20/27 is a floor, not a like-for-like: it was scored against a corpus recorded by the
-other model, and every one of its failures fell in a run the harness had already flagged unsound.
+† Eight of Gemini's thirty runs terminated `Faulted` when the project hit its monthly spending cap
+mid-benchmark, and are excluded as instrument failures rather than wrong answers — they faulted at
+step one with a 0% miss rate. The cap also produced [#54](backlog.md)'s bug a second time, in new
+wording, which is how it was noticed.
+
+‡ Local tokens are free. The `gpt-oss-120b` price entry exists so the budget still binds, and it
+makes the run report a *hosted-equivalent* of $0.005/investigation — useful for comparison, and
+not money spent.
+
+**c10 is excluded in the second column because it is broken for every model**, not because it is
+inconvenient: it carries the highest miss rate in the corpus for all four (45-67%), which is
+[#55](backlog.md) rather than a diagnosis failure. On the nine scenarios the instrument can
+actually carry, the local open-weight model matches the hosted frontier one.
+
+**The step ceiling has to move with the model.** `gpt-oss-120b` scores 57% at `MaxSteps=12` and
+90% at 20, changing nothing else, because ten of its thirty runs were truncated mid-investigation
+— see [#59](backlog.md#59-the-step-budget-is-tuned-to-one-model-and-silently-caps-anothers-accuracy).
+DeepSeek hit no ceiling in 27 runs, so each model is compared at a budget that binds it equally.
 
 **The exit code stays about the instrument, not the agent.** `hephaisto-eval run` exits non-zero
 when a dangling citation, an out-of-contract category or a replay miss rate says the harness
