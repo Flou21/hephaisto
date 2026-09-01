@@ -3027,6 +3027,18 @@ number is in the summary for a human to read."* The action rate now joins it.
 about the acting path — it reports that it could not test it. That is the honest outcome, and it
 is better than a red mark that means "the model shrugged".
 
+**The console suite had the same conflation, fixed the same way.** Two acting specs assert
+`no incident in this run produced a plan` as a hard failure, with a comment choosing that
+deliberately over a skip on the grounds that *"a phase that tested nothing must not be green"* —
+[#1](#1)'s rule. On the first full run to meet the MVP bar, those two specs were the **only**
+failure, for the same reason the shell assertion skipped: the planner declined.
+
+[#1](#1)'s actual concern was **silence** — it was filed because the suite reported a PASS on a run
+that asserted nothing. A skip that names its unmet precondition is not silent, and #1's own
+wording allows it: *"must run in full **or say so**"*. So the specs now `test.skip` with a
+`PRECONDITION:` marker, and `ui/run.sh` admits a skip only when every skipped spec carries one —
+a bare skip still fails the phase. Verified both ways.
+
 **Size.** S.
 
-**Fixed 2026-09-01.** Verified across all four shapes.
+**Fixed 2026-09-01.** Verified across all four shapes, and again at the console layer.

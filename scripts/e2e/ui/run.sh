@@ -50,9 +50,30 @@ if [ "$expected" -eq 0 ]; then
     exit 1
 fi
 
+# A skip is admitted only when it SAYS WHY, which is the "or say so" half of the rule above.
+#
+# #1 was filed because this suite reported a PASS on a run that asserted nothing - silence was
+# the fault, not skipping. Two acting specs need an incident that produced a plan, and whether
+# any does is the planner's judgement rather than a property of the console (#66, #79). Failing
+# there reports a model declining as if the console were broken; skipping silently would be #1
+# again. So: a skip carrying a PRECONDITION marker is reported and allowed, and anything else
+# still fails the phase.
 if [ "$skipped" -ne 0 ]; then
-    echo "$skipped spec(s) skipped; the console suite must run in full or say so" >&2
-    exit 1
+    stated=$(jq -r '
+        [ .. | objects | select(has("annotations"))
+          | .annotations[]? | select(.type == "skip")
+          | select((.description // "") | startswith("PRECONDITION:")) ] | length
+    ' results.json 2>/dev/null || echo 0)
+
+    if [ "${stated:-0}" -ge "$skipped" ]; then
+        echo "playwright: $skipped spec(s) skipped, all naming an unmet precondition:"
+        jq -r '.. | objects | select(has("annotations")) | .annotations[]?
+               | select(.type == "skip") | select((.description // "") | startswith("PRECONDITION:"))
+               | "  - " + .description' results.json 2>/dev/null | sort -u
+    else
+        echo "$skipped spec(s) skipped and only ${stated:-0} said why; the console suite must run in full or say so" >&2
+        exit 1
+    fi
 fi
 
 exit "$status"
