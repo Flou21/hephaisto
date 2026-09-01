@@ -3109,3 +3109,76 @@ a bare skip still fails the phase. Verified both ways.
 **Size.** S.
 
 **Fixed 2026-09-01.** Verified across all four shapes, and again at the console layer.
+
+---
+
+## Opened by v0.6.0
+
+### 80. Every cassette in the corpus is stale against the shipped prompts
+
+**Symptom.** `hephaisto-eval run --cassettes cassettes` prints a `STALE` warning for **all ten**
+cassettes, each with a different pair of hashes:
+
+```
+WARNING  c1: prompt sha256:b0fbe56d8f7dc168 STALE - prompts and runbooks now hash sha256:718988bb4e7837f3
+WARNING  c4: prompt sha256:bc97facb144dbd6e STALE - prompts and runbooks now hash sha256:2911974534bbde1f
+...
+```
+
+**Why it matters.** `PromptFingerprint` exists to say when a measurement is comparing against a
+prompt that no longer ships, and it is currently saying so about the entire corpus. That does not
+invalidate the v0.5.0 numbers — a replay measures the *current* prompt against a recorded tool
+trace, which is the point — but it does mean every published accuracy figure was produced against
+tool traces gathered under prompts that have since been rewritten, and nothing says how much of
+the gap between replay and cluster results ([#66](#66-the-planner-acts-on-half-of-a-fair-fixture))
+is that drift.
+
+The differing "now" hashes are the sharper detail: the fingerprint is per fixture because it
+includes the runbook a fixture loads, so the corpus has drifted unevenly. Three prompt
+improvements shipped in v0.5.0 specifically to change planner behaviour, which is exactly the
+behaviour #66 measures.
+
+**Why it was not fixed here.** Re-recording is a cluster job — a kind cluster, ten seeded faults,
+and a keyed run per fixture — and v0.6.0 buys no new evidence by doing it. It is also not free of
+judgement: re-recording resets the baseline that every prior release's numbers were measured
+against, so it should be done deliberately and once, with the before and after stated, rather than
+as a side effect of a milestone about documentation.
+
+**What it blocks.** Nothing that ships in v0.6.0. It is a precondition for taking either number in
+#66 as final, and for [#55](#55-the-cassette-corpus-grades-the-model-that-recorded-it), since
+re-recording is the moment to decide whether the corpus is recorded per model.
+
+**Size.** M, almost entirely cluster time.
+
+### 81. A demo transcript is published evidence, and only its addresses are redacted
+
+**Status: mitigated on 2026-09-01, and recorded because the reasoning should not have to be
+rediscovered.**
+
+**Symptom.** `transcripts/*.json` are committed and published. They carry `EvidenceBlob`s, which
+are raw untruncated tool output — the same content that keeps `cassettes/` untracked:
+
+> SafeToolDecorator redacts tool *arguments*, not tool *results*, so a cassette's raw
+> `describe_pod` and `get_pod_logs` output carries cluster env vars, hostnames and log contents
+> verbatim.
+
+**What was actually in them.** Scanned before the first commit. No credential values: the
+`secret` and `token` matches are the standard `/var/run/secrets/kubernetes.io/serviceaccount`
+mount path and a `serviceAccountToken` projected-volume declaration, neither of which is a
+credential. What was present was network layout — pod addresses and the node address of the
+machine that recorded them.
+
+**Mitigation.** `TranscriptRedactor`, applied inside `Transcript.Save()` so a transcript cannot
+reach disk unscrubbed by a second writer being added later. IPv4 only: no answer key in the corpus
+turns on an address, so removing them costs no evidence, while editing the pod specs or the log
+lines would turn a recording into a mock-up.
+
+**What this does not cover, and is the reason for the entry.** The redaction is *sound for this
+corpus*, not in general. Every fixture is a workload-level fault — a bad image tag, a memory
+limit, a missing Secret reference. A future fixture that is about networking, or one whose
+workload carries configuration in its environment, would put content in a blob that this does not
+remove and that a diagnosis depends on. At that point the answer is to leave that scenario out of
+the published set rather than to weaken the redactor, and whoever adds it should read this before
+deciding otherwise.
+
+**Size.** n/a — a standing constraint on the corpus rather than a defect.
