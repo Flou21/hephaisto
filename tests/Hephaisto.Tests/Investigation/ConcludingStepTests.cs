@@ -54,11 +54,20 @@ public class ConcludingStepTests
         budget.RecordStep(10, 10, 0.01m);
 
         budget.TryGrantConcludingStep();
+
+        // TWO round trips, not one, and the number is the tool-calling protocol rather than a
+        // preference: the conclusion is taken through the `conclude` tool, so the model emits
+        // a call on the first trip and answers after the framework runs it on the second.
+        // Reserving one paid for the emit and refused the answer, so the tool never returned a
+        // value and the run reported no finding - backlog #59's "every one produced no
+        // finding", which was this.
+        budget.EnsureCanStartStep();
+        budget.RecordStep(10, 10, 0.01m);
         budget.EnsureCanStartStep();
         budget.RecordStep(10, 10, 0.01m);
 
-        // The call after the reserved one must stop again, or "one final turn" becomes
-        // "unlimited turns" the moment a model declines to conclude.
+        // And then it stops. The point of the reservation is that it is finite: "a final turn"
+        // must not become "unlimited turns" the moment a model declines to conclude.
         var act = budget.EnsureCanStartStep;
 
         act.Should().Throw<BudgetExhaustedException>();

@@ -2140,6 +2140,12 @@ a pair: what a model costs and how many turns it needs are the same decision.
 
 **Size.** S for the reporting, M for per-model budgets.
 
+**Half of this entry's evidence was a different bug, found 2026-09-01.** The claim that every
+`StepBudgetExhausted` run "produced no finding" was read here as the ceiling truncating the model
+mid-thought. It was not: the reserved concluding step could never complete, because a tool-based
+conclusion needs two round trips and one was reserved — [#78](#78). The ceiling is still a
+per-model number and this entry stands, but its most striking figure belonged to something else.
+
 **A second ceiling, measured on a cluster 2026-08-31.** The first full-corpus run against a local
 `gpt-oss-120b` reported `1 Cancelled, 2 WallClockExhausted (of 12 investigations)`. So it is not
 only `MaxSteps`: `MaxWallClock` (10 minutes) is also a hosted-model number, and a local model at
@@ -2931,3 +2937,47 @@ Until that exists, four safety gates on the L3 path are covered only by a cluste
 dormancy is the finding and the regression is only how it surfaced.
 
 **Fixed 2026-09-01; regression guard outstanding.**
+
+### 78. The reserved concluding step was half of what the protocol needs
+
+**Status: fixed 2026-09-01** — see the end of this entry.
+
+**Symptom.** Investigations that hit `MaxSteps` produced **no finding at all**, with the agent
+logging its own rescue failing:
+
+```
+Investigation budget reached (StepBudgetExhausted); spending the reserved step on a conclusion
+  rather than discarding the run.
+The reserved concluding step failed. Reporting the original budget termination.
+  BudgetExhaustedException: Investigation budget exhausted (StepBudgetExhausted): 21 of 20 steps used
+```
+
+**Cause.** The conclusion is taken through the `conclude` **tool** — deliberately, because a model
+asked nicely to conclude may answer by calling one more diagnostic tool instead. But a tool call
+is **two** model round trips: one where the model emits the call, one where it answers after the
+framework has run it. `TryGrantConcludingStep` reserved **one**.
+
+So the first trip was paid for, the second was refused, the tool never returned a value, and the
+run reported nothing. The throw's own wording — *"21 of 20 steps used"* — reads as a run
+overshooting its budget, which is why it looked like correct enforcement rather than a rescue
+being cut in half.
+
+**Why it matters.** This is the mechanism behind [#59](#59)'s central observation, recorded there
+as a property of the model: *"10 of 30 gpt-oss runs terminated `StepBudgetExhausted`, and every one
+produced no finding."* Every one produced no finding because **the rescue could not land**, not
+because the model had nothing to say. A truncated investigation is meant to still report what it
+learned; that path has never worked.
+
+It also costs the corpus its denominator. A scenario with no finding cannot be graded, so every
+truncated investigation subtracts from the MVP bar's count — which is why three consecutive full
+runs scored 7/8, 7/7 and 7/7 against a bar that needs ten. The accuracy was never the problem.
+
+**Fix.** `ConcludingCallAllowance = 2`, named and explained where it is defined, because the
+number is the tool-calling protocol rather than a preference. The reservation stays finite: the
+call after the allowance still throws, which is what stops "a final turn" becoming "unlimited
+turns" when a model declines to conclude. Both existing tests were updated rather than removed —
+their intent was right and only their arithmetic assumed a one-trip protocol.
+
+**Size.** S.
+
+**Fixed 2026-09-01.**

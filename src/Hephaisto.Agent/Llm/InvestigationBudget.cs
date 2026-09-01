@@ -41,7 +41,23 @@ public sealed class InvestigationBudget(InvestigationBudgetOptions options, IClo
     private readonly DateTimeOffset _startedAt = clock.UtcNow;
 
     private bool _concludingStepGranted;
-    private bool _concludingStepUsed;
+    private int _concludingCallsLeft;
+
+    /// <summary>
+    /// Round trips the reserved conclusion is allowed, and it is two rather than one.
+    /// </summary>
+    /// <remarks>
+    /// The conclusion is taken through the <c>conclude</c> TOOL, and a tool call is two model
+    /// round trips by protocol: one where the model emits the call, and one where it answers
+    /// after the framework has run it. Reserving a single step paid for the first and refused
+    /// the second, so the tool never returned a value and the run reported no finding at all -
+    /// with the throw naming "21 of 20 steps used", which reads as a run overshooting rather
+    /// than as a rescue being cut in half.
+    ///
+    /// That is the mechanism behind the observation in backlog #59 that every
+    /// StepBudgetExhausted run produced no finding. The rescue existed and could never land.
+    /// </remarks>
+    private const int ConcludingCallAllowance = 2;
 
     private int _steps;
     private int _toolCalls;
@@ -93,11 +109,11 @@ public sealed class InvestigationBudget(InvestigationBudgetOptions options, IClo
     {
         lock (_gate)
         {
-            // The one call a run is allowed to make after its budget is gone, so that it can
-            // say what it found. See TryGrantConcludingStep.
-            if (_concludingStepGranted && !_concludingStepUsed)
+            // The calls a run is allowed to make after its budget is gone, so that it can say
+            // what it found. See TryGrantConcludingStep and ConcludingCallAllowance.
+            if (_concludingCallsLeft > 0)
             {
-                _concludingStepUsed = true;
+                _concludingCallsLeft--;
                 return;
             }
         }
@@ -199,6 +215,7 @@ public sealed class InvestigationBudget(InvestigationBudgetOptions options, IClo
             }
 
             _concludingStepGranted = true;
+            _concludingCallsLeft = ConcludingCallAllowance;
             return true;
         }
     }

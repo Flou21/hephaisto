@@ -356,11 +356,22 @@ chaos_await_investigations() {
         queue="$want"
     fi
 
-    # 180s an incident is comfortable for a hosted model and about right for a local one at
-    # MaxSteps=20, where each step is a full round trip through a single-instance server that
-    # is also the bottleneck for every other investigation in the queue.
-    local deadline="${INVESTIGATION_TIMEOUT:-$(( 600 + 180 * queue ))}"
-    say "investigation deadline: ${deadline}s for a queue of $queue (waiting on $want)"
+    # Seconds per queued incident, and it is a per-MODEL number rather than a constant. 180s
+    # is comfortable for a hosted model answering in seconds. A local gpt-oss-120b at
+    # MaxSteps=20 was measured at ~6.7 MINUTES per investigation, serialised, because every
+    # step is a full round trip through a single-instance server that is also the bottleneck
+    # for everything else in the queue. At 180s a queue of 11 gets 43 minutes and needs about
+    # 66, so the run timed out on arithmetic rather than on anything being wrong.
+    local per="${INVESTIGATION_SECONDS_PER_INCIDENT:-}"
+    if [ -z "$per" ]; then
+        case "${HEPHAISTO_LLM_PROVIDER:-gemini}" in
+            openai) per=420 ;;
+            *)      per=180 ;;
+        esac
+    fi
+
+    local deadline="${INVESTIGATION_TIMEOUT:-$(( 600 + per * queue ))}"
+    say "investigation deadline: ${deadline}s for a queue of $queue at ${per}s each (waiting on $want)"
 
     # COUNT THE FIXTURES, NOT THE POPULATION. This used to wait for `$want` incidents with a
     # diagnosis anywhere in the list, which is not the same claim: a cluster opens incidents the
@@ -378,8 +389,18 @@ chaos_await_investigations() {
     local diag_want
     diag_want=$(for f in $APPLIED; do fixture_target "$f"; done | jq -R . | jq -sc .)
 
+    # `|| warn` because a timeout must not abort the run - wait_for returns 1, and under
+    # `set -Eeuo pipefail` an unguarded non-zero here kills the suite outright, so one slow
+    # investigation costs every assertion behind it including the whole acting phase.
+    # chaos_await_incidents has carried this guard for exactly that reason since a slow fixture
+    # took 46 passing assertions down with it; this wait never got the same treatment, and it
+    # went unnoticed only because the old predicate was loose enough that it rarely timed out.
+    #
+    # The per-fixture check below then reports precisely which fixture is missing, which is the
+    # useful output.
     wait_for "every fixture's investigation to conclude (expecting $want)" "$deadline" \
-        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents' | jq -e --argjson want '$diag_want' 'type == \"array\" and (. as \$inc | \$want | all(. as \$t | \$inc | any((.targetName // \"\" | startswith(\$t)) and .hasDiagnosis)))' >/dev/null"
+        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents' | jq -e --argjson want '$diag_want' 'type == \"array\" and (. as \$inc | \$want | all(. as \$t | \$inc | any((.targetName // \"\" | startswith(\$t)) and .hasDiagnosis)))' >/dev/null" \
+        || warn "not every fixture concluded within the deadline; the per-fixture result below says which"
 
     # How many of the applied fixtures have an incident carrying a diagnosis. Plainly, one
     # query per fixture: the list is short and a clever single expression here is how the

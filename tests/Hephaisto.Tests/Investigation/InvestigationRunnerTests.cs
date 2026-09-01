@@ -266,11 +266,12 @@ public class InvestigationRunnerTests
         outcome.Escalation.Should().Be(EscalationReason.BudgetExhausted);
         outcome.Plan.Should().BeNull();
 
-        // Three, plus the one step reserved for a conclusion. This model never concludes -
-        // it asks for the same tool forever - so the reserve is spent and the run still ends
-        // on its budget, which is the point: the reserve is a chance to answer, not a way to
-        // keep going.
-        outcome.Investigation.StepsUsed.Should().Be(4);
+        // Three, plus the two round trips reserved for a conclusion - two because the
+        // conclusion goes through the `conclude` tool, and a tool call is an emit and an
+        // answer. This model never concludes; it asks for the same tool forever, so the
+        // reserve is spent and the run still ends on its budget. That is the point: the
+        // reserve is a chance to answer, not a way to keep going.
+        outcome.Investigation.StepsUsed.Should().Be(5);
     }
 
     [Fact]
