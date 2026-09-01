@@ -106,7 +106,9 @@ public sealed record Transcript
     /// what is removed and why it is only that.
     /// </remarks>
     public void Save(string path) =>
-        File.WriteAllText(path, JsonSerializer.Serialize(TranscriptRedactor.Redact(this), Json));
+        File.WriteAllText(
+            path,
+            TranscriptRedactor.RedactJson(JsonSerializer.Serialize(this, Json)));
 }
 
 /// <summary>

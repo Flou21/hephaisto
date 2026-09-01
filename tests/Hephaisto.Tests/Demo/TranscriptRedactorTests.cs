@@ -31,6 +31,25 @@ public class TranscriptRedactorTests
     public void Things_that_merely_contain_dots_are_left_alone(string input) =>
         Assert.Equal(input, TranscriptRedactor.Scrub(input));
 
+    /// <summary>
+    /// The regression that made this run over the whole document. The first version walked the
+    /// blobs and the step results - the obvious places - and missed Incident.Target.NodeName,
+    /// where a Prometheus alert had put an address:port. A field list has to be re-derived
+    /// every time the schema grows; scrubbing the rendered JSON cannot go out of date.
+    /// </summary>
+    [Fact]
+    public void A_field_nobody_thought_of_is_still_redacted()
+    {
+        const string json = """
+            {"incident":{"target":{"nodeName":"10.42.0.128:8080"}},"blobs":[]}
+            """;
+
+        var scrubbed = TranscriptRedactor.RedactJson(json);
+
+        Assert.DoesNotContain("10.42.0.128", scrubbed, StringComparison.Ordinal);
+        Assert.Contains("\"nodeName\":\"0.0.0.0:8080\"", scrubbed, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void The_evidence_itself_survives()
     {

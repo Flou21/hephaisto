@@ -22,6 +22,14 @@ namespace Hephaisto.Agent.Demo;
 /// mock-up wearing the costume of a recording.
 /// </para>
 /// <para>
+/// <b>It runs over the serialized document, not over a list of fields.</b> The first version
+/// walked the blobs and the step results, which are the obvious places, and missed
+/// <c>Incident.Target.NodeName</c> - where a Prometheus alert had put an <c>address:port</c>.
+/// Enumerating fields is a rule that has to be re-derived every time the schema grows, by
+/// somebody who is thinking about something else; scrubbing the rendered JSON cannot be
+/// out-of-date. The pattern only matches dotted quads, so it cannot touch JSON structure.
+/// </para>
+/// <para>
 /// <b>It is safe to do because no diagnosis depends on it.</b> Every fixture in the corpus is a
 /// workload-level fault - a bad image tag, a memory limit, a missing Secret reference - and not
 /// one of the answer keys turns on an address. If a networking fixture is ever added, this
@@ -35,32 +43,9 @@ public static partial class TranscriptRedactor
     public const string Placeholder = "0.0.0.0";
 
     /// <summary>
-    /// Rewrites every evidence blob and step result in place.
+    /// Scrubs an already-serialized transcript. Every string in the document, by construction.
     /// </summary>
-    public static Transcript Redact(Transcript transcript)
-    {
-        ArgumentNullException.ThrowIfNull(transcript);
-
-        foreach (var blob in transcript.Blobs)
-        {
-            blob.Content = Scrub(blob.Content);
-        }
-
-        foreach (var step in transcript.Investigation.Steps)
-        {
-            if (step.ResultDigest is { } digest)
-            {
-                step.ResultDigest = Scrub(digest);
-            }
-
-            if (step.Arguments is { } arguments)
-            {
-                step.Arguments = Scrub(arguments);
-            }
-        }
-
-        return transcript;
-    }
+    public static string RedactJson(string json) => Scrub(json);
 
     /// <summary>
     /// Replaces dotted quads. Guarded on each octet being 0-255 so version strings and

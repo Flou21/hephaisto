@@ -1,0 +1,806 @@
+{
+  "cassetteId": "c4",
+  "description": "ImagePullBackOff on c4-imagepull (hephaisto-chaos)",
+  "expectedRootCause": "The image tag does not exist: the pod references busybox:this-tag-does-not-exist, so the pull fails with ImagePullBackOff/ErrImagePull.",
+  "incident": {
+    "id": "01a05ef8-301b-7432-896e-12f6ddacc27c",
+    "correlationKey": "",
+    "title": "ImagePullBackOff on c4-imagepull (hephaisto-chaos)",
+    "kind": 3,
+    "severity": 1,
+    "state": 0,
+    "suppressionReason": 0,
+    "escalationReason": 0,
+    "target": {
+      "namespace": "hephaisto-chaos",
+      "kind": "Pod",
+      "name": "c4-imagepull-7fd88fdb68-5n8sf",
+      "ownerKind": "Deployment",
+      "ownerName": "c4-imagepull",
+      "workloadKey": "hephaisto-chaos/Deployment/c4-imagepull"
+    },
+    "mode": 0,
+    "openedAt": "2026-08-29T13:50:13.191525+00:00",
+    "lastSignalAt": "2026-08-29T13:52:50.55349+00:00",
+    "signals": [
+      {
+        "id": "01a05ef8-301b-7147-9774-74b0677e7511",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "Failed",
+        "message": "Error: ImagePullBackOff",
+        "firstSeen": "2026-08-29T13:50:13+00:00",
+        "lastSeen": "2026-08-29T13:51:08+00:00",
+        "count": 4,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-740b-ae63-bbd1d4ddacac",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "Failed",
+        "message": "Error: ErrImagePull",
+        "firstSeen": "2026-08-29T13:50:13+00:00",
+        "lastSeen": "2026-08-29T13:50:13+00:00",
+        "count": 1,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-72b4-a1c0-25462cecef82",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "Failed",
+        "message": "Error: ImagePullBackOff",
+        "firstSeen": "2026-08-29T13:50:13+00:00",
+        "lastSeen": "2026-08-29T13:50:13+00:00",
+        "count": 1,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-7b6e-83c7-5945e9dae166",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "ErrImagePull",
+        "message": "container app: ErrImagePull. Error response from daemon: failed to resolve reference \u0022docker.io/library/busybox:this-tag-does-not-exist\u0022: docker.io/library/busybox:this-tag-does-not-exist: not found",
+        "firstSeen": "2026-08-29T13:50:12+00:00",
+        "lastSeen": "2026-08-29T13:50:13.593271+00:00",
+        "count": 1,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-7c86-b0df-62e5ebd87b17",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "Failed",
+        "message": "Error: ImagePullBackOff",
+        "firstSeen": "2026-08-29T13:50:13+00:00",
+        "lastSeen": "2026-08-29T13:50:14+00:00",
+        "count": 2,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-7638-a7e7-63edb4324eab",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "Failed",
+        "message": "Error: ImagePullBackOff",
+        "firstSeen": "2026-08-29T13:50:13+00:00",
+        "lastSeen": "2026-08-29T13:50:41+00:00",
+        "count": 3,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-7d3d-a646-1faf534fe16f",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "Failed",
+        "message": "Error: ErrImagePull",
+        "firstSeen": "2026-08-29T13:50:13+00:00",
+        "lastSeen": "2026-08-29T13:50:56+00:00",
+        "count": 3,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-72f4-adf6-ba0515d89e7f",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "ErrImagePull",
+        "message": "container app: ErrImagePull. Error response from daemon: failed to resolve reference \u0022docker.io/library/busybox:this-tag-does-not-exist\u0022: docker.io/library/busybox:this-tag-does-not-exist: not found",
+        "firstSeen": "2026-08-29T13:50:12+00:00",
+        "lastSeen": "2026-08-29T13:51:08.143043+00:00",
+        "count": 1,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-7d7b-804b-7a084c164da0",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "Failed",
+        "message": "Error: ImagePullBackOff",
+        "firstSeen": "2026-08-29T13:50:13+00:00",
+        "lastSeen": "2026-08-29T13:51:21+00:00",
+        "count": 5,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-75dd-8a26-dd911d07bc09",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "ImagePullBackOff",
+        "message": "container app: ImagePullBackOff. Back-off pulling image \u0022busybox:this-tag-does-not-exist\u0022: ErrImagePull: Error response from daemon: failed to resolve reference \u0022docker.io/library/busybox:this-tag-does-not-exist\u0022: docker.io/library/busybox:this-tag-does-not-exist: not found",
+        "firstSeen": "2026-08-29T13:50:12+00:00",
+        "lastSeen": "2026-08-29T13:50:14.655353+00:00",
+        "count": 1,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-7565-92ff-19544c717e2d",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "Failed",
+        "message": "Error: ErrImagePull",
+        "firstSeen": "2026-08-29T13:50:13+00:00",
+        "lastSeen": "2026-08-29T13:50:26+00:00",
+        "count": 2,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-7dac-9646-5a0dde6e1812",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "ErrImagePull",
+        "message": "container app: ErrImagePull. Error response from daemon: failed to resolve reference \u0022docker.io/library/busybox:this-tag-does-not-exist\u0022: docker.io/library/busybox:this-tag-does-not-exist: not found",
+        "firstSeen": "2026-08-29T13:50:12+00:00",
+        "lastSeen": "2026-08-29T13:50:41.180556+00:00",
+        "count": 1,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-7219-80b2-07f029244e05",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "ImagePullBackOff",
+        "message": "container app: ImagePullBackOff. Back-off pulling image \u0022busybox:this-tag-does-not-exist\u0022: ErrImagePull: Error response from daemon: failed to resolve reference \u0022docker.io/library/busybox:this-tag-does-not-exist\u0022: docker.io/library/busybox:this-tag-does-not-exist: not found",
+        "firstSeen": "2026-08-29T13:50:12+00:00",
+        "lastSeen": "2026-08-29T13:50:56.140595+00:00",
+        "count": 1,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-741b-943f-067decc24c39",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "ImagePullBackOff",
+        "message": "container app: ImagePullBackOff. Back-off pulling image \u0022busybox:this-tag-does-not-exist\u0022: ErrImagePull: Error response from daemon: failed to resolve reference \u0022docker.io/library/busybox:this-tag-does-not-exist\u0022: docker.io/library/busybox:this-tag-does-not-exist: not found",
+        "firstSeen": "2026-08-29T13:50:12+00:00",
+        "lastSeen": "2026-08-29T13:51:21.142104+00:00",
+        "count": 1,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-713f-8218-0d1848cdde72",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "ErrImagePull",
+        "message": "container app: ErrImagePull. Error response from daemon: failed to resolve reference \u0022docker.io/library/busybox:this-tag-does-not-exist\u0022: docker.io/library/busybox:this-tag-does-not-exist: not found",
+        "firstSeen": "2026-08-29T13:50:12+00:00",
+        "lastSeen": "2026-08-29T13:52:02.141194+00:00",
+        "count": 1,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-7638-ac01-d79ccf590630",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "Failed",
+        "message": "Error: ImagePullBackOff",
+        "firstSeen": "2026-08-29T13:50:13+00:00",
+        "lastSeen": "2026-08-29T13:51:36+00:00",
+        "count": 6,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-7f7e-822b-c8a04ea87998",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "Failed",
+        "message": "Error: ErrImagePull",
+        "firstSeen": "2026-08-29T13:50:13+00:00",
+        "lastSeen": "2026-08-29T13:51:50+00:00",
+        "count": 4,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-76e0-a549-39ff6b74952f",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "Failed",
+        "message": "Error: ImagePullBackOff",
+        "firstSeen": "2026-08-29T13:50:13+00:00",
+        "lastSeen": "2026-08-29T13:52:02+00:00",
+        "count": 7,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-797f-b4c4-1c9246adc01a",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "Failed",
+        "message": "Error: ErrImagePull",
+        "firstSeen": "2026-08-29T13:50:13+00:00",
+        "lastSeen": "2026-08-29T13:51:50+00:00",
+        "count": 4,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-7ada-a138-6b82b6a8db83",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "ErrImagePull",
+        "message": "container app: ErrImagePull. Error response from daemon: failed to resolve reference \u0022docker.io/library/busybox:this-tag-does-not-exist\u0022: docker.io/library/busybox:this-tag-does-not-exist: not found",
+        "firstSeen": "2026-08-29T13:50:12+00:00",
+        "lastSeen": "2026-08-29T13:52:09.500202+00:00",
+        "count": 1,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-7810-b3bb-bd1e6ec63e42",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "Failed",
+        "message": "Error: ImagePullBackOff",
+        "firstSeen": "2026-08-29T13:50:13+00:00",
+        "lastSeen": "2026-08-29T13:52:02+00:00",
+        "count": 7,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-792b-bd5e-3be3195219eb",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "ImagePullBackOff",
+        "message": "container app: ImagePullBackOff. Back-off pulling image \u0022busybox:this-tag-does-not-exist\u0022: ErrImagePull: Error response from daemon: failed to resolve reference \u0022docker.io/library/busybox:this-tag-does-not-exist\u0022: docker.io/library/busybox:this-tag-does-not-exist: not found",
+        "firstSeen": "2026-08-29T13:50:12+00:00",
+        "lastSeen": "2026-08-29T13:52:16.141421+00:00",
+        "count": 1,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-78c8-82d9-0699de32eee8",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "Failed",
+        "message": "Error: ImagePullBackOff",
+        "firstSeen": "2026-08-29T13:50:13+00:00",
+        "lastSeen": "2026-08-29T13:52:16+00:00",
+        "count": 8,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-7d65-aab4-bac870de22d8",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "Failed",
+        "message": "Error: ImagePullBackOff",
+        "firstSeen": "2026-08-29T13:50:13+00:00",
+        "lastSeen": "2026-08-29T13:52:31+00:00",
+        "count": 9,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-7ed1-b8e4-f470e1157425",
+        "fingerprint": "",
+        "source": 1,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "KubeDeploymentReplicasMismatch",
+        "message": "Deployment hephaisto-chaos/c4-imagepull has fewer available replicas than desired and has not progressed in 5 minutes. This metric states THAT the Deployment is short; it never states WHY. The reason (unschedulable, image pull, config error, crash) lives in the pod\u0027s status and in Events.",
+        "firstSeen": "2026-08-29T13:52:26.759+00:00",
+        "lastSeen": "2026-08-29T13:52:50.543684+00:00",
+        "count": 1,
+        "labels": {}
+      },
+      {
+        "id": "01a05ef8-301b-741f-80fd-4ad6a252177e",
+        "fingerprint": "",
+        "source": 0,
+        "kind": 3,
+        "target": {
+          "namespace": "",
+          "kind": "",
+          "name": "",
+          "workloadKey": "//"
+        },
+        "severity": 0,
+        "reason": "Failed",
+        "message": "Error: ImagePullBackOff",
+        "firstSeen": "2026-08-29T13:50:13+00:00",
+        "lastSeen": "2026-08-29T13:52:43+00:00",
+        "count": 10,
+        "labels": {}
+      }
+    ],
+    "investigations": [],
+    "actions": [],
+    "events": [],
+    "isOpen": true
+  },
+  "investigation": {
+    "id": "01a05ef8-301b-7a20-b993-fe3ab8011ae3",
+    "incidentId": "01a05ef8-301b-7432-896e-12f6ddacc27c",
+    "modelId": "gpt-oss:120b",
+    "startedAt": "2026-09-01T21:55:18.683821+00:00",
+    "completedAt": "2026-09-01T21:56:21.352088+00:00",
+    "terminationReason": 0,
+    "stepsUsed": 6,
+    "toolCallsUsed": 5,
+    "inputTokens": 68863,
+    "outputTokens": 2124,
+    "costUsd": 0.00242697,
+    "confidence": 0.95,
+    "steps": [
+      {
+        "id": "01a05ef8-6db3-7db6-bf46-1304787cef0f",
+        "investigationId": "01a05ef8-301b-7a20-b993-fe3ab8011ae3",
+        "ordinal": 1,
+        "kind": 0,
+        "toolServer": "internal",
+        "resultDigest": "-\u003E calls get_events",
+        "resultTruncated": false,
+        "resultBytes": 0,
+        "durationMs": 15765,
+        "inputTokens": 9393,
+        "outputTokens": 103,
+        "costUsd": 0.00029930,
+        "failed": false,
+        "at": "2026-09-01T21:55:34.451661+00:00"
+      },
+      {
+        "id": "01a05ef8-6db3-7fa8-bd82-42c81919f232",
+        "investigationId": "01a05ef8-301b-7a20-b993-fe3ab8011ae3",
+        "ordinal": 2,
+        "kind": 1,
+        "toolName": "get_events",
+        "toolServer": "kubernetes",
+        "arguments": "{\u0022namespace\u0022:\u0022hephaisto-chaos\u0022,\u0022objectName\u0022:\u0022c4-imagepull-7fd88fdb68-5n8sf\u0022}",
+        "resultDigest": "[step 01a05ef8-6db3-7fa8-bd82-42c81919f232] get_events\nlog digest: 8 lines, 1045 bytes\n\n-- last 8 lines --\ntype     reason     count  objects                            first  last  message\n-------  ---------  -----  ---------------------------------  -----  ----  ------------------------------------------------------------------------------------------------\nNormal   BackOff    11     Pod/c4-imagepull-7fd88fdb68-5n8sf  0s     0s    Back-off pulling image \u0022busybox:this-tag-does-not-exist\u0022\nWarning  Failed     11     Pod/c4-imagepull-7fd88fdb68-5n8sf  0s     0s    Error: ImagePullBackOff\nNormal   Pulling    4      Pod/c4-imagepull-7fd88fdb68-5n8sf  1m     1m    Pulling image \u0022busybox:this-tag-does-not-exist\u0022\nWarning  Failed     4      Pod/c4-imagepull-7fd88fdb68-5n8sf  1m     1m    Failed to pull image \u0022busybox:this-tag-does-not-exist\u0022: Error response from daemon: failed to r\u2026\nWarning  Failed     4      Pod/c4-imagepull-7fd88fdb68-5n8sf  1m     1m    Error: ErrImagePull\nNormal   Scheduled  1      Pod/c4-imagepull-7fd88fdb68-5n8sf  2m     2m    Successfully assigned hephaisto-chaos/c4-imagepull-7fd88fdb68-5n8sf to lima-rancher-desktop\n",
+        "resultTruncated": false,
+        "resultBytes": 1045,
+        "durationMs": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "costUsd": 0,
+        "failed": false,
+        "at": "2026-09-01T21:55:34.451701+00:00"
+      },
+      {
+        "id": "01a05ef8-7776-762e-87bc-82c2936764b2",
+        "investigationId": "01a05ef8-301b-7a20-b993-fe3ab8011ae3",
+        "ordinal": 3,
+        "kind": 0,
+        "toolServer": "internal",
+        "resultDigest": "-\u003E calls describe_pod",
+        "resultTruncated": false,
+        "resultBytes": 0,
+        "durationMs": 2499,
+        "inputTokens": 9820,
+        "outputTokens": 95,
+        "costUsd": 0.00031075,
+        "failed": false,
+        "at": "2026-09-01T21:55:36.95099+00:00"
+      },
+      {
+        "id": "01a05ef8-7777-7cdd-b472-4e869f8bf691",
+        "investigationId": "01a05ef8-301b-7a20-b993-fe3ab8011ae3",
+        "ordinal": 4,
+        "kind": 1,
+        "toolName": "describe_pod",
+        "toolServer": "kubernetes",
+        "arguments": "{\u0022name\u0022:\u0022c4-imagepull-7fd88fdb68-5n8sf\u0022,\u0022namespace\u0022:\u0022hephaisto-chaos\u0022}",
+        "resultDigest": "[step 01a05ef8-7777-7cdd-b472-4e869f8bf691] describe_pod\nlog digest: 155 lines, 4972 bytes\n\n-- repeated patterns --\nx6 [#89 .. #132]     observedGeneration: 1\nx5 [#33 .. #143]         cpu: 100m\nx5 [#88 .. #108]   - lastTransitionTime: \u00222026-08-29T13:50:12Z\u0022\nx3 [#37 .. #144]         memory: 16Mi\nx3 [#90 .. #110]     status: \u0022True\u0022\nx2 [#1 .. #80] apiVersion: v1\nx2 [#20 .. #21]     uid: fd16648a-a288-440d-a8af-1ae4b8878d45\nx2 [#30 .. #116]     name: app\nx2 [#31 .. #138]     resources:\nx2 [#32 .. #139]       limits:\n\n-- last 40 lines --\n    name: app\n    ready: false\n    restartCount: 0\n    started: false\n    state:\n      waiting:\n        message: \u0027Back-off pulling image \u0022busybox:this-tag-does-not-exist\u0022: ErrImagePull: Error response from daemon: failed to resolve reference \u0022docker.io/library/busybox:this-tag-does-not-exist\u0022: docker.io/library/busybox:this-tag-does-not-exist: not found\u0027\n        reason: ImagePullBackOff\n    volumeMounts:\n    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount\n      name: kube-api-access-kcgmd\n      readOnly: true\n      recursiveReadOnly: Disabled\n  hostIP: 0.0.0.0\n  hostIPs:\n  - ip: 0.0.0.0\n  observedGeneration: 1\n  phase: Pending\n  podIP: 0.0.0.0\n  podIPs:\n  - ip: 0.0.0.0\n  qosClass: Burstable\n  resources:\n    limits:\n      cpu: 100m\n      memory: 64Mi\n    requests:\n      cpu: 10m\n      memory: 16Mi\n  startTime: \u00222026-08-29T13:50:12Z\u0022\n\nevents for this pod:\ntype     reason     count  objects                            first  last  message\n-------  ---------  -----  ---------------------------------  -----  ----  ------------------------------------------------------------------------------------------------\nNormal   BackOff    11     Pod/c4-imagepull-7fd88fdb68-5n8sf  3s     3s    Back-off pulling image \u0022busybox:this-tag-does-not-exist\u0022\nWarning  Failed     11     Pod/c4-imagepull-7fd88fdb68-5n8sf  3s     3s    Error: ImagePullBackOff\nNormal   Pulling    4      Pod/c4-imagepull-7fd88fdb68-5n8sf  1m     1m    Pulling image \u0022busybox:this-tag-does-not-exist\u0022\nWarning  Failed     4      Pod/c4-imagepull-7fd88fdb68-5n8sf  1m     1m    Failed to pull image \u0022busybox:this-tag-does-not-exist\u0022: Error response from daemon: failed to r\u2026\nWarning  Failed     4      Pod/c4-imagepull-7fd88fdb68-5n8sf  1m     1m    Error: ErrImagePull\nNormal   Scheduled  1      Pod/c4-imagepull-7fd88fdb68-5n8sf  2m     2m    Successfully assigned hephaisto-chaos/c4-imagepull-7fd88fdb68-5n8sf to lima-rancher-desktop\n\n[truncated: 105 of 155 lines omitted]\n",
+        "rawBlobId": "01a05ef8-7777-7fb7-a4a4-6e693c620787",
+        "resultTruncated": true,
+        "resultBytes": 4972,
+        "durationMs": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "costUsd": 0,
+        "failed": false,
+        "at": "2026-09-01T21:55:36.951071+00:00"
+      },
+      {
+        "id": "01a05ef8-839f-7f3f-b533-aa94e74c375d",
+        "investigationId": "01a05ef8-301b-7a20-b993-fe3ab8011ae3",
+        "ordinal": 5,
+        "kind": 0,
+        "toolServer": "internal",
+        "resultDigest": "-\u003E calls get_workload",
+        "resultTruncated": false,
+        "resultBytes": 0,
+        "durationMs": 3112,
+        "inputTokens": 10728,
+        "outputTokens": 81,
+        "costUsd": 0.00033561,
+        "failed": false,
+        "at": "2026-09-01T21:55:40.063926+00:00"
+      },
+      {
+        "id": "01a05ef8-839f-7d22-bbf3-a6f34730a870",
+        "investigationId": "01a05ef8-301b-7a20-b993-fe3ab8011ae3",
+        "ordinal": 6,
+        "kind": 1,
+        "toolName": "get_workload",
+        "toolServer": "kubernetes",
+        "arguments": "{\u0022kind\u0022:\u0022Deployment\u0022,\u0022name\u0022:\u0022c4-imagepull\u0022,\u0022namespace\u0022:\u0022hephaisto-chaos\u0022}",
+        "resultDigest": "[step 01a05ef8-839f-7d22-bbf3-a6f34730a870] get_workload\nlog digest: 16 lines, 944 bytes\n\n-- last 16 lines --\nDeployment hephaisto-chaos/c4-imagepull  age 2m\nrevision: 1\nreplicas: desired=1 ready=0 updated=1 available=0 unavailable=1\nstrategy: RollingUpdate\ngeneration: 1 (observed - the controller is acting on the current spec)\n\nconditions:\ntype         status  reason                      message                                               since\n-----------  ------  --------------------------  ----------------------------------------------------  -----\nAvailable    False   MinimumReplicasUnavailable  Deployment does not have minimum availability.        2m\nProgressing  True    ReplicaSetUpdated           ReplicaSet \u0022c4-imagepull-7fd88fdb68\u0022 is progressing.  2m\n\ncontainers (from the pod template):\ncontainer  image                            requests             limits\n---------  -------------------------------  -------------------  --------------------\napp        busybox:this-tag-does-not-exist  cpu=10m,memory=16Mi  cpu=100m,memory=64Mi\n",
+        "resultTruncated": false,
+        "resultBytes": 944,
+        "durationMs": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "costUsd": 0,
+        "failed": false,
+        "at": "2026-09-01T21:55:40.063983+00:00"
+      },
+      {
+        "id": "01a05ef8-c05d-72bf-866e-112a47c73660",
+        "investigationId": "01a05ef8-301b-7a20-b993-fe3ab8011ae3",
+        "ordinal": 7,
+        "kind": 0,
+        "toolServer": "internal",
+        "resultDigest": "-\u003E calls conclude",
+        "resultTruncated": false,
+        "resultBytes": 0,
+        "durationMs": 15551,
+        "inputTokens": 11016,
+        "outputTokens": 917,
+        "costUsd": 0.00048637,
+        "failed": false,
+        "at": "2026-09-01T21:55:55.613915+00:00"
+      },
+      {
+        "id": "01a05ef8-c05d-7461-bc2c-17d95ad38ba2",
+        "investigationId": "01a05ef8-301b-7a20-b993-fe3ab8011ae3",
+        "ordinal": 8,
+        "kind": 1,
+        "toolName": "conclude",
+        "toolServer": "internal",
+        "arguments": "{\u0022findings\u0022:[{\u0022category\u0022:\u0022image\u0022,\u0022confidence\u0022:0.95,\u0022evidence\u0022:[{\u0022excerpt\u0022:\u0022Warning  Failed     4      Pod/c4-imagepull-7fd88fdb68-5n8sf  1m     1m    Failed to pull image \\u0022busybox:this-tag-does-not-exist\\u0022: Error response from daemon: failed to r\\u2026\u0022,\u0022step_id\u0022:\u002201a05ef8-6db3-7fa8-bd82-42c81919f232\u0022},{\u0022excerpt\u0022:\u0022message: \\u0027Back-off pulling image \\u0022busybox:this-tag-does-not-exist\\u0022: ErrImagePull: Error response from daemon: failed to resolve reference \\u0022docker.io/library/busybox:this-tag-does-not-exist\\u0022: docker.io/library/busybox:this-tag-does-not-exist: not found\\u0027\u0022,\u0022step_id\u0022:\u002201a05ef8-7777-7cdd-b472-4e869f8bf691\u0022},{\u0022excerpt\u0022:\u0022app        busybox:this-tag-does-not-exist  cpu=10m,memory=16Mi  cpu=100m,memory=64Mi\u0022,\u0022step_id\u0022:\u002201a05ef8-839f-7d22-bbf3-a6f34730a870\u0022}],\u0022hypothesis\u0022:\u0022Deployment hephaisto-chaos/c4-imagepull references a non-existent image tag busybox:this-tag-does-not-exist, causing ImagePullBackOff.\u0022}],\u0022summary\u0022:\u0022The c4-imagepull Deployment is stuck in ImagePullBackOff because its pod template specifies the image tag \\u0027busybox:this-tag-does-not-exist\\u0027, which does not exist in Docker Hub. The kubelet reports a \\u0022not found\\u0022 error, leading to repeated pull attempts and back\\u2011off. Fix by correcting the image reference or publishing the intended tag.\u0022}",
+        "resultDigest": "[step 01a05ef8-c05d-7461-bc2c-17d95ad38ba2] conclude\nlog digest: 1 lines, 129 bytes\n\n-- last 1 lines --\nERROR: conclude failed: The arguments dictionary is missing a value for the required parameter \u0027request\u0027. (Parameter \u0027arguments\u0027)\n",
+        "resultTruncated": false,
+        "resultBytes": 129,
+        "durationMs": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "costUsd": 0,
+        "failed": true,
+        "error": "The arguments dictionary is missing a value for the required parameter \u0027request\u0027. (Parameter \u0027arguments\u0027)",
+        "at": "2026-09-01T21:55:55.613989+00:00"
+      },
+      {
+        "id": "01a05ef8-e08a-7fd8-8cc4-397b7c8ef933",
+        "investigationId": "01a05ef8-301b-7a20-b993-fe3ab8011ae3",
+        "ordinal": 9,
+        "kind": 0,
+        "toolServer": "internal",
+        "resultDigest": "-\u003E calls conclude",
+        "resultTruncated": false,
+        "resultBytes": 0,
+        "durationMs": 8236,
+        "inputTokens": 11482,
+        "outputTokens": 442,
+        "costUsd": 0.00041960,
+        "failed": false,
+        "at": "2026-09-01T21:56:03.850109+00:00"
+      },
+      {
+        "id": "01a05ef8-e08a-7298-8dc2-e42817f5c741",
+        "investigationId": "01a05ef8-301b-7a20-b993-fe3ab8011ae3",
+        "ordinal": 10,
+        "kind": 1,
+        "toolName": "conclude",
+        "toolServer": "internal",
+        "arguments": "{\u0022request\u0022:{\u0022findings\u0022:[{\u0022category\u0022:\u0022image\u0022,\u0022confidence\u0022:0.95,\u0022evidence\u0022:[{\u0022excerpt\u0022:\u0022Warning  Failed     4      Pod/c4-imagepull-7fd88fdb68-5n8sf  1m     1m    Failed to pull image \\u0022busybox:this-tag-does-not-exist\\u0022: Error response from daemon: failed to r\\u2026\u0022,\u0022step_id\u0022:\u002201a05ef8-6db3-7fa8-bd82-42c81919f232\u0022},{\u0022excerpt\u0022:\u0022message: \\u0027Back-off pulling image \\\\\\u0022busybox:this-tag-does-not-exist\\\\\\u0022: ErrImagePull: Error response from daemon: failed to resolve reference \\\\\\u0022docker.io/library/busybox:this-tag-does-not-exist\\\\\\u0022: docker.io/library/busybox:this-tag-does-not-exist: not found\\u0027\u0022,\u0022step_id\u0022:\u002201a05ef8-7777-7cdd-b472-4e869f8bf691\u0022},{\u0022excerpt\u0022:\u0022app        busybox:this-tag-does-not-exist  cpu=10m,memory=16Mi  cpu=100m,memory=64Mi\u0022,\u0022step_id\u0022:\u002201a05ef8-839f-7d22-bbf3-a6f34730a870\u0022}],\u0022hypothesis\u0022:\u0022Deployment hephaisto-chaos/c4-imagepull references a non-existent image tag busybox:this-tag-does-not-exist, causing ImagePullBackOff.\u0022}],\u0022summary\u0022:\u0022The c4-imagepull Deployment is stuck in ImagePullBackOff because its pod template specifies the image tag \\u0027busybox:this-tag-does-not-exist\\u0027, which does not exist in Docker Hub. The kubelet reports a \\u0022not found\\u0022 error, leading to repeated pull attempts and back\\u2011off. Fix by correcting the image reference or publishing the intended tag.\u0022}}",
+        "resultDigest": "[step 01a05ef8-e08a-7298-8dc2-e42817f5c741] conclude\nlog digest: 1 lines, 141 bytes\n\n-- last 1 lines --\nConclusion recorded. Your citations are now checked against what the tools actually returned; any that do not match are discarded. Stop here.\n",
+        "resultTruncated": false,
+        "resultBytes": 141,
+        "durationMs": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "costUsd": 0,
+        "failed": false,
+        "at": "2026-09-01T21:56:03.850186+00:00"
+      },
+      {
+        "id": "01a05ef8-feb0-7387-80fc-a0998dc0f538",
+        "investigationId": "01a05ef8-301b-7a20-b993-fe3ab8011ae3",
+        "ordinal": 11,
+        "kind": 0,
+        "toolServer": "internal",
+        "resultDigest": "**Findings**\n\n| # | Category | Confidence | Evidence |\n|---|----------|------------|----------|\n| 1 | **image** | 0.95 | \u2022 \u0060Warning  Failed \u2026 Failed to pull image \u0022busybox:this-tag-does-not-exist\u0022: Error response from daemon: failed to r\u2026\u0060 (step\u202F01a05ef8-6db3-7fa8-bd82-42c81919f232) \u003Cbr\u003E\u2022 \u0060message: \u0027Back-off pulling image \u0022busybox:this-tag-does-not-exist\u0022: ErrImagePull: Error response from daemon: failed to resolve reference \u0022docker.io/library/busybox:this-tag-does-not-exist\u0022: docker.io/library/busybox:this-tag-does-not-exist: not found\u0027\u0060 (step\u202F01a05ef8-7777-7cdd-b472-4e869f8bf691) \u003Cbr\u003E\u2022 \u0060app        busybox:this-tag-does-not-exist  cpu=10m,memory=16Mi  cpu=100m,memory=64Mi\u0060 (step\u202F01a05ef8-839f-7d22-bbf3-a6f34730a870) |\n\n**Hypothesis**\n\nThe \u0060c4-imagepull\u0060 Deployment in namespace **hephaisto-chaos** references the image tag **busybox:this-tag-does-not-exist**, which does not exist in Docker Hub. The kubelet therefore cannot resolve the image reference, resulting in repeated \u0060ErrImagePull\u0060 events and a subsequent \u0060ImagePullBackOff\u0060 state for its pod.\n\n**Summary**\n\nThe Deployment is stuck because it points to a non\u2011existent image tag. The kubelet reports \u201Cnot found\u201D when trying to pull \u0060busybox:this-tag-does-not-exist\u0060, causing the pod to remain in \u0060Pending\u0060 with \u0060ImagePullBackOff\u0060. Correct the image reference (use an existing tag or push the intended tag) and the Deployment will become healthy.",
+        "resultTruncated": false,
+        "resultBytes": 0,
+        "durationMs": 7718,
+        "inputTokens": 11955,
+        "outputTokens": 411,
+        "costUsd": 0.00042852,
+        "failed": false,
+        "at": "2026-09-01T21:56:11.568858+00:00"
+      },
+      {
+        "id": "01a05ef9-24e7-7789-ad32-dd800af19c09",
+        "investigationId": "01a05ef8-301b-7a20-b993-fe3ab8011ae3",
+        "ordinal": 12,
+        "kind": 0,
+        "toolServer": "internal",
+        "resultDigest": "{\n  \u0022summary\u0022: \u0022The Deployment references a non\u2011existent image tag (busybox:this-tag-does-not-exist). This is a configuration error that must be corrected by updating the Deployment spec. Restarting pods would not resolve the issue because they would attempt to pull the same invalid image.\u0022,\n  \u0022no_action_required\u0022: true,\n  \u0022actions\u0022: []\n}",
+        "resultTruncated": false,
+        "resultBytes": 0,
+        "durationMs": 9781,
+        "inputTokens": 4469,
+        "outputTokens": 75,
+        "costUsd": 0.00014682,
+        "failed": false,
+        "at": "2026-09-01T21:56:21.351989+00:00"
+      }
+    ],
+    "findings": [
+      {
+        "id": "01a05ef8-feb0-77f5-8ca5-5752f242e64a",
+        "investigationId": "01a05ef8-301b-7a20-b993-fe3ab8011ae3",
+        "category": "image",
+        "hypothesis": "Deployment hephaisto-chaos/c4-imagepull references a non-existent image tag busybox:this-tag-does-not-exist, causing ImagePullBackOff.",
+        "confidence": 0.95,
+        "isPrimary": true,
+        "evidence": [
+          {
+            "id": "01a05ef8-feb0-70f9-ae44-e60ba6032091",
+            "findingId": "01a05ef8-feb0-77f5-8ca5-5752f242e64a",
+            "stepId": "01a05ef8-6db3-7fa8-bd82-42c81919f232",
+            "excerpt": "Warning  Failed     4      Pod/c4-imagepull-7fd88fdb68-5n8sf  1m     1m    Failed to pull image \u0022busybox:this-tag-does-not-exist\u0022: Error response from daemon: failed to r\u2026",
+            "sourceUri": "evidence://step/01a05ef8-6db3-7fa8-bd82-42c81919f232"
+          },
+          {
+            "id": "01a05ef8-feb0-7166-bb5a-3a4f8f14a89b",
+            "findingId": "01a05ef8-feb0-77f5-8ca5-5752f242e64a",
+            "stepId": "01a05ef8-839f-7d22-bbf3-a6f34730a870",
+            "excerpt": "app        busybox:this-tag-does-not-exist  cpu=10m,memory=16Mi  cpu=100m,memory=64Mi",
+            "sourceUri": "evidence://step/01a05ef8-839f-7d22-bbf3-a6f34730a870"
+          }
+        ]
+      }
+    ],
+    "plan": {
+      "id": "01a05ef9-24e8-750f-85d4-756bd5103e1f",
+      "investigationId": "01a05ef8-301b-7a20-b993-fe3ab8011ae3",
+      "summary": "The Deployment references a non\u2011existent image tag (busybox:this-tag-does-not-exist). This is a configuration error that must be corrected by updating the Deployment spec. Restarting pods would not resolve the issue because they would attempt to pull the same invalid image.",
+      "noActionRequired": true,
+      "createdAt": "2026-09-01T21:56:21.352041+00:00",
+      "actions": []
+    }
+  },
+  "blobs": [
+    {
+      "id": "01a05ef8-7777-7fb7-a4a4-6e693c620787",
+      "investigationId": "01a05ef8-301b-7a20-b993-fe3ab8011ae3",
+      "contentType": "text/plain",
+      "content": "apiVersion: v1\nkind: Pod\nmetadata:\n  creationTimestamp: \u00222026-08-29T13:50:12Z\u0022\n  generateName: c4-imagepull-7fd88fdb68-\n  generation: 1\n  labels:\n    app.kubernetes.io/name: c4-imagepull\n    hephaisto.chaos/fault: imagepull\n    hephaisto.chaos/scenario: c4\n    pod-template-hash: 7fd88fdb68\n  name: c4-imagepull-7fd88fdb68-5n8sf\n  namespace: hephaisto-chaos\n  ownerReferences:\n  - apiVersion: apps/v1\n    kind: ReplicaSet\n    blockOwnerDeletion: true\n    controller: true\n    name: c4-imagepull-7fd88fdb68\n    uid: fd16648a-a288-440d-a8af-1ae4b8878d45\n  uid: 44d056f1-4162-4616-9e45-e8271816dbba\nspec:\n  containers:\n  - command:\n    - /bin/sh\n    - -c\n    - sleep 86400\n    image: busybox:this-tag-does-not-exist\n    imagePullPolicy: IfNotPresent\n    name: app\n    resources:\n      limits:\n        cpu: 100m\n        memory: 64Mi\n      requests:\n        cpu: 10m\n        memory: 16Mi\n    terminationMessagePath: /dev/termination-log\n    terminationMessagePolicy: File\n    volumeMounts:\n    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount\n      name: kube-api-access-kcgmd\n      readOnly: true\n  dnsPolicy: ClusterFirst\n  enableServiceLinks: true\n  nodeName: lima-rancher-desktop\n  preemptionPolicy: PreemptLowerPriority\n  priority: 0\n  restartPolicy: Always\n  schedulerName: default-scheduler\n  securityContext: {}\n  serviceAccount: default\n  serviceAccountName: default\n  terminationGracePeriodSeconds: 1\n  tolerations:\n  - effect: NoExecute\n    key: node.kubernetes.io/not-ready\n    operator: Exists\n    tolerationSeconds: 300\n  - effect: NoExecute\n    key: node.kubernetes.io/unreachable\n    operator: Exists\n    tolerationSeconds: 300\n  volumes:\n  - name: kube-api-access-kcgmd\n    projected:\n      defaultMode: 420\n      sources:\n      - serviceAccountToken:\n          expirationSeconds: 3607\n          path: token\n      - configMap:\n          items:\n          - key: ca.crt\n            path: ca.crt\n          name: kube-root-ca.crt\n      - downwardAPI:\n          items:\n          - fieldRef:\n              apiVersion: v1\n              fieldPath: metadata.namespace\n            path: namespace\nstatus:\n  allocatedResources:\n    cpu: 10m\n    memory: 16Mi\n  conditions:\n  - lastTransitionTime: \u00222026-08-29T13:50:12Z\u0022\n    observedGeneration: 1\n    status: \u0022True\u0022\n    type: PodReadyToStartContainers\n  - lastTransitionTime: \u00222026-08-29T13:50:12Z\u0022\n    observedGeneration: 1\n    status: \u0022True\u0022\n    type: Initialized\n  - lastTransitionTime: \u00222026-08-29T13:50:12Z\u0022\n    message: \u0027containers with unready status: [app]\u0027\n    observedGeneration: 1\n    reason: ContainersNotReady\n    status: \u0022False\u0022\n    type: Ready\n  - lastTransitionTime: \u00222026-08-29T13:50:12Z\u0022\n    message: \u0027containers with unready status: [app]\u0027\n    observedGeneration: 1\n    reason: ContainersNotReady\n    status: \u0022False\u0022\n    type: ContainersReady\n  - lastTransitionTime: \u00222026-08-29T13:50:12Z\u0022\n    observedGeneration: 1\n    status: \u0022True\u0022\n    type: PodScheduled\n  containerStatuses:\n  - image: busybox:this-tag-does-not-exist\n    imageID: \u0022\u0022\n    lastState: {}\n    name: app\n    ready: false\n    restartCount: 0\n    started: false\n    state:\n      waiting:\n        message: \u0027Back-off pulling image \u0022busybox:this-tag-does-not-exist\u0022: ErrImagePull: Error response from daemon: failed to resolve reference \u0022docker.io/library/busybox:this-tag-does-not-exist\u0022: docker.io/library/busybox:this-tag-does-not-exist: not found\u0027\n        reason: ImagePullBackOff\n    volumeMounts:\n    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount\n      name: kube-api-access-kcgmd\n      readOnly: true\n      recursiveReadOnly: Disabled\n  hostIP: 0.0.0.0\n  hostIPs:\n  - ip: 0.0.0.0\n  observedGeneration: 1\n  phase: Pending\n  podIP: 0.0.0.0\n  podIPs:\n  - ip: 0.0.0.0\n  qosClass: Burstable\n  resources:\n    limits:\n      cpu: 100m\n      memory: 64Mi\n    requests:\n      cpu: 10m\n      memory: 16Mi\n  startTime: \u00222026-08-29T13:50:12Z\u0022\n\nevents for this pod:\ntype     reason     count  objects                            first  last  message\n-------  ---------  -----  ---------------------------------  -----  ----  ------------------------------------------------------------------------------------------------\nNormal   BackOff    11     Pod/c4-imagepull-7fd88fdb68-5n8sf  3s     3s    Back-off pulling image \u0022busybox:this-tag-does-not-exist\u0022\nWarning  Failed     11     Pod/c4-imagepull-7fd88fdb68-5n8sf  3s     3s    Error: ImagePullBackOff\nNormal   Pulling    4      Pod/c4-imagepull-7fd88fdb68-5n8sf  1m     1m    Pulling image \u0022busybox:this-tag-does-not-exist\u0022\nWarning  Failed     4      Pod/c4-imagepull-7fd88fdb68-5n8sf  1m     1m    Failed to pull image \u0022busybox:this-tag-does-not-exist\u0022: Error response from daemon: failed to r\u2026\nWarning  Failed     4      Pod/c4-imagepull-7fd88fdb68-5n8sf  1m     1m    Error: ErrImagePull\nNormal   Scheduled  1      Pod/c4-imagepull-7fd88fdb68-5n8sf  2m     2m    Successfully assigned hephaisto-chaos/c4-imagepull-7fd88fdb68-5n8sf to lima-rancher-desktop\n",
+      "createdAt": "2026-09-01T21:55:36.951854+00:00",
+      "expiresAt": "2026-10-01T21:55:36.951854+00:00"
+    }
+  ],
+  "score": {
+    "verdict": "Correct",
+    "planVerdict": "CorrectlyDeclined",
+    "hypothesis": "Deployment hephaisto-chaos/c4-imagepull references a non-existent image tag busybox:this-tag-does-not-exist, causing ImagePullBackOff.",
+    "structurallySound": true,
+    "stepsUsed": 6,
+    "costUsd": 0.00242697,
+    "terminationReason": "Concluded"
+  },
+  "origin": {
+    "modelId": "gpt-oss:120b",
+    "recordedAgainstModelId": "gemini-3.7-flash",
+    "recordedAt": "2026-09-01T21:56:21.352595+00:00",
+    "agentVersion": "0.5.1-main.0.4\u002B23df805946ec0c37b0adafafeb12130231adec93",
+    "promptFreshness": "prompt        sha256:bc97facb144dbd6e STALE - prompts and runbooks now hash sha256:2911974534bbde1f"
+  }
+}

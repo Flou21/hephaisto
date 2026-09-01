@@ -29,5 +29,5 @@ public sealed class DemoOptions
     /// Where the transcripts live. Relative paths resolve against the content root, which in
     /// the published image is where the <c>transcripts/</c> directory is copied to.
     /// </summary>
-    public string TranscriptPath { get; set; } = "transcripts";
+    public string TranscriptPath { get; set; } = "Demo/transcripts";
 }

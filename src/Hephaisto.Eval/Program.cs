@@ -42,6 +42,10 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
           inspect <cassette.json>...
                   Validates a cassette and describes what it holds.
 
+          redact  <transcripts/> | <transcript.json>...
+                  Re-writes transcripts through the redactor and says which changed. Saving a
+                  transcript always redacts, so this is only needed when the rules change.
+
         A cassette records one scenario's tool surface, its incident and every answer the
         cluster gave, so a prompt or budget change can be measured without a cluster and
         without a seeded fault.
@@ -66,6 +70,7 @@ try
         "record" => await RecordCommand.RunAsync(parsed, lifetime.Token),
         "run" => await RunCommand.RunAsync(parsed, lifetime.Token),
         "inspect" => Inspect(parsed.Positional),
+        "redact" => RedactCommand.Run(parsed.Positional),
         _ => Unknown(args[0]),
     };
 }

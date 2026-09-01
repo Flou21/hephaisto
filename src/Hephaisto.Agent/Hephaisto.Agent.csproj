@@ -39,8 +39,7 @@
          no model, no cluster. Inert unless Demo:Seed is set. They live under this project
          rather than at the repository root so the Dockerfile, which copies src/ and nothing
          else, carries them without a special case. -->
-    <Content Include="Demo/transcripts/*.json" CopyToOutputDirectory="PreserveNewest"
-             Link="transcripts/%(Filename)%(Extension)" />
+    <Content Update="Demo/transcripts/*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
