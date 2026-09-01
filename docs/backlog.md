@@ -2757,3 +2757,44 @@ per-model pair recorded beside the price entry — which is what [#59](#59) alre
 `MaxSteps`, for the same underlying reason: **the limits are per-model and the defaults are not.**
 
 **Size.** S for the harness, M for the product default.
+
+### 75. The outbox test reported a durability failure when its own precondition had failed
+
+**Status: fixed 2026-09-01** — see the end of this entry.
+
+**Symptom.** `rc2` failed v0.3.0's acceptance criterion:
+
+```
+07:28:03  taking the receiver down (503) and restarting the agent mid-flight
+07:30:05  WARN  no refused delivery observed; the restart test may be weaker than intended
+          FAIL  a delivery survives an agent restart -- the outbox did not replay
+```
+
+The same assertion passed in `rc1` against the same code path.
+
+**Cause.** The test needs a delivery to be *attempted* while the receiver is returning 503, so a
+row is genuinely mid-flight. Whether that happens depends on incident activity the test does not
+control. In `rc2` the investigations had all concluded by the time the window opened, so nothing
+was sent, nothing was refused, and nothing was queued — and an empty outbox cannot replay.
+
+**Why it matters** is the sentence it printed. "The outbox did not replay" is a claim that the
+durability guarantee is broken; what actually happened is that the guarantee was never exercised.
+On a release gate those are opposite conclusions — one blocks a release, the other means *"we did
+not manage to test it"* — and the run had already **said so itself**, one line above, as a
+warning it then ignored.
+
+This is the identical mistake `chaos_assert_verification` was written to avoid, and its comment
+says why in terms that apply verbatim here: *"They are the first failure restated as downstream
+symptoms with confident and incorrect causes attached … A report that is wrong about why is worse
+than one that is merely incomplete."*
+
+**It also masked the more useful finding.** The interesting fact about `rc2`'s notify phase is not
+the outbox; it is that the system was quiet enough at that moment to have nothing to send — which
+is a property of when the window opens relative to the investigation queue.
+
+**Fix.** Capture whether a refusal was observed and `skip` when it was not, naming the unmet
+precondition. Also saves the 300s wait for an outcome that was already determined.
+
+**Size.** S.
+
+**Fixed 2026-09-01.**

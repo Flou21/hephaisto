@@ -186,9 +186,11 @@ notify_assert_outage_survived() {
 
     # Let the dispatcher try at least once against the failing receiver, so the row is
     # genuinely mid-flight rather than merely queued.
+    # Whether anything was actually queued decides whether the assertion below has a subject.
+    local refused=1
     wait_for "the agent to attempt a delivery against the failing receiver" 120 \
         bash -c 'kubectl --kubeconfig "$E2E_KUBECONFIG" -n hephaisto-obs logs deploy/notification-receiver --tail=200 2>/dev/null | grep -q "REFUSED"' \
-        || warn "no refused delivery observed; the restart test may be weaker than intended"
+        || { refused=0; warn "no refused delivery observed; the restart test may be weaker than intended"; }
 
     say "restarting the agent"
     kc -n "$APP_NS" rollout restart deploy/hephaisto >/dev/null 2>&1
@@ -200,6 +202,22 @@ notify_assert_outage_survived() {
 
     say "bringing the receiver back"
     notify_mode ok
+
+    # NOTHING QUEUED MEANS THERE IS NOTHING TO REPLAY, and saying so is the whole point - the
+    # same reasoning chaos_assert_verification already applies when no action was executed.
+    #
+    # This test needs a delivery to be attempted while the receiver is down. That only happens
+    # if the agent has something to send in that two-minute window, which depends on incident
+    # activity it does not control: a run whose investigations have all concluded is quiet, and
+    # nothing is refused. The warning above already knew the premise had failed, and the run
+    # then reported "the outbox did not replay" - a confident, wrong cause for an outbox that
+    # was simply empty. It is the difference between "the durability guarantee is broken" and
+    # "we did not manage to test it", and a release gate must not confuse the two.
+    if [ "$refused" != "1" ]; then
+        skip "a delivery survives an agent restart" \
+             "no delivery was refused while the receiver was down, so nothing was queued - the precondition failed, not the outbox"
+        return 0
+    fi
 
     if wait_for "the queued delivery to arrive after the restart" 300 \
             bash -c '[ "$(curl -sS --max-time 10 "http://127.0.0.1:'"$PF_PORT_RECEIVER"'/received/count" 2>/dev/null || echo 0)" -gt 0 ]'; then
