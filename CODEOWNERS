@@ -1,0 +1,7 @@
+# Everything, for now. This is a single-maintainer project and pretending otherwise would put
+# a review gate in front of a queue with nobody in it.
+#
+# The directories worth splitting out first, when there is somebody to split them to, are
+# charts/ and .github/ - a chart change reaches every installation on the next upgrade, and a
+# workflow change reaches the credentials that publish them.
+*       @Flou21
