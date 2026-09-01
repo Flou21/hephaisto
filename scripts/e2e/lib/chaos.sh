@@ -764,7 +764,7 @@ chaos_assert_action_executed() {
     elif [ "${proposed:-0}" -eq 0 ]; then
         ACT_EXECUTED=0
         skip "$ACT_FIXTURE was acted on" \
-             "the planner proposed nothing for it - a model judgement, measured at about half of runs (#66), not a fault in the acting path"
+             "the planner proposed nothing for it - a model judgement, not a fault in the acting path; see #66 for the measured rate"
         record pass "$CURRENT_PHASE" "action rate on $ACT_FIXTURE: 0 proposed" \
             "reported only - whether the planner acts is measured, not gated"
     else

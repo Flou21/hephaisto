@@ -753,16 +753,37 @@ written down individually rather than as one tidying commit.
 thirty-minute window, and the report states whether the bar was met instead of printing a ratio
 that reads as a pass at `7/9`.
 
-**What is still not done, and why.** The `--mode Auto` run itself. The harness installs a
-**published** artifact from GHCR — that is the point of it, since what nothing else proved was
-that a released build works — so it cannot test a provider that exists only on a feature branch.
-That property was kept rather than worked around: no local-image escape hatch was added, because
-it would dissolve the only thing this harness uniquely proves. It needs this branch pushed and a
-nightly published, and a push is not something this session does on its own.
+**The gate is green, on the full corpus, for the first time.** On 2026-09-01,
+`scripts/e2e/run.sh --tag 0.5.0-rc5 --full --mode Auto` exited **0**: 77 assertions, 0 failed,
+8 skipped, 98 minutes, **$0.115** on a local `gpt-oss-120b`. Every phase clean — deps 14/14,
+deploy 26/26 against the published image, validate 20/0, notify 6/0, console 7 run and 2 stated
+skips.
 
-So: this release has improved the agent's reasoning, proved it broke nothing across two model
-families, made the acting path measurable for the first time, **made the gate able to run at all
-and unable to pass without having run**, and **has still not seen it act on a cluster.**
+`root cause 8/10 correct — MVP bar met (>= 7/10 over >= 10 scenarios)`. That bar has been quoted
+since v0.1.0 and had never been **evaluable**: a scenario whose investigation was truncated
+produces no finding, and no finding cannot be graded. Three earlier full runs scored 7/8, 7/7 and
+7/7 — the accuracy was never short, the denominator was. #78 let the reserved concluding step
+finish; ceilings fell to 1 of 20 and the count reached ten. #2 closes on that.
+
+**Getting there cost eighteen fixes, and most were in the instrument.** The harness could exit 0
+having skipped everything (#61), probe the model from the wrong machine (#62), drop the fixture it
+asserts about (#63), assert a condition `DryRun` cannot produce (#64), silently disarm on resume
+(#65), release before the fixture it was waiting for had concluded (#76), abort on its own timeout,
+report a killed run as `PASSED` (#73), and gate a deterministic claim on a model's judgement (#79).
+Three product bugs sat underneath: an unattributed auto action (#71), a cooldown that refused an
+action as its own precedent (#77) — which had been **dormant on the entire L3 path** — and a
+`RestartPod` that could never be verified because its target carried no owner (#72).
+
+**What the green does not say, and this matters more than the tick.** The planner proposed nothing
+for c12, so the acting assertions skipped: `acted on`, `available after the restart` and `reached
+Resolved` were all reported as untested rather than passed. **#72's fix is unconfirmed on a
+cluster.** The agent has been observed acting exactly twice in this milestone, both before that fix
+existed. So the honest sentence is that nothing is broken which this run could test — not that the
+agent was seen resolving an incident.
+
+That is also why the acting assertion no longer gates on it. Whether the planner acts is a model
+judgement measured at 0 of 4 on a cluster and 4 of 8 in replay; those two numbers disagree, and
+#66 now says so rather than letting either stand as the rate.
 
 ---
 

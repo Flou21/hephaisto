@@ -69,6 +69,8 @@ silent skip either.
 
 ### 2. Six of ten chaos fixtures never run in an automated gate
 
+**Status: fixed 2026-09-01** — see the end of this entry.
+
 **Symptom.** The MVP bar — ≥ 7/10 correct root cause over ≥ 10 seeded scenarios — cannot be
 reached by the harness as configured. It runs four.
 
@@ -100,6 +102,24 @@ Note what this does **not** claim: c6 and c9 still cannot run, so the coverage i
 and not twelve of twelve. The bar was always written as ten. This reaches it with the fixtures
 that work rather than by replacing either of the two that do not, which is the cheaper half of
 the fix above and leaves the replacement-fixture half open if the count ever needs to be twelve.
+
+**Fixed 2026-09-01.** `scripts/e2e/run.sh --tag 0.5.0-rc5 --full --mode Auto` ran
+`c1,c2,c3,c4,c5,c7,c8,c10,c11,c12` against a published artifact and exited **0**: 77 assertions,
+0 failed, 8 skipped, 98 minutes, $0.115 on a local `gpt-oss-120b`.
+
+The bar was reached rather than approximated. `root cause 8/10 correct — MVP bar met (>= 7/10
+over >= 10 scenarios)`: ten scenarios scored, which is the denominator this entry was opened
+about, and the first time in the project's history that the bar has been **evaluable at all**.
+
+What made the difference was not coverage but [#78](#78). Every investigation truncated by the
+step ceiling used to report no finding — its reserved concluding step could never complete — and a
+scenario with no finding cannot be graded. Three earlier full runs scored 7/8, 7/7 and 7/7:
+accuracy was never the problem, the denominator was. With the conclusion able to land, ceilings
+fell to 1 of 20 investigations and the count reached ten.
+
+**c6 and c9 are still excluded, and this entry closes anyway.** The bar was always written as
+n/10; ten is what it now measures. Replacing the two fixtures that cannot run here would make it
+n/12, which is a different and larger question than the one this entry asked.
 
 ### 3. `hephaisto.human.feedback` is never recorded
 
@@ -2385,6 +2405,16 @@ path produces well-formed plans, so [#56](#56)'s disguise is ruled out here rath
 `AcceptableActions` until the observed behaviour scores well, would make the number go up without
 moving the agent — and this corpus's whole value is that it was built before the result was
 known.
+
+**The cluster rate is lower than this entry's headline, and the headline came from replay.**
+The 4-of-8 above was measured by **offline cassette replay**. On a cluster, since the wait bug
+([#76](#76)) stopped releasing before c12 had finished investigating, c12 has been acted on **0 of
+4** runs. Those are the only cluster measurements worth counting; everything earlier was taken
+with an instrument that could report a decline the planner never made.
+
+So there are two numbers and they disagree, which is itself the finding: replay and a live cluster
+are not measuring the same thing, and the corpus is the one that has been quoted. Nothing should
+claim an action rate until they are reconciled.
 
 **Size.** M. **Blocks:** claiming an action rate, which the website and the README both want to
 do.
