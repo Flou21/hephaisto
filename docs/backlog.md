@@ -2711,13 +2711,22 @@ how a release gate lies."* The implementation inverted it — it never lied abou
 about a **failure**, telling the reader that assertions had not run when they all had. On a
 release gate, "we never checked" and "we checked and it failed" are different decisions.
 
-**Fix.** `run.sh` sets `RUN_COMPLETED=1` on the only line that proves it reached the end, and
-ABORTED now requires a non-zero exit **and** not having completed. Verified across all three:
-died-early → `ABORTED`, completed-with-failures → `FAILED`, completed-clean → `PASSED`.
+**Fix, first attempt.** `run.sh` sets `RUN_COMPLETED=1` on the only line that proves it reached
+the end, and ABORTED required a non-zero exit **and** not having completed.
 
-**Size.** S.
+**That was still wrong, and a killed run proved it the next day.** Stopping a run during its act
+phase produced `PASSED -- 61 assertions`: a signal delivered while the script sits in a wait can
+leave `$?` at zero, so the exit-code half of the condition was false and it fell through to
+`PASSED`. The same false green, one door over.
 
-**Fixed 2026-08-31.**
+**Fix, corrected.** Completion is the fact; the exit code is secondary. ABORTED now depends on
+`RUN_COMPLETED` alone — a run that did not reach its last line has not been fully checked,
+whatever it exited with. Verified across four cases: killed at exit 0 → `ABORTED`, killed at 143
+→ `ABORTED`, completed-with-failures → `FAILED`, completed-clean → `PASSED`.
+
+**Size.** S, twice.
+
+**Fixed 2026-08-31, corrected 2026-09-01.**
 
 ### 74. The token ceiling and the cost ceiling are calibrated for price points 45x apart
 

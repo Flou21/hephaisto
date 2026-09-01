@@ -112,8 +112,16 @@ report_render() {
     # "N assertions passed before it stopped; the rest never ran" about a run where nothing
     # stopped and everything ran, which is the reporter lying in the one direction this file
     # exists to prevent.
-    if [ "$aborted" != "0" ] && [ "${RUN_COMPLETED:-0}" != "1" ]; then
-        printf '%s  ABORTED -- the run exited %s before finishing.%s\n' "$C_RED" "$aborted" "$C_RESET"
+    # COMPLETION IS THE FACT; the exit code is secondary. Keying this on the exit code alone
+    # made every red run read ABORTED; keying it on both let a run KILLED mid-phase report
+    # PASSED, because a signal delivered while the script sits in a wait can still leave $? at
+    # zero - observed, not theorised, by killing a run during its act phase and watching it
+    # print "PASSED -- 61 assertions".
+    #
+    # A run that did not reach its last line has not been fully checked, whatever it exited
+    # with. That is the whole distinction this block exists to draw.
+    if [ "${RUN_COMPLETED:-0}" != "1" ]; then
+        printf '%s  ABORTED -- the run did not finish (exit %s).%s\n' "$C_RED" "$aborted" "$C_RESET"
         printf '%s  %d assertions passed before it stopped; the rest never ran.%s\n\n' \
             "$C_RED" "$passed" "$C_RESET"
     elif [ "$failed" -gt 0 ]; then
