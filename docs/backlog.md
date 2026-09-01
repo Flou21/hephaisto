@@ -2888,7 +2888,16 @@ candidate as its own precedent.
 executed on a cluster, which had happened exactly once in the project's history, three hours
 before this entry was written.
 
-**Size.** S to fix. The entry is long because the dormancy is the finding and the regression is
-only how it surfaced.
+**Outstanding: there is no regression guard.** The fix is verified end to end by the e2e acting
+phase and by nothing else. A unit test cannot reach it — the figures come from an EF query inside
+the admission transaction — and the honest home is
+`tests/Hephaisto.IntegrationTests`, alongside `WorkloadQuarantineTests`, which already proves a
+neighbouring admission property against real Postgres. Two cases are worth pinning: that an
+auto-approved action **does** count toward the workload cooldown (the dormancy, which is the
+finding), and that the action being admitted **does not** count toward its own (the regression).
+Until that exists, four safety gates on the L3 path are covered only by a cluster run.
 
-**Fixed 2026-09-01.**
+**Size.** S to fix, S for the guard that is not yet written. The entry is long because the
+dormancy is the finding and the regression is only how it surfaced.
+
+**Fixed 2026-09-01; regression guard outstanding.**
