@@ -1,3 +1,5 @@
+using System.Reflection;
+using Hephaisto.Agent.Demo;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -95,6 +97,18 @@ internal static class RunCommand
         var clock = services.GetRequiredService<IClock>();
         var startedAt = clock.UtcNow;
         var passes = new List<RunScore>();
+        var modelId = services.GetRequiredService<IChatClientFactory>().InvestigationModelId;
+
+        // One file per cassette, so --repeats N leaves the last pass on disk. Deliberately not
+        // one file per pass: these are committed artifacts read by the demo seeder, and a
+        // directory that grows with the repeat count would turn a measurement flag into a
+        // source-tree change.
+        var transcriptDir = args.Value("transcripts");
+
+        if (transcriptDir is not null)
+        {
+            Directory.CreateDirectory(transcriptDir);
+        }
 
         for (var pass = 1; pass <= repeats; pass++)
         {
@@ -102,10 +116,16 @@ internal static class RunCommand
 
             foreach (var (cassette, key) in scenarios)
             {
-                var score = await ReplayAsync(services, cassette, key, judge, ct).ConfigureAwait(false);
+                var (score, outcome, incident) = await ReplayAsync(services, cassette, key, judge, ct)
+                    .ConfigureAwait(false);
 
                 scored.Add(score);
                 Console.WriteLine(Line(pass, score));
+
+                if (transcriptDir is not null)
+                {
+                    WriteTranscript(transcriptDir, cassette, score, outcome, incident, modelId, clock);
+                }
             }
 
             passes.Add(new RunScore { Label = $"{label} pass {pass}", Scenarios = scored });
@@ -125,6 +145,60 @@ internal static class RunCommand
         Write(report, args.Value("out") ?? "results");
 
         return report.Sound == report.Total ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Writes what the run just computed and would otherwise discard.
+    /// </summary>
+    /// <remarks>
+    /// The grade is written whatever it says. A transcript where the agent was wrong is still
+    /// publishable, and a demo showing only the correct ones would misrepresent a corpus this
+    /// project publishes as 8-of-10.
+    /// </remarks>
+    private static void WriteTranscript(
+        string directory,
+        Cassette cassette,
+        ScenarioScore score,
+        InvestigationOutcome outcome,
+        Incident incident,
+        string modelId,
+        IClock clock)
+    {
+        var transcript = new Transcript
+        {
+            CassetteId = cassette.Id,
+            Description = cassette.Description,
+            ExpectedRootCause = cassette.ExpectedRootCause,
+            Incident = incident,
+            Investigation = outcome.Investigation,
+            Blobs = outcome.Blobs,
+            Score = new TranscriptGrade
+            {
+                Verdict = score.Verdict.ToString(),
+                PlanVerdict = score.PlanVerdict.ToString(),
+                Hypothesis = score.Hypothesis,
+                JudgeReason = score.JudgeReason,
+                StructurallySound = score.StructurallySound,
+                StepsUsed = score.StepsUsed,
+                CostUsd = score.CostUsd,
+                TerminationReason = score.TerminationReason,
+            },
+            Origin = new TranscriptOrigin
+            {
+                ModelId = modelId,
+                RecordedAgainstModelId = cassette.Origin?.ModelId,
+                RecordedAt = clock.UtcNow,
+                AgentVersion = typeof(Transcript).Assembly
+                    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+                    ?.InformationalVersion ?? "unknown",
+                PromptFreshness = PromptFingerprint.Describe(cassette),
+            },
+        };
+
+        var path = Path.Combine(directory, $"{cassette.Id}.json");
+        transcript.Save(path);
+
+        Console.WriteLine($"         transcript -> {path}");
     }
 
     private static IReadOnlyList<string> ResolvePaths(EvalArguments args)
@@ -157,7 +231,7 @@ internal static class RunCommand
     /// every replay of one cassette carries the same one.
     /// </para>
     /// </remarks>
-    private static async Task<ScenarioScore> ReplayAsync(
+    private static async Task<(ScenarioScore Score, InvestigationOutcome Outcome, Incident Incident)> ReplayAsync(
         IServiceProvider services,
         Cassette cassette,
         AnswerKey key,
@@ -184,11 +258,18 @@ internal static class RunCommand
             services.GetRequiredService<IOptionsMonitor<InvestigationOptions>>(),
             services.GetRequiredService<ILogger<InvestigationRunner>>());
 
-        var outcome = await runner.RunAsync(Rebuild(cassette, key), ct).ConfigureAwait(false);
+        var incident = Rebuild(cassette, key);
+        var outcome = await runner.RunAsync(incident, ct).ConfigureAwait(false);
 
         var judged = await JudgeAsync(judge, cassette, outcome.Investigation, ct).ConfigureAwait(false);
 
-        return ScenarioScorer.Combine(cassette, key, outcome.Investigation, replay.Summarise(), judged);
+        // The outcome travels out rather than being dropped here. It is the only place the
+        // steps, the evidence blobs and the plan exist outside a database, and --transcripts
+        // is what turns them into an artifact.
+        return (
+            ScenarioScorer.Combine(cassette, key, outcome.Investigation, replay.Summarise(), judged),
+            outcome,
+            incident);
     }
 
     private static async Task<JudgeVerdict?> JudgeAsync(

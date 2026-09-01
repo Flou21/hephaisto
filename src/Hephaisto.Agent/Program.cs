@@ -1,4 +1,5 @@
 using Hephaisto.Agent.Components;
+using Hephaisto.Agent.Demo;
 using Microsoft.Extensions.AI;
 using Hephaisto.Agent.Kubernetes;
 using Hephaisto.Agent.Llm;
@@ -39,6 +40,10 @@ builder.Services.AddHephaistoLlm(builder.Configuration);
 builder.Services.AddHephaistoPipeline(builder.Configuration);
 builder.Services.AddHephaistoNotifications(builder.Configuration);
 builder.Services.AddHephaistoWeb();
+
+// The demo seed. Inert unless Demo:Seed is set, and refuses on a database that already holds
+// an incident - so it ships in the image without being a thing a real install can trip over.
+builder.Services.AddHephaistoDemo(builder.Configuration);
 
 // The bridge between the two streams: the Kubernetes layer builds its read-only tools, the
 // investigation loop consumes IEnumerable<AIFunction> without knowing where they came from.

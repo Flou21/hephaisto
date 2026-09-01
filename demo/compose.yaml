@@ -1,0 +1,80 @@
+# Hephaisto, with no cluster behind it.
+#
+#   docker compose -f demo/compose.yaml up
+#   open http://localhost:8080
+#
+# What you get is the real published image, the real schema, the real Blazor console and the
+# real query layer, loaded with ten investigations that a real agent ran against a real k3s
+# cluster full of real seeded faults. The only thing that is not real is the clock: every
+# timestamp is shifted forward so the rows are not older than the evidence-retention window.
+# Each incident's timeline says, in its first entry, which cassette it came from, which model
+# investigated it and how it was graded.
+#
+# There is NO API key here and nothing is fetched at runtime. Recorded investigations ship in
+# the image. That is the point: replaying a cassette needs a live model, because a cassette
+# deliberately records the tools and not the model, so a demo built on the corpus would have
+# cost money and given a different answer every time.
+#
+# What it cannot show you: the agent is not connected to anything, so it detects nothing, and
+# the executor refuses every action. Kubernetes:Enabled=false is what makes it bootable
+# without a kubeconfig, and it is not a setting to put on a deployed agent - one that watches
+# nothing while reporting itself healthy is the worst failure mode this project has, so it
+# says so at warning level on every start.
+
+name: hephaisto-demo
+
+services:
+  db:
+    # The same image the chart's embedded Postgres and scripts/dev-db.sh use. pgvector is not
+    # optional: incident_digests.embedding is a vector(768) column with an HNSW index, and the
+    # schema declares the extension before any CREATE TABLE.
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: hephaisto
+      POSTGRES_PASSWORD: hephaisto
+      POSTGRES_DB: hephaisto
+    healthcheck:
+      # The agent fails fast on an unreachable database, on purpose - "no audit, no action" -
+      # so it must not start before Postgres is accepting connections.
+      test: ["CMD-SHELL", "pg_isready -U hephaisto -d hephaisto"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    # No volume, deliberately. `docker compose down` should leave nothing behind, and a demo
+    # that accumulated state between runs would drift from what this file describes.
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  hephaisto:
+    image: ghcr.io/flou21/hephaisto:${HEPHAISTO_VERSION:-0.6.0}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      # Owner and serving roles, as a real install has them. The serving role holds INSERT but
+      # not UPDATE or DELETE on audit_events - Postgres cannot restrain a table's owner, so
+      # audit immutability depends on the agent not being one. The role and its grants are
+      # created at startup from these two strings.
+      ConnectionStrings__hephaisto: "Host=db;Port=5432;Database=hephaisto;Username=hephaisto;Password=hephaisto"
+      ConnectionStrings__hephaisto_app: "Host=db;Port=5432;Database=hephaisto;Username=hephaisto_app;Password=hephaisto_app"
+
+      # Normally false, and a separate Job in the chart, because every replica would race the
+      # DDL. One container cannot race itself.
+      Persistence__ApplyMigrationsOnStartup: "true"
+
+      # No cluster. Skips the RBAC self-check and the watchers, and leaves the executor that
+      # refuses everything in place - see KubernetesOptions.Enabled.
+      Kubernetes__Enabled: "false"
+
+      # Load the recorded investigations. Refused outright if the database already has an
+      # incident in it, so it cannot overwrite anything.
+      Demo__Seed: "true"
+
+      # The most restrictive of the three kill-switch arms wins, and this is the env arm.
+      # Redundant here - the executor already refuses - and set anyway, because a demo should
+      # show the configuration a first install actually ships with.
+      HEPHAISTO_MODE: "Observe"
+
+      ASPNETCORE_URLS: "http://+:8080"

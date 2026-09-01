@@ -33,6 +33,14 @@
          can be live_update-synced into the pod and edited without a rebuild. -->
     <Content Include="Runbooks/**/*.md" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Prompts/**/*.md" CopyToOutputDirectory="PreserveNewest" />
+
+    <!-- Recorded investigations for the demo seed. Content for the same reason and shipped in
+         the image, because the demo's whole claim is that it needs nothing fetched: no clone,
+         no model, no cluster. Inert unless Demo:Seed is set. They live under this project
+         rather than at the repository root so the Dockerfile, which copies src/ and nothing
+         else, carries them without a special case. -->
+    <Content Include="Demo/transcripts/*.json" CopyToOutputDirectory="PreserveNewest"
+             Link="transcripts/%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>

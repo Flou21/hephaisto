@@ -32,8 +32,12 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
                   call. Needs a database, a cluster and an API key.
 
           run     [--cassettes <dir> | <cassette.json>...] [--repeats 3] [--label baseline]
-                  [--no-judge] [--out results] [--set Key=Value]
+                  [--no-judge] [--out results] [--transcripts <dir>] [--set Key=Value]
                   Replays the corpus and scores it. Needs only the model.
+                  --transcripts also keeps what the run computed and normally discards: the
+                  step trace, the findings, the evidence blobs and the grade. One file per
+                  cassette, last pass wins. Those are what the demo stack is seeded from, so
+                  it needs no model, no key and no cluster.
 
           inspect <cassette.json>...
                   Validates a cassette and describes what it holds.
