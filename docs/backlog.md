@@ -2659,12 +2659,40 @@ yet settled — so the harness reports "verification never closed the incident" 
 and third attempts have not happened yet. The observed run failed the assertion at 21:34:11 with
 the final scheduled check due at 21:34:10: **one second.**
 
-**What is therefore still unknown.** Whether the app converges on its own is *not* established by
-this run: the fixture was deleted by `chaos_cleanup` and the agent pod was replaced shortly after
-the assertion, so any later attempt had no workload to look at. The next full run, with the wait
-corrected, is what decides it — and if the incident still does not reach `Resolved` once all three
-attempts have had their chance, then there is an app-side bug and this entry gets its third
-version.
+**The third version, and this one is an app bug.** With the wait corrected, a run on 2026-09-01
+executed the restart, `c12 is available after the restart` **passed** — the workload recovered —
+and the incident still did not resolve. All three verification attempts ran, and all three said
+the same thing:
+
+```
+Verification 1 of RestartPod on .../c12-stale-lease-...: Inconclusive - no health predicate for a Pod
+Verification 2 ... Inconclusive - no health predicate for a Pod
+Verification 3 ... Inconclusive - no health predicate for a Pod
+```
+
+**Cause.** `WorkloadIsHealthyAsync` prefers the owner and falls back to the target's own kind:
+
+```csharp
+var kind = target.OwnerKind is { Length: > 0 } ok ? ok : target.Kind;
+```
+
+A `RestartPod` targets a **Pod**, and the switch has no `Pod` case — nor could it usefully have
+one, since the action deletes the pod it names, so checking that name could never succeed. The
+answer has to be the owning workload, which is why `TargetRef`'s own summary calls
+`OwnerKind`/`OwnerName` *"the important fields"*.
+
+They were null. The **incident** carried `ownerKind: Deployment, ownerName: c12-stale-lease`; the
+**action**, built from the model's plan in `ActionPlanDraftMapper`, carried neither — the model
+names a namespace, a kind and a name, and has no way to know what owns the object.
+
+**So no `RestartPod` has ever been verifiable.** It is the only action type in
+`autoEnabledActionTypes`, which means the sole action the agent can take unattended is the one
+whose incident can never close. Every earlier "verification never closed the incident" was this,
+wearing two different disguises.
+
+**Fix.** The action inherits the incident's owner when it names the same object — and only then,
+because an owner copied onto a different object would send verification to look at an unrelated
+workload and call the result an answer. Three tests pin both directions.
 
 **Why it matters** is what it does to the claim. v0.2.0's acceptance criterion is that the agent
 can act; this run proved it can diagnose, plan, get admitted by policy, write to the cluster and
@@ -2683,9 +2711,11 @@ action types. This is about how long the instrument waits before calling the pre
 **Why it took until now.** Nothing had ever executed an action on a cluster, so the
 post-execution half of the state machine had never run outside unit tests.
 
-**Size.** S for the harness wait; unknown for the app, because whether the app has a problem at
-all is what the corrected wait is there to find out. **Blocks:** claiming the agent resolves
-incidents, which is the natural next sentence after "the agent can act".
+**Size.** S for the harness wait, S for the app fix — the diagnosis was the work, and it took
+three passes because the first two blamed the layer in front of the real one.
+
+**Blocks:** claiming the agent resolves incidents, which is the natural next sentence after "the
+agent can act". **Status: fixed 2026-09-01, pending a cluster run to confirm.**
 
 ### 73. Every red run was reported as ABORTED, including the ones that finished
 

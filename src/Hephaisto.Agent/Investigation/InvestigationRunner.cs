@@ -528,7 +528,7 @@ public sealed class InvestigationRunner(
                 return (draft, null, verdict.Rejections);
             }
 
-            var plan = ActionPlanDraftMapper.TryToDomain(draft, investigation.Id, incident.Id, clock.UtcNow);
+            var plan = ActionPlanDraftMapper.TryToDomain(draft, investigation.Id, incident.Id, clock.UtcNow, incident.Target);
 
             // TryToDomain drops actions the model gave no usable target. Say so: an action
             // that silently vanishes between the model proposing it and a human reading the

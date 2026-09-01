@@ -96,7 +96,8 @@ public static class ActionPlanDraftMapper
         ActionPlanDraft draft,
         Guid investigationId,
         Guid incidentId,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        TargetRef? incidentTarget = null)
     {
         ArgumentNullException.ThrowIfNull(draft);
 
@@ -146,6 +147,23 @@ public static class ActionPlanDraftMapper
                     Namespace = action.Namespace,
                     Kind = action.Kind,
                     Name = action.Name,
+
+                    // The model names a namespace, a kind and a name. It has no way to know
+                    // what OWNS the object, and the owner is what verification actually
+                    // checks: TargetRef's own summary calls OwnerKind/OwnerName "the
+                    // important fields", and WorkloadIsHealthyAsync prefers them, falling
+                    // back to Kind - which for a Pod matches no health predicate at all.
+                    //
+                    // A RestartPod recorded without an owner is therefore permanently
+                    // Inconclusive. The pod it names is deleted by the action itself, so
+                    // checking that name could never succeed, and the replacement is not
+                    // reachable from the record. Its incident sits in Verifying forever (#72).
+                    //
+                    // The incident already resolved the owner when it was opened. Carry it
+                    // across when the action names the same object - and only then, because
+                    // an owner copied onto a different object is a worse record than none.
+                    OwnerKind = InheritedOwnerKind(action, incidentTarget),
+                    OwnerName = InheritedOwnerName(action, incidentTarget),
                 },
                 Arguments = Sanitise(action.ArgumentsJson),
                 Risk = action.Risk,
@@ -201,4 +219,19 @@ public static class ActionPlanDraftMapper
             return null;
         }
     }
+
+    /// <summary>
+    /// True when the action names exactly the object the incident is about.
+    /// </summary>
+    private static bool NamesTheIncidentTarget(ActionDraft action, TargetRef? incidentTarget) =>
+        incidentTarget is not null
+        && string.Equals(incidentTarget.Namespace, action.Namespace, StringComparison.Ordinal)
+        && string.Equals(incidentTarget.Kind, action.Kind, StringComparison.Ordinal)
+        && string.Equals(incidentTarget.Name, action.Name, StringComparison.Ordinal);
+
+    private static string? InheritedOwnerKind(ActionDraft action, TargetRef? incidentTarget) =>
+        NamesTheIncidentTarget(action, incidentTarget) ? incidentTarget!.OwnerKind : null;
+
+    private static string? InheritedOwnerName(ActionDraft action, TargetRef? incidentTarget) =>
+        NamesTheIncidentTarget(action, incidentTarget) ? incidentTarget!.OwnerName : null;
 }

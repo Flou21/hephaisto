@@ -214,4 +214,84 @@ public class ActionPlanDraftTests
         plan.NoActionRequired.Should().BeTrue();
         plan.Actions.Should().BeEmpty();
     }
+
+    // #72: a RestartPod recorded without an owner is permanently Inconclusive. The pod it
+    // names is deleted by the action itself, and VerificationChecks has no health predicate
+    // for a bare Pod - so the incident sits in Verifying forever. The incident already knows
+    // the owner; the model cannot.
+    private static ActionPlanDraft RestartDraft(string ns, string kind, string name) => new()
+    {
+        Summary = "restart it",
+        Actions =
+        [
+            new ActionDraft
+            {
+                Type = ActionType.RestartPod,
+                Namespace = ns,
+                Kind = kind,
+                Name = name,
+                Risk = RiskTier.Low,
+            },
+        ],
+    };
+
+    [Fact]
+    public void An_action_on_the_incident_target_inherits_its_owner()
+    {
+        var incidentTarget = new TargetRef
+        {
+            Namespace = "hephaisto-chaos",
+            Kind = "Pod",
+            Name = "c12-stale-lease-abc",
+            OwnerKind = "Deployment",
+            OwnerName = "c12-stale-lease",
+        };
+
+        var plan = ActionPlanDraftMapper.TryToDomain(
+            RestartDraft("hephaisto-chaos", "Pod", "c12-stale-lease-abc"),
+            Guid.CreateVersion7(), Guid.CreateVersion7(), DateTimeOffset.UnixEpoch, incidentTarget);
+
+        var action = plan.Actions.Should().ContainSingle().Subject;
+
+        action.Target.OwnerKind.Should().Be("Deployment");
+        action.Target.OwnerName.Should().Be("c12-stale-lease");
+
+        // And that is what verification keys on: the workload, not the pod that is about to
+        // stop existing.
+        action.Target.WorkloadKey.Should().Be("hephaisto-chaos/Deployment/c12-stale-lease");
+    }
+
+    [Fact]
+    public void An_action_on_a_different_object_inherits_nothing()
+    {
+        // An owner copied onto an object it does not own is a worse record than none: it would
+        // send verification to look at an unrelated workload and call the result an answer.
+        var incidentTarget = new TargetRef
+        {
+            Namespace = "hephaisto-chaos",
+            Kind = "Pod",
+            Name = "c12-stale-lease-abc",
+            OwnerKind = "Deployment",
+            OwnerName = "c12-stale-lease",
+        };
+
+        var plan = ActionPlanDraftMapper.TryToDomain(
+            RestartDraft("hephaisto-chaos", "Pod", "some-other-pod"),
+            Guid.CreateVersion7(), Guid.CreateVersion7(), DateTimeOffset.UnixEpoch, incidentTarget);
+
+        var action = plan.Actions.Should().ContainSingle().Subject;
+
+        action.Target.OwnerKind.Should().BeNull();
+        action.Target.OwnerName.Should().BeNull();
+    }
+
+    [Fact]
+    public void With_no_incident_target_the_owner_is_simply_absent()
+    {
+        var plan = ActionPlanDraftMapper.TryToDomain(
+            RestartDraft("hephaisto-chaos", "Pod", "c12-stale-lease-abc"),
+            Guid.CreateVersion7(), Guid.CreateVersion7(), DateTimeOffset.UnixEpoch);
+
+        plan.Actions.Should().ContainSingle().Which.Target.OwnerKind.Should().BeNull();
+    }
 }
