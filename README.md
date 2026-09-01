@@ -7,11 +7,23 @@ and writes up a diagnosis with the evidence it used.
 It is also a first-class *producer* of telemetry: every investigation is a trace you can
 open in Grafana, step through, and then ask the agent about.
 
-> **Status: v0.2.0.** Images and charts are published to GHCR with build provenance
-> attested. `v0.1.0` met its gate — 22/24 correct root cause over cassette replay — and
-> `v0.2.0` is the release in which the agent can **act**: execute a narrow allowlist of
-> reversible actions, verify them, revert or escalate when they do not hold, and close the
-> incident when they do.
+> **Status: v0.5.0.** Multi-arch images and Helm charts are published to GHCR with build
+> provenance attested, and both are pullable anonymously.
+>
+> **Diagnosis is measured.** Against ten seeded chaos scenarios on a real cluster, the agent
+> identified the correct root cause in **8 of 10** — the project's stated bar is ≥ 7/10 over
+> ≥ 10 scenarios. The full end-to-end gate runs ten fixtures in 98 minutes for $0.115 against a
+> local `gpt-oss-120b`; it can also be driven by Gemini, DeepSeek, OpenRouter or any
+> OpenAI-compatible endpoint.
+>
+> **Acting is built, gated, and not yet demonstrated closing an incident.** The executor, the
+> policy engine, verification and rollback are all in place and unit- and integration-tested, and
+> the agent has been observed executing actions on a cluster. What has *not* been observed is an
+> incident it acted on reaching `Resolved` — see
+> [#72](docs/backlog.md#72-an-incident-that-was-successfully-acted-on-sits-in-verifying-forever).
+> How often the planner proposes an action at all is measured at 4-of-8 in replay and 0-of-4 on a
+> cluster; those disagree, and until they reconcile neither is quoted as the rate
+> ([#66](docs/backlog.md#66-the-planner-acts-on-half-of-a-fair-fixture)).
 >
 > It ships configured to act **nowhere**. `policy.actionableNamespaces` is empty,
 > `policy.autoEnabledActionTypes` is empty, and `mode` is `Observe` — three independent
@@ -66,29 +78,39 @@ Being precise about this matters, because the difference is the whole safety arg
 | Kill switch — three independent arms, most restrictive wins | **works** |
 | Audit log, budgets, cooldowns, oscillation detection | **works** |
 | Plan generation (schema-constrained, no tools) | **works** |
-| Executing a plan against the cluster | built, five action types — see below |
-| Verification at T+60s / T+5m / T+15m, and rollback | built |
+| Executing a plan against the cluster | observed on a cluster, five action types — see below |
+| Verification at T+60s / T+5m / T+15m, and rollback | built, never observed closing an incident |
 | Approval workflow — UI and API | **works** |
 | Oscillation detection wired to a workload quarantine | **works** |
-| `SilenceAlert` — always requiring approval | built |
-| Outbound notifications: webhook and Teams, over a Postgres outbox | built |
+| `SilenceAlert` — always requiring approval | built, needs Alertmanager configured |
+| Outbound notifications: webhook and Teams, over a Postgres outbox | **works** |
 | `RollbackDeployment`, `PatchResources` | not built — refused, not attempted |
 | Runbook memory, OIDC approval identity, in-card approval | not built |
 | A written design language, one token set, visual regression baselines | **works** |
 
-**"Built" rather than "works" is deliberate for the rows above.** Detection, investigation
-and diagnosis are measured against a real cluster; the acting path and the delivery path are
-unit- and integration-tested and have not yet been observed completing end to end on a
-cluster. The first run of the acceptance test found three bugs
-between the proposal and the restart, all since fixed and none re-run. `docs/roadmap.md` has
-the detail.
+**The wording of each row is chosen, not casual.** Detection, investigation and diagnosis are
+measured against a real cluster over ten seeded scenarios. The delivery path was measured in
+v0.3.0, including the assertion it exists for: the receiver taken down, the agent restarted
+mid-flight, the receiver brought back, and the delivery arriving anyway.
+
+The acting path is the one to read carefully. The agent **has** been observed executing actions
+against a cluster, and the policy engine that gates them is exhaustively unit-tested. What has
+never been observed is the last step — an incident the agent acted on reaching `Resolved`,
+because until v0.5.0 a `RestartPod` could not be verified at all
+([#72](docs/backlog.md#72-an-incident-that-was-successfully-acted-on-sits-in-verifying-forever),
+fixed and not yet confirmed on a cluster). Whether the planner proposes an action on a fair
+fixture is separately measured, and the two instruments disagree — 4-of-8 in replay against
+0-of-4 on a cluster ([#66](docs/backlog.md#66-the-planner-acts-on-half-of-a-fair-fixture)).
+
+`docs/roadmap.md` has the detail, and `docs/backlog.md` has everything known to be broken.
 
 The executor covers exactly the verbs the write `Role` grants: `RestartPod`,
 `RolloutRestart`, `ScaleWorkload`, `DeleteStuckJob` and `DeleteFailedJobPods`. Anything
 else is **refused before a call is made**, with `outcome=unsupported` and nothing
 attempted — which for `CordonNode` and `DrainNode` is the honest answer, because their
 `ClusterRole` ships deliberately unbound. `SilenceAlert` needs an outbound client bound to
-Alertmanager, and arrives with v0.3.0's notification stack.
+Alertmanager: it shipped with v0.3.0's notification stack, and is refused before any call is made
+when no Alertmanager URL is configured.
 
 The machinery that *gates* an action was built and tested a full release ahead of the
 action itself, deliberately — the policy engine is the argument that auto-remediation would
@@ -181,8 +203,11 @@ Multi-arch images and the Helm chart are published to GHCR on every release tag,
 provenance attested, and both are pullable anonymously:
 
 ```sh
-helm install hephaisto oci://ghcr.io/flou21/charts/hephaisto --version 0.2.0
+helm install hephaisto oci://ghcr.io/flou21/charts/hephaisto
 ```
+
+That resolves the newest published chart. Add `--version 0.5.0` to pin one; the chart version
+and the app version are the same number, set by the tag.
 
 Installed as it ships, the agent acts nowhere: `policy.actionableNamespaces` is empty, so no
 write `Role` is rendered at all, and `mode` is `Observe`. Enabling anything means naming a
@@ -328,9 +353,10 @@ audit row already lives.
 | `GET /healthz`, `/readyz`, `/metrics` | health and Prometheus metrics |
 | `/` | Blazor Server UI |
 
-This table is **unchanged in v0.3.0**, which is worth stating rather than leaving implied: the
-milestone adds outbound delivery and no new inbound route. That is the property that makes
-linking out of a Teams card cheap and approving inside one expensive.
+This table is **unchanged since v0.3.0**, which is worth stating rather than leaving implied:
+that milestone added outbound delivery and no new inbound route, and none has been added since.
+That is the property that makes linking out of a Teams card cheap and approving inside one
+expensive.
 
 **The Alertmanager webhook is unauthenticated** (Alertmanager cannot authenticate to a
 receiver). It is protected by a NetworkPolicy, and that NetworkPolicy is therefore its
