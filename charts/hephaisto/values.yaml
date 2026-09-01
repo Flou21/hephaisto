@@ -122,9 +122,11 @@ secrets:
   # POSTGRES_APP_PASSWORD for the non-owner role the agent serves as.
   postgres: hephaisto-postgres
   # The LLM API keys. Both keys are optional and which one is needed depends on
-  # Llm:Provider: GEMINI_API_KEY for the gemini provider, and for embeddings whatever
-  # answers chat; LLM_API_KEY for the openai-compatible provider (DeepSeek, OpenRouter,
-  # a local Ollama or LM Studio server). A Secret carrying only one is a normal install.
+  # Llm:Provider: GEMINI_API_KEY for the gemini provider and for embeddings while
+  # Llm:EmbeddingProvider is gemini (its default); LLM_API_KEY for the openai-compatible
+  # provider (DeepSeek, OpenRouter, a local Ollama or LM Studio server). A Secret carrying
+  # only one is a normal install, and one carrying neither is a valid self-hosted install
+  # that points both Llm__Endpoint and Llm__EmbeddingEndpoint at local servers.
   llm: hephaisto-llm
   # The grafana-mcp bearer token: key `token`. Cannot exist before install - only Grafana can
   # mint it - so this is necessarily a reference to something you create first.

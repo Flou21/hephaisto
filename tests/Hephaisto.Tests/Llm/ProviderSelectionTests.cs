@@ -159,4 +159,102 @@ public class ProviderSelectionTests
 
         Assert.IsType<OpenAiChatClientFactory>(sp.GetRequiredService<IChatClientFactory>());
     }
+
+    // ---- the embedding seam -----------------------------------------------------------
+    //
+    // Embeddings were the last part of the stack with no alternative provider, which made a
+    // Google account a hard dependency of a self-hosted agent for one arm of its search box.
+    // These pin the second seam, and in particular pin it as a *separate* decision from chat.
+
+    /// <summary>
+    /// The invariant that matters most here, and the one a future convenience change would
+    /// break: EmbeddingProvider does not follow Provider. Speaking the OpenAI chat format does
+    /// not imply serving /v1/embeddings, so inheriting would silently redirect embeddings the
+    /// day someone switched chat providers.
+    /// </summary>
+    [Fact]
+    public void The_embedding_provider_does_not_follow_the_chat_provider()
+    {
+        using var sp = Build(
+            ("Llm:Provider", "openai"),
+            ("Llm:ApiKey", "sk-test"),
+            ("Llm:EmbeddingApiKey", "gm-test"));
+
+        Assert.IsType<GeminiEmbeddingGeneratorFactory>(
+            sp.GetRequiredService<IEmbeddingGeneratorFactory>());
+    }
+
+    [Fact]
+    public void Openai_embeddings_resolve_their_own_factory()
+    {
+        using var sp = Build(
+            ("Llm:EmbeddingProvider", "openai"),
+            ("Llm:EmbeddingEndpoint", "http://ollama.infra-ai:11434/v1"));
+
+        var factory = sp.GetRequiredService<IEmbeddingGeneratorFactory>();
+
+        Assert.IsType<OpenAiEmbeddingGeneratorFactory>(factory);
+        Assert.Equal("openai", factory.ProviderName);
+    }
+
+    [Fact]
+    public void An_unknown_embedding_provider_is_loud()
+    {
+        using var sp = Build(("Llm:EmbeddingProvider", "hopeful-typo"));
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => sp.GetRequiredService<IEmbeddingGeneratorFactory>());
+
+        Assert.Contains("hopeful-typo", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The case the seam exists for: a fully self-hosted install, no external account, and
+    /// semantic search still working.
+    /// </summary>
+    [Fact]
+    public void A_self_hosted_embedding_endpoint_needs_no_account()
+    {
+        using var sp = Build(
+            ("Llm:Provider", "openai"),
+            ("Llm:Endpoint", "http://localhost:11434/v1"),
+            ("Llm:EmbeddingProvider", "openai"),
+            ("Llm:EmbeddingEndpoint", "http://localhost:11434/v1"),
+            ("LLM_API_KEY", string.Empty));
+
+        var generator = sp.GetRequiredService<IEmbeddingGenerator<string, Embedding<float>>>();
+
+        Assert.IsNotType<UnconfiguredEmbeddingGenerator>(generator);
+    }
+
+    /// <summary>
+    /// The mirror of the Gemini rule: Llm:ApiKey belongs to whichever provider answers chat,
+    /// so an OpenAI embedding factory must not borrow a Gemini chat key. Borrowing it would
+    /// authenticate with the wrong credential and fail per call, which IncidentEmbedder
+    /// swallows as a routine degradation - a misconfiguration in the costume of a fallback.
+    /// </summary>
+    [Fact]
+    public void The_chat_key_reaches_openai_embeddings_only_when_the_chat_provider_is_openai()
+    {
+        using var sp = Build(
+            ("Llm:ApiKey", "gm-test"),
+            ("Llm:EmbeddingProvider", "openai"),
+            ("LLM_API_KEY", string.Empty));
+
+        Assert.IsType<UnconfiguredEmbeddingGenerator>(
+            sp.GetRequiredService<IEmbeddingGenerator<string, Embedding<float>>>());
+    }
+
+    [Fact]
+    public void Openai_embeddings_degrade_rather_than_throwing_with_nothing_configured()
+    {
+        // Deliberately unlike the chat factory, which throws here. Losing the vector arm is a
+        // quality reduction, not an outage, and the agent must still boot and investigate.
+        using var sp = Build(
+            ("Llm:EmbeddingProvider", "openai"),
+            ("LLM_API_KEY", string.Empty));
+
+        Assert.IsType<UnconfiguredEmbeddingGenerator>(
+            sp.GetRequiredService<IEmbeddingGenerator<string, Embedding<float>>>());
+    }
 }

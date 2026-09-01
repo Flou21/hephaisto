@@ -19,12 +19,18 @@ namespace Hephaisto.Agent.Llm;
 /// service resolution, before a single incident was read.
 /// </para>
 /// <para>
-/// <b>Embeddings stay on Gemini deliberately, and separately.</b> They are not on the
-/// investigation path - <see cref="IncidentEmbedder"/> runs after the incident is written and
-/// feeds the vector arm of a hybrid search that already falls back to its lexical arm. So the
-/// cheap-provider decision, which is about the 12-round-trip investigation loop, has no
-/// bearing on them, and coupling the two would have meant changing an unmeasured thing to fix
-/// a measured one.
+/// <b>Embeddings are decided separately from chat, and Gemini is the default rather than the
+/// only option.</b> They are not on the investigation path - <see cref="IncidentEmbedder"/>
+/// runs after the incident is written and feeds the vector arm of a hybrid search that already
+/// falls back to its lexical arm. So the cheap-provider decision, which is about the
+/// 12-round-trip investigation loop, has no bearing on them, and coupling the two would have
+/// meant changing an unmeasured thing to fix a measured one. That argument is about cost, and
+/// it still holds. It does not answer the separate question of <i>availability</i> - a fully
+/// self-hosted install had no reachable embedding provider at all - which is what
+/// <see cref="OpenAiEmbeddingGeneratorFactory"/> answers, behind
+/// <see cref="LlmOptions.EmbeddingProvider"/>. The default is unchanged, so this is not a
+/// swap: picking a different default needs a search-quality measurement this repository does
+/// not have.
 /// </para>
 /// <para>
 /// <b>A missing key degrades rather than throws.</b> Chat construction fails loudly without a
@@ -34,7 +40,7 @@ namespace Hephaisto.Agent.Llm;
 /// The warning is emitted once, at startup, rather than once per incident.
 /// </para>
 /// </remarks>
-public sealed class GeminiEmbeddingGeneratorFactory : IDisposable
+public sealed class GeminiEmbeddingGeneratorFactory : IEmbeddingGeneratorFactory, IDisposable
 {
     private readonly Client? _client;
     private readonly LlmOptions _options;
@@ -62,7 +68,9 @@ public sealed class GeminiEmbeddingGeneratorFactory : IDisposable
             loggerFactory.CreateLogger<GeminiEmbeddingGeneratorFactory>().LogWarning(
                 "No Gemini key for embeddings, so incidents will be stored without a vector and "
                 + "search will use its lexical arm only. Set Llm:EmbeddingApiKey or "
-                + "GEMINI_API_KEY to restore semantic search.");
+                + "GEMINI_API_KEY to restore semantic search, or set Llm:EmbeddingProvider="
+                + "openai with Llm:EmbeddingEndpoint to use a self-hosted embedding server "
+                + "and no external account.");
 
             return;
         }
@@ -71,6 +79,10 @@ public sealed class GeminiEmbeddingGeneratorFactory : IDisposable
             apiKey: apiKey,
             httpOptions: GeminiChatClientFactory.BuildHttpOptions(_options));
     }
+
+    public string ProviderName => "gemini";
+
+    public string ModelId => _options.EmbeddingModel;
 
     /// <summary>
     /// The generator, or null when no key was configured. Null is a supported state: the
@@ -103,7 +115,8 @@ internal sealed class UnconfiguredEmbeddingGenerator : IEmbeddingGenerator<strin
         EmbeddingGenerationOptions? options = null,
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException(
-            "No embedding generator is configured. Set Llm:EmbeddingApiKey or GEMINI_API_KEY.");
+            "No embedding generator is configured. Set Llm:EmbeddingApiKey or GEMINI_API_KEY, "
+            + "or Llm:EmbeddingProvider=openai with Llm:EmbeddingEndpoint.");
 
     public object? GetService(Type serviceType, object? serviceKey = null) => null;
 

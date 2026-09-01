@@ -344,8 +344,13 @@ spec:
             # ---------------------------------------------------------------------------
             # Two keys, both optional, because which one is needed depends on Llm:Provider
             # and an install legitimately carries only one. GEMINI_API_KEY serves the gemini
-            # provider and, whatever answers chat, the embedding generator; LLM_API_KEY serves
-            # the openai-compatible provider - DeepSeek, OpenRouter, a local server.
+            # provider, and the embedding generator while Llm:EmbeddingProvider is gemini -
+            # its default; LLM_API_KEY serves the openai-compatible provider - DeepSeek,
+            # OpenRouter, a local server.
+            #
+            # An install that self-hosts embeddings needs NEITHER for them: set
+            # Llm__EmbeddingProvider=openai and Llm__EmbeddingEndpoint at a local server
+            # through extraEnv, and the vector arm of search works with no external account.
             #
             # `optional: true` moves the missing-key failure from the kubelet to the app,
             # which is an improvement rather than a relaxation: CreateContainerConfigError on

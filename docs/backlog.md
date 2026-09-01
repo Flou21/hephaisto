@@ -2084,6 +2084,43 @@ re-embedding: a data backfill, not a schema migration.
 
 **Size.** M, of which the measurement is most of it.
 
+**Split 2026-09-01, and half of it shipped.** The entry conflated two questions that turn out to
+have different blockers:
+
+1. *Can a self-hosted install reach an embedding provider at all?* Nothing about that needed a
+   measurement, because it does not change anyone's defaults. `IEmbeddingGeneratorFactory` now
+   mirrors `IChatClientFactory`, `OpenAiEmbeddingGeneratorFactory` joins the Gemini one behind
+   it, and `Llm:EmbeddingProvider` selects between them - so any server offering
+   `/v1/embeddings`, an in-cluster Ollama included, works with no external account. **The
+   default is unchanged**, deliberately: `EmbeddingProvider` is *not* inherited from `Provider`,
+   because speaking the OpenAI chat format does not imply serving embeddings, and where it is
+   served the useful model is rarely the chat model. Six tests pin that, including the
+   non-inheritance rule and the mirror of the existing "a chat key is not an embedding key"
+   invariant.
+2. *Which model should ship as the default?* Still blocked, and on exactly what this entry said:
+   nothing here scores search quality.
+
+**Three corrections to the candidate above, for whoever picks up (2).**
+
+- **Licence is the deciding factor and was not weighed.** EmbeddingGemma is under the Gemma
+  Terms of Use, not Apache or MIT - use restrictions, flowed down to anyone the chart
+  distributes to. This entry exists to remove a Google dependency from a self-hosted AGPL agent;
+  a Google-*licensed* model removes the API account and not the vendor relationship. Apache-2.0
+  peers exist in the same size class: `Qwen3-Embedding-0.6B`, `gte-base-en-v1.5`,
+  `nomic-embed-text-v1.5`, `granite-embedding-278m`, `Arctic-embed-m-v2.0`.
+- **"768 natively so the column is unchanged" is weaker than it reads.** It is used above to
+  rule out Qwen3 at 1024, but Qwen3 supports Matryoshka truncation to 768 - and this entry
+  already concedes every digest needs re-embedding regardless. The backfill is the expensive
+  half and happens either way; once every row is being rewritten, `ALTER TABLE ... vector(N)`
+  plus an HNSW rebuild is close to free.
+- **Task prefixes.** EmbeddingGemma expects `task: search result | query: ...`. Wrong prefixes
+  degrade retrieval silently, which is a good way to benchmark a model into last place by
+  accident.
+
+So the shortlist is filtered **licence first**, then 768-native or cleanly truncatable, then
+CPU-runnable - and the measurement picks the winner rather than this file doing it. MTEB
+standings move; re-check them at the time rather than trusting the numbers written here.
+
 ### 58. The eval judge bypasses the provider seam
 
 **Status: fixed 2026-08-31** — see the end of this entry.

@@ -54,6 +54,18 @@ public sealed class LlmOptions
     /// </summary>
     public string? PlanningModel { get; set; }
 
+    /// <summary>
+    /// Which wire format serves embeddings: <c>gemini</c> or <c>openai</c>.
+    /// </summary>
+    /// <remarks>
+    /// <b>Deliberately not inherited from <see cref="Provider"/>.</b> Speaking the OpenAI chat
+    /// format does not imply serving <c>/v1/embeddings</c>, and where it is served the useful
+    /// model is rarely the chat model. Defaulting this to the chat provider would silently
+    /// redirect embeddings the day someone switched chat providers, so it is an explicit
+    /// decision. It stays <c>gemini</c> until an operator says otherwise.
+    /// </remarks>
+    public string EmbeddingProvider { get; set; } = "gemini";
+
     public string EmbeddingModel { get; set; } = "gemini-embedding-001";
 
     /// <summary>
@@ -81,13 +93,26 @@ public sealed class LlmOptions
     /// <c>GEMINI_API_KEY</c>.
     /// </summary>
     /// <remarks>
-    /// Embeddings stay on Gemini regardless of which provider answers chat, because they are
-    /// not on the investigation path and the cheap-provider decision is about the
-    /// investigation loop. Running chat on an OpenAI-compatible provider therefore needs two
-    /// keys, or none at all if losing the search index's semantic arm is acceptable - a
-    /// missing key degrades rather than failing to boot.
+    /// Embeddings are configured independently of chat - see <see cref="EmbeddingProvider"/> -
+    /// because they are not on the investigation path and the cheap-provider decision is about
+    /// the investigation loop. Running chat on an OpenAI-compatible provider while embeddings
+    /// stay on Gemini therefore needs two keys; pointing <see cref="EmbeddingProvider"/> at an
+    /// OpenAI-compatible endpoint instead needs none, and so does accepting the loss of the
+    /// search index's semantic arm. A missing key degrades rather than failing to boot.
     /// </remarks>
     public string? EmbeddingApiKey { get; set; }
+
+    /// <summary>
+    /// The embedding endpoint, when it differs from <see cref="Endpoint"/>. Only read by the
+    /// <c>openai</c> embedding provider; falls back to <see cref="Endpoint"/>.
+    /// </summary>
+    /// <remarks>
+    /// Its own value because the two are frequently different hosts - a local Ollama serving
+    /// embeddings alongside a hosted chat provider is the configuration this exists for. Like
+    /// <see cref="Endpoint"/>, it is passed through verbatim including the version segment
+    /// (<c>http://ollama.infra-ai:11434/v1</c>).
+    /// </remarks>
+    public string? EmbeddingEndpoint { get; set; }
 
     /// <summary>
     /// Overrides the provider endpoint - a local gateway, a proxy, or a record/replay server

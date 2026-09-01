@@ -74,19 +74,38 @@ public static class LlmServiceCollectionExtensions
             services.AddSingleton<IGrafanaAnnotator, NullGrafanaAnnotator>();
         }
 
-        // Gemini's own embedding generator, wrapped so its spans land on the same source as
-        // the chat spans. Failure degrades - IncidentEmbedder saves a null embedding and
-        // search falls back to its lexical arm - so this never needs a resilience policy that
-        // could turn one slow call into a stalled resolution.
+        // The embedding generator, wrapped so its spans land on the same source as the chat
+        // spans. Failure degrades - IncidentEmbedder saves a null embedding and search falls
+        // back to its lexical arm - so this never needs a resilience policy that could turn
+        // one slow call into a stalled resolution.
         //
-        // It owns its own SDK client rather than borrowing the chat factory's. This used to
-        // cast IChatClientFactory to GeminiChatClientFactory, which made any other chat
-        // provider an InvalidCastException at the first service resolution - embeddings and
-        // investigation are separate decisions and are now wired as such.
-        services.AddSingleton<GeminiEmbeddingGeneratorFactory>();
+        // Each factory owns its own SDK client rather than borrowing the chat factory's. This
+        // used to cast IChatClientFactory to GeminiChatClientFactory, which made any other
+        // chat provider an InvalidCastException at the first service resolution - embeddings
+        // and investigation are separate decisions and are wired as such.
+        //
+        // EmbeddingProvider is read separately from Provider and defaults to gemini
+        // independently of it. Inheriting would silently move embeddings to whatever answers
+        // chat the day someone switched, and a chat endpoint need not serve embeddings at all.
+        var embeddingProvider = configuration[$"{LlmOptions.SectionName}:EmbeddingProvider"] ?? "gemini";
+
+        services.AddSingleton<IEmbeddingGeneratorFactory>(sp => embeddingProvider.ToLowerInvariant() switch
+        {
+            "gemini" => ActivatorUtilities.CreateInstance<GeminiEmbeddingGeneratorFactory>(sp),
+
+            // Ollama, vLLM or any hosted provider serving /v1/embeddings. This is what lets a
+            // fully self-hosted install keep semantic search without an external account.
+            "openai" => ActivatorUtilities.CreateInstance<OpenAiEmbeddingGeneratorFactory>(sp),
+
+            // Loud on purpose, and matching the chat seam: a typo must not fall back to a
+            // default and leave an operator believing they self-hosted embeddings.
+            _ => throw new InvalidOperationException(
+                $"Unknown Llm:EmbeddingProvider '{embeddingProvider}'. Implementations are "
+                + "'gemini' and 'openai'."),
+        });
 
         services.AddSingleton<IEmbeddingGenerator<string, Embedding<float>>>(sp =>
-            sp.GetRequiredService<GeminiEmbeddingGeneratorFactory>().Create(sp)
+            sp.GetRequiredService<IEmbeddingGeneratorFactory>().Create(sp)
                 ?? new UnconfiguredEmbeddingGenerator());
 
         services.AddSingleton<IncidentEmbedder>();
