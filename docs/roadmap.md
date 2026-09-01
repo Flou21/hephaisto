@@ -909,6 +909,37 @@ investigation on their laptop with one command and no API key, and install the c
 README that describes the release it ships with — and every claim on that page names its
 measurement, its denominator and the instrument that produced it.
 
+### Where it stands — in progress
+
+**Shipped.** The demo works and was verified rather than assumed: the agent booted with no cluster
+against a scratch database, seeded ten recorded investigations, and served them — 10 incidents, 30
+transitions, 31 evidence blobs, 10 digests, with each diagnosis citing evidence that resolves back
+to the step that produced it. `Kubernetes:Enabled` is the fix that made a console without a cluster
+possible at all, and it is strictly *less* capable: skipping the Kubernetes layer leaves the
+executor that refuses everything, which the registration comment had already anticipated.
+
+Alongside it: the embedding seam (#57 split, the half that needed no measurement), `SECURITY.md`
+and the rest of the community files, a chart README, the Pages workflow, and repository metadata —
+description, fourteen topics, wiki off. The README no longer announces v0.2.0 or installs a
+three-release-old chart.
+
+**Two things the work found, both now written down.** Every cassette is stale against the shipped
+prompts ([#80](backlog.md#80-every-cassette-in-the-corpus-is-stale-against-the-shipped-prompts)),
+which nothing had said out loud and which bears directly on #66. And a transcript is published
+evidence carrying the same raw tool output that keeps `cassettes/` untracked
+([#81](backlog.md#81-a-demo-transcript-is-published-evidence-and-only-its-addresses-are-redacted)) —
+scanned before the first commit, no credentials, but addresses were present and are now removed by
+a redactor that runs over the serialized document. The first version of that redactor walked a list
+of fields and missed one, which is the argument against field lists.
+
+**Outstanding, and it is the half that gates the claim.** #72 is still unconfirmed on a cluster and
+#66's two numbers still disagree, so the hero's *"It fixes what it can prove"* remains the one
+sentence on the site whose evidence is outstanding. The product screenshots are not captured
+either, for the same reason: both want the one `--full --mode Auto` run, and the `shots` phase it
+would run in is not built yet. **Deploying the site before that run means publishing the claim
+ahead of its evidence**, which is a decision rather than an oversight, and this section exists so
+it is made deliberately.
+
 ---
 
 ## The project track — landing page, docs, and the rest
