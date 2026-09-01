@@ -17,7 +17,25 @@ against the code rather than believed — see [backlog #9](backlog.md#9-semantic
 
 ## Where it stands
 
-`v0.4.0` is the current release. **The console has a written design language**: one token set that
+`v0.5.0` shipped on 2026-09-01. **The list got shorter, and the gate went green.** The release
+whose feature was that it shipped no feature: eighteen fixes, most of them in the instrument that
+measures everything else, and `scripts/e2e/run.sh` exiting **0** on the full ten-fixture corpus for
+the first time in the project's life — 77 assertions, 98 minutes, $0.115 on a local `gpt-oss-120b`.
+
+**The MVP bar became evaluable, and was met.** `root cause 8/10 correct` against a bar of
+≥ 7/10 over ≥ 10 scenarios, quoted since v0.1.0 and never before gradeable: a truncated
+investigation produces no finding, and no finding cannot be scored. The accuracy was never short —
+the denominator was. [#2](backlog.md#2-six-of-ten-chaos-fixtures-never-run-in-an-automated-gate)
+closed on it after five releases.
+
+**What it did not establish is the more useful sentence.** The planner proposed nothing for c12 on
+that run, so `acted on`, `available after the restart` and `reached Resolved` were all reported
+untested rather than passed. Nothing is broken that this run could test — which is not the same as
+having seen the agent resolve an incident. [#66](backlog.md#66-the-planner-acts-on-half-of-a-fair-fixture)
+and [#72](backlog.md#72-an-incident-that-was-successfully-acted-on-sits-in-verifying-forever) carry
+that, and they are what v0.6.0 has to answer before the site can say otherwise.
+
+`v0.4.0` shipped on 2026-08-30. **The console has a written design language**: one token set that
 the app and a landing page both consume from the same file, canonical by test rather than by
 convention, and a visual safety net that photographs every component in both themes on every pull
 request. Light mode stopped being "a courtesy". The app has a favicon, and the repository has its
@@ -608,7 +626,7 @@ Razor component existed, so the Blazor static web assets were never resolved.
 
 ---
 
-## v0.5.0 — Paying the debt down
+## v0.5.0 — Paying the debt down — **done**
 
 **A release whose feature is that the list gets shorter.** Deliberately scheduled rather than
 hoped for: every milestone so far has closed backlog items *alongside* a feature, which works
@@ -665,7 +683,7 @@ or given a fresh sentence saying why it is still there. **No new capability ship
 moment it grows a feature it becomes a release that also did some tidying, which is what every
 release so far has been.
 
-### Where it stands — in progress
+### Where it stands — shipped 2026-09-01
 
 Scoped by decision to what blocks a claim or what the site would otherwise inherit and have to be
 built twice: #41, #2, #47, #37, #50, #52. The rest of the backlog sweep this section asks for is
@@ -787,10 +805,119 @@ judgement measured at 0 of 4 on a cluster and 4 of 8 in replay; those two number
 
 ---
 
+## v0.6.0 — Someone else can run it
+
+**The first release aimed at a reader rather than at the author.** Every milestone so far made the
+agent better at its job. This one makes the project usable by somebody who did not write it — which
+is a different skill, and one this repo has never practised.
+
+The repository has been public since before v0.0.1. That is worth stating plainly, because it means
+this is not a launch: it is a **first impression that already exists and is currently wrong**.
+`README.md` announces `Status: v0.2.0` on a repo tagged v0.5.0 and tells a visitor to install
+`--version 0.2.0`, which is a three-release-old chart. The description, topics and homepage are
+empty. There is no screenshot of the product anywhere, and `website/` — finished in v0.4.0 — has
+never been deployed.
+
+### Why now, and not earlier
+
+The project track below was deferred for a reason that has expired. It said *"deliberately last:
+every page here is an application of the design language, so building it first means building it
+twice."* v0.4.0 shipped that design language, and v0.5.0 shipped a harness that can drive a real
+console full of real incidents. Both preconditions are now met, so the track stops being a
+non-versioned appendix and becomes this milestone.
+
+### The two claims that gate it
+
+The backlog has exactly two open entries carrying a `Blocks:` field, and neither blocks a feature —
+both block a **sentence somebody wants to publish**:
+
+- **[#66](backlog.md#66-the-planner-acts-on-half-of-a-fair-fixture)** blocks claiming an action
+  rate. Replay says 4 of 8; a cluster says 0 of 4. Those disagree, and until they are reconciled
+  neither is *the* rate.
+- **[#72](backlog.md#72-an-incident-that-was-successfully-acted-on-sits-in-verifying-forever)**
+  blocks claiming the agent resolves incidents. Fixed on 2026-09-01 and **never confirmed on a
+  cluster**; the agent has been observed acting exactly twice, both times before the fix existed.
+
+v0.5.0 had a section called *"The three that block a claim someone has already made"* and closed all
+three. These are their successors, and the same rule applies: the site does not get to say it until
+the instrument does. `website/index.html` currently leads with **"It fixes what it can prove"** —
+the one claim in the repo whose evidence is still outstanding.
+
+### What ships
+
+**Truth first.** The roadmap and the README describe the release they ship with. The README is
+restructured so a visitor reaches *what it is → what it looks like → try it → install* before the
+safety argument, which stays but moves; today the install command is at line 184, behind it.
+
+**A demo that needs no cluster.** Trying this today requires Kubernetes, Prometheus, Alertmanager,
+prometheus-operator, Postgres with pgvector and a model key. That is a reasonable production
+dependency list and an unreasonable evaluation one, and the gap is why nobody has evaluated it.
+
+The blocker is structural rather than effort, and it is worth stating because it rules out the
+obvious approach: **a cassette records the tools, not the model** — deliberately, since the model is
+the thing under test. So replaying a cassette is a live, paid, non-deterministic model run, and no
+key-free demo can be built from the corpus as it stands. What is missing is the *output* half —
+`InvestigationOutcome`, the steps, findings, evidence and plan — which `hephaisto-eval` computes and
+throws away after scoring. Recording those as committed **transcripts** makes every demo option
+key-free at once, including the console itself.
+
+Two containers, then: Postgres and the published image, seeded from transcripts, with every seeded
+incident stamped with the model and date that produced it so it can never read as live data. A
+by-product: the console **cannot currently boot without a cluster at all** — the Kubernetes stack
+registers unconditionally and its RBAC self-check fires 40+ access reviews before anything else
+happens. A stranger has never been able to start this on a laptop.
+
+**An embedding endpoint that is not Google's.**
+[#57](backlog.md#57-production-needs-a-google-api-key-so-the-search-box-has-a-semantic-arm) splits.
+The seam ships — any OpenAI-compatible `/v1/embeddings` endpoint, which is what Ollama and vLLM
+already serve — and Gemini **stays the default**, so this is not a swap and needs no search-quality
+measurement it does not have. Choosing a bundled local model is the half that stays blocked, and it
+stays blocked on the same missing measurement.
+
+**Screenshots, generated.** Captured by the e2e harness against a live console with real seeded
+incidents, on the `brand-assets.sh` contract: render, refuse if a precondition fails, write a
+committed PNG, never gate CI. Opt-in and refreshed once a release — nothing compares them, because
+the subject is model-written prose and a comparison would be a build gate on a language model.
+
+**The rest of the checklist below**, which has been written down and unscheduled since v0.4.0:
+`SECURITY.md` first, since there is no vulnerability reporting path at all for an agent that holds
+cluster credentials.
+
+### The decision that shaped the rest
+
+**Prove the claim rather than soften it.** The alternative was available and cheaper: rewrite the
+hero to say only what is measured — diagnosis at 8/10 — and describe acting as present but
+unquantified. That would have shipped immediately and stayed honest.
+
+It was rejected because the claim is not decoration. "It fixes what it can prove" is the reason this
+project is different from a diagnosis bot, and retiring it to make a launch date would mean the
+first public version of the project understates the thing it spent v0.2.0 building. So #66 and #72
+gate the copy, and if they will not reconcile, the measured sentence ships instead — that is a real
+possible outcome of this milestone rather than a failure of it.
+
+**No new capability**, again. `PatchResources`
+([#39](backlog.md#39-the-executor-covers-five-action-types-three-are-refused)) is the largest gap
+and the actual remediation for c4 and c7 — the two fixtures where diagnosis succeeds and the planner
+has nothing to offer. It is capability, and it waits. The notification channels wait too, which is
+the harder call: Slack is genuinely cheap and Teams-only excludes most of the audience this
+milestone is trying to reach.
+
+### Done when
+
+A stranger can find the page, see what the console actually looks like, run a real recorded
+investigation on their laptop with one command and no API key, and install the current chart from a
+README that describes the release it ships with — and every claim on that page names its
+measurement, its denominator and the instrument that produced it.
+
+---
+
 ## The project track — landing page, docs, and the rest
 
-Not version-numbered; a website does not version with the agent. Deliberately last: every page here
-is an application of the design language, so building it first means building it twice.
+**Scheduled into v0.6.0 above**; this section is retained as the reference material for it, because
+its decisions were argued once and should not be re-argued. It was deferred on the grounds that
+"every page here is an application of the design language, so building it first means building it
+twice" — v0.4.0 shipped that design language, so the deferral has expired. A website still does not
+version with the agent; the work of first publishing it does.
 
 ### Where the site lives
 
