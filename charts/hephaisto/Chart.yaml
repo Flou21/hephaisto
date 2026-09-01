@@ -10,6 +10,13 @@ sources:
 # deployed yet, and a chart icon that 404s is worse than the blank tile it replaced.
 icon: https://raw.githubusercontent.com/Flou21/hephaisto/main/design/brand/mark.svg
 
+# Artifact Hub shows this on the chart tile. A URL rather than an email address: the address
+# would be published into every chart index that mirrors this one, and a profile link reaches
+# the same person without doing that.
+maintainers:
+  - name: Flou21
+    url: https://github.com/Flou21
+
 annotations:
   # Artifact Hub surfaces the licence from here. Worth setting explicitly: a chart that
   # installs an AGPL program should say so where someone browsing charts will see it.
