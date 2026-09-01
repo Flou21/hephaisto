@@ -30,6 +30,7 @@
     </span>
     <span class="spacer"></span>
     <a href="#safety">What stops it</a>
+    <a href="#demo">Demo</a>
     <a href="#install">Install</a>
     <a href="https://github.com/Flou21/hephaisto">GitHub</a>
   </nav>
@@ -42,7 +43,7 @@
       its work.
     </p>
     <a class="cta" href="#safety">What stops it &rarr;</a>
-    <a class="cta ghost" href="#install">Install</a>
+    <a class="cta ghost" href="#demo">See it running</a>
   </header>
 
   <!--
@@ -160,10 +161,27 @@
     </p>
 <pre><span class="c"># installs in observe mode, acting nowhere</span>
 helm install hephaisto <span class="k">oci://ghcr.io/flou21/charts/hephaisto</span></pre>
-    <p class="lede" style="margin-bottom:0">
+    <p class="lede">
       The console is on port 8080. Point it at Prometheus, Loki and Alertmanager, and it will
       start opening incidents it has no permission to do anything about — which is the right
       way round to start.
+    </p>
+
+    <h3 id="demo">Or look first, without a cluster</h3>
+    <p class="lede">
+      Two containers, no API key, no Kubernetes. You get the published image and the real
+      console, loaded with ten investigations the agent ran against a cluster full of seeded
+      faults — the step trace, the diagnosis, and every citation linking back to the raw tool
+      output it came from.
+    </p>
+<pre><span class="c"># then open http://localhost:8080</span>
+curl -fsSL <span class="k">https://raw.githubusercontent.com/Flou21/hephaisto/main/demo/compose.yaml</span> \
+  | docker compose -f - up</pre>
+    <p class="lede" style="margin-bottom:0">
+      Nine of the ten were graded correct against a written answer key. The tenth is in there
+      too, labelled — a demo showing only what worked would be a different claim. Connected to
+      nothing, it detects nothing and refuses every action: this is the output, not the agent
+      running.
     </p>
   </section>
 
