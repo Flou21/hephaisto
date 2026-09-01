@@ -727,17 +727,50 @@ chaos_assert_action_executed() {
          | .actions[]? | select(.executedAt != null and .dryRun == $dry) | .type' \
         "$details" 2>/dev/null | wc -l | tr -d ' ')
 
-    # Recorded, not just reported. chaos_assert_verification asks two questions that only have
-    # a subject if something ran, and answering them anyway is how a report ends up confidently
-    # wrong about why - see the comment there.
-    local shape="non-dry-run"; [ "$dry" = "true" ] && shape="dry-run"
+    # How many actions the planner PROPOSED for this fixture, in any state. This number is
+    # what separates a test from a coin toss, and the distinction is the whole point of this
+    # block.
+    #
+    # "The agent executed an action" bundles two unrelated claims. Whether the planner CHOSE
+    # to act is a model judgement, measured at roughly half of runs on this fixture (#66) - a
+    # number worth reporting and meaningless as a gate. Whether the acting MACHINERY works,
+    # given that a plan exists, is deterministic and is what this harness is for: it is what
+    # caught the null approver (#71), the cooldown that refused an action as its own precedent
+    # (#77) and the verification that could never close (#72).
+    #
+    # Gating on the two together produced an assertion that failed about half the time, which
+    # tells nobody whether the app works. So:
+    #
+    #   nothing proposed        -> skip, and report the rate. The planner declined; that is a
+    #                              measurement, not a defect, and the repo already treats model
+    #                              judgement this way - the root-cause judge never gates either.
+    #   proposed, none executed -> FAIL. Admission or the executor refused a plan the planner
+    #                              made, which is exactly how #77 surfaced.
+    #   executed                -> assert attribution, recovery and closure, hard.
+    local proposed
+    proposed=$(jq -r --arg t "$target" \
+        'select(.target.name != null and (.target.name | contains($t)))
+         | .actions[]? | .type' \
+        "$details" 2>/dev/null | wc -l | tr -d ' ')
+
+    local shape="non-dry-run"
+    if [ "$dry" = "true" ]; then
+        shape="dry-run"
+    fi
 
     if [ "${executed:-0}" -ge 1 ]; then
         ACT_EXECUTED=1
         pass "$ACT_FIXTURE was acted on ($executed $shape action(s) executed)"
+    elif [ "${proposed:-0}" -eq 0 ]; then
+        ACT_EXECUTED=0
+        skip "$ACT_FIXTURE was acted on" \
+             "the planner proposed nothing for it - a model judgement, measured at about half of runs (#66), not a fault in the acting path"
+        record pass "$CURRENT_PHASE" "action rate on $ACT_FIXTURE: 0 proposed" \
+            "reported only - whether the planner acts is measured, not gated"
     else
         ACT_EXECUTED=0
-        fail "$ACT_FIXTURE was not acted on" "expected at least one executed, $shape action"
+        fail "$ACT_FIXTURE was not acted on" \
+             "$proposed action(s) were proposed and none executed - admission or the executor refused a plan the planner did make"
     fi
 
     # DryRun's other half, and the one worth more: it planned, and it still changed nothing.

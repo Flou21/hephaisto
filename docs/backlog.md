@@ -2483,13 +2483,17 @@ the gate affordable could not run — and it failed as a *silence*, not as an er
 
 **Fix.** `|| true` on both pipelines: a file with no matching line means "no key here", not "stop".
 
-A sweep for the same hazard class across the harness — `[ cond ] && var=value` followed by more
-statements, which returns 1 and aborts when the condition is false — found **three more, all
-introduced the same day**, in the new timeout floor and the new judge's auth header. Two of them
-fire on the *common* path: the floor comparison is false for the default four-fixture set, and the
-auth header is absent exactly when the model is local and keyless. All are now `if` blocks. The one
-surviving instance, in `should_run`, is safe because every call site is an `if` condition, where
-`set -e` is suspended — verified rather than assumed.
+A sweep for `[ cond ] && var=value` found three more instances, which were rewritten as `if`
+blocks for clarity. **The claim first recorded here — that they would abort — was wrong, and is
+corrected.** Tested directly afterwards: under `set -Eeuo pipefail`, a failing `[ ] && assign`
+*mid-function* does not abort, because `set -e` ignores the non-final commands of an AND-OR list;
+it aborts only as a function's **last** statement, where the failing status becomes the function's
+return value. So those three were harmless and the rewrites are readability, not fixes.
+
+The hazard in this entry is real and is narrower than first written: it is the **command
+substitution assignment**, `var=$(pipeline)`, which does abort — demonstrated in isolation before
+the fix and again after. The lesson worth keeping is the one about testing the claim rather than
+the pattern: a sweep found by shape, and half of what it found was not the thing.
 
 **Size.** S to fix, and the reason it is written down is the class rather than the instance: this
 is the third time this repo has been bitten by `set -e` turning a false test into a dead run.
@@ -2981,3 +2985,48 @@ their intent was right and only their arithmetic assumed a one-trip protocol.
 **Size.** S.
 
 **Fixed 2026-09-01.**
+
+### 79. The acting assertion gated on a model's judgement, so it failed half the time
+
+**Status: fixed 2026-09-01** — see the end of this entry.
+
+**Symptom.** `c12 was not acted on` failed on roughly half of otherwise-clean runs. Across six
+cluster runs the fixture was acted on twice. The same run could pass or fail with no change to the
+code, which is the definition of an assertion that carries no information.
+
+**Cause.** One assertion bundled two unrelated claims:
+
+1. **Did the planner choose to act?** A model judgement. Measured at about 50% on this fixture
+   ([#66](#66)), and 0 of 15 on its predecessor c11 ([#41](#41)).
+2. **Does the acting machinery work, given a plan?** Deterministic. The executor, admission,
+   attribution and verification.
+
+Gating on both means the second — the part that is actually a test — is only exercised when the
+first happens to land. And a red result never distinguished "the agent declined" from "the
+executor is broken".
+
+**Why it was not simply deleted.** That assertion earned its place three times in one night: the
+null approver ([#71](#71)), the workload cooldown refusing an action as its own precedent
+([#77](#77)), and verification that could never close ([#72](#72)). All three are machinery, all
+three were found by exactly this check. The flakiness was in what it gated on, not in what it
+looked at.
+
+**Fix.** Split on a fact already in `details.jsonl` — whether any action was **proposed**:
+
+| proposed | executed | verdict |
+|---|---|---|
+| 0 | 0 | **skip**, and report the action rate |
+| ≥1 | 0 | **fail** — admission or the executor refused a plan the planner made |
+| ≥1 | ≥1 | **pass**, then attribution, recovery and closure are gated hard |
+
+The middle row is how #77 presented, so it stays a hard failure. The top row is a model judgement,
+and this repo already has a settled convention for those: the root-cause judge *"never gates; the
+number is in the summary for a human to read."* The action rate now joins it.
+
+**What this deliberately gives up.** A run where the planner declines no longer proves anything
+about the acting path — it reports that it could not test it. That is the honest outcome, and it
+is better than a red mark that means "the model shrugged".
+
+**Size.** S.
+
+**Fixed 2026-09-01.** Verified across all four shapes.
