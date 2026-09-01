@@ -362,14 +362,41 @@ chaos_await_investigations() {
     local deadline="${INVESTIGATION_TIMEOUT:-$(( 600 + 180 * queue ))}"
     say "investigation deadline: ${deadline}s for a queue of $queue (waiting on $want)"
 
-    wait_for "investigations to conclude (expecting $want)" "$deadline" \
-        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents' | jq -e 'type == \"array\" and ([.[] | select(.hasDiagnosis)] | length) >= $want' >/dev/null"
+    # COUNT THE FIXTURES, NOT THE POPULATION. This used to wait for `$want` incidents with a
+    # diagnosis anywhere in the list, which is not the same claim: a cluster opens incidents the
+    # fixtures did not cause - self-signals from the observability stack, kube-scheduler,
+    # coredns - and any of those reaching a diagnosis counted toward the total.
+    #
+    # On a two-fixture run the wait was satisfied by c2 plus a kube-scheduler self-signal while
+    # c12, the fixture the act phase asserts about, was still Investigating. The act phase then
+    # reported "0 action(s) executed in Auto mode" - which reads as the planner declining to
+    # act, and is the single symptom this project has spent three releases chasing (#41, #66).
+    # It was measuring the wrong incidents.
+    #
+    # Matched on target the same way chaos_await_incidents matches, so what is waited for and
+    # what is asserted cannot drift.
+    local diag_want
+    diag_want=$(for f in $APPLIED; do fixture_target "$f"; done | jq -R . | jq -sc .)
 
-    local done_count
-    done_count=$(api_array "/api/incidents" | jq '[.[] | select(.hasDiagnosis)] | length')
+    wait_for "every fixture's investigation to conclude (expecting $want)" "$deadline" \
+        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents' | jq -e --argjson want '$diag_want' 'type == \"array\" and (. as \$inc | \$want | all(. as \$t | \$inc | any((.targetName // \"\" | startswith(\$t)) and .hasDiagnosis)))' >/dev/null"
+
+    # How many of the applied fixtures have an incident carrying a diagnosis. Plainly, one
+    # query per fixture: the list is short and a clever single expression here is how the
+    # previous version came to be counting something else.
+    local done_count=0
+    local f t
+    for f in $APPLIED; do
+        t=$(fixture_target "$f")
+        if api_array "/api/incidents" \
+            | jq -e --arg t "$t" 'any((.targetName // "" | startswith($t)) and .hasDiagnosis)' >/dev/null 2>&1; then
+            done_count=$(( done_count + 1 ))
+        fi
+    done
+
     [ "${done_count:-0}" -ge "$want" ] \
-        && pass "$done_count investigation(s) produced a diagnosis" \
-        || fail "only ${done_count:-0} of $want incidents were investigated"
+        && pass "$done_count of $want fixture investigation(s) produced a diagnosis" \
+        || fail "only ${done_count:-0} of $want fixture incidents were investigated"
 }
 
 # Pulls the full detail for every incident once, so the assertions below and the report and

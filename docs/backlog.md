@@ -2798,3 +2798,44 @@ precondition. Also saves the 300s wait for an outcome that was already determine
 **Size.** S.
 
 **Fixed 2026-09-01.**
+
+### 76. The investigation wait counted incidents the fixtures did not cause
+
+**Status: fixed 2026-09-01** — see the end of this entry.
+
+**Symptom.** A two-fixture `--mode Auto` run reported `0 action(s) executed in Auto mode` and
+failed `c12 was not acted on`. Queried at that moment, **c12's incident was still
+`Investigating`, `hasDiagnosis=false`**. The planner had not declined; it had not yet been asked.
+
+**Cause.** `chaos_await_investigations` waited on
+
+```jq
+([.[] | select(.hasDiagnosis)] | length) >= $want
+```
+
+— *any* incident carrying a diagnosis, counted against the number of fixtures applied. A cluster
+opens incidents the fixtures did not cause: self-signals from the observability stack,
+`kube-scheduler`, `coredns`, `local-path-provisioner`. On the observed run the two required
+diagnoses were **c2 plus a `kube-scheduler` self-signal**, so the wait returned while the fixture
+the act phase asserts about was still running.
+
+**Why it matters** is which conclusion it manufactures. The symptom it produces —
+*"0 actions executed"* — is indistinguishable from the planner choosing not to act, and that is
+the exact claim this project has spent three releases investigating across [#41](#41) and
+[#66](#66). An instrument that can fabricate the finding under study is worse than no instrument,
+and this one did it silently, on the phase that carries v0.2.0's acceptance criterion.
+
+**What this does and does not revise.** [#66](#66)'s 4-of-8 action rate was measured by **offline
+cassette replay**, which does not use this code path, so that number stands. What is now in
+question is every *cluster* observation of "the agent did not act" — rc2's included. Those were
+measured with a wait that could return early, and they should not be treated as evidence about
+the planner until they have been re-run against the corrected predicate.
+
+**Fix.** Match on fixture target, the same way `chaos_await_incidents` already does, so what is
+waited for and what is asserted cannot drift. Verified against the captured incident list from
+the failing run: the new predicate reports not-satisfied while c12 lacks a diagnosis, where the
+old one was satisfied by the scheduler self-signal.
+
+**Size.** S to fix; the entry is long because of what it invalidates.
+
+**Fixed 2026-09-01.**
