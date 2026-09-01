@@ -338,14 +338,14 @@ public sealed class ActionRepository(
     /// <inheritdoc />
     public Task<ActionBudgetSnapshot> ReadBudgetAsync(
         Guid incidentId, TargetRef target, AgentMode mode, CancellationToken ct) =>
-        ReadBudgetAsync(incidentId, target, mode, clock.UtcNow, ct);
+        ReadBudgetAsync(incidentId, target, mode, clock.UtcNow, ct, null);
 
     private Task<ActionBudgetSnapshot> ReadBudgetAsync(
         AgentAction action,
         AgentMode mode,
         DateTimeOffset now,
         CancellationToken ct) =>
-        ReadBudgetAsync(action.IncidentId, action.Target, mode, now, ct);
+        ReadBudgetAsync(action.IncidentId, action.Target, mode, now, ct, action.Id);
 
     /// <remarks>
     /// One query set, two callers: admission runs it inside the serializable transaction and
@@ -358,7 +358,8 @@ public sealed class ActionRepository(
         TargetRef target,
         AgentMode mode,
         DateTimeOffset now,
-        CancellationToken ct)
+        CancellationToken ct,
+        Guid? excludeActionId)
     {
         var hourAgo = now.AddHours(-1);
         var dayAgo = now.AddDays(-1);
@@ -368,6 +369,22 @@ public sealed class ActionRepository(
         // Rollbacks are excluded from every count for the same reason they bypass the
         // gates: undoing damage must not be rationed by the damage.
         var counted = admitted.Where(a => a.IsRollbackOf == null);
+
+        // AND THE ACTION BEING ADMITTED IS NOT ITS OWN PRECEDENT. Every figure below is keyed
+        // on ApprovedAt, and an auto-approved action now carries one from the moment policy
+        // admits it - so without this the action finds itself in its own budget snapshot and
+        // is refused for a cooldown it started: "workload ... acted on 0s ago; cooldown is
+        // 900s", with nothing having executed at all.
+        //
+        // This was invisible until it was not. Auto actions used to leave ApprovedAt null, so
+        // they contributed to none of these counts and the workload cooldown was dormant on
+        // the entire Auto path - a gate that looked present and never fired. Populating
+        // ApprovedAt for attribution (#71) switched it on, and the first thing it did was
+        // refuse the action that woke it.
+        if (excludeActionId is { } self)
+        {
+            counted = counted.Where(a => a.Id != self);
+        }
 
         var workload = WorkloadQuery.ForWorkload(counted, target);
 

@@ -2848,3 +2848,47 @@ old one was satisfied by the scheduler self-signal.
 **Size.** S to fix; the entry is long because of what it invalidates.
 
 **Fixed 2026-09-01.**
+
+### 77. Attributing an auto action woke a dormant cooldown, which refused the action that woke it
+
+**Status: fixed 2026-09-01** — see the end of this entry.
+
+**Symptom.** After [#71](#71) landed, a targeted Auto run planned a `RestartPod` for c12, policy
+admitted it (`decision: Allow`, `approvedBy: hephaisto/auto`), and it never executed:
+
+```
+Refused RestartPod on hephaisto-chaos/Pod/c12-stale-lease-...:
+WorkloadCooldown - workload ... acted on 0s ago; cooldown is 900s
+```
+
+**Nothing had executed.** The workload had never been acted on. The action was refused for a
+cooldown it had started itself, 0 seconds earlier.
+
+**Cause, and it is self-inflicted.** `ReadBudgetAsync` keys every figure on `ApprovedAt` —
+including `LastActionOnWorkloadAt`, the cooldown's input — and `AdmittedStates` includes
+`Approved`. #71 set `ApprovedAt` at the moment policy admits an action, so by the time execution
+admission ran, the action was in its own budget snapshot.
+
+**What that exposes is worse than the regression.** Auto-approved actions previously left
+`ApprovedAt` null, so they contributed to *none* of these counts: `LastActionOnWorkloadAt`,
+`ActionsOnWorkloadLastHour`, `ActionsClusterWideLastHour`, `ActionsClusterWideLastDay`. **The
+workload cooldown, the per-workload hourly cap and both cluster-wide caps were dormant on the
+entire Auto path** — the L3 path, the only one that writes to a cluster without a human. They
+looked present in the code, in `values.yaml` and in the console, and never fired. A gate that
+cannot fire is worse than an absent one, because nobody goes looking for it.
+
+So #71 did not break the cooldown. It switched four safety gates on for the first time, and the
+first thing the newly-live cooldown did was refuse the action that had just populated it.
+
+**Fix.** The action being admitted is excluded from its own budget snapshot. The four gates stay
+live — which is the behaviour their configuration has always promised — and no longer count the
+candidate as its own precedent.
+
+**Why the harness could not have caught this before.** It needs an action to be admitted *and*
+executed on a cluster, which had happened exactly once in the project's history, three hours
+before this entry was written.
+
+**Size.** S to fix. The entry is long because the dormancy is the finding and the regression is
+only how it surfaced.
+
+**Fixed 2026-09-01.**
