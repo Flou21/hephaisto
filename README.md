@@ -30,6 +30,29 @@ open in Grafana, step through, and then ask the agent about.
 > things you have to change before anything can happen. Do not point it at anything you
 > care about.
 
+## See it without a cluster
+
+Two containers, no API key, no Kubernetes, nothing fetched at runtime:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Flou21/hephaisto/main/demo/compose.yaml \
+  | docker compose -f - up
+# then open http://localhost:8080
+```
+
+You get the real published image, the real schema and the real console, loaded with **ten
+investigations the agent actually ran** against a k3s cluster full of seeded faults — the step
+trace, the diagnosis, and every evidence excerpt linking back to the untruncated tool output it
+came from.
+
+Each incident's timeline says, in its first entry, which fixture it was replayed from, which
+model investigated it and how it was graded. Nine of the ten were graded correct; the tenth is
+in there too, labelled, because a demo showing only the ones that worked would be a different
+claim from the one this project publishes.
+
+**What it cannot show you:** the agent is connected to nothing, so it detects nothing and the
+executor refuses every action. It is the product's output, not the product running.
+
 ## What it does
 
 ```
@@ -193,7 +216,10 @@ blocker.
 - **PostgreSQL 17 with `pgvector`** — the agent fails fast without it, on purpose
 - A model API key. `Llm:Provider` selects `gemini` or `openai` — the latter being the wire
   format rather than the vendor, so DeepSeek, OpenRouter and a local Ollama or LM Studio
-  server are all reached through it by setting `Llm:Endpoint`
+  server are all reached through it by setting `Llm:Endpoint`. Embeddings are configured
+  separately (`Llm:EmbeddingProvider`), so a fully self-hosted install can keep the semantic
+  arm of search by pointing at any endpoint serving `/v1/embeddings` — no external account.
+  Without one, search falls back to its lexical arm and says so
 - Optionally Grafana + `grafana-mcp`, which is what gives the agent PromQL and LogQL tools.
   Without it the agent degrades to Kubernetes-only reads and says so in its logs.
 
