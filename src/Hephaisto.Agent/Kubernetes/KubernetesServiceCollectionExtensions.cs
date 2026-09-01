@@ -53,6 +53,36 @@ public static class KubernetesServiceCollectionExtensions
         services.AddMetrics();
         services.TryAddSingleton(TimeProvider.System);
 
+        // Bound directly rather than through IOptions because this decides what gets
+        // registered at all, and IOptions is not resolvable while the collection is being
+        // built.
+        var enabled = configuration.GetSection(KubernetesOptions.SectionName)
+            .Get<KubernetesOptions>()?.Enabled ?? true;
+
+        if (!enabled)
+        {
+            // The client is still registered, and still the only thing that changes: it
+            // throws a sentence naming the setting instead of a kubeconfig FileNotFound from
+            // four frames down. Everything that reaches for the cluster therefore fails the
+            // same way, explaining itself, rather than failing differently per call site.
+            services.TryAddSingleton<IKubernetes>(_ => throw new InvalidOperationException(
+                "Kubernetes:Enabled is false, so this process has no cluster client. That is "
+                + "the demo and UI-only configuration; an agent expected to detect anything "
+                + "must not run with it."));
+
+            services.TryAddSingleton<KubernetesApi>();
+            services.TryAddSingleton<OwnerCache>();
+            services.TryAddSingleton<KubernetesReadTools>();
+
+            // Deliberately NOT registering the real executor, RbacSelfCheck or the watcher.
+            // Leaving the executor alone is what keeps the pipeline's RefusingActionExecutor,
+            // and the two hosted services are precisely what made a cluster mandatory: one
+            // runs forty-odd access reviews at boot, the other opens watches.
+            services.AddHostedService<KubernetesDisabledAnnouncer>();
+
+            return services;
+        }
+
         services.TryAddSingleton<IKubernetes>(_ => CreateClient(configuration));
         services.TryAddSingleton<KubernetesApi>();
         services.TryAddSingleton<OwnerCache>();
@@ -99,4 +129,32 @@ public static class KubernetesServiceCollectionExtensions
         KubernetesClientConfiguration.BuildConfigFromConfigFile(
             kubeconfigPath: options.KubeconfigPath,
             currentContext: options.KubeconfigContext);
+}
+
+/// <summary>
+/// Says, once per start and at warning level, that this process has no cluster.
+/// </summary>
+/// <remarks>
+/// An agent with <c>Kubernetes:Enabled=false</c> detects nothing and is otherwise
+/// indistinguishable from a healthy one: it serves the console, answers <c>/readyz</c> and
+/// reports no errors, because nothing is wrong with it - it simply is not watching anything.
+/// That is the failure mode this repository treats as the worst kind, so the disabled path is
+/// audible rather than silent. It is a hosted service so the line lands in the startup
+/// sequence beside the checks it replaces, not buried in DI.
+/// </remarks>
+internal sealed class KubernetesDisabledAnnouncer(
+    ILogger<KubernetesDisabledAnnouncer> logger) : IHostedService
+{
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        logger.LogWarning(
+            "Kubernetes:Enabled is false. This process has NO cluster connection: it will not "
+            + "watch, detect, investigate or act, and the executor refuses everything. The "
+            + "console and the HTTP surface work. This is the demo configuration - if this is "
+            + "a deployed agent, it is misconfigured.");
+
+        return Task.CompletedTask;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }

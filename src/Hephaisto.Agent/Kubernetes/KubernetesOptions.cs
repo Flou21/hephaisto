@@ -34,6 +34,34 @@ public sealed class KubernetesOptions
     /// </summary>
     public string ClusterName { get; set; } = "default";
 
+    /// <summary>
+    /// Whether this process talks to a cluster at all. <see langword="true"/> everywhere that
+    /// matters.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This exists for exactly one case: a console with no cluster behind it.</b> The
+    /// published image could not start on a laptop, because the Kubernetes layer registers
+    /// unconditionally, <see cref="RbacSelfCheck"/> fires forty-odd access reviews before
+    /// anything else happens, and building a client without a ServiceAccount token falls back
+    /// to a kubeconfig that is not there. So the demo stack - and anyone who wants to look at
+    /// the UI before committing to an install - could not get as far as a page.
+    /// </para>
+    /// <para>
+    /// <b>Setting it false in a Deployment is a mistake this cannot prevent, only announce.</b>
+    /// An agent with no cluster detects nothing and would otherwise report itself perfectly
+    /// healthy, which is the worst failure this repository has - so the disabled path logs a
+    /// warning at startup naming this setting, every time, rather than once at debug level.
+    /// </para>
+    /// <para>
+    /// It does not weaken any safety property. The Kubernetes layer is what REPLACES the
+    /// refusing executor the pipeline registers, so skipping it leaves the executor that
+    /// refuses everything - the correct posture for a host with no cluster, and one the
+    /// registration comment already anticipated.
+    /// </para>
+    /// </remarks>
+    public bool Enabled { get; set; } = true;
+
     /// <summary>Only consulted outside the cluster. Null means the ambient KUBECONFIG.</summary>
     public string? KubeconfigPath { get; set; }
 
