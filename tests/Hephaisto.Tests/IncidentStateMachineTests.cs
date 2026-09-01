@@ -505,4 +505,31 @@ public sealed class IncidentStateMachineTests
 
         return data;
     }
+
+    // #71: the first action ever executed on a cluster was written with approvedBy null, while
+    // three doc comments said it is always populated. Doc comments are not a guard; this is.
+    [Fact]
+    public void The_auto_actor_is_the_name_ApprovalSource_Auto_documents()
+    {
+        // ApprovalSource.Auto's own summary says "ApprovedBy is hephaisto/auto". If the constant
+        // and that sentence drift, the audit trail and its documentation disagree.
+        IncidentStateMachine.AutoActor.Should().Be("hephaisto/auto");
+    }
+
+    [Fact]
+    public void The_auto_actor_may_grant_because_policy_is_not_a_model()
+    {
+        // Policy admitting a low-risk action is rules deciding, not the model deciding, and
+        // that is exactly what L3 means. The forbidden list exists to stop a model opinion
+        // being laundered into an approval - this must not be caught by it.
+        IncidentStateMachine.IsForbiddenGranter(IncidentStateMachine.AutoActor).Should().BeFalse();
+    }
+
+    [Fact]
+    public void A_model_identity_still_cannot_grant_anything()
+    {
+        // The other direction, so the test above cannot pass by the list being empty.
+        IncidentStateMachine.IsForbiddenGranter(IncidentStateMachine.ModelActor).Should().BeTrue();
+        IncidentStateMachine.IsForbiddenGranter("gemini").Should().BeTrue();
+    }
 }

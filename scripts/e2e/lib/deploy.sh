@@ -70,6 +70,20 @@ deploy_install() {
         say "investigation step ceiling: $steps"
     fi
 
+    # The wall-clock ceiling, same story one axis over. 10 minutes is comfortable for a hosted
+    # model answering in seconds; a local one at ~6.7 minutes per investigation runs close
+    # enough to it that the first full Auto run ended 2 of 27 investigations on the clock. A
+    # truncated run produces no finding, so it is not merely slower - it is unscoreable, and it
+    # drops the MVP bar's denominator without saying anything about the model.
+    local wall="${HEPHAISTO_LLM_MAX_WALLCLOCK:-}"
+    if [ -z "$wall" ] && [ "${HEPHAISTO_LLM_PROVIDER:-gemini}" = "openai" ]; then
+        wall="00:20:00"
+    fi
+    if [ -n "$wall" ]; then
+        env_add Llm__Investigation__MaxWallClock "$wall"
+        say "investigation wall-clock ceiling: $wall"
+    fi
+
     helm_e2e upgrade --install hephaisto "$CHART_REPO/hephaisto" \
         --version "$VERSION" \
         --namespace "$APP_NS" --create-namespace \

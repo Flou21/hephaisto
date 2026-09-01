@@ -91,6 +91,20 @@ networkPolicy:
 # Raised to leave headroom for the widest fixture set while still bounding a loop. If a run ever
 # approaches $3 something is genuinely wrong, which is what the cap is for.
 extraEnv:
+  # The token ceiling, raised because it - not the cost cap - is what binds on a cheap model.
+  #
+  # Measured on the first full Auto run: 27 investigations, 14 of them refused outright with
+  # TerminationReason.Cancelled and the incidents escalated BudgetExhausted, at a total spend of
+  # $0.066 against a $3.00 hourly cost cap. Nothing was close to the money. What ran out was
+  # MaxTokensPerHour, which defaults to 2,000,000 - and 2M tokens of gpt-oss-120b costs about
+  # six cents, so the two ceilings are calibrated for price points ~45x apart.
+  #
+  # The caps below were written for gemini-3.7-flash at $0.75/1M. On a model at $0.03/1M the
+  # cost cap is unreachable and the token cap is the whole budget, which is how a full-corpus
+  # run lost half its investigations without spending anything. 20M keeps a real bound and
+  # restores cost as the ceiling that governs.
+  - name: Llm__Budget__MaxTokensPerHour
+    value: "20000000"
   - name: Llm__Budget__MaxCostUsdPerIncident
     value: "0.10"
   - name: Llm__Budget__MaxCostUsdPerHour

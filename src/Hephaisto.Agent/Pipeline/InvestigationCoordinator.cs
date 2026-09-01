@@ -389,6 +389,23 @@ public sealed class InvestigationCoordinator(
                 _ => ActionState.Denied,
             };
 
+            // Attribution belongs where the decision is made. ApprovalSource.Auto already
+            // documents itself as "Executed by policy under L3 autonomy. ApprovedBy is
+            // hephaisto/auto", and ActionPlan.ApprovedBy says it is "always populated,
+            // including for automatic actions" - but nothing set either, so the first action
+            // ever executed on a cluster was written with approvedBy null (#71).
+            //
+            // Two call sites downstream coalesced `?? "hephaisto/auto"` when writing their
+            // audit rows, which kept the audit trail honest and left the action itself
+            // unattributed. Defaulting an invariant at the edges is how a third reader gets
+            // the null; set it once, here, where the claim becomes true.
+            if (verdict.Decision == PolicyDecision.Allow)
+            {
+                action.ApprovedBy = IncidentStateMachine.AutoActor;
+                action.ApprovalSource = ApprovalSource.Auto;
+                action.ApprovedAt = clock.UtcNow;
+            }
+
             metrics.PolicyDecision(
                 verdict.Decision,
                 action.Type,

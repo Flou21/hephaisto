@@ -42,6 +42,17 @@ public sealed class IncidentStateMachine(IClock clock)
 
     public const string SystemActor = "hephaisto/system";
 
+    /// <summary>
+    /// The actor for an action the policy engine admitted under L3, with no human involved.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately NOT in <see cref="ForbiddenGranters"/>. Policy admitting a low-risk action
+    /// is the agent's own decision, made by rules rather than by the model, and it is exactly
+    /// what L3 means; laundering a model's opinion into a human approval is the thing that list
+    /// prevents, and this is not that.
+    /// </remarks>
+    public const string AutoActor = "hephaisto/auto";
+
     private static readonly string[] ForbiddenGranters = [ModelActor, "model", "llm", "gemini", "hephaisto/llm"];
 
     /// <summary>

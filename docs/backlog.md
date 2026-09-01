@@ -2643,10 +2643,28 @@ FAIL  c12's incident did not reach Resolved
 Queried well after the run, the incident is still `state=Verifying`, `escalationReason=None` —
 not escalated, not resolved, not stuck on a budget. Just open.
 
-**Cause.** `Verifying` appears to have no sweeper. The action executes, the incident moves to
-`Verifying`, the workload becomes healthy — and nothing subsequently re-checks the predicate and
-closes it. This is the same shape as [#44](#44): a state whose exit transition has no producer,
-so anything that lands there stays there.
+**Cause — corrected after looking rather than pattern-matching.** The first draft of this entry
+said `Verifying` has no sweeper. **That was wrong.** `VerificationScheduler` exists, is registered
+as a hosted service, polls every 10 seconds, and calls `Resolve` with `hephaisto/verifier`.
+
+What actually happens is a timing mismatch. `VerificationSchedule.Delays` is **60s, 5m, 15m**.
+`chaos_assert_verification` waits 240s, and says why in its own comment: *"4 minutes covers the
+T+60s check plus scheduler poll … and stops short of the T+5m second attempt - if the first check
+did not settle it, waiting for the second would be measuring something else."* So the harness
+gives verification **one** attempt out of three.
+
+c12's recovery is a pod deletion, a recreation, `minReadySeconds` (added for [#41](#41)) and the
+app's own startup. That can exceed T+60s, and when it does the first check finds the workload not
+yet settled — so the harness reports "verification never closed the incident" while the second
+and third attempts have not happened yet. The observed run failed the assertion at 21:34:11 with
+the final scheduled check due at 21:34:10: **one second.**
+
+**What is therefore still unknown.** Whether the app converges on its own is *not* established by
+this run: the fixture was deleted by `chaos_cleanup` and the agent pod was replaced shortly after
+the assertion, so any later attempt had no workload to look at. The next full run, with the wait
+corrected, is what decides it — and if the incident still does not reach `Resolved` once all three
+attempts have had their chance, then there is an app-side bug and this entry gets its third
+version.
 
 **Why it matters** is what it does to the claim. v0.2.0's acceptance criterion is that the agent
 can act; this run proved it can diagnose, plan, get admitted by policy, write to the cluster and
@@ -2660,14 +2678,14 @@ an action that did *not* work gets noticed. A verification path that never concl
 distinguish "it worked" from "it did not", because it reports neither.
 
 **Not the same as [#42](#42).** That entry is about the predicate being workload-shaped for two
-action types. This is about the predicate never being evaluated again at all, for the action type
-that works.
+action types. This is about how long the instrument waits before calling the predicate wrong.
 
 **Why it took until now.** Nothing had ever executed an action on a cluster, so the
 post-execution half of the state machine had never run outside unit tests.
 
-**Size.** M. **Blocks:** claiming the agent resolves incidents, which is the natural next
-sentence after "the agent can act".
+**Size.** S for the harness wait; unknown for the app, because whether the app has a problem at
+all is what the corrected wait is there to find out. **Blocks:** claiming the agent resolves
+incidents, which is the natural next sentence after "the agent can act".
 
 ### 73. Every red run was reported as ABORTED, including the ones that finished
 
@@ -2700,3 +2718,42 @@ died-early → `ABORTED`, completed-with-failures → `FAILED`, completed-clean 
 **Size.** S.
 
 **Fixed 2026-08-31.**
+
+### 74. The token ceiling and the cost ceiling are calibrated for price points 45x apart
+
+**Symptom.** The first full `--mode Auto` run refused **14 of 27** investigations outright —
+`TerminationReason.Cancelled`, incidents escalated `BudgetExhausted` — having spent **$0.066**
+against a **$3.00** hourly cost cap. Half the corpus was declined on a budget that was 2% used.
+
+**Cause.** `LlmBudgetOptions` has two independent hourly ceilings:
+
+```csharp
+public long MaxTokensPerHour { get; set; } = 2_000_000;
+public decimal MaxCostUsdPerHour { get; set; } = 3.00m;
+```
+
+At `gemini-3.7-flash`'s $0.75/1M those are roughly commensurate — 2M tokens is about $1.50, so
+either could bind and the cost cap usually does. At `gpt-oss-120b`'s $0.03/1M, 2M tokens is about
+**six cents**, and the cost cap of $3.00 corresponds to ~100M tokens. The token ceiling therefore
+binds roughly **45x earlier**, and the observed $0.066 spend is exactly what 2M tokens costs at
+that price — the run stopped on tokens and the money was never the point.
+
+**Why it matters.** Switching to a cheaper provider silently changes *which* ceiling governs, and
+the one that starts governing was never tuned for the new price. Worse, the failure is not legible
+as a budget failure: the operator sees `BudgetExhausted` beside a spend two orders of magnitude
+under the cap, so the obvious reading — "the cap is wrong" — is correct while the obvious *cap* is
+the wrong one to look at.
+
+It also cost the milestone its headline number. Fourteen refused investigations produce no
+findings, so they cannot be graded, and the MVP bar reported `not applicable: 8 scenarios scored,
+the bar needs 10`. **Accuracy was 7/8; it was the ceilings that dropped the denominator.**
+
+**Fix, for the harness.** `values-e2e.yaml` raises `MaxTokensPerHour` to 20,000,000, which keeps a
+real bound and restores cost as the ceiling that governs at this price point.
+
+**Not fixed, and worth a decision.** The product default is still one number for every model. The
+honest options are a token cap derived from the cost cap and the resolved price, or a documented
+per-model pair recorded beside the price entry — which is what [#59](#59) already asks for on
+`MaxSteps`, for the same underlying reason: **the limits are per-model and the defaults are not.**
+
+**Size.** S for the harness, M for the product default.

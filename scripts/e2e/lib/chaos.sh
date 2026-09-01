@@ -774,7 +774,18 @@ chaos_assert_verification() {
 
     # And the incident says so. Resolved is granted only by hephaisto/verifier, after a
     # deterministic predicate looked at the cluster - a model may never grant it.
-    wait_for "$ACT_FIXTURE's incident to reach Resolved" 240 _act_resolved \
+    #
+    # Long enough for the WHOLE schedule, not just its first attempt. VerificationSchedule
+    # retries at 60s, 5m and 15m; this used to wait 240s and stop deliberately short of the
+    # second attempt, on the reasoning that a first check which did not settle it was measuring
+    # something else. That reasoning does not survive contact with a fixture whose recovery is a
+    # pod recreation plus minReadySeconds: the first check can legitimately arrive too early,
+    # and the harness then reported "verification never closed the incident" with two attempts
+    # still pending. The observed failure landed one second before the final check was due.
+    #
+    # 16 minutes covers T+15m plus the 10s poll and a settle. It is a long wait, but it is the
+    # difference between measuring the agent and measuring the stopwatch.
+    wait_for "$ACT_FIXTURE's incident to reach Resolved" "${VERIFY_TIMEOUT:-960}" _act_resolved \
         && pass "$ACT_FIXTURE's incident reached Resolved" \
         || fail "$ACT_FIXTURE's incident did not reach Resolved" \
                "the workload recovered but verification never closed the incident"
