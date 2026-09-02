@@ -1,0 +1,1333 @@
+/*
+ * Hephaisto console.
+ *
+ * Plain CSS, no framework, no CDN. This pod can run in a cluster with no egress, and an
+ * incident console whose stylesheet fails to load is unreadable at exactly the moment
+ * somebody needs it.
+ *
+ * That rule is about the NETWORK, not about the file count, and it used to be written here as
+ * "everything here is in this one file for the same reason". Since v0.4.0 there are two, both
+ * served from this pod's own wwwroot: tokens.css holds the canonical token set and this file
+ * holds everything that consumes it. No colour may be written below - a test enforces it.
+ *
+ * Dark first, dense, monospace for anything a human might compare character by character -
+ * ids, workload keys, log excerpts, timestamps. Target reader: on call at 3am, on whatever
+ * monitor is in the room.
+ *
+ * STATE IS NEVER COLOUR ALONE. Every state, severity, risk and decision carries a glyph and
+ * a word next to it. Colour is the third channel, never the only one.
+ */
+
+/*
+ * Tokens live in tokens.css, which is linked before this file and is the canonical set. A
+ * colour written below this line will fail the build - see that file for why.
+ */
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: var(--root-size);
+    line-height: 1.45;
+}
+
+a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+h1 {
+    font-size: var(--text-4xl);
+    font-weight: 600;
+    margin: 0 0 0.75rem;
+    letter-spacing: -0.01em;
+}
+
+h2 {
+    font-size: var(--text-root);
+    font-weight: 600;
+    margin: 0 0 0.5rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid var(--border);
+}
+
+h3 {
+    font-size: var(--text-xl);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-dim);
+    margin: 1.1rem 0 0.4rem;
+}
+
+h4 {
+    font-size: var(--text-md);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-dim);
+    margin: 0.7rem 0 0.25rem;
+}
+
+.mono {
+    font-family: var(--mono);
+    font-size: 0.92em;
+}
+
+.glyph {
+    font-family: var(--mono);
+    font-weight: 700;
+    display: inline-block;
+    min-width: 1ch;
+}
+
+.hp-muted {
+    color: var(--fg-dim);
+}
+
+.hp-error {
+    color: var(--red);
+}
+
+.hp-alarm {
+    color: var(--red);
+    font-weight: 600;
+}
+
+.hp-warn {
+    color: var(--yellow);
+}
+
+/* ---------------------------------------------------------------- shell */
+
+.hp-shell {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+.hp-main {
+    /* min-width: 0 is the flex-child override, and it does the OPPOSITE of what the comment
+       here used to claim. It read "1200px is the floor the tables are laid out for", which
+       described an intention no rule implemented - there is no min-width: 1200px anywhere, and
+       never was. What this line actually does is let a flex child shrink below its content
+       width, which is what allows the nine-column table to scroll inside itself instead of
+       pushing the whole page sideways.
+       The tables ARE laid out expecting roughly 1200px of room. That is a fact about the
+       design, and it belongs in docs/design.md where it is true, rather than here attached to
+       a declaration that says something else. */
+    min-width: 0;
+    padding: 1rem 1.25rem 4rem;
+}
+
+.hp-nav {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    padding: 0.4rem 1.25rem;
+    background: var(--bg-raised);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: var(--z-sticky);
+}
+
+.hp-brand {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+}
+
+.hp-brand-name {
+    font-family: var(--mono);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+.hp-mode {
+    font-family: var(--mono);
+    font-size: var(--text-lg);
+    padding: 0.05rem 0.45rem;
+    border-radius: var(--radius);
+    border: 1px solid currentColor;
+}
+
+.mode-unknown { color: var(--fg-faint); }
+.mode-off { color: var(--fg-dim); }
+.mode-observe { color: var(--cyan); }
+.mode-dryrun { color: var(--yellow); }
+.mode-auto { color: var(--orange); }
+.mode-latched {
+    color: var(--red);
+    font-weight: 700;
+}
+
+.hp-navlinks {
+    display: flex;
+    gap: 1rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.hp-navlinks a {
+    color: var(--fg-dim);
+    font-family: var(--mono);
+    padding: 0.15rem 0;
+    border-bottom: 2px solid transparent;
+}
+
+.hp-navlinks a:hover {
+    color: var(--fg);
+    text-decoration: none;
+}
+
+.hp-navlinks a.active {
+    color: var(--fg);
+    border-bottom-color: var(--accent);
+}
+
+.hp-nav-alarm {
+    margin-left: auto;
+    color: var(--red);
+    font-family: var(--mono);
+    font-weight: 600;
+}
+
+/* The theme control. `margin-left: auto` here rather than on the alarm alone, so the pair
+   sits together at the right end: the first auto margin takes the free space and the alarm
+   follows immediately after it.
+
+   Quiet by design. It is a preference, not a state anyone needs to read at a glance, and it
+   sits in the same chrome as the mode badge - which IS load-bearing and must stay the thing
+   the eye lands on. */
+.hp-theme {
+    margin-left: auto;
+    padding: 0.1rem 0.4rem;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    background: transparent;
+    color: var(--fg-faint);
+    font-family: var(--mono);
+    font-size: var(--text-sm);
+    cursor: pointer;
+}
+
+/* THE LABEL IS CSS, NOT JAVASCRIPT, and that is not a stylistic preference.
+   `<Routes>` renders interactively, so Blazor replaces the body subtree once the circuit takes
+   over - which wiped a label written by app.js on load and left the button reading "theme"
+   with no state at all. Same shape as backlog #48: acting on the static render and being
+   overwritten by the live one.
+
+   `data-theme` lives on <html>, which Blazor does not own, so a rule keyed off it survives
+   every re-render with no re-application and no observer. Absent means system, which is also
+   what an unreadable or unrecognised stored value degrades to. */
+.hp-theme::after {
+    content: "system";
+}
+
+:root[data-theme="light"] .hp-theme::after {
+    content: "light";
+}
+
+:root[data-theme="dark"] .hp-theme::after {
+    content: "dark";
+}
+
+.hp-theme:hover {
+    background: var(--bg-hover);
+    color: var(--fg-dim);
+}
+
+.hp-theme:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+/* When the alarm is present it, not the button, owns the free space - otherwise the alarm
+   would be pushed flush against the button and read as part of it. */
+.hp-nav-alarm + .hp-theme,
+.hp-theme ~ .hp-nav-alarm {
+    margin-left: 0.6rem;
+}
+
+/* ---------------------------------------------------------------- tables */
+
+.hp-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--text-xl);
+}
+
+.hp-table th {
+    text-align: left;
+    font-weight: 600;
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-dim);
+    padding: 0.3rem 0.5rem;
+    border-bottom: 1px solid var(--border-strong);
+    white-space: nowrap;
+}
+
+.hp-table td {
+    padding: var(--cell-y) var(--cell-x);
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+}
+
+.hp-table tbody tr:hover {
+    background: var(--bg-hover);
+}
+
+.hp-row {
+    cursor: pointer;
+}
+
+.c-num,
+.c-time {
+    white-space: nowrap;
+}
+
+.c-title {
+    width: 30%;
+}
+
+.hp-ns {
+    color: var(--fg-dim);
+}
+
+.hp-msg {
+    max-width: 42rem;
+}
+
+.hp-sub {
+    display: block;
+    font-size: var(--text-xs);
+    color: var(--fg-faint);
+    font-family: var(--mono);
+}
+
+.hp-count {
+    color: var(--fg-faint);
+    font-family: var(--mono);
+    font-weight: 400;
+}
+
+.hp-empty {
+    color: var(--fg-dim);
+    background: var(--bg-sunken);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-lg);
+    padding: 0.6rem 0.8rem;
+}
+
+.hp-note {
+    color: var(--fg-dim);
+    background: var(--bg-raised);
+    border-left: 3px solid var(--cyan);
+    padding: 0.5rem 0.8rem;
+}
+
+/* ------------------------------------------------- state / severity / risk
+
+   Each rule sets colour AND is paired with a glyph and a word in the markup. If you are
+   tempted to drop the glyph to save a character of width, don't: the entire point is that
+   these read correctly on a monitor that renders these colours as three shades of grey. */
+
+.hp-state,
+.hp-sev,
+.hp-risk,
+.hp-decision {
+    font-family: var(--mono);
+    font-size: var(--text-lg);
+    white-space: nowrap;
+}
+
+.st-detected { color: var(--blue); }
+.st-triaging { color: var(--cyan); }
+.st-suppressed { color: var(--fg-faint); }
+.st-investigating { color: var(--purple); }
+.st-awaiting { color: var(--yellow); }
+.st-acting { color: var(--orange); }
+.st-verifying { color: var(--cyan); }
+.st-resolved { color: var(--green); }
+.st-escalated { color: var(--red); font-weight: 600; }
+.st-expired { color: var(--fg-faint); }
+
+.sev-critical { color: var(--red); font-weight: 600; }
+.sev-warning { color: var(--yellow); }
+.sev-info { color: var(--fg-dim); }
+
+.risk-low { color: var(--green); }
+.risk-medium { color: var(--yellow); }
+.risk-high { color: var(--orange); }
+.risk-critical { color: var(--red); font-weight: 600; }
+
+.dec-allow { color: var(--green); }
+.dec-approval { color: var(--yellow); }
+.dec-deny { color: var(--red); }
+
+.hp-yes { color: var(--green); font-family: var(--mono); font-size: var(--text-lg); }
+.hp-no { color: var(--fg-faint); font-family: var(--mono); font-size: var(--text-lg); }
+.hp-partial { color: var(--yellow); font-family: var(--mono); font-size: var(--text-lg); }
+
+.hp-chip {
+    display: inline-block;
+    font-size: var(--text-xs);
+    padding: 0.05rem 0.4rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    color: var(--fg-dim);
+    white-space: nowrap;
+}
+
+.chip-primary {
+    color: var(--purple);
+    border-color: var(--purple);
+    font-weight: 600;
+}
+
+.chip-fp {
+    color: var(--orange);
+    border-color: var(--orange);
+}
+
+.chip-lexical { color: var(--cyan); border-color: var(--cyan); }
+.chip-semantic { color: var(--purple); border-color: var(--purple); }
+
+/* ---------------------------------------------------------------- filters */
+
+.hp-filters {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+    padding: 0.5rem 0.7rem;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+}
+
+.hp-filters label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: var(--text-md);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-dim);
+}
+
+.hp-filter-status {
+    margin-left: auto;
+    display: flex;
+    gap: 0.8rem;
+    align-items: center;
+}
+
+select,
+input[type="text"],
+input[type="search"],
+textarea {
+    background: var(--bg-sunken);
+    color: var(--fg);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    padding: 0.2rem 0.35rem;
+    font-family: var(--mono);
+    font-size: var(--text-lg);
+}
+
+/* Links were missing from this list, and links are most of what a keyboard user moves
+   between here: every incident title in the table, every nav item, every evidence citation.
+   They fell back to the user agent's own outline, which on a dark ground is frequently a thin
+   black ring that is effectively invisible. Accessibility is part of acceptance for v0.4.0
+   rather than a follow-up, and this is the cheapest half of it. */
+/* Routes.razor's <FocusOnNavigate Selector="h1" /> sends focus to the page heading on every
+   navigation, which is right for a screen reader and drew a full-width focus ring around the
+   heading for everyone else, on every page load.
+   Suppressed outright rather than restyled. The heading carries tabindex="-1", so it is never
+   reachable by Tab and the router is the ONLY thing that ever focuses it - which means a ring
+   there is not telling a keyboard user where they are, it is drawing a box around a heading
+   somebody just navigated to on purpose. Verified against the live console rather than assumed:
+   tabindex="-1", and document.activeElement is the h1 on load.
+   The first attempt at this styled h1:focus-visible instead, and Chrome matched it - so the ring
+   stayed and merely changed colour. */
+h1:focus,
+h1:focus-visible {
+    outline: none;
+}
+
+a:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+button:focus-visible,
+summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+button {
+    background: var(--bg-hover);
+    color: var(--fg);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    padding: 0.2rem 0.6rem;
+    font-family: var(--mono);
+    font-size: var(--text-lg);
+    cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+    border-color: var(--accent);
+}
+
+button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------------- detail header */
+
+.hp-detail-header {
+    margin-bottom: 1.25rem;
+}
+
+.hp-badges {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 0.6rem;
+}
+
+.hp-kv {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.1rem 0.9rem;
+    margin: 0 0 0.6rem;
+}
+
+.hp-kv dt {
+    color: var(--fg-dim);
+    font-size: var(--text-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.hp-kv dd {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.hp-callout {
+    border-left: 3px solid var(--border-strong);
+    background: var(--bg-raised);
+    padding: 0.5rem 0.8rem;
+    margin: 0.5rem 0;
+    border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.callout-escalated { border-left-color: var(--red); }
+.callout-suppressed { border-left-color: var(--fg-faint); }
+.callout-quarantine { border-left-color: var(--orange); }
+.callout-resolved { border-left-color: var(--green); }
+.callout-error { border-left-color: var(--red); color: var(--red); }
+.callout-retry { border-left-color: var(--blue, var(--fg-faint)); }
+
+/* The retry control. Deliberately quiet - it is an escape hatch on a page whose
+   subject is usually the investigation itself, and it spends money when pressed. */
+.hp-retry {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.hp-retry-controls {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.hp-retry-name {
+    padding: 0.25rem 0.5rem;
+    min-width: 12rem;
+    font-family: var(--sans);
+}
+
+.hp-section {
+    margin-bottom: 1.75rem;
+}
+
+/* ---------------------------------------------------------------- timeline */
+
+.hp-timeline {
+    list-style: none;
+    margin: 0.4rem 0 0;
+    padding: 0;
+}
+
+.hp-timeline li {
+    display: grid;
+    grid-template-columns: 12rem 16rem 1fr;
+    gap: 0.6rem;
+    padding: 0.15rem 0;
+    border-bottom: 1px solid var(--border);
+}
+
+/* --------------------------------------------------- investigation trace
+
+   The most important thing on the page. Everything is one click from visible and nothing
+   is more than two: a reader deciding whether to trust this agent with write access is
+   reading this list, and every collapsed layer is a chance to give up. */
+
+.hp-investigation {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 0.7rem 0.9rem;
+    margin-bottom: 1rem;
+    background: var(--bg-raised);
+}
+
+.hp-inv-header {
+    display: flex;
+    gap: 0.8rem;
+    align-items: center;
+    flex-wrap: wrap;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.hp-steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    counter-reset: none;
+}
+
+.hp-step {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border-strong);
+    border-radius: var(--radius);
+    margin-bottom: 0.2rem;
+    background: var(--bg-sunken);
+}
+
+.hp-step.step-failed {
+    border-left-color: var(--red);
+}
+
+.hp-step > summary {
+    display: flex;
+    align-items: baseline;
+    gap: 0.7rem;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    min-height: var(--row);
+    flex-wrap: wrap;
+}
+
+.hp-step > summary:hover {
+    background: var(--bg-hover);
+}
+
+.hp-ordinal {
+    color: var(--fg-faint);
+    min-width: 2.2ch;
+    text-align: right;
+}
+
+.hp-step-kind {
+    font-family: var(--mono);
+    font-size: var(--text-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0 0.3rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid currentColor;
+}
+
+.kind-tool { color: var(--cyan); }
+.kind-llm { color: var(--purple); }
+
+.hp-step-name {
+    font-weight: 600;
+}
+
+.hp-server {
+    color: var(--fg-faint);
+}
+
+.hp-step-metrics {
+    margin-left: auto;
+    color: var(--fg-dim);
+    font-size: var(--text-md);
+    white-space: nowrap;
+}
+
+/* Truncation is never quietly styled away: a digest that dropped most of its input and one
+   that did not are different evidence. */
+.hp-truncated {
+    color: var(--orange);
+    font-family: var(--mono);
+    font-size: var(--text-sm);
+}
+
+.hp-failed {
+    color: var(--red);
+    font-family: var(--mono);
+    font-size: var(--text-sm);
+    font-weight: 600;
+}
+
+.hp-step-body {
+    padding: 0.3rem 0.7rem 0.6rem 0.7rem;
+    border-top: 1px solid var(--border);
+}
+
+/* --------------------------------------------------- two shared primitives
+ *
+ * backlog #52: the console had two unrelated implementations of a progress bar and two
+ * near-duplicate treatments of a monospace block. Two implementations of one idea drift, and a
+ * design language exists to stop exactly that.
+ *
+ * What is shared is defined once, here. What differs stays on the individual rules, because it
+ * is CONTEXT rather than accident and flattening it would be the wrong fix:
+ *
+ *   the bar   .hp-meter-* is a page-level budget meter that carries threshold marks, so it is
+ *             taller and needs a positioning context; .hp-conf-* is an inline confidence
+ *             indicator sitting inside a finding, so it is shorter and has a fixed width. One
+ *             height for both would make one of them wrong for where it lives.
+ *   the block .hp-code is a block quotation of program output and is monospace; .hp-excerpt is
+ *             a short inline citation inside a finding and inherits the body face. The padding
+ *             differs for the same reason.
+ *
+ * So this consolidates the implementation without changing the rendering, which is the half the
+ * visual baselines can actually prove. A deliberate visual unification, if anyone wants one,
+ * is then a separate change somebody can review as a design decision rather than a refactor.
+ */
+
+.hp-code,
+.hp-excerpt {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: var(--text-md);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.hp-meter-track,
+.hp-conf-track {
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.hp-meter-fill,
+.hp-conf-fill {
+    height: 100%;
+}
+
+.hp-code {
+    font-family: var(--mono);
+    line-height: 1.4;
+    padding: 0.4rem 0.55rem;
+    margin: 0 0 0.4rem;
+    max-height: 22rem;
+    overflow: auto;
+}
+
+.hp-raw-code {
+    max-height: 32rem;
+}
+
+.hp-raw > summary,
+.hp-labels > summary,
+.hp-transitions > summary,
+details > summary {
+    cursor: pointer;
+    color: var(--fg-dim);
+    font-family: var(--mono);
+    font-size: var(--text-md);
+}
+
+/* The landing animation for a citation click. Two seconds is long enough to find the row
+   with your eyes and short enough not to still be pulsing when you start reading it. */
+.hp-flash {
+    animation: hp-flash 2s ease-out;
+}
+
+@keyframes hp-flash {
+    0%, 40% {
+        background: color-mix(in srgb, var(--accent) 22%, transparent);
+        border-left-color: var(--accent);
+    }
+    100% {
+        background: var(--bg-sunken);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .hp-flash {
+        animation: none;
+        outline: 2px solid var(--accent);
+    }
+}
+
+/* ---------------------------------------------------------------- findings */
+
+.hp-finding {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.5rem 0.7rem;
+    margin-bottom: 0.5rem;
+    background: var(--bg-sunken);
+}
+
+.hp-finding.finding-primary {
+    border-color: var(--purple);
+}
+
+.hp-finding header {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.hp-hypothesis {
+    margin: 0.35rem 0 0.5rem;
+}
+
+/* A bar and a number, never a badge reading "high". A word invents a calibration nobody
+   measured; 0.71 next to a bar lets the reader apply their own. */
+.hp-conf {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-left: auto;
+}
+
+.hp-conf-track {
+    display: inline-block;
+    width: 7rem;
+    height: 0.5rem;
+    background: var(--bg);
+}
+
+.hp-conf-fill {
+    display: block;
+    background: var(--purple);
+}
+
+.hp-evidence {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.hp-evidence > li {
+    border-left: 2px solid var(--border-strong);
+    padding: 0.2rem 0 0.2rem 0.6rem;
+    margin-bottom: 0.35rem;
+}
+
+/* The citation link. Deliberately loud: following it is how a reader checks the grounding
+   invariant themselves instead of taking the finding on trust. */
+.hp-cite {
+    font-family: var(--mono);
+    font-size: var(--text-sm);
+    padding: 0 0.35rem;
+    color: var(--accent);
+    border-color: var(--accent);
+    background: transparent;
+}
+
+.hp-cite-broken {
+    color: var(--red);
+    border: 1px solid var(--red);
+    border-radius: var(--radius);
+    display: inline-block;
+}
+
+.hp-excerpt {
+    margin: 0.2rem 0 0.1rem;
+    padding: 0.25rem 0.5rem;
+}
+
+.hp-source {
+    font-size: var(--text-xs);
+}
+
+/* ---------------------------------------------------------------- plan */
+
+.hp-plan-banner {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: baseline;
+    background: var(--bg-sunken);
+    border: 1px solid var(--yellow);
+    border-left-width: 3px;
+    border-radius: 0 var(--radius) var(--radius) 0;
+    padding: 0.5rem 0.8rem;
+    margin-bottom: 0.5rem;
+    color: var(--yellow);
+}
+
+.hp-plan-banner .hp-muted {
+    flex-basis: 100%;
+}
+
+.hp-plan-summary {
+    margin: 0.3rem 0 0.6rem;
+}
+
+.hp-reasons {
+    margin: 0.2rem 0 0.2rem 0.9rem;
+    padding: 0;
+    font-size: var(--text-md);
+    color: var(--fg-dim);
+}
+
+.hp-exec {
+    font-size: var(--text-xs);
+}
+
+/* ---------------------------------------------------------------- feedback */
+
+.hp-feedback-list {
+    list-style: none;
+    margin: 0 0 0.8rem;
+    padding: 0;
+}
+
+.hp-feedback-list > li {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    flex-wrap: wrap;
+    padding: 0.3rem 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.hp-comment {
+    flex-basis: 100%;
+    margin: 0.15rem 0 0;
+    color: var(--fg-dim);
+}
+
+.hp-feedback-form {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 0.7rem 0.9rem;
+    background: var(--bg-raised);
+    max-width: 42rem;
+}
+
+.hp-field {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.55rem;
+}
+
+.hp-label {
+    font-size: var(--text-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-dim);
+    min-width: 11rem;
+}
+
+.hp-req {
+    color: var(--orange);
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.hp-thumb.on {
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.hp-feedback-form textarea,
+.hp-feedback-form input[type="text"] {
+    flex: 1 1 18rem;
+    font-family: var(--sans);
+}
+
+.hp-submit {
+    font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- search */
+
+.hp-searchbar {
+    display: flex;
+    gap: 0.8rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 0.8rem;
+}
+
+.hp-searchbar input[type="search"] {
+    flex: 1 1 30rem;
+    padding: 0.3rem 0.5rem;
+}
+
+.hp-hits {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.hp-hits > li {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.5rem 0.7rem;
+    margin-bottom: 0.5rem;
+    background: var(--bg-raised);
+}
+
+.hp-hits header {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.hp-digest {
+    margin: 0.35rem 0;
+    white-space: pre-wrap;
+}
+
+.hp-why {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+    font-size: var(--text-sm);
+    color: var(--fg-dim);
+}
+
+/* ---------------------------------------------------------------- status */
+
+.hp-status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: 0.7rem;
+    margin-bottom: 0.7rem;
+}
+
+.hp-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.5rem 0.7rem;
+    background: var(--bg-raised);
+}
+
+.hp-stat-label {
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-dim);
+}
+
+.hp-stat-value {
+    font-size: var(--text-3xl);
+    font-weight: 600;
+}
+
+.hp-meter {
+    margin-bottom: 0.7rem;
+    max-width: 46rem;
+}
+
+.hp-meter-head {
+    display: flex;
+    gap: 0.6rem;
+    align-items: baseline;
+    margin-bottom: 0.2rem;
+}
+
+.hp-meter-label {
+    font-size: var(--text-md);
+    color: var(--fg-dim);
+    min-width: 11rem;
+}
+
+.hp-meter-track {
+    /* The positioning context the threshold marks are absolutely placed against, and the one
+       structural difference from .hp-conf-track that is not merely dimensional. */
+    position: relative;
+    height: 0.7rem;
+    background: var(--bg-sunken);
+}
+
+.meter-ok { color: var(--green); }
+.meter-warn { color: var(--yellow); }
+.meter-exhausted { color: var(--red); }
+
+.hp-meter-fill.meter-ok { background: var(--green); }
+.hp-meter-fill.meter-warn { background: var(--yellow); }
+.hp-meter-fill.meter-exhausted { background: var(--red); }
+
+/* Thresholds are drawn on the track, not implied by the fill colour: "68%" says nothing
+   without knowing that warning starts at 80. */
+.hp-meter-mark {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 0;
+    border-left: 2px dashed var(--fg-dim);
+}
+
+.mark-warn {
+    border-left-color: var(--yellow);
+}
+
+.mark-max {
+    border-left-color: var(--red);
+    margin-left: -2px;
+}
+
+/* ---------------------------------------------------------------- error UI
+
+   Blazor's own element. A faulted circuit stops updating silently, and an incident console
+   that has quietly stopped refreshing is worse than one that admits it. */
+
+#blazor-error-ui {
+    display: none;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: var(--z-overlay);
+    background: var(--red);
+    color: var(--on-alert);
+    font-family: var(--mono);
+    font-weight: 600;
+    padding: 0.5rem 1rem;
+}
+
+#blazor-error-ui .reload {
+    color: var(--on-alert);
+    text-decoration: underline;
+    margin-left: 0.6rem;
+}
+
+/* The kill-switch arm list on /status. Collapsed by default because three healthy arms
+   saying the same thing is noise; expanded it answers "which one do I change". */
+.hp-arms {
+  margin-top: 0.75rem;
+}
+
+.hp-arms summary {
+  cursor: pointer;
+  font-size: var(--text-xl);
+}
+
+.hp-arms ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  font-size: var(--text-xl);
+  line-height: 1.7;
+}
+
+/* ---------------------------------------------------------------------------------------
+ * Reconnect overlay.
+ *
+ * Blazor toggles the classes on #components-reconnect-modal; this file decides what they
+ * look like. Hidden by default, and deliberately loud when shown: the thing it is reporting
+ * is that every number on the page has stopped being true, which is the one failure an
+ * incident console must never present quietly.
+ * ------------------------------------------------------------------------------------ */
+
+.hp-reconnect {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-overlay);
+    background: var(--scrim);
+    align-items: center;
+    justify-content: center;
+    font-family: var(--sans);
+}
+
+/* Blazor adds exactly one of these. `show` is a retry in progress; `failed` means the
+   retries are exhausted; `rejected` means the server came back but this circuit is gone -
+   its state died with the old process, so only a reload recovers. */
+.hp-reconnect.components-reconnect-show,
+.hp-reconnect.components-reconnect-failed,
+.hp-reconnect.components-reconnect-rejected {
+    display: flex;
+}
+
+.hp-reconnect-box {
+    max-width: 34rem;
+    padding: 1.5rem 1.75rem;
+    border: 1px solid var(--orange);
+    border-left: 4px solid var(--orange);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+    color: var(--fg);
+    box-shadow: var(--shadow-modal);
+}
+
+.hp-reconnect-title {
+    margin: 0 0 0.6rem;
+    font-size: var(--text-2xl);
+    font-weight: 600;
+    color: var(--orange);
+}
+
+.hp-reconnect-title::before {
+    content: "! ";
+    font-family: var(--mono);
+}
+
+.hp-reconnect-retrying,
+.hp-reconnect-failed {
+    display: none;
+    margin: 0 0 0.6rem;
+    font-family: var(--mono);
+    font-size: var(--text-xl);
+    color: var(--fg-dim);
+}
+
+.components-reconnect-show .hp-reconnect-retrying,
+.components-reconnect-failed .hp-reconnect-failed,
+.components-reconnect-rejected .hp-reconnect-failed {
+    display: block;
+}
+
+.hp-reconnect-note {
+    margin: 0;
+    font-size: var(--text-xl);
+    color: var(--fg-faint);
+}
+
+.hp-reconnect-box button {
+    margin-left: 0.4rem;
+    padding: 0.25rem 0.7rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--bg-hover);
+    color: var(--fg);
+    font: inherit;
+    cursor: pointer;
+}
+
+.hp-reconnect-box button:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* Live investigation progress in the diagnosis column. Distinct from every result colour,
+   because it is not a result - it is the agent working, and it changes under the reader. */
+.hp-running {
+    color: var(--cyan);
+    white-space: nowrap;
+}
+
+.hp-running .glyph {
+    animation: hp-pulse 1.4s ease-in-out infinite;
+}
+
+.hp-activity {
+    margin-left: 0.4rem;
+    padding: 0 0.3rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    color: var(--fg-dim);
+    font-size: 0.8em;
+}
+
+.hp-queued {
+    color: var(--fg-faint);
+}
+
+@keyframes hp-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.25; }
+}
+
+/* A reader who has turned motion down still gets the text; only the pulse goes. */
+@media (prefers-reduced-motion: reduce) {
+    .hp-running .glyph { animation: none; }
+}
+
+/* The in-flight investigation on a detail page. Bordered in the running colour so it reads
+   as "happening now" rather than as one more finished record in the list. */
+.hp-investigation-live {
+    border-left: 3px solid var(--cyan);
+    background: color-mix(in srgb, var(--cyan) 4%, var(--bg-raised));
+}
+
+.hp-investigation-live .hp-investigation-head {
+    display: flex;
+    gap: 0.9rem;
+    align-items: baseline;
+}
+
+/* ---------------------------------------------------------------------------------------
+ * Build footer
+ * ---------------------------------------------------------------------------------------
+ * Deliberately quiet: it is reference material, not status. It earns its place because
+ * "which build am I looking at" is the first question of any incident and the console is
+ * where someone already is. --fg-faint keeps it out of the way until looked for.
+ */
+.hp-version {
+    margin-top: 2.5rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border);
+    color: var(--fg-faint);
+    font-size: var(--text-sm);
+    letter-spacing: 0.02em;
+}
+
+.hp-version-commit {
+    margin-left: 0.5rem;
+    color: var(--fg-faint);
+    opacity: 0.75;
+}
+
+.hp-version-sep {
+    margin: 0 0.4rem;
+    color: var(--fg-faint);
+    opacity: 0.6;
+}
+
+.hp-version a {
+    color: var(--fg-faint);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.hp-version a:hover {
+    color: var(--fg-dim);
+}

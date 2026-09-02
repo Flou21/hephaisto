@@ -332,6 +332,9 @@ public class DesignTokenTests
     [Theory]
     [InlineData("src/Hephaisto.Agent/Components/App.razor")]
     [InlineData("website/index.html")]
+    // The demo site is rendered rather than authored, so its <meta> lives in the renderer - but
+    // it is the same literal with the same way of going stale, so it is read the same way.
+    [InlineData("demo-site/build.mjs")]
     public void ThemeColourAgreesWithTheBackgroundToken(string relative)
     {
         var (dark, light) = Themes();
@@ -383,6 +386,27 @@ public class DesignTokenTests
     /// to anything and drifts silently.
     /// </remarks>
     /// <summary>
+    /// The demo site ships the console's stylesheet, byte for byte.
+    /// </summary>
+    /// <remarks>
+    /// It is the only surface that copies app.css rather than writing its own, and that is the
+    /// point of it: the pages are rendered with the console's own hp-* class vocabulary so they
+    /// are the product's appearance rather than a reconstruction of it. A drifted copy would make
+    /// that claim quietly false - the demo would keep rendering, in last release's console.
+    /// </remarks>
+    [Fact]
+    public void TheDemoSiteShipsTheSameConsoleStylesheet()
+    {
+        var console = Path.Combine(RepoRoot(), "src", "Hephaisto.Agent", "wwwroot", "app.css");
+        var copy = Path.Combine(RepoRoot(), "demo-site", "app.css");
+
+        File.ReadAllText(copy).Should().Be(
+            File.ReadAllText(console),
+            "demo-site/app.css is a copy of the console's stylesheet; regenerate it with "
+            + "`cp src/Hephaisto.Agent/wwwroot/app.css demo-site/app.css` rather than editing it");
+    }
+
+    /// <summary>
     /// The docs site declares the same theme colours, in the shape VitePress wants them.
     /// </summary>
     /// <remarks>
@@ -419,6 +443,7 @@ public class DesignTokenTests
     [
         "website",
         Path.Combine("docs-site", ".vitepress", "theme"),
+        "demo-site",
     ];
 
     /// <summary>The two faces every surface ships, self-hosted, with no CDN anywhere.</summary>
@@ -469,6 +494,7 @@ public class DesignTokenTests
         yield return Path.Combine(RepoRoot(), "src", "Hephaisto.Agent", "wwwroot", "app.css");
         yield return Path.Combine(RepoRoot(), "website", "site.css");
         yield return Path.Combine(RepoRoot(), "docs-site", ".vitepress", "theme", "custom.css");
+        yield return Path.Combine(RepoRoot(), "demo-site", "demo.css");
     }
 
     private static string StrippedOfComments(string line)

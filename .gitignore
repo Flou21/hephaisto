@@ -36,3 +36,7 @@ results/
 docs-site/node_modules/
 docs-site/.vitepress/dist/
 docs-site/.vitepress/cache/
+
+# demo-site renders to dist/ from the transcripts; like website/, what is served is built, and
+# the build is reproducible from what is committed.
+demo-site/dist/

@@ -1,0 +1,179 @@
+/*
+ * The demo site's own layer.
+ *
+ * app.css is loaded first and does the real work - this file adds only what a static archive
+ * needs and the Blazor console does not: a page shell, a provenance banner, an index summary and
+ * a pager. Everything an incident detail page renders reuses the console's own hp-* vocabulary,
+ * which is the point: this is meant to be the product's appearance, not a reconstruction of it.
+ *
+ * No colour literals. A test enforces it - this file is in
+ * DesignTokenTests.ConsumingStylesheets(), alongside app.css and the landing page.
+ */
+
+.hp-wrap {
+    max-width: 74rem;
+    margin: 0 auto;
+    padding: 1.5rem 1.25rem 4rem;
+}
+
+.hp-nav .spacer {
+    flex: 1;
+}
+
+.hp-nav a {
+    color: var(--fg-dim);
+    font-family: var(--mono);
+    text-decoration: none;
+}
+
+.hp-nav a:hover {
+    color: var(--fg);
+}
+
+.hp-foot {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.2rem;
+    align-items: center;
+    max-width: 74rem;
+    margin: 0 auto;
+    padding: 1.2rem 1.25rem 2.5rem;
+    border-top: 1px solid var(--border);
+    color: var(--fg-faint);
+    font-size: var(--text-lg);
+}
+
+/*
+ * The banner that makes the page unmistakably a recording.
+ *
+ * On the index it introduces the corpus; on a detail page it carries DemoSeeder.Provenance
+ * verbatim - the cassette, the model, the date and the grade. It is first in the document and
+ * styled to be read, because a visitor who mistakes this for a live agent has been misled by a
+ * design decision rather than by a sentence.
+ */
+.hp-demo-banner {
+    margin: 0 0 1.75rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius);
+    background: var(--bg-raised);
+    color: var(--fg-dim);
+    font-size: var(--text-xl);
+    line-height: 1.5;
+}
+
+.hp-demo-banner strong {
+    color: var(--fg);
+}
+
+.hp-lede {
+    max-width: 62ch;
+    color: var(--fg-dim);
+    font-size: var(--text-2xl);
+    line-height: 1.55;
+}
+
+.hp-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2rem;
+    margin: 1.5rem 0;
+    padding: 0.9rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-sunken);
+}
+
+.hp-summary div {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.hp-summary dt {
+    color: var(--fg-faint);
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.hp-summary dd {
+    margin: 0;
+    color: var(--fg);
+    font-size: var(--text-3xl);
+    font-variant-numeric: tabular-nums;
+}
+
+/* The index table. Wide content scrolls in its own box; the page never scrolls sideways. */
+.hp-incidents {
+    width: 100%;
+    font-variant-numeric: tabular-nums;
+}
+
+.hp-incidents .c-title a {
+    color: var(--fg);
+    font-weight: 600;
+}
+
+.hp-incidents .c-title a:hover {
+    color: var(--accent);
+}
+
+.hp-incidents .hp-sub {
+    display: block;
+    margin-top: 0.15rem;
+    color: var(--fg-faint);
+    font-size: var(--text-sm);
+}
+
+.hp-incidents td {
+    vertical-align: top;
+}
+
+/*
+ * The answer key. Set apart deliberately: it is the one thing on the page the model never saw,
+ * and a reader who cannot tell it apart from the diagnosis cannot check the grading.
+ */
+.hp-answer-key {
+    max-width: 74ch;
+    padding: 0.7rem 0.95rem;
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--bg-sunken);
+    color: var(--fg);
+}
+
+.hp-pager {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: 2.5rem;
+    padding-top: 1.2rem;
+    border-top: 1px solid var(--border);
+    font-size: var(--text-lg);
+}
+
+/* Long recorded prose wants a measure; the console's density is right for scanning, not reading. */
+.hp-hypothesis,
+.hp-plan-summary {
+    max-width: 78ch;
+}
+
+.hp-timeline .hp-muted {
+    display: block;
+    max-width: 90ch;
+    margin-top: 0.15rem;
+}
+
+@media (max-width: 45rem) {
+    .hp-wrap,
+    .hp-foot {
+        padding-left: 0.85rem;
+        padding-right: 0.85rem;
+    }
+
+    .hp-summary {
+        gap: 1rem;
+    }
+}

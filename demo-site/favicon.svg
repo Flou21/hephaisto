@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Hephaisto">
+  <!--
+    The mark is the console's own glyph for `escalated` - the ^ it prints the moment the agent
+    decides a human is needed - drawn as a solid wedge so it reads equally as a spark. That is
+    the only forge the identity gets: no anvil, no hammer.
+
+    The tile is the raised background rather than the page background, so it keeps an edge
+    against a dark browser chrome instead of dissolving into it, and still reads as a dark tile
+    on a light one. Sized against 16px, the only size a favicon really has to survive.
+
+    (Token names are spelled out in prose here on purpose: a double hyphen is illegal inside an
+    XML comment, so writing the CSS custom property names literally made this file invalid and
+    it failed as a silently broken image.)
+  -->
+  <rect width="32" height="32" rx="6" fill="#1b1e24"/>
+  <path d="M16 5.2 L27.4 26.2 L21.6 26.2 L16 15.6 L10.4 26.2 L4.6 26.2 Z" fill="#ff8a3d"/>
+</svg>
