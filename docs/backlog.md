@@ -3422,3 +3422,52 @@ rather than protecting it.
 **Size.** S.
 
 **Fixed 2026-09-02.**
+
+### 85. `--nightly` never published the branch, and the README said it did
+
+**Symptom.** `scripts/e2e/README.md:170` states, as a settled fact a reader relies on:
+
+> A local model does not make the image local. The harness installs the *published* artifact
+> from GHCR by design, so `--nightly` still pushes the branch and builds it in Actions.
+
+`build_nightly` did no such thing. It called `gh workflow run nightly.yml --ref <branch>` and
+nothing else.
+
+**Cause.** `--ref` names a branch on GitHub. The runner checks out **that** branch, and every phase
+after `build` installs the resulting published chart and image. So the commit under test was
+whatever `origin/<branch>` already pointed at, which on an unpushed branch is an older commit and
+on a never-pushed branch is a dispatch failure.
+
+**Why it matters more than a stale test.** The failure is silent and it inverts the meaning of the
+result. A dispatch against a stale ref succeeds, the workflow goes green, the harness installs it,
+the fixtures pass, and the run reports a green gate — **for code that is not the code in the
+working tree**. Every entry in this file about measurement integrity is a version of the same
+problem: an instrument that reports success without having measured the thing. This one reports
+success having measured a different thing.
+
+It also had a second-order cost. Because publishing was a human step that nothing enforced, the
+whole harness needed a person in the loop before it could test anything, which is why the label
+rename in v0.6.0 could not be verified end to end from a working copy.
+
+**Fix.** `build_nightly` publishes the current branch before dispatching, and then asserts
+`ls-remote` agrees with local `HEAD` — so "the runner is building this commit" is checked rather
+than assumed. Three guards make doing that automatically defensible:
+
+- **A dirty tree is refused.** The artifact under test and the working copy would otherwise be
+  different things, and every later failure would be attributed to the wrong code. `build_rc`
+  refuses for the same reason.
+- **`main` is never published from here.** A commit landing on `main` fires `ci.yml` *and*
+  `deploy.yml`, and `deploy.yml` publishes the three public sites. Running a test harness must
+  never be a way to deploy, so on `main` this asserts `HEAD == origin/main` and stops.
+- **Nothing is ever forced**, under any flag. A rejected update means the branch moved, which is a
+  thing to look at rather than something a test harness overwrites.
+
+`HEPHAISTO_E2E_NO_PUSH=1` restores the old behaviour for dispatching a branch somebody else
+published, and says so in the run output rather than doing it quietly.
+
+`build_rc` is deliberately unchanged. It publishes a permanent public tag, image, chart and
+prerelease, and it still asks for the tag to be typed back.
+
+**Size.** S.
+
+**Fixed 2026-09-02.**

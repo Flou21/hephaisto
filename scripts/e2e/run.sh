@@ -72,7 +72,9 @@ usage() {
     cat <<'EOF'
 
 Options:
-  --nightly            dispatch nightly.yml and test what it publishes (default)
+  --nightly            publish the current branch, dispatch nightly.yml, test what it
+                       builds (default). Refuses on a dirty tree, and never publishes
+                       main - see HEPHAISTO_E2E_NO_PUSH below.
   --rc                 cut the next release candidate, publish it, test it (prompts)
   --tag <version>      test a version that is already published, e.g. 0.0.1-rc2
   --fixtures <list>    comma-separated chaos fixtures (default: c2,c3,c4,c7)
@@ -97,6 +99,11 @@ Phases: build, cluster, deps, deploy, chaos, validate, act, notify, ui, report
 
 A local model, which is free: set HEPHAISTO_LLM_PROVIDER=openai with an endpoint the CLUSTER
 can reach - not localhost, which from a pod is a different machine. See scripts/e2e/README.md.
+
+HEPHAISTO_E2E_NO_PUSH=1 dispatches whatever origin already points at instead of publishing the
+current branch first. For testing a branch somebody else pushed. Note that the harness installs
+the PUBLISHED artifact either way, so with this set you are testing the remote's commit, not
+yours.
 EOF
 }
 

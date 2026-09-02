@@ -4,14 +4,63 @@
 # ---------------------------------------------------------------------------------------
 # Phase 1a - dispatch a nightly
 # ---------------------------------------------------------------------------------------
+# The nightly builds what is ON GITHUB, not what is on disk - `gh workflow run --ref` names a
+# branch and the runner checks that branch out. Every phase after this one then installs the
+# PUBLISHED chart and image. So an unpushed commit does not produce a slightly stale test; it
+# produces a green run against a build of somebody else's code, which is worse than a red one.
+#
+# Publishing the branch used to be a human step, and a silent one to get wrong: the dispatch
+# succeeds against whatever the remote branch already points at and says nothing about it. It is
+# done here now, behind the three guards that are what make doing it automatically defensible.
 build_nightly() {
-    say "dispatching nightly.yml on $(git -C "$REPO" rev-parse --abbrev-ref HEAD)"
+    local branch dirty local_sha remote_sha
+
+    branch=$(git -C "$REPO" rev-parse --abbrev-ref HEAD)
+    [ "$branch" != "HEAD" ] || die "detached HEAD; --nightly dispatches a branch, so check one out first"
+
+    # 1. A dirty tree means the artifact under test and the working copy are different things,
+    #    and every failure after this point would be attributed to the wrong code. build_rc
+    #    refuses for the same reason; a nightly is cheaper to redo but no easier to interpret.
+    dirty=$(git -C "$REPO" status --porcelain)
+    [ -z "$dirty" ] || die "working tree is dirty; commit or stash first - the nightly builds what is published, not what is on disk"
+
+    local_sha=$(git -C "$REPO" rev-parse HEAD)
+
+    if [ "$branch" = "main" ]; then
+        # 2. main is never published from here, and this is the guard that matters most. A
+        #    commit landing on main fires ci.yml AND deploy.yml, and deploy.yml publishes the
+        #    three public sites. Running a test harness must never be a way to deploy, so on
+        #    main this asserts rather than acts.
+        git -C "$REPO" fetch --quiet origin main
+        remote_sha=$(git -C "$REPO" rev-parse origin/main)
+        [ "$local_sha" = "$remote_sha" ] \
+            || die "HEAD is not origin/main, and this will not publish main for you: landing a commit on main triggers deploy.yml, which publishes the public sites. Do that deliberately, or run this from a branch"
+        say "on main, already published - dispatching without publishing"
+    elif [ "${HEPHAISTO_E2E_NO_PUSH:-0}" = "1" ]; then
+        # 3. The escape hatch, for dispatching a branch somebody else published.
+        say "HEPHAISTO_E2E_NO_PUSH=1 - dispatching whatever origin/$branch already points at"
+    else
+        say "publishing $branch so the nightly builds this commit"
+
+        # Never forced, under any flag. A rejected update means the remote branch has moved,
+        # which is a thing to look at rather than something a test harness overwrites.
+        git -C "$REPO" push --quiet -u origin "$branch" \
+            || die "could not update origin/$branch; it has probably diverged - resolve that by hand rather than from here"
+
+        remote_sha=$(git -C "$REPO" ls-remote origin "refs/heads/$branch" | cut -f1)
+        [ "$local_sha" = "$remote_sha" ] \
+            || die "updated origin/$branch but it is at ${remote_sha:0:8}, not ${local_sha:0:8}; something else is writing to this branch"
+
+        pass "origin/$branch is at ${local_sha:0:8}"
+    fi
+
+    say "dispatching nightly.yml on $branch"
 
     local before
     before=$(gh -R "$GH_REPO" run list --workflow=nightly.yml --limit 1 \
                 --json databaseId -q '.[0].databaseId // 0')
 
-    gh -R "$GH_REPO" workflow run nightly.yml --ref "$(git -C "$REPO" rev-parse --abbrev-ref HEAD)" \
+    gh -R "$GH_REPO" workflow run nightly.yml --ref "$branch" \
         || die "could not dispatch nightly.yml"
 
     # A dispatch returns before the run exists, so the id has to be polled for. Matching on
