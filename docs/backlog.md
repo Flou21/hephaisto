@@ -2458,6 +2458,57 @@ do.
 
 ---
 
+**Reconciled 2026-09-02, and the paragraph above is wrong.** Replay and the cluster were measuring
+the same thing all along. What differed was the **model**, and this entry compared a DeepSeek
+replay number against a gpt-oss cluster number.
+
+Every c12 measurement in `results/`, grouped by the model that produced it:
+
+| model | n | acted | breakdown |
+|---|---|---|---|
+| `deepseek-v4-flash` | 8 | **4** | 4 `Reasonable`, 4 `MissedAnAction` |
+| `gpt-oss:120b` | 18 | **0** | 10 `MissedAnAction`, 8 `NoPlan` |
+| `gemini-3.7-flash` | 3 | **0** | 2 `MissedAnAction`, 1 `NoPlan` |
+
+Fisher's exact, DeepSeek against gpt-oss: **p = 0.0047**.
+
+The headline "4 times in 8" *is* the DeepSeek arm — all of it, exactly. The cluster's "0 of 4" was
+gpt-oss, because the e2e gate runs the free local model. gpt-oss is **0 of 18** on replay, so the
+two instruments agree precisely once the model is held fixed. There was never an
+instrument disagreement to reconcile; there was a per-model property recorded as the agent's.
+
+**That makes this the third instance of one failure mode**, and it is worth naming as a pattern
+rather than a coincidence: [#55](#55) is the corpus grading the model that recorded it,
+[#74](#74) is ceilings tuned for one model binding 45x earlier on another, and this is an action
+rate. Each time, a number that belongs to a model was written down as a number that belongs to the
+agent.
+
+**What replaces the claim.** There is no such thing as "the action rate" for this agent. On c12,
+`deepseek-v4-flash` proposes an acceptable action about half the time and `gpt-oss:120b`
+essentially never does — and 0 of 18 is not a small sample. Any published figure must name the
+model beside it, in the same sentence, the way every cost figure in this repository already does.
+
+**A consequence worth stating separately, because it changes what can be tested.**
+[#72](#72-an-incident-that-was-successfully-acted-on-sits-in-verifying-forever) needs a cluster run
+in which the agent actually acts. Driven by `gpt-oss:120b` that run cannot exist: the planner
+proposes nothing, so nothing executes, so nothing verifies. Confirming #72 requires a model that
+acts, which is why it stayed unconfirmed through a milestone whose gate had just been moved onto
+the free local model to save money.
+
+**Still open, and narrower than before:** *why* gpt-oss declines. The mechanism is visible in the
+plan it does produce — `noActionRequired: true`, with a summary reasoning that the lease "is stored
+on a PersistentVolumeClaim, which persists across pod restarts". That is our own planning prompt
+talking back: it lists "the contents of a PersistentVolumeClaim" as state a replacement pod
+reproduces exactly. For c12 that rule is wrong, because the hinge is the pod's *name* rather than
+the stored bytes — the fixture's own comment says "different for a replacement pod. That is the
+whole hinge." The model reads the rule correctly and applies it to a case the rule does not fit.
+
+Not the confidence gate (0.95 on a declining run) and not the step budget
+(`terminationReason: Concluded`), which are hypotheses 1 and 2 above; both are now ruled out with
+data rather than argued.
+
+---
+
 ## The v0.5.0 carry, reviewed 2026-08-31
 
 v0.5.0's rule is that *"an item leaves `backlog.md` by being fixed, or by being reclassified as a
@@ -3182,3 +3233,41 @@ the published set rather than to weaken the redactor, and whoever adds it should
 deciding otherwise.
 
 **Size.** n/a — a standing constraint on the corpus rather than a defect.
+
+### 83. The in-cluster reachability probe reads 401 as unroutable
+
+**Symptom.** Pointing the harness at any authenticated provider fails at deps:
+
+```
+FAIL  the cluster cannot reach https://api.deepseek.com/v1 (HTTP 401) --
+      the host probe passed, so the endpoint is up but not routable from a pod
+```
+
+The endpoint was reachable. It answered — that is what 401 *is*. The message asserts the
+opposite, and it asserts it confidently.
+
+**Cause.** `deps_verify_llm_reachable` curls `${endpoint}/models` from a pod with no
+`Authorization` header and compares the status against `200`. A local Ollama serves that
+unauthenticated, so the check was written, tested and shipped against the one provider for which
+"reachable" and "200" are the same thing.
+
+**Why it matters, and why it is the same bug twice.** This is [#61](#61) in a mirror. That entry
+is titled "a keyless endpoint is a local model, not an absent one" and fixed a *host* probe that
+assumed a key existed. This is the *in-cluster* probe assuming one never would. Both conflate
+authentication with reachability, and both fail in the direction that blocks a working setup —
+which the harness's own commentary calls out as worse than having no check at all.
+
+It bit at the worst moment: [#66](#66-the-planner-acts-on-half-of-a-fair-fixture) resolved to "the
+action rate is per-model, and `gpt-oss:120b` never acts on c12", which means confirming
+[#72](#72-an-incident-that-was-successfully-acted-on-sits-in-verifying-forever) requires a hosted
+model — and this check refuses every hosted model before the first fixture is applied.
+
+**Fix.** Read the status rather than compare it. `200` passes, `401` and `403` pass with the
+reason stated in the assertion text, anything else fails as before. The probe deliberately still
+sends no credential: it exists to answer a routing question, and answering that by putting an API
+key into a pod spec would be a bad trade when the endpoint answering at all already settles it.
+Whether the key works is `deps_secrets`' job on the host, and has been since #61.
+
+**Size.** S.
+
+**Fixed 2026-09-02.**

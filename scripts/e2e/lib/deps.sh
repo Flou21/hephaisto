@@ -372,13 +372,31 @@ deps_verify_llm_reachable() {
     # back, which is the status code however many times kubectl decided to print it.
     out=$(printf '%s' "$raw" | tr -cd '0-9' | tail -c 3)
 
-    if [ "$out" = "200" ]; then
-        pass "the cluster can reach the model at $endpoint"
-    else
-        # Deliberately a fail, not a warn. Continuing would spend two hours proving the
-        # agent cannot investigate, which is a fact about the address.
-        fail "the cluster cannot reach $endpoint (HTTP ${out:-000})" \
-             "the host probe passed, so the endpoint is up but not routable from a pod - a loopback or docker-internal address will do this"
-        kc delete pod "$pod" --ignore-not-found --wait=false >/dev/null 2>&1 || true
-    fi
+    # THIS PROBE ASKS ABOUT ROUTING, NOT ABOUT CREDENTIALS, and the difference is the whole
+    # reason it reads more than one status code. It sends no Authorization header - deliberately,
+    # because answering a routing question by putting an API key into a pod spec would be a bad
+    # trade - so an authenticated provider answers 401 and an unauthenticated local server
+    # answers 200. Both prove the packet arrived, which is the only thing being established
+    # here; whether the key works is the HOST probe's job in deps_secrets.
+    #
+    # Reading 401 as unreachable is exactly #61 in a mirror. That entry was "a missing key is
+    # not a missing model" and fixed a host probe that assumed a key; this one assumed there
+    # would never be one, so selecting any hosted provider failed a check about the address
+    # with a message asserting the address was wrong. Both are the same mistake: conflating
+    # authentication with reachability.
+    case "$out" in
+        200)
+            pass "the cluster can reach the model at $endpoint"
+            ;;
+        401|403)
+            pass "the cluster can reach the model at $endpoint (HTTP $out - it answered, and this probe sends no credential)"
+            ;;
+        *)
+            # Deliberately a fail, not a warn. Continuing would spend two hours proving the
+            # agent cannot investigate, which is a fact about the address.
+            fail "the cluster cannot reach $endpoint (HTTP ${out:-000})" \
+                 "the host probe passed, so the endpoint is up but not routable from a pod - a loopback or docker-internal address will do this"
+            kc delete pod "$pod" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+            ;;
+    esac
 }
