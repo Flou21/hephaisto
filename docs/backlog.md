@@ -2931,6 +2931,25 @@ three passes because the first two blamed the layer in front of the real one.
 **Blocks:** claiming the agent resolves incidents, which is the natural next sentence after "the
 agent can act". **Status: fixed 2026-09-01, pending a cluster run to confirm.**
 
+**Why the confirming run still has not happened, stated precisely 2026-09-02.** It needs a
+cluster run in which the agent actually executes something, and the only model this machine may
+drive is the local one - DeepSeek and Gemini both cost real money. Three instrument defects that
+were suppressing the acting path have since been fixed ([#82](#82), [#86](#86), [#87](#87)), and
+they moved the odds materially in the right direction: on c12 replay the planner is now invoked
+11 times in 12 rather than 5, so an e2e run at least reaches the decision it is meant to test.
+
+What they did not move is the decision itself. `gpt-oss:120b` proposes an acceptable action on
+c12 about 1 run in 11, and [#89](#89) established why: asked directly whether a replacement pod
+would fail the same way, it answers wrongly 7 times in 9. At that rate a confirming e2e run is
+roughly a one-in-eleven event costing ~25 minutes of the single shared cluster each attempt, so
+it is not something to sit and retry - and retrying until it lands would be selecting the run
+that agrees with us, which is the habit this file exists to prevent.
+
+So the honest status is unchanged and now has a number attached: **the app fix is pinned by
+three unit tests and has never been observed end to end**, and it stays that way until either a
+model that completes the inference is available for a cluster run, or a fixture whose acting
+case does not depend on it exists. Both are #66's remaining work, not this entry's.
+
 ### 73. Every red run was reported as ABORTED, including the ones that finished
 
 **Status: fixed 2026-08-31** — see the end of this entry.
