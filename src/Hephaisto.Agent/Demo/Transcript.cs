@@ -37,6 +37,14 @@ namespace Hephaisto.Agent.Demo;
 /// instrument that decides whether that was correct is the answer key, which lives elsewhere
 /// and is not derived from this.
 /// </para>
+/// <para>
+/// <b>The corpus is two disjoint sets, and only one of them carries the published number.</b>
+/// A <see cref="TranscriptCapture.Replay"/> transcript is the output half of a cassette and is
+/// scored against the answer key; a <see cref="TranscriptCapture.Cluster"/> one is a finished
+/// incident exported from the agent's database, which was never replayed and has no cassette
+/// behind it. Averaging them would publish a different measurement under the existing label,
+/// so the accuracy figure is over the replay set and says so.
+/// </para>
 /// </remarks>
 public sealed record Transcript
 {
@@ -174,4 +182,50 @@ public sealed record TranscriptOrigin
     /// so rather than be silently re-read as current.
     /// </summary>
     public string? PromptFreshness { get; init; }
+
+    /// <summary>How this file was made, which its contents cannot answer.</summary>
+    /// <remarks>
+    /// <para>
+    /// The renderers decide what to DRAW from the payload - a transcript that carries incident
+    /// transitions has a state history and one that does not needs one composed. That is a
+    /// structural question and a flag would be a second source of truth for it.
+    /// </para>
+    /// <para>
+    /// This answers the two questions the payload genuinely cannot. <b>Provenance:</b> a live
+    /// capture was never replayed from a cassette against a second model's tool trace, so the
+    /// sentence under it must not say it was. <b>The denominator:</b> the published accuracy
+    /// figure is over the replayed corpus, and quietly widening it to include cluster captures
+    /// would change the measurement while keeping the label - which is the curation this type's
+    /// own remarks forbid.
+    /// </para>
+    /// </remarks>
+    [JsonConverter(typeof(JsonStringEnumConverter<TranscriptCapture>))]
+    public TranscriptCapture Capture { get; init; } = TranscriptCapture.Replay;
+}
+
+/// <summary>Where a transcript came from.</summary>
+/// <remarks>
+/// <see cref="Replay"/> is zero deliberately: the committed corpus predates this field, and a
+/// default of zero means those files deserialise unchanged rather than being rewritten to say
+/// what they already were. The converter is per-property rather than on
+/// <see cref="Transcript.Json"/>, because putting a string-enum converter on the options would
+/// turn every OTHER enum in the artifact into a string too - and <c>demo-site/enums.mjs</c>
+/// exists precisely to map those integers back to names.
+/// </remarks>
+public enum TranscriptCapture
+{
+    /// <summary>
+    /// <c>hephaisto-eval run --transcripts</c>: a live model against a recorded tool trace.
+    /// Carries no state history, because replay constructs an investigation runner and no
+    /// executor, no policy engine and no state machine.
+    /// </summary>
+    Replay = 0,
+
+    /// <summary>
+    /// <c>hephaisto-eval export</c>: a finished incident lifted out of the agent's own
+    /// database after a real run on a real cluster. Carries what actually happened, including
+    /// the things replay can never produce - an executed action, a policy decision, and a
+    /// terminal state that was reached rather than assumed.
+    /// </summary>
+    Cluster = 1,
 }

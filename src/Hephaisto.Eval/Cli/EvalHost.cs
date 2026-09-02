@@ -129,6 +129,26 @@ internal static class EvalHost
     }
 
     /// <summary>
+    /// The incident database and nothing else, for exporting a finished incident.
+    /// </summary>
+    /// <remarks>
+    /// The only builder here with no cluster and no model, which is what makes
+    /// <c>export</c> cheap, offline and repeatable: it reads rows the agent already wrote and
+    /// computes nothing. Deliberately not <see cref="BuildForRecording"/>, which also registers
+    /// the Kubernetes client - an export has no cluster to talk to, and requiring one would
+    /// make a database-only operation fail on a laptop with no kubeconfig.
+    /// </remarks>
+    public static ServiceProvider BuildForExport(IConfiguration configuration)
+    {
+        var services = new ServiceCollection();
+
+        AddCommon(services, configuration);
+        services.AddHephaistoPersistence(configuration);
+
+        return services.BuildServiceProvider();
+    }
+
+    /// <summary>
     /// Logging, plus <see cref="IConfiguration"/> itself.
     /// </summary>
     /// <remarks>

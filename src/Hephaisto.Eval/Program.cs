@@ -1,11 +1,17 @@
 using Hephaisto.Eval;
 using Hephaisto.Eval.Cli;
 
-// The eval harness CLI. Three commands, and the split between them is the design:
+// The eval harness CLI. Five commands, and the split between them is the design - what each
+// one NEEDS is the whole reason it is a separate verb:
 //
 //   record   needs a cluster, a database and money. Run rarely, on the dev cluster.
 //   run      needs only the model. Run constantly, which is what makes experiments affordable.
+//   export   needs a database and nothing else. It is how an incident the agent actually acted
+//            on becomes a committed artifact - the one thing `run` can never produce, because
+//            replay constructs an InvestigationRunner and no executor, no policy engine and no
+//            state machine, so it has no executed action and no terminal state to record.
 //   inspect  needs nothing. Reads a cassette so a fixture nobody can check by hand cannot exist.
+//   redact   needs nothing. Re-scrubs transcripts when the rules change.
 //
 // Nothing here is reachable from the agent: the Dockerfile copies Core, ServiceDefaults and
 // Agent only, so this project cannot grow the shipped image.
@@ -39,6 +45,14 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
                   cassette, last pass wins. Those are what the demo stack is seeded from, so
                   it needs no model, no key and no cluster.
 
+          export  --incident <guid> --id <c13-resolved> [--fixture c13] [--expect <text>]
+                  [--description <text>] [--out <dir>] [--force] [--set Key=Value]
+                  Snapshots a FINISHED incident out of the database into a transcript: the
+                  transitions it actually made, the action it executed or was refused, and
+                  the policy decision behind that. No model, no cluster, nothing computed.
+                  Refuses an incident still in flight, one with no transitions, and one whose
+                  evidence blobs the retention sweep has already taken.
+
           inspect <cassette.json>...
                   Validates a cassette and describes what it holds.
 
@@ -69,6 +83,7 @@ try
     {
         "record" => await RecordCommand.RunAsync(parsed, lifetime.Token),
         "run" => await RunCommand.RunAsync(parsed, lifetime.Token),
+        "export" => await ExportCommand.RunAsync(parsed, lifetime.Token),
         "inspect" => Inspect(parsed.Positional),
         "redact" => RedactCommand.Run(parsed.Positional),
         _ => Unknown(args[0]),
