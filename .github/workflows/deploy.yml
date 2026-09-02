@@ -1,0 +1,119 @@
+name: deploy
+
+# Publishes the three sites: the landing page, the docs and the demo.
+#
+# This replaces pages.yml, and the reason is a hard limit rather than a preference: a GitHub Pages
+# site binds exactly ONE custom domain. CNAME holds one hostname and the settings UI has one field,
+# with apex+www the only special case - so hephaisto.dev, docs.hephaisto.dev and demo.hephaisto.dev
+# cannot come from one repository's Pages. The alternatives were three repositories, which the
+# roadmap rejects because documentation in a separate repo goes stale, or a different host.
+#
+# WHAT THIS COSTS, STATED PLAINLY. pages.yml was proud that it held no stored credential - the
+# Pages token was minted per run by OIDC - and ci.yml makes the same claim in its own header.
+# Cloudflare has no GitHub OIDC path for wrangler, so this is the first workflow in the repository
+# to hold a long-lived deploy secret. Three things keep that as small as it can be:
+#
+#   - the token is scoped to Pages:Edit on one account and nothing else;
+#   - it lives in the `cloudflare-pages` environment, not in repository secrets, so a pull request
+#     from a fork cannot read it;
+#   - ci.yml still holds no credential at all, and that rule is unchanged.
+#
+# Hiding the trade would be worse than making it. If Cloudflare ships OIDC for Pages, this goes
+# back to a minted token and this paragraph gets deleted.
+#
+# One thing this cannot do for you: the three Pages projects must exist, and their custom domains
+# must be attached, before the first run. Nothing in the repository can create them.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - 'docs-site/**'
+      - 'demo-site/**'
+      # The three surfaces share one token file and one pair of faces. A change to either moves
+      # all three, so all three redeploy - deploying only the directory that changed would leave
+      # two sites on last week's palette.
+      - 'src/Hephaisto.Agent/wwwroot/tokens.css'
+      - 'src/Hephaisto.Agent/wwwroot/app.css'
+      # The demo site is rendered from these, so a re-recorded corpus is a site change.
+      - 'src/Hephaisto.Agent/Demo/transcripts/**'
+      - 'src/Hephaisto.Core/Domain/Enums.cs'
+      # And the docs transclude these rather than copying them.
+      - 'src/Hephaisto.Agent/Runbooks/**'
+      - 'src/Hephaisto.Agent/Prompts/**'
+      - 'charts/hephaisto/values.yaml'
+      - 'docs/architecture.md'
+      - 'CHANGELOG.md'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# NOT cancel-in-progress. A superseded test run is waste; a cancelled deploy can leave a site
+# mid-swap. Carried over from pages.yml, where the same reasoning applied to one site and now
+# applies to three.
+concurrency:
+  group: deploy-sites
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: cloudflare-pages
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      # website/ has no build step and never has: it is hand-written HTML consuming the same
+      # tokens.css the console does, with the fonts self-hosted in the repo, so what is committed
+      # is what is served. The two directories below are the first build output this repo deploys.
+      - name: build the docs
+        working-directory: docs-site
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: build the demo
+        working-directory: demo-site
+        run: node build.mjs
+
+      # A guard, not a formality. The demo is rendered from transcripts that are published
+      # evidence, and #84 was an address that reached a rendered page because the redactor and the
+      # scan that checked it shared a bug. build.mjs refuses on an unredacted corpus; this asserts
+      # the pages it produced are non-empty, because a renderer that silently emitted nothing would
+      # otherwise deploy an empty site over a working one.
+      - name: the sites are not empty
+        run: |
+          set -euo pipefail
+          test -s website/index.html
+          test -s docs-site/.vitepress/dist/index.html
+          test -s demo-site/dist/index.html
+          test "$(find demo-site/dist/i -name '*.html' | wc -l)" -ge 10
+          echo "landing, docs and $(find demo-site/dist/i -name '*.html' | wc -l) demo pages present"
+
+      - name: hephaisto.dev
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy website --project-name=hephaisto-www --branch=main
+
+      - name: docs.hephaisto.dev
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy docs-site/.vitepress/dist --project-name=hephaisto-docs --branch=main
+
+      - name: demo.hephaisto.dev
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy demo-site/dist --project-name=hephaisto-demo --branch=main

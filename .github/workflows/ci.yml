@@ -417,6 +417,52 @@ jobs:
 
   # The safety net for the stylesheet. Nothing else in this workflow can see a visual
   # regression: the console suite asserts behaviour against a live agent, and every one of its
+  # Both generated sites must still build.
+  #
+  # Until v0.6.0 there was nothing to build - website/ is hand-written HTML and what is committed
+  # is what is served, which is why pages.yml carried no build step and said so. The docs site and
+  # the demo site changed that, and neither fails in a way a reviewer would notice by reading the
+  # diff:
+  #
+  #   - the docs transclude eleven runbooks, four prompts, values.yaml, architecture.md and
+  #     CHANGELOG.md from where they actually live. A moved or renamed file does not error, it
+  #     renders a blank section. ignoreDeadLinks is false so a link into the repo that stopped
+  #     resolving fails the build, which is the whole point of keeping the docs in the repository.
+  #   - the demo site parses the domain enums out of Enums.cs and refuses to render if a member
+  #     was renamed, and refuses again if any transcript still contains an unredacted address.
+  #
+  # So this is a correctness gate on the docs, not a packaging step. It holds no credential and
+  # deploys nothing - that is deploy.yml, on main only.
+  sites:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: the docs build, and every transclusion still resolves
+        working-directory: docs-site
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: the demo renders from the committed transcripts
+        working-directory: demo-site
+        run: node build.mjs
+
+      # A build that emitted nothing exits 0. Assert it produced pages, the same way
+      # visual-test.sh asserts the suite actually compared something.
+      - name: both produced pages
+        run: |
+          set -euo pipefail
+          test -s docs-site/.vitepress/dist/index.html
+          test -s demo-site/dist/index.html
+          pages=$(find demo-site/dist/i -name '*.html' | wc -l)
+          test "$pages" -ge 10 || { echo "only $pages demo pages rendered"; exit 1; }
+          echo "docs ok, $pages demo pages"
+
   # assertions passes just as happily against a console whose layout has collapsed.
   #
   # Runs INSIDE the pinned Playwright image rather than installing browsers on the runner,
