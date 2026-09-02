@@ -2507,6 +2507,32 @@ Not the confidence gate (0.95 on a declining run) and not the step budget
 (`terminationReason: Concluded`), which are hypotheses 1 and 2 above; both are now ruled out with
 data rather than argued.
 
+**And the prompt is not the cause either — tested, and it is a null result.** The obvious fix was
+to correct that rule: ask "would a replacement pod hit the same failure?" rather than "where does
+the state live", remove PersistentVolumeClaim from the reproduce-exactly list, and say explicitly
+that persisted state comparing a *previous pod's identity* against the current one does not
+reproduce for a replacement. Twelve replays with that prompt against twelve without, same model,
+same ceilings, same endpoint, one variable:
+
+| arm | concluded | acted | rate |
+|---|---|---|---|
+| baseline | 9/12 | 0 | 0% |
+| reworded planning prompt | 9/12 | 1 | 11% |
+
+Fisher's exact **p = 1.0**. Root-cause accuracy moved 10/12 to 8/12, also noise, also not an
+improvement. **The change was reverted** rather than kept: a longer prompt that moves nothing is a
+cost with no benefit, and keeping it would be the unevidenced change this file exists to prevent.
+
+What the arm does establish is where the association lives. The one run that acted is the shortest
+hypothesis of the twelve and the only one that never mentions the volume at all; every declining
+run reasons from "the PVC persists". Since removing that line from the prompt did not stop the
+model reaching for it, **the association is in the model rather than only in our wording** — which
+is the first explanation offered so far that accounts for four prompt arms failing in a row (#41's
+three, and this one).
+
+That reframes the remaining work. Prompt engineering has now been tried four times and measured
+four times; the next thing worth trying is not a fifth wording.
+
 ---
 
 ## The v0.5.0 carry, reviewed 2026-08-31
@@ -3233,6 +3259,73 @@ the published set rather than to weaken the redactor, and whoever adds it should
 deciding otherwise.
 
 **Size.** n/a — a standing constraint on the corpus rather than a defect.
+
+### 82. The concluding-step rescue cannot land when the ceiling that broke was tokens
+
+**Symptom.** Replaying `c12` twelve times against a local `gpt-oss-120b` with
+`Llm:Investigation:MaxSteps=20`, several runs end:
+
+```
+TokenBudgetExhausted: 449,776 of 400,000 input tokens used
+The reserved concluding step failed. Reporting the original budget termination.
+```
+
+The run produces **no finding**, so it cannot be graded, so it drops out of the denominator —
+which is exactly the failure [#78](#78) fixed for the step ceiling and which
+[#59](#59) recorded as "every one produced no finding".
+
+**Cause.** `TryGrantConcludingStep` grants `ConcludingCallAllowance = 2` calls, and
+`EnsureCanStartStep` lets those bypass the breach check. Two is the right number for the happy
+path and the entry above says why: the conclusion goes through the `conclude` **tool**, and a tool
+call is two round trips by protocol. What it does not cover is the model not calling the tool
+cleanly on its first attempt — a text reply, a malformed call, a retry — after which the third
+round trip finds the allowance spent and the breach still latched.
+
+It is worse for tokens than for steps. A concluding call resends the whole conversation, so the
+one dimension that is already over its ceiling is the one the rescue has to spend again to work.
+
+**The rescue is not broken, it is a coin flip**, and that is the part worth stating precisely. In
+the same twelve-run baseline, one token-exhausted investigation concluded and graded `correct`
+while others did not: the difference is only whether the model spent its two granted turns on a
+clean `conclude` call. So the symptom is intermittent, which is exactly the shape that gets
+attributed to the model rather than to a ceiling.
+
+**Why it was found now.** Raising `MaxSteps` to 20, which is [#59](#59)'s fix and what
+`values-e2e.yaml` ships, buys more round trips — and every round trip resends the transcript, so
+input tokens accumulate faster than linearly. **Fixing the step ceiling moved the binding
+constraint to the token ceiling.** That is [#74](#74)'s thesis one level up: its lesson was that
+the limits are per-model and the defaults are not, and this adds that the limits are not co-tuned
+across *dimensions* either. `MaxInputTokens` has been 400,000 since it was written, against a
+`MaxSteps` that has since changed.
+
+**Why it matters beyond the number.** A budget-terminated run and a planner that chose not to act
+are indistinguishable in the summary line, which is precisely what
+[#66](#66-the-planner-acts-on-half-of-a-fair-fixture) flags as blocking an honest reading of the
+action rate — that entry names the step budget and does not consider the token one.
+
+**The design already agrees with the fix.** The `conclude` tool is wrapped
+`budget: null` on stated reasoning: *"A run whose tool budget is exhausted is told to conclude
+with what it has, and a `conclude` that the same budget then refuses would leave it no way to say
+anything at all."* That is exactly this argument. It was applied to the **tool** and not to the
+**round trips that carry it**, which instead get a fixed allowance of two - so the exemption holds
+right up until the model needs a third turn to use it.
+
+**Not an artefact of replay.** Replay tools go through the same `SafeToolDecorator.WrapAll` path
+as live ones, so truncation and byte caps are identical and a cluster accumulates input tokens the
+same way. The confound applies to both instruments, which is one fewer reason to believe
+[#66](#66-the-planner-acts-on-half-of-a-fair-fixture)'s replay and cluster arms are measuring
+different things.
+
+**Fix, not applied here.** Either reserve token headroom the way steps are reserved, or exempt the
+concluding call from the input-token ceiling with its own hard cap. Both are changes to the budget
+path and were deliberately kept out of the prompt experiment that found this, because changing two
+things between a baseline and a treatment measures neither.
+
+While here: the XML comment on `TryGrantConcludingStep` still reads "This grants exactly one step
+and never renews", which stopped being true when #78 changed the allowance to two.
+
+**Size.** S for the reserve, M if the ceilings are co-tuned properly.
+
 
 ### 83. The in-cluster reachability probe reads 401 as unroutable
 
