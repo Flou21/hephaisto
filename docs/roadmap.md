@@ -932,6 +932,43 @@ scanned before the first commit, no credentials, but addresses were present and 
 a redactor that runs over the serialized document. The first version of that redactor walked a list
 of fields and missed one, which is the argument against field lists.
 
+**The three sites, shipped 2026-09-02.** `docs-site/` is VitePress, and it answers the objection
+that deferred it — that a second rendering surface is a second place for documentation to rot —
+structurally rather than by discipline. Nothing that already exists is copied: the eleven runbooks,
+the four prompt fragments, `values.yaml`, the CI values files, `architecture.md` and `CHANGELOG.md`
+are transcluded from where they live, and `ignoreDeadLinks` is false so a repo link that stops
+resolving fails the build. Written from scratch: the promotion path from `Observe` to `Auto` as a
+walkthrough, and a troubleshooting page organised by symptom — that material existed but was
+scattered across `NOTES.txt`, README gotchas and `values.yaml` comments, and `NOTES.txt` in
+particular was invisible until after a successful install.
+
+`demo-site/` renders the ten transcripts to static HTML. The console itself could not be hosted: it
+is Blazor Server, so every page is a SignalR circuit against a process holding a database
+connection, and hosting that publicly would mean running an agent on the internet to show what an
+agent looks like. It ships the console's own `app.css` and its `hp-*` vocabulary, so it is the
+product's appearance rather than a reconstruction, and it parses the domain enums out of `Enums.cs`
+at build time rather than carrying a second copy that would drift.
+
+**The design system needed generalising, and would have failed silently otherwise.**
+`DesignTokenTests` named `website/` in three places. Two more surfaces would have been exempt from
+the no-colour-literals rule while appearing covered, so the token-file and font assertions are now
+a theory over a list of surfaces. Verified by injecting a hex literal and watching it fail by file
+and line before reverting — a test never seen failing is not yet a test.
+
+**A real bug fell out of it, and how it was found is the useful part.**
+[#84](backlog.md#84-the-redactors-word-boundary-missed-an-address-and-mangled-a-version-string):
+the redactor anchors on `\b`, and it runs over a *serialized* document where a newline is the two
+characters `\` and `n` — so an address beginning a line inside an evidence blob read as
+`...\n10.42.0.68` and never matched. It reached a rendered page. The same `\b` also matched
+`2.3.4.5` inside `v1.2.3.4.5`, which is redaction becoming editing.
+
+This is [#81](backlog.md#81-a-demo-transcript-is-published-evidence-and-only-its-addresses-are-redacted)'s
+own fix creating its successor: scrubbing the whole document cured the field list that missed a
+field, and introduced a bug that only exists because the escapes are now part of the text being
+matched. **The redactor and the scan that checked it agreed the corpus was clean because they
+shared the pattern.** Unrelated code rendering the same files is what disagreed — a check that
+inherits its subject's bug is not a second opinion.
+
 **Outstanding, and it is the half that gates the claim.** #72 is still unconfirmed on a cluster and
 #66's two numbers still disagree, so the hero's *"It fixes what it can prove"* remains the one
 sentence on the site whose evidence is outstanding. The product screenshots are not captured
@@ -939,6 +976,16 @@ either, for the same reason: both want the one `--full --mode Auto` run, and the
 would run in is not built yet. **Deploying the site before that run means publishing the claim
 ahead of its evidence**, which is a decision rather than an oversight, and this section exists so
 it is made deliberately.
+
+The demo site makes that gap visible rather than papering over it, which is the right outcome but
+worth naming: **none of the ten transcripts shows the agent acting.** `plan.actions[]` is empty in
+every one — eight correctly declined, two judged to have missed an action, one produced no finding.
+So a visitor reads ten investigations in which the agent never acts, on a site whose hero says *"It
+fixes what it can prove."* The index page says so in as many words.
+
+A transcript that shows an action is one `hephaisto-eval run --transcripts` away, on the c12
+fixture, driven by a model that acts. That is a model-choice decision rather than engineering work,
+and it is the same decision #66 and #72 both reduce to.
 
 ---
 
@@ -961,11 +1008,18 @@ surface, in the same diff and the same review. This repo documents itself unusua
 unusually honestly; splitting the docs away is the most reliable way to lose that. The toolchain
 objection is weak — `scripts/e2e/ui/` already carries a `package.json`.
 
-**Hosting: GitHub Pages first, self-hosting kept open.** VitePress emits static files, so this is a
-low-regret choice — a Pages workflow builds and deploys on push to `main`, the custom domain is a
-DNS record, nothing to operate. If it should later live on a self-managed cluster, the same build
-output goes into a small static image published by the same CI: a DNS change, not a rewrite.
-Self-hosting a marketing site is ops work that buys nothing until there is traffic.
+**Hosting: ~~GitHub Pages first~~ Cloudflare Pages, revised 2026-09-02.** The original reasoning
+still holds for one site and was overturned by a requirement it never considered: three of them, on
+three subdomains. **A GitHub Pages site binds exactly one custom domain** — `CNAME` holds one
+hostname and the settings UI has one field, with apex+www the only special case — so
+`hephaisto.tld`, `docs.` and `demo.` cannot come from one repository's Pages. The alternatives were
+three repositories, which the section above rejects for the reason it gives, or a different host.
+
+Three Cloudflare Pages projects from this one repository, deployed by direct upload from one
+workflow, keeps the "same repository" rule intact. The exit remains what it was: these are static
+files, so moving them is a DNS change rather than a rewrite. The cost is a stored deploy
+credential, discussed in `deploy.yml`'s own header, because Cloudflare has no OIDC path for
+wrangler and `pages.yml`'s minted-per-run token was a property worth not losing quietly.
 
 ### Content mostly exists already
 
