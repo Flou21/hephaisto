@@ -105,6 +105,95 @@ internal sealed class DemoSeeder(
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
+    /// <summary>
+    /// Everything the seed does to a transcript before it touches the database: decide whether
+    /// the file carries its own history, compose one if it does not, and rebase every clock.
+    /// </summary>
+    /// <remarks>
+    /// Separated from <c>SeedOneAsync</c> so it can be asserted without a Postgres. This is the
+    /// half that decides what the console will SAY about an incident, which is the half worth
+    /// pinning: it silently claimed Escalated for every transcript until an exported one
+    /// arrived that had actually resolved.
+    /// </remarks>
+    internal static void PrepareForSeed(Transcript transcript, DateTimeOffset now)
+    {
+        var incident = transcript.Incident;
+        var investigation = transcript.Investigation;
+
+        // The serialized incident carries its investigations, and the investigation is also
+        // added explicitly below. Adding both would insert the graph twice.
+        incident.Investigations.Clear();
+
+        // Whether this file carries a state history is the whole question, and the transitions
+        // ARE that history - so it is asked of the payload rather than of a flag. A cluster
+        // export records what the agent actually did; a replay cannot, because
+        // `run --transcripts` constructs an investigation runner and no state machine.
+        var recorded = incident.Events.Count > 0;
+
+        if (!recorded)
+        {
+            incident.Actions.Clear();
+            incident.Events.Clear();
+        }
+
+        // Anchor the most recent moment in the transcript at "just now" and shift everything
+        // else by the same amount, so every interval the page renders - time to diagnosis,
+        // gaps between steps - survives exactly.
+        var latest = Latest(incident, investigation, transcript.Blobs);
+        var shift = now - latest;
+
+        Rebase(incident, investigation, transcript.Blobs, shift);
+
+        investigation.IncidentId = incident.Id;
+
+        if (!recorded)
+        {
+            // In Observe mode a diagnosed incident goes to a human: nothing executes, so
+            // nothing verifies, so nothing closes. That is the state these recordings actually
+            // ended in, and it is COMPOSED here rather than read, because a replayed transcript
+            // has no state to read - so it is labelled as composed on the first transition.
+            incident.State = IncidentState.Escalated;
+
+            // Not PolicyDenied. No policy engine ran on any of these, and saying one denied the
+            // plan is a claim about a component that was never constructed. It read as harmless
+            // until a genuinely denied cluster capture landed in the same list beside ten
+            // replays wearing the same label.
+            incident.EscalationReason = investigation.Plan is null || investigation.Plan.NoActionRequired
+                ? EscalationReason.NoPlanProduced
+                : EscalationReason.None;
+
+            incident.Events.Add(new IncidentEvent
+            {
+                IncidentId = incident.Id,
+                From = null,
+                To = IncidentState.Detected,
+                At = incident.OpenedAt,
+                Reason = Provenance(transcript),
+            });
+
+            incident.Events.Add(new IncidentEvent
+            {
+                IncidentId = incident.Id,
+                From = IncidentState.Detected,
+                To = IncidentState.Investigating,
+                At = investigation.StartedAt,
+                Reason = $"Investigating with {investigation.ModelId}.",
+            });
+
+            incident.Events.Add(new IncidentEvent
+            {
+                IncidentId = incident.Id,
+                From = IncidentState.Investigating,
+                To = IncidentState.Escalated,
+                At = investigation.CompletedAt ?? investigation.StartedAt,
+                Reason = incident.EscalationReason is EscalationReason.NoPlanProduced
+                    ? "Diagnosed, and no action was proposed. Escalated to a human."
+                    : "Diagnosed, and a plan was proposed. Nothing executes in Observe mode.",
+            });
+        }
+
+    }
+
     private async Task SeedOneAsync(
         HephaistoDbContext db,
         IncidentEmbedder embedder,
@@ -114,57 +203,7 @@ internal sealed class DemoSeeder(
         var incident = transcript.Incident;
         var investigation = transcript.Investigation;
 
-        // The serialized incident carries its investigations, and the investigation is also
-        // added explicitly below. Adding both would insert the graph twice.
-        incident.Investigations.Clear();
-        incident.Actions.Clear();
-        incident.Events.Clear();
-
-        // Anchor the most recent moment in the transcript at "just now" and shift everything
-        // else by the same amount, so every interval the page renders - time to diagnosis,
-        // gaps between steps - survives exactly.
-        var latest = Latest(incident, investigation, transcript.Blobs);
-        var shift = clock.UtcNow - latest;
-
-        Rebase(incident, investigation, transcript.Blobs, shift);
-
-        investigation.IncidentId = incident.Id;
-
-        // In Observe mode a diagnosed incident goes to a human: nothing executes, so nothing
-        // verifies, so nothing closes. That is the state these recordings actually ended in.
-        incident.State = IncidentState.Escalated;
-        incident.EscalationReason = investigation.Plan is null
-            ? EscalationReason.NoPlanProduced
-            : EscalationReason.PolicyDenied;
-
-        incident.Events.Add(new IncidentEvent
-        {
-            IncidentId = incident.Id,
-            From = null,
-            To = IncidentState.Detected,
-            At = incident.OpenedAt,
-            Reason = Provenance(transcript),
-        });
-
-        incident.Events.Add(new IncidentEvent
-        {
-            IncidentId = incident.Id,
-            From = IncidentState.Detected,
-            To = IncidentState.Investigating,
-            At = investigation.StartedAt,
-            Reason = $"Investigating with {investigation.ModelId}.",
-        });
-
-        incident.Events.Add(new IncidentEvent
-        {
-            IncidentId = incident.Id,
-            From = IncidentState.Investigating,
-            To = IncidentState.Escalated,
-            At = investigation.CompletedAt ?? investigation.StartedAt,
-            Reason = incident.EscalationReason is EscalationReason.NoPlanProduced
-                ? "Diagnosed, and no action was proposed. Escalated to a human."
-                : "Diagnosed, and a plan was proposed. Nothing executes in Observe mode.",
-        });
+        PrepareForSeed(transcript, clock.UtcNow);
 
         db.Incidents.Add(incident);
         db.AddInvestigationGraph(investigation);
@@ -200,6 +239,20 @@ internal sealed class DemoSeeder(
     /// </remarks>
     internal static string Provenance(Transcript t)
     {
+        // A cluster export was never replayed, has no cassette behind it and no second model's
+        // tool trace, so none of the sentence below is true of it. The structural caveat is
+        // replay-specific too - there is no recording to miss against.
+        if (t.Origin.Capture is TranscriptCapture.Cluster)
+        {
+            return $"DEMO DATA - LIVE CAPTURE, exported from the agent's own database after a "
+                + $"real run on a real k3s cluster. Incident {t.Incident.Id.ToString()[..8]}, "
+                + $"investigated by {t.Origin.ModelId} on {t.Origin.RecordedAt:yyyy-MM-dd}, "
+                + $"agent {t.Origin.AgentVersion}. The state, the transitions and the policy "
+                + "decision are what the agent did, not what this page composed. Timestamps are "
+                + "shifted forward; nothing else is changed. Not part of the replayed cassette "
+                + "corpus and not counted in its score.";
+        }
+
         var caveat = t.Score.StructurallySound
             ? string.Empty
             : " NOTE: this replay was structurally unsound - the recorded tool trace did not "
@@ -229,6 +282,24 @@ internal sealed class DemoSeeder(
         candidates.AddRange(incident.Signals.Select(s => s.LastSeen));
         candidates.AddRange(investigation.Steps.Select(s => s.At));
         candidates.AddRange(blobs.Select(b => b.CreatedAt));
+
+        // A cluster export carries three clocks a replay never had, and all three run PAST
+        // the investigation: an incident is resolved after the loop finishes, not during it.
+        // Anchoring on the old set put the resolution and the execution in the future - a
+        // console showing an action executed ten minutes from now.
+        if (incident.ResolvedAt is { } resolved)
+        {
+            candidates.Add(resolved);
+        }
+
+        candidates.AddRange(incident.Events.Select(e => e.At));
+
+        if (investigation.Plan is { } plan)
+        {
+            candidates.Add(plan.CreatedAt);
+            candidates.AddRange(plan.Actions.Where(a => a.ApprovedAt is not null).Select(a => a.ApprovedAt!.Value));
+            candidates.AddRange(plan.Actions.Where(a => a.ExecutedAt is not null).Select(a => a.ExecutedAt!.Value));
+        }
 
         return candidates.Max();
     }
@@ -263,6 +334,33 @@ internal sealed class DemoSeeder(
         foreach (var step in investigation.Steps)
         {
             step.At += shift;
+        }
+
+        // The transitions the timeline renders. Composed ones are built from already-shifted
+        // fields, so this is a no-op for a replay and load-bearing for an export.
+        foreach (var transition in incident.Events)
+        {
+            transition.At += shift;
+        }
+
+        if (investigation.Plan is { } plan)
+        {
+            // Unshifted until now, which was a latent bug for the ten as well: the plan
+            // rendered as created weeks before the investigation that produced it.
+            plan.CreatedAt += shift;
+
+            foreach (var action in plan.Actions)
+            {
+                if (action.ApprovedAt is { } approved)
+                {
+                    action.ApprovedAt = approved + shift;
+                }
+
+                if (action.ExecutedAt is { } executed)
+                {
+                    action.ExecutedAt = executed + shift;
+                }
+            }
         }
 
         foreach (var blob in blobs)
