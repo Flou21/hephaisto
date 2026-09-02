@@ -4005,3 +4005,41 @@ still default-denies. It is there because this failure was silent, total, and pr
 agent that had simply stopped acting.
 
 **Size.** S. **Fixed 2026-09-02.**
+
+### 93. The Resolved assertion read a field the list endpoint does not have
+
+**Symptom.** With [#72](#72-an-incident-that-was-successfully-acted-on-sits-in-verifying-forever)
+and [#92](#92) fixed, a clean cluster run acted on c13, recovered it, and the agent's own log
+said:
+
+```
+Verification 1 of RestartPod on hephaisto-chaos/Deployment/c13-wedged-lock:
+  Passed - Deployment/c13-wedged-lock is settled with 1/1 ready and no container waiting
+Incident 01a062c6-ce97-7ce7-961c-28241050f6a5 resolved: ...
+```
+
+and the API agreed - `state: Resolved`, `resolvedAt: 2026-09-02T16:02:24`, the full
+`Detected -> Triaging -> Investigating -> Acting -> Verifying -> Resolved` chain, granted by
+`hephaisto/verifier`. The harness still reported *"the workload recovered but verification never
+closed the incident"*.
+
+**Cause.** `_act_resolved` filtered the list endpoint with `.target.name`. The list endpoint
+projects `IncidentListItem`, which carries `targetKind` and `targetName` **flat**; only the
+detail endpoint has a nested `target` object. So `.target.name` was null on every row, the
+`select` dropped all of them, and the count was always zero.
+
+**The assertion could never pass**, for any agent, in any release. Every other `.target.name` in
+`chaos.sh` reads `details.jsonl`, which does have the nested object, which is why only this one
+was wrong and why it looked idiomatic.
+
+**Why it survived.** It is an assertion that can only fail, and for three releases it had four
+genuine bugs to agree with - the harness wait, the missing owner, the jsonb audit detail, the
+node label. Each time it fired it was right for a reason that had nothing to do with its own
+query, so nothing ever questioned it. **A check that has never passed is not evidence that the
+thing it checks is broken**, and this file has now produced two of those in one milestone -
+[#1](#1) is the same shape with the opposite sign, an assertion that could only pass.
+
+**Fix.** `.targetName`. Verified against the live API on the run that exposed it: the corrected
+filter returns 1 for the same data the old one returned 0 for.
+
+**Size.** S. **Fixed 2026-09-02.**

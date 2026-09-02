@@ -838,10 +838,20 @@ chaos_assert_action_executed() {
 }
 
 # True once the acting fixture's incident has been closed by the verifier.
+#
+# `.targetName`, NOT `.target.name`. The list endpoint projects IncidentListItem, which
+# carries targetKind/targetName flat; only the detail endpoint has a nested `target` object.
+# So this read null on every row, the `select` dropped all of them, and the assertion could
+# never pass whatever the agent did - it reported "the workload recovered but verification
+# never closed the incident" against an incident that had genuinely reached Resolved.
+#
+# That is the fifth distinct thing #72 has been, and the only one that was in the harness
+# rather than the agent. It is also the reason to be careful with an assertion that can only
+# fail: it agreed with four real bugs in a row, so nothing ever questioned it. See #93.
 _act_resolved() {
     [ "$(api_array "/api/incidents?state=Resolved&limit=100" \
         | jq -r --arg t "$(fixture_target "$ACT_FIXTURE")" \
-            '[.[] | select(.target.name != null and (.target.name | contains($t)))] | length' \
+            '[.[] | select(.targetName != null and (.targetName | contains($t)))] | length' \
         2>/dev/null || echo 0)" -ge 1 ]
 }
 
