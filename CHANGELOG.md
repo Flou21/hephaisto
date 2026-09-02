@@ -12,7 +12,36 @@ the same number.
 
 ## Unreleased
 
+**Someone else can run it.** Three public sites, a demo that runs on a laptop with one command
+and no API key, and — for the first time in the project's life — an incident the agent acted on
+reaching `Resolved`.
+
 ### Added
+- **The agent has been observed closing an incident it acted on.** On `c13-wedged-lock`:
+  `Detected → Triaging → Investigating → Acting → Verifying → Resolved`, 41 seconds after the
+  restart, granted by `hephaisto/verifier`, 70 assertions. **This retires v0.5.0's "Not
+  established" line below.** It is one run on one fixture; the acting path is now demonstrated
+  end to end rather than reliable, and the docs say which.
+- **Three sites**, on Cloudflare Pages: [hephaisto.dev](https://hephaisto.dev),
+  [docs.hephaisto.dev](https://docs.hephaisto.dev) and
+  [demo.hephaisto.dev](https://demo.hephaisto.dev). The docs site *transcludes* the repository —
+  the runbooks, the prompt fragments, `values.yaml`, `architecture.md` and this file are included
+  from their real locations rather than copied, and `ignoreDeadLinks` is false so a moved file
+  breaks the build instead of rendering a blank section.
+- **`c13-wedged-lock`**, a thirteenth chaos fixture, because the acting path had no fixture that
+  could measure it. `c11` and `c12` both put the wedged state on a PVC, so acting means overriding
+  the correct rule that PVC contents survive a pod replacement — and a decline is then ambiguous
+  between "will not act" and "did not make the inference". c13 puts the same fault on an
+  `emptyDir`, which the planning prompt already names as pod-scoped. It measures willingness to
+  act; c12 keeps measuring the inference. **Quote the two numbers separately.**
+- **`hephaisto-eval export`**, a fifth CLI verb. Snapshots a *finished* incident out of the
+  database into a transcript — the transitions it made, the action it executed or was refused,
+  and the policy decision behind it. `run` can never produce those: replay constructs an
+  investigation runner and no executor, no policy engine and no state machine.
+- **Termination reporting in the eval harness.** A run cut off by a token or step budget used to
+  render as a bare `no finding` and read as a wrong answer. The per-scenario line now names the
+  termination reason, and the summary prints the histogram — with the number that matters beside
+  it: how many attempts the planner actually ran in.
 - **A demo that needs no cluster.** `demo/compose.yaml` brings up Postgres and the published
   image with ten recorded investigations loaded — the step trace, the diagnosis, and every
   evidence excerpt linked back to the raw tool output it came from. No API key, no Kubernetes,
@@ -30,7 +59,69 @@ the same number.
   advisories.
 - A README for the chart, so Artifact Hub stops rendering an empty page.
 
+### Changed
+- **BREAKING — the Kubernetes label prefix is `hephaisto.dev/`, not `hephaisto.io/`.** A label
+  prefix is meant to be a DNS domain you control, and `hephaisto.io` never was one. Three labels
+  moved, all read by the policy engine:
+
+  | before | after |
+  |---|---|
+  | `hephaisto.io/destructive-actions-allowed` | `hephaisto.dev/destructive-actions-allowed` |
+  | `hephaisto.io/allow-single-replica-restart` | `hephaisto.dev/allow-single-replica-restart` |
+  | `hephaisto.io/protected` | `hephaisto.dev/protected` |
+
+  There is **no compatibility shim and no dual-prefix read**, deliberately: a policy engine that
+  accepts two spellings of "this namespace opted in" is a worse thing to reason about than one
+  that accepts one.
+
+  **Upgrading.** This fails *closed*. An upgraded agent looks for a label that is not there, the
+  policy engine denies, and the reason is recorded on the action row — nothing is silently
+  permitted, and the failure mode of skipping this note is an agent that stops acting, not one
+  that acts where it should not. Relabel every namespace you had opted in:
+
+  ```sh
+  kubectl label ns <ns> hephaisto.dev/destructive-actions-allowed=true
+  kubectl label ns <ns> hephaisto.io/destructive-actions-allowed-
+  ```
+
+  Same for any workload carrying `hephaisto.io/protected` or
+  `hephaisto.io/allow-single-replica-restart`. These are **code defaults, not chart values**, so
+  if you overrode `Policy:RequiredNamespaceLabel`, `Policy:ProtectedLabels` or
+  `Policy:AllowSingleReplicaRestartLabel` in config or env, update those too — the defaults moved
+  and your overrides did not.
+- **`ACT_FIXTURE` now defaults to `c13`**, with `c11` and `c12` still selectable. `--full` runs
+  eleven fixtures rather than ten.
+- **`PlanVerdict` gained `PlannerNeverRan`.** `NoPlan` pooled four outcomes, and any action rate
+  over the total counted a run that never reached the planner as a decline.
+- Hosting moved from GitHub Pages to Cloudflare Pages: one Pages site binds one custom domain,
+  and this needs three.
+- The README leads with what it is, what it looks like and how to try it, before the safety
+  argument.
+
 ### Fixed
+- **An incident that was successfully acted on sat in `Verifying` forever.** The resolve
+  transition wrote its audit detail as a bare string into a `jsonb` column, so Postgres rejected
+  it (`22P02`) and rolled back the transition that had just succeeded. Four more layers sat on
+  top of it: an action with no owner reference could not be verified, a harness wait that ended
+  before verification did, an `instance` label read as a node name (so `ClusterFacts` came back
+  empty and default-deny refused every action), and finally an assertion that read `.target.name`
+  from a list endpoint that does not return it — an assertion that could never pass, and that had
+  agreed with four genuine bugs in a row.
+- **The `conclude` tool asked for a wrapper `gpt-oss` never sends**, and three budget ceilings hid
+  it. `TokenBudgetExhausted` went from 6 of 24 attempts to 0 of 24.
+- **Confidence was offered in two places and read from one**, so a well-formed conclusion could be
+  scored as though it had none.
+- **An auto-executed action left `ApprovedBy` null**, against an invariant three doc comments
+  assert. Nothing had ever executed an action on a cluster, so the assertion had no subject.
+- **The demo site shipped another state's glyph for three states.** `Escalated` rendered with
+  `AwaitingApproval`'s marker, `Investigating` with `Detected`'s, `Detected` with `Expired`'s — on
+  every page, since the site existed. The vocabulary is now parsed from `Display.cs`, which
+  `docs/design.md` names as its owner, instead of copied.
+- **A seeded replay was reported as `PolicyDenied`** by a policy engine the demo stack never
+  constructs.
+- **The redactor's `\b` missed an address that reached a rendered page**, because `\n` before a
+  digit is not a word boundary.
+- **`--nightly` published the branch it claimed to be testing**, not the one asked for.
 - The README announced `Status: v0.2.0` on a v0.5.0 repository and its install command pinned
   `--version 0.2.0`, so anyone following it installed a three-release-old chart.
 
