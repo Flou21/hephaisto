@@ -19,12 +19,14 @@ public sealed class PlanGraderTests
             MustNotPropose = forbidden ?? [],
         };
 
-    private static Investigation With(ActionPlan? plan) => new()
+    private static Investigation With(
+        ActionPlan? plan, TerminationReason ended = TerminationReason.Concluded) => new()
     {
         IncidentId = Guid.NewGuid(),
         ModelId = "test",
         StartedAt = DateTimeOffset.UnixEpoch,
         Plan = plan,
+        TerminationReason = ended,
     };
 
     private static ActionPlan Plan(bool noAction, params ActionType[] types) => new()
@@ -104,11 +106,44 @@ public sealed class PlanGraderTests
     public void No_plan_at_all_is_skipped_rather_than_graded()
     {
         // An investigation can end before planning for a dozen legitimate reasons, and the
-        // root-cause verdict already accounts for all of them.
+        // root-cause verdict already accounts for all of them. This is the residual case: the
+        // loop concluded cleanly and still emitted nothing, which is a defect in the agent
+        // rather than a ceiling, and it keeps NoPlan to itself.
         var (verdict, records) = PlanGrader.Grade(With(plan: null), Key());
 
         verdict.Should().Be(PlanVerdict.NoPlan);
         records.Should().OnlyContain(r => r.Status == EvalStatus.Skip);
+    }
+
+    [Theory]
+    [InlineData(TerminationReason.TokenBudgetExhausted)]
+    [InlineData(TerminationReason.StepBudgetExhausted)]
+    [InlineData(TerminationReason.WallClockExhausted)]
+    [InlineData(TerminationReason.Stalled)]
+    public void A_run_cut_off_before_planning_is_not_a_decline(TerminationReason ended)
+    {
+        // Backlog #88. This and the test above used to return the same verdict, so an action
+        // rate counted a run that never reached phase 2 as a run that chose not to act - nine
+        // of twenty-four gpt-oss attempts, which is most of the gap the published p-value was
+        // measuring.
+        var (verdict, records) = PlanGrader.Grade(With(plan: null, ended), Key());
+
+        verdict.Should().Be(PlanVerdict.PlannerNeverRan);
+        records.Should().OnlyContain(r => r.Status == EvalStatus.Skip);
+        records.Should().Contain(r => r.Detail.Contains(ended.ToString(), StringComparison.Ordinal),
+            "the reason a run was cut off is the whole point of separating it from a decline");
+    }
+
+    [Fact]
+    public void An_escalation_before_planning_is_not_a_decline_either()
+    {
+        // The escalation arm cannot be seen from the Investigation at all - EscalationReason
+        // lives on the runner's outcome - which is why it is passed in rather than derived.
+        // Grounding loss reaches this path, and it is not the agent declining to act.
+        var (verdict, _) = PlanGrader.Grade(
+            With(plan: null), Key(), EscalationReason.GroundingRejected);
+
+        verdict.Should().Be(PlanVerdict.PlannerNeverRan);
     }
 
     [Fact]

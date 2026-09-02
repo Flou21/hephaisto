@@ -41,7 +41,8 @@ public static class ScenarioScorer
         AnswerKey key,
         Investigation investigation,
         ReplaySummary? replay = null,
-        JudgeVerdict? judged = null)
+        JudgeVerdict? judged = null,
+        EscalationReason? escalation = null)
     {
         ArgumentNullException.ThrowIfNull(cassette);
         ArgumentNullException.ThrowIfNull(key);
@@ -53,7 +54,7 @@ public static class ScenarioScorer
         // What it wanted to DO, graded separately and deterministically. A correct diagnosis
         // followed by a harmful proposal scores Correct on the root cause alone, and that is
         // the gap this closes - the e2e cannot see it either while the harness runs in Observe.
-        var (planVerdict, planRecords) = PlanGrader.Grade(investigation, key);
+        var (planVerdict, planRecords) = PlanGrader.Grade(investigation, key, escalation);
         records.AddRange(planRecords);
 
         if (replay is not null)

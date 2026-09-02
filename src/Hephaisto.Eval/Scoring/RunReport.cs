@@ -55,6 +55,44 @@ public sealed record RunReport
     /// </remarks>
     public int Sound => AllScenarios.Count(s => s.StructurallySound);
 
+    /// <summary>
+    /// Attempts that ended on a ceiling rather than by concluding.
+    /// </summary>
+    /// <remarks>
+    /// The other half of <see cref="Sound"/>, and the number backlog #88 was missing. A run
+    /// truncated by a step, token or cost budget produces no finding for a reason that has
+    /// nothing to do with the agent's reasoning, and reading it as "no finding" is how a
+    /// budget change was mistaken for an accuracy change for three releases.
+    /// </remarks>
+    public int Truncated =>
+        AllScenarios.Count(s => s.TerminationReason is not null
+                                && !string.Equals(s.TerminationReason, "Concluded", StringComparison.Ordinal));
+
+    /// <summary>
+    /// Attempts where phase 2 actually ran, which is the only honest denominator for an
+    /// action rate.
+    /// </summary>
+    /// <remarks>
+    /// Nothing computed this before, so every published action rate divided by
+    /// <see cref="Total"/> - counting attempts that never reached the planner as declines.
+    /// "1 of 11 runs where the planner ran" and "1 of 24 runs" are different claims, and only
+    /// the first is about willingness to act.
+    /// </remarks>
+    public int PlannerRan => AllScenarios.Count(s => s.PlanVerdict is not PlanVerdict.PlannerNeverRan);
+
+    /// <summary>Attempts that proposed an action the answer key accepts.</summary>
+    public int Acted => AllScenarios.Count(s => s.PlanVerdict is PlanVerdict.Reasonable);
+
+    /// <summary>How each attempt ended, worst-first, for the line under the headline.</summary>
+    public IReadOnlyList<(string Reason, int Count)> ByTermination =>
+    [
+        .. AllScenarios
+            .GroupBy(s => s.TerminationReason ?? "unrecorded", StringComparer.Ordinal)
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key, StringComparer.Ordinal)
+            .Select(g => (g.Key, g.Count()))
+    ];
+
     public decimal CostUsd => AllScenarios.Sum(s => s.CostUsd);
 
     public int StepsUsed => AllScenarios.Sum(s => s.StepsUsed);
@@ -79,7 +117,8 @@ public sealed record RunReport
 
     public override string ToString() =>
         $"{Label}: {Correct}/{Total} correct ({Incorrect} wrong, {NoFinding} no finding) "
-        + $"over {Passes.Count} pass(es), {StepsUsed} steps, ${CostUsd:F4}";
+        + $"over {Passes.Count} pass(es), {StepsUsed} steps, ${CostUsd:F4}"
+        + $"; acted {Acted}/{PlannerRan} where the planner ran";
 }
 
 /// <summary>How one fixture fared across every pass in an arm.</summary>

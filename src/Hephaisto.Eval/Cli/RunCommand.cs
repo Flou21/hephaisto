@@ -267,7 +267,8 @@ internal static class RunCommand
         // steps, the evidence blobs and the plan exist outside a database, and --transcripts
         // is what turns them into an artifact.
         return (
-            ScenarioScorer.Combine(cassette, key, outcome.Investigation, replay.Summarise(), judged),
+            ScenarioScorer.Combine(
+                cassette, key, outcome.Investigation, replay.Summarise(), judged, outcome.Escalation),
             outcome,
             incident);
     }
@@ -373,8 +374,16 @@ internal static class RunCommand
 
         var soundness = score.StructurallySound ? string.Empty : "  UNSOUND";
 
+        // A run that hit a ceiling renders as "no finding" and reads as a wrong answer. It is
+        // not one - it is a run that was cut off - and the difference was invisible on this
+        // line for three releases while it was the thing being measured (backlog #59, #88).
+        var ended = score.TerminationReason is { } reason
+                    && !string.Equals(reason, "Concluded", StringComparison.Ordinal)
+            ? $"  {reason}"
+            : string.Empty;
+
         return $"  {pass}  {score.Fixture,-4} {verdict} {score.StepsUsed,3} steps  "
-            + $"${score.CostUsd:F4}  {score.Replay}{soundness}";
+            + $"${score.CostUsd:F4}  {score.Replay}{ended}{soundness}";
     }
 
     private static void Summarise(RunReport report)
@@ -388,6 +397,26 @@ internal static class RunCommand
 
         Console.WriteLine();
         Console.WriteLine($"  {report}");
+
+        // How the attempts ENDED, beside how they scored. Without this a budget change and an
+        // accuracy change look identical in the headline, which is the confusion backlog #88
+        // untangled after it had already produced a published p-value.
+        if (report.Truncated > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine(
+                $"  {report.Truncated} of {report.Total} attempts ended on a ceiling rather than "
+                + "by concluding:");
+
+            foreach (var (reason, count) in report.ByTermination)
+            {
+                Console.WriteLine($"    {count,3}  {reason}");
+            }
+
+            Console.WriteLine(
+                $"  the planner ran in {report.PlannerRan} of {report.Total}; an action rate over "
+                + "the larger number counts a truncated run as a decline");
+        }
 
         if (report.Sound < report.Total)
         {

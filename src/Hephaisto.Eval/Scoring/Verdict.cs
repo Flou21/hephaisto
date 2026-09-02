@@ -93,7 +93,13 @@ public sealed record ScenarioScore
     /// independently and the interesting case is the one where they disagree: a perfect
     /// diagnosis followed by a proposal that would have destroyed the evidence for it.
     /// </remarks>
-    public PlanVerdict PlanVerdict { get; init; } = PlanVerdict.NoPlan;
+    /// <remarks>
+    /// The default is <see cref="PlanVerdict.PlannerNeverRan"/> rather than
+    /// <see cref="PlanVerdict.NoPlan"/>: a score nobody set is one where the planner
+    /// demonstrably did not run, and defaulting it to the decline bucket is how an unscored
+    /// attempt used to arrive in an action rate as a zero.
+    /// </remarks>
+    public PlanVerdict PlanVerdict { get; init; } = PlanVerdict.PlannerNeverRan;
 
     /// <summary>The judge's one-sentence reason, when a judge ran.</summary>
     public string? JudgeReason { get; init; }

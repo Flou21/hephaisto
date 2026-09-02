@@ -19,8 +19,22 @@ public enum PlanVerdict
     /// <summary>Proposed nothing where an action was available and appropriate.</summary>
     MissedAnAction = 3,
 
-    /// <summary>No plan reached the scorer at all - the investigation ended before planning.</summary>
+    /// <summary>
+    /// The loop concluded cleanly and still produced no plan. A defect, not a decline.
+    /// </summary>
     NoPlan = 4,
+
+    /// <summary>
+    /// Phase 2 never ran: the investigation hit a ceiling or escalated before planning.
+    /// </summary>
+    /// <remarks>
+    /// Named for the fact rather than the cause, because the causes are several and the point
+    /// of backlog #88 is that pooling them is what produced a published action rate whose
+    /// denominator counted nine runs that never reached the planner as nine declines. An
+    /// attempt in this state is evidence about the budget, not about willingness to act, and
+    /// belongs outside the denominator rather than in it as a zero.
+    /// </remarks>
+    PlannerNeverRan = 5,
 }
 
 /// <summary>
@@ -50,8 +64,14 @@ public static class PlanGrader
 {
     public const string Phase = "plan";
 
+    /// <param name="escalation">
+    /// The outcome's escalation reason, when the runner set one. It is passed in rather than
+    /// derived because it does not exist on <see cref="Investigation"/> at all - it lives on
+    /// the runner's outcome - and deriving it from what is on the investigation is precisely
+    /// the guessing backlog #88 is about.
+    /// </param>
     public static (PlanVerdict Verdict, IReadOnlyList<EvalRecord> Assertions) Grade(
-        Investigation investigation, AnswerKey key)
+        Investigation investigation, AnswerKey key, EscalationReason? escalation = null)
     {
         ArgumentNullException.ThrowIfNull(investigation);
         ArgumentNullException.ThrowIfNull(key);
@@ -63,9 +83,24 @@ public static class PlanGrader
         {
             // Not a failure. An investigation can end before planning for a dozen legitimate
             // reasons, and the root-cause verdict already accounts for those.
-            records.Add(EvalRecord.Skip(Phase, $"{key.Fixture}: plan", "the investigation produced no plan"));
+            //
+            // But WHICH of those reasons matters, and this used to be one cell. Backlog #88:
+            // "declined to act" and "never got as far as deciding" were both NoPlan, and the
+            // action rate counted both as declines - nine of twenty-four gpt-oss runs had
+            // never reached phase 2 at all. A ceiling is evidence about the budget; a clean
+            // conclusion with no plan is evidence about the agent. Only the second is a
+            // decline, and only the second belongs in an action rate's denominator.
+            var ceiling = investigation.TerminationReason is not TerminationReason.Concluded;
 
-            return (PlanVerdict.NoPlan, records);
+            var why = ceiling
+                ? $"the investigation ended on {investigation.TerminationReason} before planning"
+                : escalation is not null
+                    ? $"the investigation escalated ({escalation}) before planning"
+                    : "the investigation concluded and produced no plan";
+
+            records.Add(EvalRecord.Skip(Phase, $"{key.Fixture}: plan", why));
+
+            return (ceiling || escalation is not null ? PlanVerdict.PlannerNeverRan : PlanVerdict.NoPlan, records);
         }
 
         var proposed = plan.Actions.Select(a => a.Type).Distinct().ToList();
