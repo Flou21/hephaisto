@@ -2842,7 +2842,18 @@ Auto` run that has been outstanding across three releases.
 so the two `??` coalesces become redundant rather than load-bearing, and delete them or leave
 them as belt-and-braces deliberately.
 
-**Size.** S.
+**Fixed, and the entry did not land with the fix.**
+`InvestigationCoordinator.cs` sets `ApprovedBy = IncidentStateMachine.AutoActor`,
+`ApprovalSource.Auto` and `ApprovedAt` on the `PolicyDecision.Allow` arm, where the claim
+becomes true rather than at the edges that read it. Confirmed on a cluster by [#72](#72)'s run:
+`ok every executed action names an approver`.
+
+Worth recording that this is the repo's own convention broken - a fix and its backlog entry are
+supposed to land in the same commit, and this one shipped in code and stayed open on paper until
+the v0.6.0 sweep found it. An entry that is fixed but unmarked is worse than one that is open:
+it makes the carry review count work that is already done.
+
+**Size.** S. **Fixed 2026-09-02, marked 2026-09-03.**
 
 ### 72. An incident that was successfully acted on sits in `Verifying` forever
 
