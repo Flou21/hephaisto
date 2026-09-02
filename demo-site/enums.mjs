@@ -31,6 +31,13 @@ export const REQUIRED = [
     'ActionType',
     'AgentMode',
     'StepKind',
+
+    // The action row: a cluster capture carries a policy decision and an execution state,
+    // which no replayed transcript ever had.
+    'PolicyDecision',
+    'ActionState',
+    'ApprovalSource',
+    'RiskTier',
 ]
 
 export function read(enumsCsPath) {

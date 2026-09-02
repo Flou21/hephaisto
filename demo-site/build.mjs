@@ -30,6 +30,7 @@ import { readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, rmSy
 import { join, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { read as readEnums, label } from './enums.mjs'
+import { read as readDisplay, look } from './display.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = join(HERE, '..')
@@ -41,7 +42,13 @@ const SITE = 'https://hephaisto.dev'
 const DOCS = 'https://docs.hephaisto.dev'
 const REPO_URL = 'https://github.com/Flou21/hephaisto'
 
+const ordinal = (id) => {
+    const m = /^c(\d+)/.exec(id)
+    return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER
+}
+
 const maps = readEnums(join(REPO, 'src', 'Hephaisto.Core', 'Domain', 'Enums.cs'))
+const display = readDisplay(join(REPO, 'src', 'Hephaisto.Agent', 'Components', 'Display.cs'))
 
 // ---------------------------------------------------------------- formatting
 
@@ -65,9 +72,17 @@ const duration = (from, to) => {
 }
 
 const sevClass = (v) => `sev-${label(maps, 'Severity', v).toLowerCase()}`
-const stateGlyph = (name) => ({
-    Resolved: '+', Escalated: '!', Suppressed: '-', Investigating: '*', Detected: '.',
-}[name] ?? '.')
+// Read from Display.cs rather than copied. The copy that used to live here had Escalated,
+// Investigating and Detected all wrong, and each wrong value was another state's glyph.
+const stateGlyph = (name) => look(display, 'stateGlyph', name)
+const stateClass = (name) => look(display, 'stateClass', name)
+const decisionGlyph = (name) => look(display, 'decisionGlyph', name)
+const decisionClass = (name) => look(display, 'decisionClass', name)
+
+/** The console's own state badge: glyph, word, then colour - never colour alone. */
+const stateBadge = (name) =>
+    `<span class="hp-state ${stateClass(name)}"><span class="glyph">${esc(stateGlyph(name))}</span> `
+    + `${esc(name.toLowerCase())}</span>`
 
 // ------------------------------------------------------- provenance, ported
 
@@ -77,6 +92,18 @@ const stateGlyph = (name) => ({
  * would quietly curate the demo up from the 8-of-10 this project publishes.
  */
 function provenance(t) {
+    // A live capture was never replayed, has no cassette behind it and no second model's tool
+    // trace, so none of the replay sentence is true of it. Ported from DemoSeeder.Provenance,
+    // which branches the same way and for the same reason.
+    if (capture(t) === 'Cluster') {
+        return `DEMO DATA — LIVE CAPTURE, exported from the agent's own database after a real run `
+            + `on a real k3s cluster. Investigated by ${t.origin.modelId} on `
+            + `${day(t.origin.recordedAt)}, agent ${t.origin.agentVersion}. The state, the `
+            + 'transitions and the policy decision are what the agent did, not what this page '
+            + 'composed. Timestamps are the original recording times. Not part of the replayed '
+            + 'cassette corpus and not counted in its score.'
+    }
+
     const caveat = t.score.structurallySound
         ? ''
         : ' NOTE: this replay was structurally unsound — the recorded tool trace did not cover '
@@ -91,10 +118,35 @@ function provenance(t) {
         + `Timestamps are the original recording times.${caveat}`
 }
 
-/** The three transitions DemoSeeder synthesises; incident.events[] is empty in the files. */
+/** How the file was made. The payload cannot answer this; TranscriptOrigin.Capture does. */
+const capture = (t) => t.origin.capture ?? 'Replay'
+
+const events = (t) =>
+    [...(t.incident.events ?? [])].sort((a, b) => new Date(a.at) - new Date(b.at))
+
+/**
+ * The state history: read when the file has one, composed when it does not.
+ *
+ * The discriminator is the transitions themselves, because they ARE the history - a flag would
+ * be a second source of truth for a fact the payload already settles, and it would fail OPEN:
+ * an exporter that forgot the events but set the flag would render an empty timeline under a
+ * heading promising what happened. This fails safe, into the labelled synthesis.
+ */
 function transitions(t) {
+    const recorded = events(t)
+
+    if (recorded.length > 0) {
+        return recorded.map((e) => ({
+            from: e.from == null ? null : label(maps, 'IncidentState', e.from),
+            to: label(maps, 'IncidentState', e.to),
+            at: e.at,
+            reason: e.reason,
+        }))
+    }
+
     const inv = t.investigation
     const noPlan = !inv.plan
+
     return [
         { from: null, to: 'Detected', at: t.incident.openedAt, reason: provenance(t) },
         {
@@ -108,6 +160,113 @@ function transitions(t) {
                 : 'Diagnosed, and a plan was proposed. Nothing executes in Observe mode.',
         },
     ]
+}
+
+/**
+ * The state to show in the badge.
+ *
+ * Deliberately NOT `incident.state`. Detected is zero, which is also what the serializer writes
+ * for a field nothing set, so on a replayed transcript the two are indistinguishable and
+ * rendering it would swap today's wrong answer for a different one. When there IS a history the
+ * terminal state comes from its last transition, which arrives with a timestamp and a reason -
+ * so the badge and the timeline cannot disagree.
+ */
+function terminalState(t) {
+    const recorded = events(t)
+
+    if (recorded.length === 0) {
+        return 'Escalated'
+    }
+
+    const last = label(maps, 'IncidentState', recorded[recorded.length - 1].to)
+    const column = label(maps, 'IncidentState', t.incident.state)
+
+    if (last !== column) {
+        // A column and a log that disagree is a bug worth failing a build over, not worth
+        // rendering. Same second-opinion reasoning as the unredacted-address scan below.
+        throw new Error(
+            `${t.cassetteId}: the last transition says ${last} and incident.state says ${column}. `
+            + 'One of them is wrong and this page would publish whichever it happened to read.',
+        )
+    }
+
+    return last
+}
+
+/**
+ * The plan, and what the policy engine did with it.
+ *
+ * The banner used to say "Would have done this - nothing was executed" unconditionally, which
+ * was true of every replayed transcript and is false of a cluster capture where an action was
+ * admitted and run. It branches on the actions now.
+ *
+ * The policy cell is the point of the whole page for the reader docs/design.md names - a
+ * platform team asking "what stops it?". A decision with no reasons beside it is an assertion;
+ * with them it is an argument. Every class here already exists in the console's app.css and is
+ * already photographed in design/gallery.html, so nothing new is invented.
+ */
+function renderPlan(plan) {
+    const actions = plan.actions ?? []
+    const executed = actions.filter((a) => a.executedAt && !a.dryRun)
+    const denied = actions.filter((a) => label(maps, 'PolicyDecision', a.decision) === 'Deny')
+
+    const banner = executed.length > 0
+        ? `<div class="hp-plan-banner">
+    <span class="glyph">${esc(decisionGlyph('Allow'))}</span>
+    <strong>This was executed.</strong>
+    <span class="hp-muted">The policy engine admitted it, C# over a closed action vocabulary
+      carried it out, and deterministic predicates checked the result at T+60s, T+5m and
+      T+15m. The planning model held no tools at any point.</span>
+  </div>`
+        : denied.length > 0
+            ? `<div class="hp-plan-banner">
+    <span class="glyph">${esc(decisionGlyph('Deny'))}</span>
+    <strong>Refused by policy — the agent diagnosed this and was not allowed to act.</strong>
+    <span class="hp-muted">The plan below was produced, judged, and denied before anything
+      could touch the cluster. The reason is recorded on the action itself.</span>
+  </div>`
+            : `<div class="hp-plan-banner">
+    <span class="glyph">${esc(decisionGlyph('RequireApproval'))}</span>
+    <strong>Would have done this — nothing was executed.</strong>
+    <span class="hp-muted">The planning model holds no tools and emits JSON against a schema;
+      execution is separate C# over a closed action vocabulary. Every action below was judged by
+      the policy engine before anything could touch it.</span>
+  </div>`
+
+    const rows = actions.map((a) => {
+        const decision = label(maps, 'PolicyDecision', a.decision)
+        const reasons = (a.decisionReasons ?? []).length
+            ? `<ul class="hp-reasons">${a.decisionReasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>`
+            : ''
+
+        const exec = a.executedAt
+            ? `<div class="hp-exec mono">state ${esc(label(maps, 'ActionState', a.state))}
+                 · executed ${esc(stamp(a.executedAt))}${a.dryRun ? ' · dryRun' : ''}
+                 · by ${esc(a.approvedBy ?? 'nobody')}
+                 (${esc(label(maps, 'ApprovalSource', a.approvalSource))})</div>`
+            : `<div class="hp-exec mono">state ${esc(label(maps, 'ActionState', a.state))}</div>`
+
+        return `<li>
+      <div class="mono"><strong>${esc(label(maps, 'ActionType', a.type))}</strong>
+        ${esc(a.target?.name ?? '')}
+        <span class="hp-chip mono">${esc(label(maps, 'RiskTier', a.risk))} risk</span>
+        <span class="hp-decision ${decisionClass(decision)}"><span class="glyph">${esc(decisionGlyph(decision))}</span>
+          ${esc(decision.toLowerCase())}</span></div>
+      ${a.predictedEffect ? `<p class="hp-muted">${esc(a.predictedEffect)}</p>` : ''}
+      ${reasons}
+      ${exec}
+    </li>`
+    }).join('')
+
+    const body = actions.length === 0
+        ? `<p class="hp-empty">No action was proposed.${plan.noActionRequired
+            ? ' The planner set <code>no_action_required</code> — which is the expected outcome for'
+              + ' most incidents, and what the planning prompt tells it to default to.' : ''}</p>`
+        : `<ul class="hp-plan">${rows}</ul>`
+
+    return `${banner}
+  ${plan.summary ? `<p class="hp-plan-summary">${esc(plan.summary)}</p>` : ''}
+  ${body}`
 }
 
 // ------------------------------------------------------------------ chrome
@@ -161,7 +320,7 @@ function renderIndex(all) {
         const verdict = t.score.verdict
 
         return `<tr class="hp-row">
-  <td class="c-state"><span class="hp-state"><span class="glyph">!</span> Escalated</span></td>
+  <td class="c-state">${stateBadge(terminalState(t))}</td>
   <td class="c-sev"><span class="hp-sev ${sevClass(t.incident.severity)}">${esc(sev)}</span></td>
   <td class="c-kind mono">${esc(kind)}</td>
   <td class="c-target mono"><span class="hp-ns">${esc(t.incident.target?.namespace ?? '—')}</span>/${esc(t.incident.target?.name ?? '—')}</td>
@@ -173,19 +332,42 @@ function renderIndex(all) {
 </tr>`
     }).join('\n')
 
-    const correct = all.filter((t) => t.score.verdict === 'Correct').length
+    // Two disjoint sets. The published accuracy figure is over the REPLAYED corpus, and
+    // widening its denominator to include cluster captures would change the measurement while
+    // keeping the label - so every count below says which set it is over.
+    const replays = all.filter((t) => capture(t) === 'Replay')
+    const captures = all.filter((t) => capture(t) === 'Cluster')
+
+    const correct = replays.filter((t) => t.score.verdict === 'Correct').length
+    const declined = replays.filter((t) => t.score.planVerdict === 'CorrectlyDeclined').length
+    const missed = replays.filter((t) => t.score.planVerdict === 'MissedAnAction').length
+    const noPlan = replays.filter((t) => t.score.planVerdict === 'NoPlan').length
+
+    const acted = all.filter((t) =>
+        (t.investigation.plan?.actions ?? []).some((a) => a.executedAt && !a.dryRun)).length
+    const denied = all.filter((t) => (t.investigation.plan?.actions ?? [])
+        .some((a) => label(maps, 'PolicyDecision', a.decision) === 'Deny')).length
+
     const cost = all.reduce((a, t) => a + t.investigation.costUsd, 0)
+
+    // Every one of these was hard-coded as a word, and the words had drifted from the files:
+    // "Eight correctly declined, one proposed nothing, and in two an action was missed" is
+    // eleven statements about ten investigations. Counting is the fix.
+    const n = all.length
 
     const body = `
 <div class="hp-demo-banner">
   <strong>These are recordings, not a live agent.</strong>
-  Ten investigations the agent actually ran against a k3s cluster full of seeded faults, replayed
-  and rendered as static pages. Nothing here is connected to anything: no cluster, no database, no
-  model. Each incident's timeline says which cassette it came from, which model investigated it,
-  and how it was graded — including the one that got it wrong.
+  ${n} investigations the agent actually ran against a k3s cluster full of seeded faults, rendered
+  as static pages. Nothing here is connected to anything: no cluster, no database, no
+  model. Each incident's timeline says where it came from, which model investigated it,
+  and how it was graded — including the one that got it wrong.${captures.length > 0
+    ? ` ${captures.length === 1 ? 'One of them was' : `${captures.length} of them were`} exported
+      from the agent's own database after a real run, so the state and the policy decision on
+      ${captures.length === 1 ? 'it' : 'those'} are recorded rather than composed.` : ''}
 </div>
 
-<h1>Ten investigations</h1>
+<h1>${n} investigations</h1>
 
 <p class="hp-lede">
   Every row below links to the full step trace: what the model asked for, what it was shown, the
@@ -194,10 +376,12 @@ function renderIndex(all) {
 </p>
 
 <dl class="hp-summary">
-  <div><dt>graded correct</dt><dd class="mono">${correct} of ${all.length}</dd></div>
+  <div><dt>graded correct</dt><dd class="mono">${correct} of ${replays.length} replayed</dd></div>
+  ${acted > 0 ? `<div><dt>acted on</dt><dd class="mono">${acted}</dd></div>` : ''}
+  ${denied > 0 ? `<div><dt>refused by policy</dt><dd class="mono">${denied}</dd></div>` : ''}
   <div><dt>total cost</dt><dd class="mono">${usd(cost)}</dd></div>
-  <div><dt>investigating model</dt><dd class="mono">${esc(all[0].origin.modelId)}</dd></div>
-  <div><dt>tool traces from</dt><dd class="mono">${esc(all[0].origin.recordedAgainstModelId ?? '—')}</dd></div>
+  <div><dt>investigating model</dt><dd class="mono">${esc(replays[0].origin.modelId)}</dd></div>
+  <div><dt>tool traces from</dt><dd class="mono">${esc(replays[0].origin.recordedAgainstModelId ?? '—')}</dd></div>
 </dl>
 
 <table class="hp-table hp-incidents">
@@ -211,24 +395,35 @@ ${rows}
 </table>
 
 <section class="hp-section">
-<h2>What this cannot show you</h2>
+<h2>What this shows, and what it does not</h2>
+${acted + denied > 0
+  ? `<p>
+  <strong>${acted > 0 ? `${acted} of these ${n} shows the agent acting.` : ''}${denied > 0
+    ? ` ${denied} shows it being refused.` : ''}</strong>
+  ${acted + denied === 1 ? 'That one was' : 'Those were'} exported from the agent's own database
+  after a real run, which is the only way this page can show an executed action at all: a replay
+  serves a recorded tool trace to a live model and constructs no executor, no policy engine and
+  no state machine, so it has nothing to execute with and nothing to be refused by.
+</p>` : ''}
 <p>
-  <strong>None of these ten shows the agent acting.</strong> Eight correctly declined to propose an
-  action, one proposed nothing at all, and in two the grader judged an action was missed. That is a
-  measured property of the model these were replayed against, not a limitation of this page —
-  <code>gpt-oss:120b</code> proposed an action in 0 of 18 runs on a fixture where
-  <code>deepseek-v4-flash</code> proposed one in 4 of 8.
+  <strong>None of the ${replays.length} replayed investigations shows the agent acting.</strong>
+  ${declined} correctly declined to propose an action, ${noPlan === 1 ? 'one produced no plan at all'
+    : `${noPlan} produced no plan at all`}, and in ${missed} the grader judged an action was missed.
+  That is a measured property of the model these were replayed against, not a limitation of this
+  page — on that fixture <code>gpt-oss:120b</code> proposed an action in 1 of 11 runs where the
+  planner actually ran, where <code>deepseek-v4-flash</code> proposed one in 4 of 8.
 </p>
 <p>
-  The honest version of the claim is therefore: this is what the agent's <em>diagnosis</em> looks
-  like. <a href="${DOCS}/internals/evaluation">The evidence page</a> has the denominators.
+  So the honest version is: the replayed corpus is what the agent's <em>diagnosis</em> looks like,
+  and whether it acts is a separate question measured separately, on a separate fixture.
+  <a href="${DOCS}/internals/evaluation">The evidence page</a> has the denominators.
 </p>
 </section>
 `
     return page({
-        title: 'Hephaisto — ten recorded investigations',
+        title: `Hephaisto — ${n} recorded investigations`,
         description:
-            'Ten real Kubernetes incident investigations, with the full step trace, evidence and '
+            `${n} real Kubernetes incident investigations, with the full step trace, evidence and `
             + 'grading. Static pages, no account, nothing live.',
         body,
         depth: 0,
@@ -306,6 +501,11 @@ function renderDetail(t, all) {
     const stepsById = new Map((inv.steps ?? []).map((s) => [s.id, s]))
     const kind = label(maps, 'SignalKind', inc.kind)
     const sev = label(maps, 'Severity', inc.severity)
+    const state = terminalState(t)
+
+    // Only worth a chip when it says something: None is the absence of a reason, not a reason.
+    const escalationName = label(maps, 'EscalationReason', inc.escalationReason ?? 0)
+    const escalation = escalationName === 'None' ? null : escalationName
 
     const idx = all.findIndex((x) => x.cassetteId === t.cassetteId)
     const prev = all[idx - 1]
@@ -330,32 +530,18 @@ function renderDetail(t, all) {
            grounding check is dropped rather than shown as fact, so this can mean the model
            concluded nothing <em>or</em> that everything it claimed failed verification.</p>`
 
-    const plan = inv.plan
-        ? `<div class="hp-plan-banner">
-    <span class="glyph">!</span>
-    <strong>Would have done this — nothing was executed.</strong>
-    <span class="hp-muted">The planning model holds no tools and emits JSON against a schema;
-      execution is separate C# over a closed action vocabulary. Every action below was judged by
-      the policy engine before anything could touch it.</span>
-  </div>
-  ${inv.plan.summary ? `<p class="hp-plan-summary">${esc(inv.plan.summary)}</p>` : ''}
-  ${(inv.plan.actions ?? []).length === 0
-      ? `<p class="hp-empty">No action was proposed.${inv.plan.noActionRequired
-          ? ' The planner set <code>no_action_required</code> — which is the expected outcome for'
-            + ' most incidents, and what the planning prompt tells it to default to.' : ''}</p>`
-      : `<ul class="hp-plan">${inv.plan.actions.map((a) =>
-            `<li class="mono">${esc(label(maps, 'ActionType', a.type))} ${esc(a.target?.name ?? '')}</li>`).join('')}</ul>`}`
-        : '<p class="hp-empty">No plan was produced.</p>'
+    const plan = inv.plan ? renderPlan(inv.plan) : '<p class="hp-empty">No plan was produced.</p>'
 
     const body = `
 <div class="hp-demo-banner">${esc(provenance(t))}</div>
 
-<p class="hp-muted"><a href="../index.html">← all ten investigations</a></p>
+<p class="hp-muted"><a href="../index.html">← all ${all.length} investigations</a></p>
 
 <div class="hp-detail-header">
   <h1>${esc(inc.title)}</h1>
   <div class="hp-badges">
-    <span class="hp-state"><span class="glyph">${stateGlyph('Escalated')}</span> Escalated</span>
+    ${stateBadge(state)}${escalation
+      ? `<span class="hp-chip mono">${esc(escalation)}</span>` : ''}
     <span class="hp-sev ${sevClass(inc.severity)}">${esc(sev)}</span>
     <span class="hp-chip mono">${esc(kind)}</span>
     <span class="hp-chip mono">cassette ${esc(t.cassetteId)}</span>
@@ -366,7 +552,12 @@ function renderDetail(t, all) {
     <div><dt>node</dt><dd class="mono">${esc(inc.target?.nodeName ?? '—')}</dd></div>
     <div><dt>opened</dt><dd class="mono">${esc(stamp(inc.openedAt))}</dd></div>
     <div><dt>investigated</dt><dd class="mono">${duration(inv.startedAt, inv.completedAt)}</dd></div>
+    ${inc.resolvedAt
+      ? `<div><dt>resolved</dt><dd class="mono">${esc(duration(inc.openedAt, inc.resolvedAt))} after it opened</dd></div>`
+      : ''}
   </dl>
+  ${inc.resolution
+    ? `<p class="hp-plan-summary">${esc(inc.resolution)}</p>` : ''}
 </div>
 
 <section class="hp-section">
@@ -447,7 +638,13 @@ function main() {
     }
 
     const all = files.map((f) => JSON.parse(readFileSync(join(TRANSCRIPTS, f), 'utf8')))
-        .sort((a, b) => Number(a.cassetteId.slice(1)) - Number(b.cassetteId.slice(1)))
+        // Number('13-resolved') is NaN, and a comparator that returns NaN gives an
+        // implementation-defined order - which would scramble the index and the prev/next
+        // pager silently, with no id that is not exactly c<digits>.
+        .sort((a, b) =>
+            (capture(b) === 'Cluster') - (capture(a) === 'Cluster')
+            || ordinal(a.cassetteId) - ordinal(b.cassetteId)
+            || a.cassetteId.localeCompare(b.cassetteId))
 
     // The redactor replaces IPv4 with 0.0.0.0. Publishing a transcript that slipped through would
     // be publishing an address, so the build refuses rather than trusting that redact was run.
