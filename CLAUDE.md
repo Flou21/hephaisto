@@ -248,7 +248,7 @@ yourself writing an UPDATE against `agent_mode` to make the agent act, the thing
 Two traps worth knowing before you test acting:
 
 - **Every actionable namespace must also carry
-  `hephaisto.io/destructive-actions-allowed: "true"`.** `infra/namespaces.yaml` sets it on
+  `hephaisto.dev/destructive-actions-allowed: "true"`.** `infra/namespaces.yaml` sets it on
   `hephaisto-chaos`. Without it the policy engine denies, and the reason says so — but only on
   the action row, so it reads as a mysterious refusal if you are watching the pod logs.
 - **`c11-transient` remembers.** Its generation counter lives on a PVC, so deleting only the

@@ -111,8 +111,8 @@ makes it exhaustively unit-testable.
 | `ProtectedNamespaces` | set | seeded, never actionable |
 | `AutoEnabledActionTypes` | set | `[]` |
 | `ProtectedLabels` | map | seeded |
-| `RequiredNamespaceLabel` | string | `hephaisto.io/destructive-actions-allowed` |
-| `AllowSingleReplicaRestartLabel` | string | `hephaisto.io/allow-single-replica-restart` |
+| `RequiredNamespaceLabel` | string | `hephaisto.dev/destructive-actions-allowed` |
+| `AllowSingleReplicaRestartLabel` | string | `hephaisto.dev/allow-single-replica-restart` |
 | `MaxPodsPerAction` | int | `10` |
 | `MaxWorkloadFraction` | double | `0.5` |
 | `MaxActionsPerIncident` | int | `3` |

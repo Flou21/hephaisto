@@ -464,7 +464,7 @@ public static partial class LogDigester
     private static bool IsKeptAnnotation(string text) =>
         text.Contains("deployment.kubernetes.io/revision", StringComparison.OrdinalIgnoreCase) ||
         text.Contains("kubernetes.io/change-cause", StringComparison.OrdinalIgnoreCase) ||
-        text.Contains("hephaisto.io/", StringComparison.OrdinalIgnoreCase);
+        text.Contains("hephaisto.dev/", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Returns the index of the last line belonging to the block opened at <paramref name="start"/>.</summary>
     private static int SkipBlock(string[] lines, int start, int indent)

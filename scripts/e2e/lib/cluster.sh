@@ -87,7 +87,7 @@ cluster_create() {
     # The write Role is only rendered for namespaces carrying this label, so its absence
     # would show up much later as an agent that cannot act where it is supposed to.
     local labelled
-    labelled=$(kc get ns "$CHAOS_NS" -o jsonpath='{.metadata.labels.hephaisto\.io/destructive-actions-allowed}' 2>/dev/null || true)
+    labelled=$(kc get ns "$CHAOS_NS" -o jsonpath='{.metadata.labels.hephaisto\.dev/destructive-actions-allowed}' 2>/dev/null || true)
     [ "$labelled" = "true" ] \
         && pass "chaos namespace carries the destructive-actions-allowed label" \
         || fail "chaos namespace label missing" "got '${labelled:-<none>}'"

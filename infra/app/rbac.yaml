@@ -171,7 +171,7 @@ rules:
       - nodes
       # namespaces
       #   To enumerate what exists and read namespace labels -- notably
-      #   hephaisto.io/destructive-actions-allowed, which the agent's policy engine checks
+      #   hephaisto.dev/destructive-actions-allowed, which the agent's policy engine checks
       #   as a second, independent confirmation before proposing any write. Belt and
       #   braces with the RoleBinding scope below.
       - namespaces
@@ -350,7 +350,7 @@ subjects:
 # property of the object, not of a binding someone might change.
 #
 # Everything below is destructive. The containment is that the only namespace it applies to
-# contains nothing anyone depends on (see the hephaisto.io/destructive-actions-allowed
+# contains nothing anyone depends on (see the hephaisto.dev/destructive-actions-allowed
 # label in infra/namespaces.yaml).
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -508,10 +508,10 @@ metadata:
   name: hephaisto-node
   labels:
     app.kubernetes.io/part-of: hephaisto
-    hephaisto.io/phase: "3"
-    hephaisto.io/bound: "false"
+    hephaisto.dev/phase: "3"
+    hephaisto.dev/bound: "false"
   annotations:
-    hephaisto.io/deliberately-unbound: >-
+    hephaisto.dev/deliberately-unbound: >-
       This ClusterRole has no binding anywhere in infra/. Creating one enables node
       cordon and drain. On a single-node cluster a drain is a full cluster outage,
       including the agent that ordered it. Do not bind this without a recorded human

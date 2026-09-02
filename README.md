@@ -248,7 +248,7 @@ and the app version are the same number, set by the tag.
 Installed as it ships, the agent acts nowhere: `policy.actionableNamespaces` is empty, so no
 write `Role` is rendered at all, and `mode` is `Observe`. Enabling anything means naming a
 namespace, labelling that namespace
-`hephaisto.io/destructive-actions-allowed: "true"`, promoting an action type into
+`hephaisto.dev/destructive-actions-allowed: "true"`, promoting an action type into
 `policy.autoEnabledActionTypes`, and raising `mode` — four deliberate acts, in git.
 
 You can also build from source.

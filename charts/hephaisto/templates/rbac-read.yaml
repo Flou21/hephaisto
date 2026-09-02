@@ -83,7 +83,7 @@ rules:
       - nodes
       # namespaces
       #   To enumerate what exists and read namespace labels -- notably
-      #   hephaisto.io/destructive-actions-allowed, which the agent's policy engine checks
+      #   hephaisto.dev/destructive-actions-allowed, which the agent's policy engine checks
       #   as a second, independent confirmation before proposing any write. Belt and
       #   braces with the RoleBinding scope below.
       - namespaces

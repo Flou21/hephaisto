@@ -11,7 +11,7 @@ This page is the order to make them in, and what to check after each.
 | Gate | Where it lives | Default |
 |---|---|---|
 | 1. The namespace is named | `policy.actionableNamespaces` (Helm) | empty — act nowhere |
-| 2. The namespace is labelled | `hephaisto.io/destructive-actions-allowed: "true"` on the namespace | absent |
+| 2. The namespace is labelled | `hephaisto.dev/destructive-actions-allowed: "true"` on the namespace | absent |
 | 3. The action type is promoted | `policy.autoEnabledActionTypes` (Helm) | empty — everything needs approval |
 | 4. The mode is raised | `mode`, or `HEPHAISTO_MODE`, or the database arm | `Observe` |
 
@@ -69,7 +69,7 @@ policy:
 
 ```sh
 kubectl label namespace my-scratch-namespace \
-  hephaisto.io/destructive-actions-allowed=true
+  hephaisto.dev/destructive-actions-allowed=true
 ```
 
 The chart **refuses to render** if you name `kube-system`, `kube-public`, `default`, the release

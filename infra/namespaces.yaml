@@ -21,7 +21,7 @@ metadata:
   name: hephaisto
   labels:
     app.kubernetes.io/part-of: hephaisto
-    hephaisto.io/role: agent
+    hephaisto.dev/role: agent
     # kubernetes.io/metadata.name is set automatically by the API server, but it is
     # written explicitly here because the NetworkPolicy in infra/app/rbac.yaml selects
     # on it and an explicit label documents that dependency.
@@ -33,7 +33,7 @@ metadata:
   name: hephaisto-obs
   labels:
     app.kubernetes.io/part-of: hephaisto
-    hephaisto.io/role: observability
+    hephaisto.dev/role: observability
     kubernetes.io/metadata.name: hephaisto-obs
 ---
 apiVersion: v1
@@ -42,8 +42,8 @@ metadata:
   name: hephaisto-chaos
   labels:
     app.kubernetes.io/part-of: hephaisto
-    hephaisto.io/role: chaos
+    hephaisto.dev/role: chaos
     kubernetes.io/metadata.name: hephaisto-chaos
     # Marks this namespace as safe to break. Nothing anyone depends on may be deployed
     # here, because the agent holds delete/patch on workloads in it.
-    hephaisto.io/destructive-actions-allowed: "true"
+    hephaisto.dev/destructive-actions-allowed: "true"

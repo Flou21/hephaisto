@@ -14,7 +14,7 @@ helm install hephaisto oci://ghcr.io/flou21/charts/hephaisto
 **Installed as it ships, the agent acts nowhere.** `policy.actionableNamespaces` is empty, so no
 write `Role` is rendered at all; `policy.autoEnabledActionTypes` is empty; and `mode` is
 `Observe`. Enabling anything takes four deliberate changes, in git — naming a namespace,
-labelling that namespace `hephaisto.io/destructive-actions-allowed: "true"`, promoting one
+labelling that namespace `hephaisto.dev/destructive-actions-allowed: "true"`, promoting one
 action type, and raising the mode.
 
 ## What it needs

@@ -62,7 +62,7 @@
       "required": ["actionableNamespaces"],
       "properties": {
         "actionableNamespaces": {
-          "description": "Namespaces the agent may act in. Empty means nowhere. kube-*, default, the release namespace and observabilityNamespace are refused at render time. Each must also carry the label hephaisto.io/destructive-actions-allowed=true, which the policy engine checks.",
+          "description": "Namespaces the agent may act in. Empty means nowhere. kube-*, default, the release namespace and observabilityNamespace are refused at render time. Each must also carry the label hephaisto.dev/destructive-actions-allowed=true, which the policy engine checks.",
           "type": "array",
           "uniqueItems": true,
           "items": { "type": "string", "minLength": 1 }

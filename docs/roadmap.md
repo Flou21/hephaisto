@@ -949,6 +949,32 @@ agent looks like. It ships the console's own `app.css` and its `hp-*` vocabulary
 product's appearance rather than a reconstruction, and it parses the domain enums out of `Enums.cs`
 at build time rather than carrying a second copy that would drift.
 
+**The domain is `hephaisto.dev`, and the label prefix followed it.** Bought 2026-09-02.
+`.com` was taken; `.io` was available and carried the one genuinely project-specific argument —
+`hephaisto.io/` had been this project's Kubernetes label prefix since v0.1.0, and the convention is
+that a prefix is a DNS domain **you control**. It was not one. `.io` now renews at roughly four
+times `.dev`, so the cheaper fix was to move the prefix rather than to buy the name it already
+claimed.
+
+So `hephaisto.io/` became `hephaisto.dev/` across the policy defaults, the namespace manifests, the
+chart, its schema, the e2e assertion and the docs — 33 occurrences, all of them live. No
+compatibility shim and no dual-prefix read: there are no installations to migrate, so accepting
+both would have been permanent complexity bought for nobody.
+
+Two files keep the old name on purpose. `backlog.md`'s
+[#10](backlog.md#10-hephaistoiodestructive-actions-allowed-is-read-by-no-code) is titled after the
+label, and its own second line already says the heading stays because these titles are the anchors
+this file links by — so the entry gained a note that the prefix moved, and kept its name. That is
+the same rule that governs every other closed entry here: the record says what was true when it was
+filed.
+
+**Where the dev cluster stands.** The kind cluster's namespaces were re-applied and carry the new
+labels; `kubectl`'s three-way merge pruned the old ones cleanly. The agent running there does not
+match yet, and cannot be made to from a working copy: the e2e harness installs the **published**
+chart and image from GHCR rather than building locally, so the pod carries whatever the last
+nightly compiled. The mismatch fails closed — the old binary looks for a label that is no longer
+there, so the policy engine denies — and it resolves on the next published build.
+
 **The design system needed generalising, and would have failed silently otherwise.**
 `DesignTokenTests` named `website/` in three places. Two more surfaces would have been exempt from
 the no-colour-literals rule while appearing covered, so the token-file and font assertions are now

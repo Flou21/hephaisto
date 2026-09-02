@@ -73,7 +73,7 @@ policy:
   #
   # Refused outright: kube-*, default, the release namespace, observabilityNamespace.
   #
-  # EACH NAMESPACE MUST ALSO CARRY THE LABEL `hephaisto.io/destructive-actions-allowed: "true"`.
+  # EACH NAMESPACE MUST ALSO CARRY THE LABEL `hephaisto.dev/destructive-actions-allowed: "true"`.
   # That is a second, independent confirmation and it is checked by the policy engine, not
   # just documented: this list is the operator's authority, the label is the namespace
   # owner's, and both have to agree before anything in it can be touched. A namespace named

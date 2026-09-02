@@ -356,6 +356,11 @@ degrades rather than wedging. `scripts/bootstrap-secrets.sh` adds the key to an 
 
 **Status: fixed 2026-08-30** — see the end of this entry. The heading is left as it was, because these numbers and titles are the anchors `roadmap.md` links by.
 
+**The prefix in the heading is stale, deliberately.** Renamed to
+`hephaisto.dev/destructive-actions-allowed` on 2026-09-02, when the project bought the domain the
+Kubernetes convention says a label prefix should be — the old one was a DNS name nobody here owned.
+The heading keeps the name it was filed under; everything live uses the new prefix.
+
 **Symptom.** The model is told a safety net exists that does not.
 
 **Evidence.** `src/Hephaisto.Agent/Prompts/30-planning.md:25-26`, verbatim: *"…automatically at 60

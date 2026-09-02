@@ -78,7 +78,7 @@ public sealed class PolicyEngineTests
         var result = PolicyEngine.Evaluate(Given.Request(), facts, Given.Options());
 
         result.Decision.Should().Be(PolicyDecision.Deny);
-        result.Reasons.Should().ContainMatch("*does not carry hephaisto.io/destructive-actions-allowed=true*");
+        result.Reasons.Should().ContainMatch("*does not carry hephaisto.dev/destructive-actions-allowed=true*");
     }
 
     [Theory]
@@ -92,7 +92,7 @@ public sealed class PolicyEngineTests
         // silently means something different from what the manifests document.
         var facts = Given.Facts() with
         {
-            NamespaceLabels = Given.Labels(("hephaisto.io/destructive-actions-allowed", value)),
+            NamespaceLabels = Given.Labels(("hephaisto.dev/destructive-actions-allowed", value)),
         };
 
         PolicyEngine.Evaluate(Given.Request(), facts, Given.Options())
@@ -104,7 +104,7 @@ public sealed class PolicyEngineTests
     {
         var facts = Given.Facts() with
         {
-            NamespaceLabels = Given.Labels(("hephaisto.io/destructive-actions-allowed", "True")),
+            NamespaceLabels = Given.Labels(("hephaisto.dev/destructive-actions-allowed", "True")),
         };
 
         PolicyEngine.Evaluate(Given.Request(), facts, Given.Options())
@@ -145,7 +145,7 @@ public sealed class PolicyEngineTests
         var facts = Given.Facts() with
         {
             NamespaceLabels = Given.Labels(),
-            TargetLabels = Given.Labels(("hephaisto.io/destructive-actions-allowed", "true")),
+            TargetLabels = Given.Labels(("hephaisto.dev/destructive-actions-allowed", "true")),
         };
 
         PolicyEngine.Evaluate(Given.Request(), facts, Given.Options())
@@ -199,7 +199,7 @@ public sealed class PolicyEngineTests
     [Fact]
     public void ProtectedLabelOnTarget_Denies()
     {
-        var facts = Given.Facts() with { TargetLabels = Given.Labels(("hephaisto.io/protected", "true")) };
+        var facts = Given.Facts() with { TargetLabels = Given.Labels(("hephaisto.dev/protected", "true")) };
 
         var result = PolicyEngine.Evaluate(Given.Request(), facts, Given.Options());
 
@@ -212,7 +212,7 @@ public sealed class PolicyEngineTests
     {
         // The label is a key/value opt-out, not a key presence check: `protected=false` means
         // someone considered it and said no.
-        var facts = Given.Facts() with { TargetLabels = Given.Labels(("hephaisto.io/protected", "false")) };
+        var facts = Given.Facts() with { TargetLabels = Given.Labels(("hephaisto.dev/protected", "false")) };
 
         PolicyEngine.Evaluate(Given.Request(), facts, Given.Options())
             .Decision.Should().Be(PolicyDecision.Allow);

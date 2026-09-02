@@ -118,7 +118,7 @@ internal static class Given
             Now = Now,
             Mode = AgentMode.Auto,
             Workload = Workload(),
-            NamespaceLabels = Labels(("hephaisto.io/destructive-actions-allowed", "true")),
+            NamespaceLabels = Labels(("hephaisto.dev/destructive-actions-allowed", "true")),
         };
 
     public static ActionRequest Request(ActionType type = ActionType.RestartPod) =>

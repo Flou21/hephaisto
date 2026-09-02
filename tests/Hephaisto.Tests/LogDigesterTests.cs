@@ -387,14 +387,14 @@ public sealed class LogDigesterTests
     public void DescribeKeepsHephaistoOwnAnnotations()
     {
         var raw = Join([
-            "Annotations:  hephaisto.io/last-action: restart",
+            "Annotations:  hephaisto.dev/last-action: restart",
             "              example.com/noise: yes",
             "Status: Running",
         ]);
 
         var digest = LogDigester.DigestDescribe(raw);
 
-        digest.Should().Contain("hephaisto.io/last-action");
+        digest.Should().Contain("hephaisto.dev/last-action");
         digest.Should().NotContain("example.com/noise");
     }
 

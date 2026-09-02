@@ -36,7 +36,7 @@ public sealed class PolicyOptions
     /// <summary>An object carrying any of these labels is never touched.</summary>
     public Dictionary<string, string> ProtectedLabels { get; set; } = new()
     {
-        ["hephaisto.io/protected"] = "true",
+        ["hephaisto.dev/protected"] = "true",
     };
 
     /// <summary>
@@ -52,10 +52,10 @@ public sealed class PolicyOptions
     /// without the operator. Note the cost of that: a namespace added to the allowlist and
     /// never labelled is denied, and the reason says so.
     /// </remarks>
-    public string RequiredNamespaceLabel { get; set; } = "hephaisto.io/destructive-actions-allowed";
+    public string RequiredNamespaceLabel { get; set; } = "hephaisto.dev/destructive-actions-allowed";
 
     /// <summary>Opt-in escape hatch for restarting the only replica of a single-replica workload.</summary>
-    public string AllowSingleReplicaRestartLabel { get; set; } = "hephaisto.io/allow-single-replica-restart";
+    public string AllowSingleReplicaRestartLabel { get; set; } = "hephaisto.dev/allow-single-replica-restart";
 
     public int MaxPodsPerAction { get; set; } = 10;
 
