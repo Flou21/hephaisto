@@ -8,7 +8,8 @@ used, and — where you have allowed it to — executes a narrow allowlist of re
 verifies them, and reverts or escalates when they do not hold.
 
 ```sh
-helm install hephaisto oci://ghcr.io/flou21/charts/hephaisto
+helm install hephaisto oci://ghcr.io/flou21/charts/hephaisto \
+  --namespace hephaisto --create-namespace
 ```
 
 **Installed as it ships, the agent acts nowhere.** `policy.actionableNamespaces` is empty, so no

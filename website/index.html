@@ -161,7 +161,8 @@
       It will do nothing until you tell it otherwise.
     </p>
 <pre><span class="c"># installs in observe mode, acting nowhere</span>
-helm install hephaisto <span class="k">oci://ghcr.io/flou21/charts/hephaisto</span></pre>
+helm install hephaisto <span class="k">oci://ghcr.io/flou21/charts/hephaisto</span> \
+  --namespace hephaisto --create-namespace</pre>
     <p class="lede">
       The console is on port 8080. Point it at Prometheus, Loki and Alertmanager, and it will
       start opening incidents it has no permission to do anything about — which is the right

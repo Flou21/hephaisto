@@ -239,7 +239,8 @@ Multi-arch images and the Helm chart are published to GHCR on every release tag,
 provenance attested, and both are pullable anonymously:
 
 ```sh
-helm install hephaisto oci://ghcr.io/flou21/charts/hephaisto
+helm install hephaisto oci://ghcr.io/flou21/charts/hephaisto \
+  --namespace hephaisto --create-namespace
 ```
 
 That resolves the newest published chart. Add `--version 0.6.0` to pin one; the chart version
