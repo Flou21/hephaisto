@@ -7,7 +7,7 @@ and writes up a diagnosis with the evidence it used.
 It is also a first-class *producer* of telemetry: every investigation is a trace you can
 open in Grafana, step through, and then ask the agent about.
 
-> **Status: v0.5.0.** Multi-arch images and Helm charts are published to GHCR with build
+> **Status: v0.6.0.** Multi-arch images and Helm charts are published to GHCR with build
 > provenance attested, and both are pullable anonymously.
 >
 > **Diagnosis is measured.** Against ten seeded chaos scenarios on a real cluster, the agent
@@ -21,8 +21,10 @@ open in Grafana, step through, and then ask the agent about.
 > the agent has been observed executing actions on a cluster. What has *not* been observed is an
 > incident it acted on reaching `Resolved` — see
 > [#72](docs/backlog.md#72-an-incident-that-was-successfully-acted-on-sits-in-verifying-forever).
-> How often the planner proposes an action at all is measured at 4-of-8 in replay and 0-of-4 on a
-> cluster; those disagree, and until they reconcile neither is quoted as the rate
+> How often the planner proposes an action at all turned out to be a property of the **model**
+> rather than of the agent: 4-of-8 for `deepseek-v4-flash`, 0-of-18 for `gpt-oss:120b`, 0-of-3 for
+> `gemini-3.7-flash` (Fisher p = 0.0047). The two numbers that used to be quoted as disagreeing
+> instruments were the two models
 > ([#66](docs/backlog.md#66-the-planner-acts-on-half-of-a-fair-fixture)).
 >
 > It ships configured to act **nowhere**. `policy.actionableNamespaces` is empty,
@@ -32,7 +34,11 @@ open in Grafana, step through, and then ask the agent about.
 
 ## See it without a cluster
 
-Two containers, no API key, no Kubernetes, nothing fetched at runtime:
+Ten real investigations, rendered as static pages: **<https://demo.hephaisto.dev>**. No install, no
+account, nothing to run.
+
+To drive the real console instead — two containers, no API key, no Kubernetes, nothing fetched at
+runtime:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Flou21/hephaisto/main/demo/compose.yaml \
@@ -122,8 +128,12 @@ never been observed is the last step — an incident the agent acted on reaching
 because until v0.5.0 a `RestartPod` could not be verified at all
 ([#72](docs/backlog.md#72-an-incident-that-was-successfully-acted-on-sits-in-verifying-forever),
 fixed and not yet confirmed on a cluster). Whether the planner proposes an action on a fair
-fixture is separately measured, and the two instruments disagree — 4-of-8 in replay against
-0-of-4 on a cluster ([#66](docs/backlog.md#66-the-planner-acts-on-half-of-a-fair-fixture)).
+fixture is separately measured, and it is a property of the model rather than of the agent —
+4-of-8 for `deepseek-v4-flash` against 0-of-18 for `gpt-oss:120b`, Fisher p = 0.0047. Replay and a
+cluster agree exactly once the model is held fixed; the "disagreeing instruments" this entry used
+to describe were two different models
+([#66](docs/backlog.md#66-the-planner-acts-on-half-of-a-fair-fixture)). If you need the agent to
+propose remediations, that is a model-selection decision.
 
 `docs/roadmap.md` has the detail, and `docs/backlog.md` has everything known to be broken.
 
@@ -232,7 +242,7 @@ provenance attested, and both are pullable anonymously:
 helm install hephaisto oci://ghcr.io/flou21/charts/hephaisto
 ```
 
-That resolves the newest published chart. Add `--version 0.5.0` to pin one; the chart version
+That resolves the newest published chart. Add `--version 0.6.0` to pin one; the chart version
 and the app version are the same number, set by the tag.
 
 Installed as it ships, the agent acts nowhere: `policy.actionableNamespaces` is empty, so no

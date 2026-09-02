@@ -2,7 +2,7 @@ apiVersion: v2
 name: hephaisto
 description: An autonomous SRE agent that investigates Kubernetes incidents and reports what it found.
 type: application
-home: https://github.com/Flou21/hephaisto
+home: https://hephaisto.dev
 sources:
   - https://github.com/Flou21/hephaisto
 # Artifact Hub renders this beside the chart, and it was blank for four releases because the
@@ -24,6 +24,12 @@ annotations:
   artifacthub.io/links: |
     - name: source
       url: https://github.com/Flou21/hephaisto
+    - name: documentation
+      url: https://docs.hephaisto.dev
+    - name: demo
+      url: https://demo.hephaisto.dev
+    - name: support
+      url: https://github.com/Flou21/hephaisto/issues
 keywords:
   - sre
   - kubernetes

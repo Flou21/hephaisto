@@ -223,6 +223,31 @@ jobs:
 
           helm push "/tmp/hephaisto-$V.tgz" '${{ env.CHART_REPO }}'
 
+      # Artifact Hub reads the repository's ownership metadata from a separate OCI artifact under
+      # a fixed `artifacthub.io` tag, not from anything inside the chart. Without it the chart
+      # publishes and appears as an unclaimed listing - which is the state four releases shipped
+      # in, and the reason artifacthub-repo.yml exists at the repository root rather than beside
+      # Chart.yaml.
+      #
+      # Pushed on every release including release candidates: the tag is fixed, so this is
+      # idempotent, and special-casing it would mean the metadata could only ever be corrected by
+      # cutting a real release.
+      - uses: oras-project/setup-oras@v2
+
+      - name: Publish the Artifact Hub repository metadata
+        run: |
+          set -euo pipefail
+          echo '${{ secrets.GITHUB_TOKEN }}' | oras login ghcr.io \
+            --username '${{ github.actor }}' --password-stdin
+
+          # The config is /dev/null by design - Artifact Hub reads the LAYER, and its media type
+          # is what identifies the artifact. Both strings are load-bearing and neither is a
+          # convention we chose.
+          oras push \
+            'ghcr.io/flou21/charts/hephaisto:artifacthub.io' \
+            --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+            artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml
+
       - name: Prove a consumer can actually pull it
         run: |
           set -euo pipefail

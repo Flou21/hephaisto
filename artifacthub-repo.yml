@@ -1,0 +1,22 @@
+# Artifact Hub repository metadata.
+#
+# This claims ownership of the chart repository at oci://ghcr.io/flou21/charts, so Artifact Hub
+# shows it as a verified publisher rather than an unclaimed listing. It has to sit at the ROOT of
+# the OCI repository rather than next to Chart.yaml, so release.yml pushes it alongside the
+# packaged chart.
+#
+# BOTH FIELDS BELOW ARE DELIBERATELY BLANK, and the file is inert until they are filled.
+#
+#   repositoryID  issued by Artifact Hub when the repository is first registered there. It is not
+#                 a secret - it is a public identifier whose entire job is to be read by a crawler
+#                 - but it cannot be guessed, so it has to be pasted in after registering.
+#   email         must match the Artifact Hub account that owns the listing.
+#
+# The email is not filled in here for the same reason Chart.yaml's maintainers entry is a profile
+# URL rather than an address: this file is copied into every chart index that mirrors this one, and
+# publishing an address into all of them is a decision for the person whose address it is. Fill it
+# when you register, in a commit of your own.
+repositoryID: ""
+owners:
+  - name: Flou21
+    email: ""
