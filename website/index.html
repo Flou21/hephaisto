@@ -30,7 +30,8 @@
     </span>
     <span class="spacer"></span>
     <a href="#safety">What stops it</a>
-    <a href="#demo">Demo</a>
+    <a href="https://demo.hephaisto.dev">Demo</a>
+    <a href="https://docs.hephaisto.dev">Docs</a>
     <a href="#install">Install</a>
     <a href="https://github.com/Flou21/hephaisto">GitHub</a>
   </nav>
@@ -169,10 +170,11 @@ helm install hephaisto <span class="k">oci://ghcr.io/flou21/charts/hephaisto</sp
 
     <h3 id="demo">Or look first, without a cluster</h3>
     <p class="lede">
-      Two containers, no API key, no Kubernetes. You get the published image and the real
-      console, loaded with ten investigations the agent ran against a cluster full of seeded
-      faults — the step trace, the diagnosis, and every citation linking back to the raw tool
-      output it came from.
+      <a href="https://demo.hephaisto.dev">Read ten of them in your browser</a> — no install, no
+      account. Or run the real console locally: two containers, no API key, no Kubernetes, loaded
+      with the same ten investigations the agent ran against a cluster full of seeded faults — the
+      step trace, the diagnosis, and every citation linking back to the raw tool output it came
+      from.
     </p>
 <pre><span class="c"># then open http://localhost:8080</span>
 curl -fsSL <span class="k">https://raw.githubusercontent.com/Flou21/hephaisto/main/demo/compose.yaml</span> \
@@ -187,7 +189,8 @@ curl -fsSL <span class="k">https://raw.githubusercontent.com/Flou21/hephaisto/ma
 
   <footer>
     <a href="https://github.com/Flou21/hephaisto">Source</a>
-    <a href="https://github.com/Flou21/hephaisto/blob/main/docs/architecture.md">Architecture</a>
+    <a href="https://docs.hephaisto.dev">Docs</a>
+    <a href="https://docs.hephaisto.dev/internals/architecture">Architecture</a>
     <a href="https://github.com/Flou21/hephaisto/blob/main/docs/backlog.md">Everything known broken</a>
     <span>AGPL-3.0</span>
   </footer>
