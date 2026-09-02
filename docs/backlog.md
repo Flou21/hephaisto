@@ -3012,8 +3012,43 @@ also wraps a non-JSON detail rather than letting Postgres reject the transaction
 argument as the timestamp it already normalises there, and load-bearing for a different reason:
 an audit write that can fail is a state change that can fail.
 
-**Size.** S, after an M of diagnosis and a fixture. **Status: fixed 2026-09-02, confirming
-cluster run pending a build that contains the fix.**
+**Size.** S, after an M of diagnosis and a fixture.
+
+**Confirmed on a cluster 2026-09-02, which is what this entry has been waiting for since
+v0.2.0.** A clean kind cluster, `0.5.1-main.0.34`, `--mode Auto`, driven by the free local
+`gpt-oss:120b`:
+
+```
+ok  c13 was acted on (1 non-dry-run action(s) executed)
+ok  every executed action names an approver
+ok  c13 is available after the restart
+ok  c13's incident reached Resolved            (41s)
+
+PASSED -- 70 assertions, 4 skipped
+```
+
+and the incident itself:
+
+```
+state: Resolved | resolvedAt: 2026-09-02T16:02:24 | escalation: None
+Detected -> Triaging -> Investigating -> Acting -> Verifying -> Resolved
+  (granted by hephaisto/verifier)
+resolution: "Deployment/c13-wedged-lock is settled with 1/1 ready and no container waiting"
+```
+
+**So "the agent resolved it" is a sentence this project can now say**, with the model named
+beside it the way [#66](#66-the-planner-acts-on-half-of-a-fair-fixture) requires: on c13,
+`gpt-oss:120b` proposed an acceptable action on six of six cluster runs. That is c13's number
+and not c12's, and the two are different questions - see [#90](#90).
+
+**It took five layers, and four of them were real.** The harness wait, the missing action owner,
+the jsonb audit detail ([#72](#72) proper), the `instance`-as-node label ([#92](#92)), and
+finally an assertion that could never pass ([#93](#93)). Every one presented identically: a
+healthy workload, an incident in `Verifying` or refused, and no reason recorded anywhere. The
+lesson worth keeping is the last one - the assertion agreed with four genuine bugs in a row, so
+nothing ever questioned the assertion.
+
+**Status: fixed and confirmed 2026-09-02. Closed.**
 
 ### 73. Every red run was reported as ABORTED, including the ones that finished
 
