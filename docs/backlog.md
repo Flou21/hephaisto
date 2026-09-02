@@ -3835,7 +3835,27 @@ measured with a broken instrument, not that a working one has now been read.
 `PlanVerdict` that distinguishes "the planner declined" from "the planner never ran". The
 second is the smaller change and the one that would have prevented this entry.
 
+**The reporting split landed 2026-09-03.** `PlanVerdict.PlannerNeverRan` separates a run that hit
+a ceiling or escalated before phase 2 from `NoPlan`, which now means only the residual - the loop
+concluded cleanly and still emitted nothing, which is a defect and should be loud rather than
+pooled. The per-scenario line names the termination reason whenever it is not `Concluded`, so a
+truncated run can no longer render as a bare `no finding` and read as a wrong answer; the summary
+prints the histogram with the sentence that matters beside it, and `RunReport.PlannerRan` is the
+denominator nothing computed before.
+
+**The escalation arm is passed in rather than derived**, and that is the part worth keeping.
+`EscalationReason` lives on `InvestigationOutcome`, not on `Investigation`, so it cannot be seen
+from what the grader receives - grounding loss reaches this path without touching anything on the
+investigation. Deriving it from what *is* visible would have been the same guessing this entry is
+about, so `ScenarioScorer.Combine` takes it from the call site that already holds the outcome.
+`ScenarioScore.PlanVerdict` also defaults to `PlannerNeverRan` now: a score nobody set is one
+where the planner demonstrably did not run, and the old default put it in the decline bucket.
+
+**What it does not do is license a published action rate.** The instrument can now be read; the
+number still has to be measured with it, and quoted with its fixture beside it ([#90](#90)).
+
 **Size.** S for the reporting split. **Blocks:** the same sentence #66 blocks.
+**Status: fixed 2026-09-03.**
 
 ### 89. gpt-oss declines c12 because it gets the decisive question wrong, not because nobody asked it
 
@@ -4089,3 +4109,90 @@ thing it checks is broken**, and this file has now produced two of those in one 
 filter returns 1 for the same data the old one returned 0 for.
 
 **Size.** S. **Fixed 2026-09-02.**
+
+### 94. The demo site rendered another state's glyph for three of the five it knew
+
+**Symptom.** None, which is the point. Every page on demo.hephaisto.dev rendered a state badge
+that looked entirely correct and was wrong.
+
+`demo-site/build.mjs` carried its own copy of the glyph table. `docs/design.md` names
+`Components/Display.cs` as the owner of the glyph vocabulary and the enum-to-class mapping, and
+the copy had drifted from it - not into arbitrary characters, which someone would have noticed,
+but into **other states' glyphs**:
+
+| state | the site rendered | `Display.cs` says | and that glyph belongs to |
+|---|---|---|---|
+| `Escalated` | `!` | `^` | `AwaitingApproval` |
+| `Investigating` | `*` | `~` | `Detected` |
+| `Detected` | `.` | `*` | `Expired` |
+
+So the site announced "Escalated" beside the marker for an incident waiting on a human. It also
+had no entry at all for `Acting`, `Verifying`, `Triaging`, `AwaitingApproval` or `Expired` - five
+of the ten - and dropped the `st-*` class the console emits, leaving state carried by the word
+alone where the console carries glyph, word and colour. `docs/design.md`'s fourth rule is that
+state is never colour alone; this was the other half of that failure and nothing checked it.
+
+**Why nothing caught it.** `demo-site/enums.mjs` exists precisely to stop this, and it works - it
+parses `Enums.cs` rather than copying it, because a hand-written map "would create a second
+definition that drifts the first time a member is inserted in the middle". The glyphs are the
+same problem one layer up, and they were hand-written anyway. The visual baselines photograph
+`design/gallery.html`, which renders from the console's stylesheet and never sees `build.mjs`.
+
+**Fix.** `demo-site/display.mjs` parses `Display.cs` at build time on the same contract as
+`enums.mjs`: refuse loudly rather than return something plausible, because what actually breaks
+it is a `switch` rewritten as a dictionary and the symptom would be every state rendering
+identically. `DisplayVocabularyTests` asserts from the C# side that the shape those regexes match
+still exists, and that every arm agrees with what the method returns. Verified against a
+`Display.cs` with an arm deleted and one with the switch replaced: both refused.
+
+**Size.** S. **Fixed 2026-09-03.**
+
+### 95. The seeded demo reported ten incidents as policy-denied by a policy engine that never ran
+
+**Symptom.** `DemoSeeder` set `EscalationReason.PolicyDenied` on every seeded incident whose
+investigation carried a plan:
+
+```csharp
+incident.EscalationReason = investigation.Plan is null
+    ? EscalationReason.NoPlanProduced
+    : EscalationReason.PolicyDenied;
+```
+
+The demo stack constructs no policy engine. `Kubernetes:Enabled` is false, the executor refuses
+everything, and nothing on that path is ever asked for a decision - so this is a claim about a
+component that was never built, asserted on ten incidents.
+
+**Why it read as harmless.** It was uniform. Every row said the same thing, the wording on the
+transition beside it ("Diagnosed, and a plan was proposed. Nothing executes in Observe mode.")
+was accurate, and a reader had nothing to contrast it against. It stops being harmless the moment
+a genuinely policy-denied incident is seeded into the same list, because then two rows carry the
+same label and only one of them earned it - and the one that earned it is the interesting one.
+
+**The general shape** is the one this project keeps finding: a value composed at render time and
+presented as a value that was recorded. See [#94](#94) for the same failure in the glyph table
+and the state badge, in the sibling renderer, found in the same sweep.
+
+**Fix.** `NoPlanProduced` when nothing was proposed, `None` otherwise. More usefully, the whole
+synthesis is now gated on whether the transcript carries incident transitions at all, so a
+recorded incident keeps the state, the reason and the actions it actually had.
+
+**Size.** S. **Fixed 2026-09-03.**
+
+### 96. The console does not render an action's verifications
+
+**Symptom.** `AgentAction.Verifications` is persisted, carries the T+60s / T+5m / T+15m outcomes,
+and is read by nothing on the way out. `IncidentDetail.razor` renders the action, its decision,
+its reasons and its execution line, and stops there.
+
+**Why it matters more than it looks.** Verification is the load-bearing half of the safety
+argument - "everything it does is verified, then reverted if it did not work" is on the landing
+page - and the evidence that it happened is currently only in the database and the logs. The one
+place a human looks at an action is the one place the check on that action is not shown.
+
+**Not fixed here**, and noticed rather than hunted: `hephaisto-eval export` deliberately does not
+carry the verification rows into a transcript, on the grounds that nothing renders them and an
+artifact should not ship fields with no consumer. That reasoning is sound and the gap it points
+at is real, so it is written down instead of being quietly worked around. Fixing the console is
+the prerequisite; the exporter follows.
+
+**Size.** S for the console, S to add them to the export afterwards. **Open.**
