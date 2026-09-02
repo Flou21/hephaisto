@@ -246,6 +246,35 @@ public sealed record AnswerKey
             // transient fault rather than whether it will spot a two-volume interaction. See #41.
             AcceptableActions = [ActionType.RestartPod, ActionType.RolloutRestart],
         },
+        new()
+        {
+            Fixture = "c13",
+            ExpectedKind = SignalKind.CrashLoopBackOff,
+            ExpectedRootCause =
+                "The container refuses to start because a startup lock at /scratch/startup.lock, "
+                + "on an emptyDir, was left behind by an earlier run of this container that exited "
+                + "abnormally. The lock is released only on a clean shutdown, so every container "
+                + "restart inside this pod finds it still held and exits 1. emptyDir dies with the "
+                + "pod, so a replacement pod gets an empty volume and starts cleanly.",
+            MustMentionAnyOf = ["lock", "emptydir", "/scratch"],
+
+            // The THIRD fixture where acting is correct, and it exists because the other two
+            // cannot separate two questions they have been sharing one number for.
+            //
+            // c11 and c12 both put the state on a PVC, and both therefore ask the agent to act
+            // AGAINST the rule that PVC contents survive a pod replacement - c11 by reconciling a
+            // second volume, c12 by noticing the comparison is against the pod's own name. That
+            // rule is correct and an SRE agent should hold it, so a model that declines is not
+            // obviously unwilling to act; it may simply have failed the override. Backlog #89
+            // measured gpt-oss-120b failing c12's override 7 times in 9 when asked point blank.
+            //
+            // c13's state is on an emptyDir, which 30-planning.md already names as pod-scoped and
+            // not reproduced by a replacement. No override, no reconciliation, one volume, and the
+            // rule the prompt states is sufficient. So this measures WILLINGNESS TO ACT, and c12
+            // keeps measuring the inference. Quote the two numbers separately; averaging them
+            // recreates exactly the conflation this fixture was added to end.
+            AcceptableActions = [ActionType.RestartPod, ActionType.RolloutRestart],
+        },
     ];
 
     public static AnswerKey? For(string fixture) =>

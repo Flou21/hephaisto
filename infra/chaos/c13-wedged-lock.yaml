@@ -1,0 +1,196 @@
+# =============================================================================
+# C13 - a startup lock left behind by an abnormal exit, on an emptyDir
+# =============================================================================
+# WHY THIS FIXTURE EXISTS
+#   C11 and C12 are the two fixtures a restart fixes, and neither of them can
+#   measure whether the agent will act. C11 needs a PVC counter reconciled
+#   against an emptyDir marker, and was declined twelve times out of twelve.
+#   C12 removed that second volume - and kept the PVC. Its own header names the
+#   reason C11 failed: "the state is on a PersistentVolumeClaim, PVC contents
+#   survive a pod replacement, so replacing the pod cannot help", which is
+#   CORRECT reasoning and a rule an SRE agent should hold. C12 then asks the
+#   agent to override that rule on the grounds that the comparison is against
+#   the pod's own NAME, which a replacement changes.
+#
+#   Backlog #89 measured what that costs. Asked point blank whether a
+#   replacement pod would fail the same way, gpt-oss:120b answered wrongly SEVEN
+#   times out of NINE - "a new replica using the same PVC will encounter the
+#   same stale lease and fail identically" - and every gpt-oss run that DID
+#   propose a restart was one that had stopped believing the state was on a PVC.
+#   One of them hallucinated an emptyDir and acted on it.
+#
+#   So C12 measures an inference, and it is a fair and hard one. What it cannot
+#   also do is measure whether the agent will act on pod-scoped state at all,
+#   because a model that fails the inference declines for a reason that has
+#   nothing to do with willingness. Those are two questions and they have been
+#   sharing one number. This fixture is the second question, on its own.
+#
+#   30-planning.md already states the rule this needs, in as many words: state
+#   that lives in "a file written to an emptyDir" is pod-scoped, and a
+#   replacement pod does not reproduce it. Here that rule is sufficient. There
+#   is nothing to override and nothing to reconcile - one volume, and it is the
+#   one the prompt already calls pod-scoped.
+#
+#   DELIBERATELY NOT A REPLACEMENT FOR C12. C12 stays exactly as it is and keeps
+#   reporting what it reports. Grading the harder fixture as a pass, or widening
+#   its AcceptableActions, would be the bar-lowering that backlog #66 refuses.
+#   Adding an easier fixture ALONGSIDE it is not the same act, and the two
+#   numbers must be quoted separately or this file has made things worse.
+#
+# WHAT IT BREAKS
+#   The workload takes a startup lock on an emptyDir and releases it on a clean
+#   shutdown. An abnormal exit - a kill -9, an OOM, a node blip - leaves the lock
+#   behind, and the next start of the same container finds a lock it cannot
+#   distinguish from one a live process is holding, so it refuses to start.
+#
+#     /scratch  an emptyDir. Holds the startup lock.
+#
+#   emptyDir survives a CONTAINER restart and dies with the POD. That is the
+#   whole fixture: the kubelet restarting the container inside the crash loop
+#   finds the same held lock every time, and deleting the POD gives the
+#   replacement an empty volume and no lock.
+#
+#   Modelled on the fault 30-planning.md already names as the canonical case for
+#   a restart: "the process that wedged on a stale lock".
+#
+# HOW IT IS ARMED, AND WHY THAT NEEDS A STEP
+#   The lock has to be left behind by an exit the workload did not choose, so
+#   something outside the pod has to cause it once. A fixture that wedged itself
+#   deterministically would wedge the replacement pod too - the new pod runs the
+#   same entrypoint against the same empty volume and would reach the same state,
+#   which is exactly the recursion that forces C11 and C12 onto a PVC.
+#
+#     kubectl -n hephaisto-chaos exec deploy/c13-wedged-lock -- touch /scratch/crash
+#
+#   The entrypoint watches for that file and exits 137 WITHOUT releasing the
+#   lock, which is what a kill -9 looks like from the lock's point of view. The
+#   file is visible in the entrypoint that describe_pod returns in full, so
+#   nothing about the mechanism is hidden from the agent; it is simulating the
+#   abnormal exit, not the fault.
+#
+#   scripts/e2e/lib/chaos.sh arms this automatically. By hand, apply, wait for
+#   the pod to be Ready, then run the exec above.
+#
+# RESETTING IT
+#   Unlike C11 and C12 there is nothing to clean up - the state died with the
+#   pod. Delete the Deployment and apply it again:
+#
+#     kubectl delete -f infra/chaos/c13-wedged-lock.yaml
+#     kubectl apply  -f infra/chaos/c13-wedged-lock.yaml
+#
+#   That is itself worth noticing: C11's PVC counter and C12's lease are both
+#   fixture memory that outlives the fixture, and both have produced a run that
+#   looked like the agent fixing something it never touched.
+#
+# EXPECTED KUBERNETES EVENTS
+#   - Warning  BackOff   Back-off restarting failed container app in pod ...
+#     (until the pod is replaced; then Pulled/Created/Started and nothing more)
+#
+# EXPECTED METRIC / PROMQL SIGNAL
+#   kube_pod_container_status_waiting_reason{
+#     namespace="hephaisto-chaos", container="app",
+#     reason="CrashLoopBackOff"} == 1
+#
+#   Fires ChaosPodCrashLooping, the same shipped rule as C2, C11 and C12, so it
+#   carries hephaisto_kind: CrashLoopBackOff and gets the crash-loop runbook.
+#   No new alert rule, which is deliberate: a new rule would be a second thing
+#   that could be wrong about a fixture whose whole job is to be unambiguous.
+#
+#   AFTER a restart, and this is what verification checks:
+#     kube_deployment_status_replicas_available{
+#       namespace="hephaisto-chaos", deployment="c13-wedged-lock"} == 1
+#
+# EXPECTED LOG SIGNAL
+#   {k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c13-wedged-lock"}
+#     |= "FATAL"
+#
+#   Exact expected line:
+#     FATAL: startup lock /scratch/startup.lock is still held from an earlier run
+#     of this container; it is released only on a clean shutdown; refusing to start
+#
+#   And after the replacement:
+#     startup lock /scratch/startup.lock taken; serving
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: c13-wedged-lock
+  namespace: hephaisto-chaos
+  labels:
+    app.kubernetes.io/name: c13-wedged-lock
+    hephaisto.chaos/scenario: c13
+    hephaisto.chaos/fault: transient
+spec:
+  replicas: 1
+
+  # Same reason as C12: the container has no readiness probe, so it is Ready the
+  # instant it is Running. Without this the Deployment reports availableReplicas: 1
+  # for the couple of seconds each crash cycle spends Running, and anything
+  # sampling availability catches a broken workload looking healthy.
+  minReadySeconds: 20
+
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: c13-wedged-lock
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: c13-wedged-lock
+        hephaisto.chaos/scenario: c13
+        hephaisto.chaos/fault: transient
+    spec:
+      terminationGracePeriodSeconds: 1
+      volumes:
+        # An emptyDir, and it is the entire point of the fixture. It survives a
+        # container restart and dies with the pod, so the lock below is pod-scoped
+        # state in exactly the sense 30-planning.md uses the phrase.
+        - name: scratch
+          emptyDir: {}
+      containers:
+        - name: app
+          # busybox:1.37 - linux/arm64 manifest verified.
+          image: busybox:1.37
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: scratch
+              mountPath: /scratch
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              LOCK=/scratch/startup.lock
+
+              # A lock still present at startup was left by an earlier run of this
+              # container that did not exit cleanly. This process cannot tell that
+              # from a lock a live process is holding, so it refuses to start.
+              if [ -f "$LOCK" ]; then
+                echo "FATAL: startup lock $LOCK is still held from an earlier run of this container; it is released only on a clean shutdown; refusing to start"
+                exit 1
+              fi
+
+              echo "$$" > "$LOCK"
+              echo "startup lock $LOCK taken; serving"
+
+              # Released on a clean shutdown, which is what makes an unclean one
+              # leave it behind.
+              trap 'rm -f "$LOCK"; echo "startup lock released"; exit 0' TERM INT
+
+              # /scratch/crash is how the harness simulates the abnormal exit that
+              # arms this fixture - see "HOW IT IS ARMED" above. Exiting here skips
+              # the trap, so the lock survives into the next container start, which
+              # is precisely what a kill -9 does.
+              while true; do
+                if [ -f /scratch/crash ]; then
+                  echo "abnormal termination; exiting without releasing $LOCK"
+                  exit 137
+                fi
+                sleep 2
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi

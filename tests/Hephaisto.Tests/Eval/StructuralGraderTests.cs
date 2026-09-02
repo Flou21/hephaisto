@@ -197,11 +197,11 @@ public class StructuralGraderTests
     }
 
     [Fact]
-    public void The_answer_key_covers_the_ten_gradeable_fixtures_and_omits_c6_and_c9()
+    public void The_answer_key_covers_the_eleven_gradeable_fixtures_and_omits_c6_and_c9()
     {
-        AnswerKey.All.Should().HaveCount(10);
+        AnswerKey.All.Should().HaveCount(11);
         AnswerKey.All.Select(k => k.Fixture).Should().BeEquivalentTo(
-            ["c1", "c2", "c3", "c4", "c5", "c7", "c8", "c10", "c11", "c12"]);
+            ["c1", "c2", "c3", "c4", "c5", "c7", "c8", "c10", "c11", "c12", "c13"]);
 
         // c6 cannot fire on local-path and c9 is node-wide; neither is gradeable, and pretending
         // otherwise is how a corpus of 8 gets reported as 10.
@@ -221,12 +221,21 @@ public class StructuralGraderTests
         // This is not a cap. If a later fixture is one an action genuinely answers, raise it
         // and say so - the assertion exists so that going back to zero is loud.
         //
-        // Two of them, and they are the same fault at different difficulties: c11 hides the
-        // hinge behind an emptyDir marker gating a PVC counter, c12 puts one comparison in
-        // plain sight. #41 is the measurement that made the second one necessary.
+        // Three of them, and they are the same fault at three difficulties. c11 hides the hinge
+        // behind an emptyDir marker gating a PVC counter. c12 puts one comparison in plain
+        // sight - but its state is still on a PVC, so acting means overriding the (correct)
+        // rule that PVC contents survive a replacement, and backlog #89 measured gpt-oss-120b
+        // failing that override 7 times in 9 when asked point blank. c13 puts the state on an
+        // emptyDir, where the rule 30-planning.md already states is sufficient and there is
+        // nothing to override.
+        //
+        // That progression is the point: a decline on c11 or c12 is ambiguous between "will
+        // not act" and "did not make the inference", and only c13 separates them. Adding it
+        // is not widening AcceptableActions on a fixture that was failing - c11 and c12 are
+        // untouched and keep reporting what they report. See #90.
         AnswerKey.All.Where(k => k.AcceptableActions.Count > 0)
             .Select(k => k.Fixture)
-            .Should().BeEquivalentTo(["c11", "c12"]);
+            .Should().BeEquivalentTo(["c11", "c12", "c13"]);
 
         // And the other direction stays asserted: the four fixtures a restart would answer
         // plausibly and wrongly still forbid it.

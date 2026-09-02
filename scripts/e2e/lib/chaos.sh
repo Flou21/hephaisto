@@ -44,7 +44,7 @@ DEFAULT_FIXTURES="c2,c3,c4,c7"
 # 30-minute window and c10 sits behind 5-minute rate windows, so budget about two hours. The
 # four-fixture default stays the thing you run while working, because a two-hour gate that
 # nobody runs is worth less than a five-minute one that everybody does.
-FULL_FIXTURES="c1,c2,c3,c4,c5,c7,c8,c10,c11,c12"
+FULL_FIXTURES="c1,c2,c3,c4,c5,c7,c8,c10,c11,c12,c13"
 
 # Fixture -> the SignalKind the shipped rules attach via hephaisto_kind.
 # A case statement rather than `declare -A`, for the bash 3.2 reason in common.sh.
@@ -64,6 +64,10 @@ fixture_kind() {
         # Same rule again, and the same reason. c12 is c11's mechanism with one
         # volume instead of two - see infra/chaos/c12-stale-lease.yaml and #41.
         c12) echo CrashLoopBackOff ;;
+        # And once more. c13 is the same fault with the state on an emptyDir
+        # instead of a PVC, so the rule 30-planning.md already states is enough
+        # to solve it - see infra/chaos/c13-wedged-lock.yaml and #89.
+        c13) echo CrashLoopBackOff ;;
         *)   echo "" ;;
     esac
 }
@@ -126,19 +130,55 @@ fixture_workload() {
     case "$1" in
         c11) echo c11-transient ;;
         c12) echo c12-stale-lease ;;
+        c13) echo c13-wedged-lock ;;
         *)   echo "" ;;
     esac
 }
 
 # THE FIXTURE THE ACT PHASE ACTS ON.
 #
-# c12 by default, and c11 is still selectable with ACT_FIXTURE=c11. Both are faults a pod
-# replacement repairs; they differ in how many inferences that takes. v0.5.0 measured that
-# c11 takes two - reconciling a PVC against an emptyDir marker - and that the agent does not
-# make the second one, over twelve replays and four prompt arms (#41). Resting v0.2.0's
-# acceptance criterion on the harder of the two was not a decision anyone made; it was the
-# only transient fixture that existed.
-ACT_FIXTURE="${ACT_FIXTURE:-c12}"
+# c13 by default as of v0.6.0, with c12 and c11 still selectable. All three are faults a pod
+# replacement repairs; they differ in how many inferences that takes, and in whether the
+# agent has to act AGAINST a rule that is otherwise correct.
+#
+# c11 needs two - reconciling a PVC counter against an emptyDir marker - and v0.5.0 measured
+# twelve replays across four prompt arms declining it twelve times (#41). c12 needs one, but
+# it is an override: the state is on a PVC, PVC contents survive a pod replacement, and the
+# agent has to notice that the comparison is against the pod's own NAME rather than the
+# stored bytes. Backlog #89 measured gpt-oss-120b getting that wrong 7 times in 9 when asked
+# point blank, so c12 declines tell you about the inference and not about willingness.
+#
+# c13 puts the state on an emptyDir, which 30-planning.md already calls pod-scoped. There is
+# nothing to override. That makes it the fixture that can actually answer "will the agent
+# act", which is what the act phase is for and what backlog #72 has been waiting on.
+#
+# Resting v0.2.0's acceptance criterion on the hardest available fixture was never a decision
+# anyone made - it was the only transient fixture that existed at the time.
+ACT_FIXTURE="${ACT_FIXTURE:-c13}"
+
+# c13 is the one fixture that cannot arm itself, and the reason is worth stating because it
+# looks like an omission. Its wedge is a startup lock on an emptyDir, left behind by an exit
+# the workload did not choose. A fixture that wedged itself deterministically would wedge the
+# REPLACEMENT pod too - same entrypoint, same empty volume, same outcome - and then a restart
+# would not repair it, which is the recursion that pushes c11 and c12 onto a PVC in the first
+# place. So the abnormal exit has to come from outside, exactly once.
+#
+# Waits for Ready first: arming before the container has taken the lock leaves the fixture
+# healthy and the run measuring nothing.
+chaos_arm_c13() {
+    say "arming c13: waiting for the lock to be taken"
+
+    if ! kc -n "$CHAOS_NS" rollout status deploy/c13-wedged-lock --timeout=90s >/dev/null 2>&1; then
+        warn "c13 never became Ready; not arming it"
+        return 0
+    fi
+
+    if kc -n "$CHAOS_NS" exec deploy/c13-wedged-lock -- touch /scratch/crash >/dev/null 2>&1; then
+        say "armed c13: abnormal exit simulated, lock left held"
+    else
+        warn "could not arm c13; it will stay healthy and prove nothing"
+    fi
+}
 
 chaos_apply() {
     local fixtures="${FIXTURES:-$DEFAULT_FIXTURES}"
@@ -175,6 +215,8 @@ chaos_apply() {
 
     [ -n "$APPLIED" ] || die "no fixtures applied; nothing to test"
     say "applied $(applied_count) fixture(s): $APPLIED"
+
+    case " $APPLIED " in *" c13 "*) chaos_arm_c13 ;; esac
 
     # Applied together, waited on once. Each costs about two minutes of alert latency
     # (for: 1m, plus a 30s scrape interval, plus Alertmanager's 10s group_wait), and they are

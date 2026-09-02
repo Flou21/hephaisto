@@ -89,7 +89,7 @@ Options:
   --mode <M>           Off, Observe (default), DryRun or Auto. Auto installs the chart able
                        to act and asserts that it did; DryRun asserts it planned and still
                        changed nothing; Observe and Off assert the opposite, that nothing
-                       executed. DryRun and Auto both add $ACT_FIXTURE (c12 by default) to
+                       executed. DryRun and Auto both add $ACT_FIXTURE (c13 by default) to
                        whatever fixtures were selected.
   --no-ui              skip the Playwright suite
   --yes                do not prompt before pushing an rc tag
@@ -294,7 +294,7 @@ fi
 CURRENT_PHASE=chaos
 if should_run chaos; then
     # An acting run needs a fixture a restart actually fixes; a containment run has no use
-    # for one. ACT_FIXTURE names it (c12 by default, c11 with ACT_FIXTURE=c11), and adding it
+    # for one. ACT_FIXTURE names it (c13 by default; c12 and c11 remain selectable), and adding it
     # here rather than naming a fixture twice keeps the thing injected and the thing asserted
     # from drifting apart.
     # This has to hold however the fixture list was chosen. It used to apply only when
