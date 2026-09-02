@@ -3947,3 +3947,61 @@ tool that is not otherwise on the path. As it stands a transient docker fault re
 unpublished image.
 
 **Size.** S. **Open.**
+
+### 92. An `instance` label became a node name, and default-deny did the rest
+
+**Symptom.** On the third and fourth cluster runs of c13, the planner proposed a correct
+`RestartPod` and the harness still reported:
+
+```
+FAIL  c13 was not acted on -- 1 action(s) were proposed and none executed
+      admission or the executor refused a plan the planner did make
+```
+
+The action:
+
+```json
+{ "type": "RestartPod", "state": "Denied", "decision": "Deny",
+  "decisionReasons": ["cluster facts could not be read, so no action can be judged"] }
+```
+
+**Cause.** The incident's target:
+
+```json
+{ "kind": "Pod", "name": "c13-wedged-lock-6778bccbd9-6s4wg",
+  "ownerKind": null, "ownerName": null,
+  "nodeName": "10.244.0.6:8080" }
+```
+
+`nodeName` is an IP and a port. `AlertmanagerEndpoints.ResolveTarget` read
+`Label(labels, "node") ?? Label(labels, "instance")`, and `instance` is a **scrape target
+address** - that shape for anything scraped per-pod. `ClusterFactsGatherer.ReadNodeAsync` then
+asks the API server for a Node called `10.244.0.6:8080`, gets a 404 and throws; the gatherer
+converts any throw into `ClusterFactsUnavailable`; and that is default-denied, correctly.
+
+**So every action proposed on an alert without a `node` label was refused, permanently**, and
+the reason names neither the label nor the node. Default-deny is right and the message is
+useless: "cluster facts could not be read" describes a cluster that cannot be reached, and what
+actually happened is that we asked it a malformed question.
+
+**The two ingestion paths disagreed about what a node name is.** `SignalMapper` - the Kubernetes
+watch path - reads `node` and stops. Only the Alertmanager path had the fallback, so only alerts
+could poison an incident, and the fixtures that had ever been acted on came in through the other
+one. It is [#33](#33) one field over: a label mapped somewhere it does not belong, silently.
+
+**Why it hid for three releases.** Nothing had ever executed an action on a cluster until
+v0.6.0, and the two runs that did (#90) acted on the *Deployment*-scoped incident, whose target
+carries no node at all. The pod-scoped duplicate is the one that gets the bogus node - so
+whether the agent could act came down to which of two incidents for the same fault reached the
+planner first. That duplication is itself worth an entry and does not have one yet.
+
+**Fix.** `node` only. Null is a shape everything downstream already handles: `NodeFacts` is
+nullable and `ReadNodeAsync` returns null for a missing name. A node the alert did not name is a
+fact we do not have, which is a different thing from a fact we could not read.
+
+`ReadNodeAsync` also now treats a **404 specifically** as "no such node" and returns null rather
+than failing the whole gather. Narrow on purpose - every other failure still propagates and
+still default-denies. It is there because this failure was silent, total, and presented as an
+agent that had simply stopped acting.
+
+**Size.** S. **Fixed 2026-09-02.**

@@ -366,7 +366,29 @@ public sealed class ClusterFactsGatherer(
             return null;
         }
 
-        var node = await api.Core.ReadNodeAsync(nodeName, cancellationToken: ct).ConfigureAwait(false);
+        V1Node node;
+
+        try
+        {
+            node = await api.Core.ReadNodeAsync(nodeName, cancellationToken: ct).ConfigureAwait(false);
+        }
+        catch (HttpOperationException ex) when (ex.Response?.StatusCode == HttpStatusCode.NotFound)
+        {
+            // A node that does not exist is a fact we do not have, not a fact we could not
+            // read, and the difference decides whether an action can be judged at all. Every
+            // other failure here still propagates and still default-denies.
+            //
+            // Narrow on purpose - 404 only. This is the second line of defence behind #92,
+            // where a mis-mapped `instance` label put `10.244.0.6:8080` in this argument and
+            // denied every action on every alert without a `node` label. The mapping is the
+            // bug and is fixed; this is here because the failure was silent, total, and
+            // presented as an agent that had simply stopped acting.
+            logger.LogWarning(
+                "Incident target names node '{Node}', which does not exist. Judging without node facts.",
+                nodeName);
+
+            return null;
+        }
 
         var pods = await api.Core
             .ListPodForAllNamespacesAsync(fieldSelector: $"spec.nodeName={nodeName}", cancellationToken: ct)

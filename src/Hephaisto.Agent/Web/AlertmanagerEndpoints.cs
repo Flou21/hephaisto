@@ -289,7 +289,25 @@ public static class AlertmanagerEndpoints
                 ?? Label(labels, "exported_namespace")
                 ?? Label(labels, "k8s_namespace_name")
                 ?? string.Empty,
-            NodeName = Label(labels, "node") ?? Label(labels, "instance"),
+            // `node` only, and NOT `instance`. This fell back to `instance` for three
+            // releases, and `instance` is a scrape target address - `10.244.0.6:8080` for
+            // anything scraped per-pod. A TargetRef carrying that as its node name reaches
+            // ClusterFactsGatherer.ReadNodeAsync, which asks the API server for a Node called
+            // `10.244.0.6:8080`, gets a 404, and throws. The gatherer turns any throw into
+            // ClusterFactsUnavailable, which is default-denied - so EVERY action proposed on
+            // an alert without a `node` label was refused, permanently, with the reason
+            // "cluster facts could not be read, so no action can be judged" and nothing
+            // anywhere naming the label that did it.
+            //
+            // It is the same shape as #33 one field over: a label mapped to a place it does
+            // not belong, silently. The Kubernetes watch path never had this - SignalMapper
+            // reads `node` and stops - so the two ingestion paths disagreed about what a node
+            // name is, and only the Alertmanager one could poison an incident. See #92.
+            //
+            // Null is a shape everything downstream already handles: NodeFacts is nullable
+            // and ReadNodeAsync returns null for a missing name. A node the alert did not
+            // name is a fact we do not have, which is different from a fact we cannot read.
+            NodeName = Label(labels, "node"),
         };
 
         (target.Kind, target.Name) = ObjectIdentity(labels);
