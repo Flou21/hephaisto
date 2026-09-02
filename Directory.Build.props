@@ -38,16 +38,21 @@
     <MinVerAutoIncrement>patch</MinVerAutoIncrement>
 
     <!-- The floor for the version being worked towards, and the ONE thing here that a human
-         moves. MinVer auto-increments the PATCH, so after v0.4.0 it heads to 0.4.1 and every
+         moves. MinVer auto-increments the PATCH, so after v0.5.0 it heads to 0.5.1 and every
          untagged build - and every rc that scripts/e2e/lib/build.sh derives from it - would be
-         numbered 0.4.1 no matter what the release actually contains. v0.5.0 changes what the
-         agent proposes and widens the eval corpus; calling that a patch would put the roadmap,
-         the history and the tag in three different versions of the same release.
+         numbered 0.5.1 no matter what the release actually contains. v0.6.0 moves the label
+         prefix to hephaisto.dev, which is a BREAKING change for any namespace already opted
+         in; calling that a patch would be wrong about the one thing a version number is for.
+
+         It was left at 0.5 for the whole of v0.6.0's development, which is exactly the trap
+         the paragraph below warns about: the rc path in scripts/e2e/lib/build.sh would have
+         cut v0.5.1-rc1 for the v0.6.0 release, and release.yml's own guard would then have
+         refused to publish it - a permanent public tag with nothing behind it.
 
          Raise this when a milestone starts, not when it ships. It only sets a floor: once
-         v0.5.0 is tagged MinVer reads the tag and this line stops mattering, until the next
+         v0.6.0 is tagged MinVer reads the tag and this line stops mattering, until the next
          minor. -->
-    <MinVerMinimumMajorMinor>0.5</MinVerMinimumMajorMinor>
+    <MinVerMinimumMajorMinor>0.6</MinVerMinimumMajorMinor>
     <MinVerDefaultPreReleaseIdentifiers>main.0</MinVerDefaultPreReleaseIdentifiers>
     <AssemblyVersion>0.0.0.0</AssemblyVersion>
     <RepositoryUrl>https://github.com/Flou21/hephaisto</RepositoryUrl>
