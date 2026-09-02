@@ -1,0 +1,185 @@
+/*
+ * The docs site, wearing the product's clothes.
+ *
+ * VitePress ships a complete design system of its own, keyed on --vp-* custom properties. This
+ * file does not replace it - it re-points it. Every --vp-* colour below resolves to a token from
+ * tokens.css, which is the byte-identical copy of the file the console and the landing page both
+ * consume, so a colour changed once moves all three surfaces in the same commit.
+ *
+ * There is deliberately not a single colour literal here, and a test enforces that: this file is
+ * in DesignTokenTests.ConsumingStylesheets(). Where a translucent value is needed, color-mix()
+ * derives it from a token rather than a new hex being invented - that is why those read the way
+ * they do. color-mix() is not a loophole in the no-literals rule; it writes no colour.
+ *
+ * The one thing this file may NOT do is define a colour inside a theme block. tokens.css already
+ * defines both themes together, and that is the only place contrast is checked.
+ */
+
+@import "./tokens.css";
+
+:root {
+    /* Surfaces. VitePress uses four; the token file ships four, and they mean the same things. */
+    --vp-c-bg: var(--bg);
+    --vp-c-bg-alt: var(--bg-sunken);
+    --vp-c-bg-soft: var(--bg-raised);
+    --vp-c-bg-elv: var(--bg-raised);
+    --vp-c-bg-elv-mute: var(--bg-hover);
+
+    /* Text. VitePress's -1/-2/-3 ladder is the token file's fg/fg-dim/fg-faint, in order. */
+    --vp-c-text-1: var(--fg);
+    --vp-c-text-2: var(--fg-dim);
+    --vp-c-text-3: var(--fg-faint);
+
+    --vp-c-divider: var(--border);
+    --vp-c-border: var(--border);
+    --vp-c-gutter: var(--border);
+
+    /*
+     * Brand. --accent is the interactive accent, and DesignTokenTests asserts it is not mistakable
+     * for a severity colour - which is exactly the property a link colour needs.
+     *
+     * VitePress darkens -1 -> -2 -> -3 for hover and active states. The token file has no accent
+     * ramp (it has one accent, on purpose), so the ramp is mixed toward the foreground rather than
+     * invented: it stays on the accent's hue and moves with it.
+     */
+    --vp-c-brand-1: var(--accent);
+    --vp-c-brand-2: color-mix(in srgb, var(--accent) 82%, var(--fg));
+    --vp-c-brand-3: color-mix(in srgb, var(--accent) 64%, var(--fg));
+    --vp-c-brand-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+
+    /*
+     * Callouts. The token file's semantic colours already carry the meanings VitePress wants, and
+     * they are the same ones the console uses for severity - so a warning on this page and a
+     * warning in the product are the same colour, which is the entire point of doing this.
+     */
+    --vp-c-tip-1: var(--green);
+    --vp-c-tip-soft: color-mix(in srgb, var(--green) 14%, transparent);
+    --vp-c-note-1: var(--blue);
+    --vp-c-note-soft: color-mix(in srgb, var(--blue) 14%, transparent);
+    --vp-c-warning-1: var(--yellow);
+    --vp-c-warning-soft: color-mix(in srgb, var(--yellow) 14%, transparent);
+    --vp-c-danger-1: var(--red);
+    --vp-c-danger-soft: color-mix(in srgb, var(--red) 14%, transparent);
+    --vp-c-important-1: var(--purple);
+    --vp-c-important-soft: color-mix(in srgb, var(--purple) 14%, transparent);
+    --vp-c-caution-1: var(--orange);
+    --vp-c-caution-soft: color-mix(in srgb, var(--orange) 14%, transparent);
+
+    --vp-c-default-1: var(--fg-dim);
+    --vp-c-default-soft: color-mix(in srgb, var(--fg-faint) 14%, transparent);
+
+    /* Buttons: VitePress asks for a text colour that sits ON the accent. The token file has one. */
+    --vp-button-brand-bg: var(--accent);
+    --vp-button-brand-text: var(--on-alert);
+    --vp-button-brand-border: transparent;
+    --vp-button-brand-hover-bg: color-mix(in srgb, var(--accent) 88%, var(--fg));
+    --vp-button-brand-hover-text: var(--on-alert);
+    --vp-button-brand-hover-border: transparent;
+    --vp-button-brand-active-bg: color-mix(in srgb, var(--accent) 76%, var(--fg));
+    --vp-button-brand-active-text: var(--on-alert);
+
+    --vp-button-alt-bg: var(--bg-raised);
+    --vp-button-alt-text: var(--fg);
+    --vp-button-alt-border: var(--border);
+    --vp-button-alt-hover-bg: var(--bg-hover);
+    --vp-button-alt-hover-text: var(--fg);
+    --vp-button-alt-hover-border: var(--border-strong);
+
+    /* Code. The console renders tool output on --bg-sunken; so does this. */
+    --vp-code-block-bg: var(--bg-sunken);
+    --vp-code-bg: color-mix(in srgb, var(--fg-faint) 12%, transparent);
+    --vp-code-color: var(--fg);
+    --vp-code-link-color: var(--accent);
+    --vp-code-link-hover-color: var(--accent);
+    --vp-code-block-divider-color: var(--border);
+    --vp-code-copy-code-bg: var(--bg-raised);
+    --vp-code-copy-code-hover-bg: var(--bg-hover);
+    --vp-code-copy-code-active-text: var(--fg);
+    --vp-code-tab-divider: var(--border);
+    --vp-code-tab-text-color: var(--fg-dim);
+    --vp-code-tab-hover-text-color: var(--fg);
+    --vp-code-tab-active-text-color: var(--fg);
+    --vp-code-tab-active-bar-color: var(--accent);
+
+    --vp-custom-block-info-bg: var(--bg-raised);
+    --vp-custom-block-details-bg: var(--bg-raised);
+
+    /* Type. Both faces are self-hosted next to tokens.css; nothing is fetched at runtime. */
+    --vp-font-family-base: var(--sans);
+    --vp-font-family-mono: var(--mono);
+
+    --vp-nav-logo-height: 1.5rem;
+    --vp-layout-max-width: 96rem;
+    --vp-sidebar-width: 17rem;
+
+    /*
+     * Shiki writes its own colours into inline styles, which is the one place tokens cannot reach.
+     * Turning the theme off entirely leaves code in --vp-code-color, which is --fg, which is what
+     * the console already does with tool output: it does not colourise it either.
+     */
+    --vp-c-disabled-bg: var(--bg-hover);
+}
+
+/*
+ * Reading sizes, not console sizes - the same deviation website/site.css already documents and for
+ * the same reason. The console is dense because it is scanned by somebody who already knows what
+ * they are looking at. This is read once, by somebody deciding whether to trust it.
+ *
+ * --root-size is 13.5px in the token file and every length in it is a rem, so raising the root
+ * here rescales the whole system without touching a single token.
+ */
+:root {
+    --root-size: 16px;
+}
+
+html {
+    font-size: var(--root-size);
+}
+
+.vp-doc h1,
+.vp-doc h2,
+.vp-doc h3 {
+    text-wrap: balance;
+}
+
+.vp-doc h2 {
+    border-top-color: var(--border);
+}
+
+/* Tables carry measurements on this site, so digits have to line up. */
+.vp-doc table {
+    font-variant-numeric: tabular-nums;
+    display: table;
+    width: 100%;
+}
+
+.vp-doc td code,
+.vp-doc th code {
+    white-space: nowrap;
+}
+
+/* Wide content scrolls inside its own box; the page body never scrolls sideways. */
+.vp-doc div[class*="language-"],
+.vp-doc .table-wrapper {
+    overflow-x: auto;
+}
+
+/*
+ * The provenance banner. Used on pages whose body is transcluded from a file that lives elsewhere
+ * in the repo, so a reader can see they are being shown the real thing rather than a description
+ * of it.
+ */
+.hp-source {
+    margin: 0 0 1.5rem;
+    padding: 0.6rem 0.9rem;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius);
+    background: var(--bg-raised);
+    color: var(--fg-dim);
+    font-size: var(--text-xl);
+}
+
+.hp-source code {
+    font-family: var(--mono);
+}

@@ -268,7 +268,7 @@ public class DesignTokenTests
     }
 
     /// <summary>
-    /// The website consumes the SAME token file, byte for byte.
+    /// Every surface consumes the SAME token file, byte for byte.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -278,32 +278,45 @@ public class DesignTokenTests
     /// a colour on one side.
     /// </para>
     /// <para>
-    /// A copy rather than a symlink or a build step, because the site has to be deployable on
-    /// its own and this repo deliberately has no build step for CSS. The copy is safe only
-    /// because this test exists.
+    /// A copy rather than a symlink or a build step, because each site has to be deployable on
+    /// its own and this repo deliberately has no build step for CSS. The copies are safe only
+    /// because this test exists - and it was generalised from one hardcoded path the moment a
+    /// third and fourth copy appeared, because a test naming only <c>website/</c> would have gone
+    /// on passing while the docs site drifted.
     /// </para>
     /// </remarks>
-    [Fact]
-    public void TheWebsiteConsumesTheSameTokenFile()
+    [Theory]
+    [MemberData(nameof(Surfaces))]
+    public void EverySurfaceConsumesTheSameTokenFile(string surface)
     {
-        File.ReadAllText(WebsiteTokenFile()).Should().Be(
+        var copy = Path.Combine(RepoRoot(), surface, "tokens.css");
+
+        File.Exists(copy).Should().BeTrue($"{surface} is listed as a surface, so it must ship the tokens");
+
+        File.ReadAllText(copy).Should().Be(
             File.ReadAllText(TokenFile()),
-            "website/tokens.css is a copy of the canonical set; regenerate it with "
-            + "`cp src/Hephaisto.Agent/wwwroot/tokens.css website/tokens.css` rather than "
-            + "editing it, or the two surfaces drift within one release");
+            $"{surface}/tokens.css is a copy of the canonical set; regenerate it with "
+            + $"`cp src/Hephaisto.Agent/wwwroot/tokens.css {surface.Replace('\\', '/')}/tokens.css` "
+            + "rather than editing it, or the surfaces drift within one release");
     }
 
-    /// <summary>The website ships the same font binaries, so the two surfaces set type identically.</summary>
+    /// <summary>Every surface ships the same font binaries, so they all set type identically.</summary>
+    /// <remarks>
+    /// The <c>@font-face</c> src in tokens.css is <c>url("fonts/...")</c>, resolved relative to the
+    /// stylesheet - so a surface that copies the token file without the fonts beside it renders in
+    /// a fallback stack and looks deliberate to anybody who has not seen the real thing.
+    /// </remarks>
     [Theory]
-    [InlineData("archivo-latin.woff2")]
-    [InlineData("jetbrains-mono-latin.woff2")]
-    public void TheWebsiteShipsTheSameFonts(string file)
+    [MemberData(nameof(SurfaceFonts))]
+    public void EverySurfaceShipsTheSameFonts(string surface, string file)
     {
         var app = Path.Combine(RepoRoot(), "src", "Hephaisto.Agent", "wwwroot", "fonts", file);
-        var site = Path.Combine(RepoRoot(), "website", "fonts", file);
+        var copy = Path.Combine(RepoRoot(), surface, "fonts", file);
 
-        File.ReadAllBytes(site).Should().Equal(File.ReadAllBytes(app),
-            $"{file} differs between the console and the landing page, so one of them is "
+        File.Exists(copy).Should().BeTrue($"{surface} must ship {file} beside its tokens.css");
+
+        File.ReadAllBytes(copy).Should().Equal(File.ReadAllBytes(app),
+            $"{file} differs between the console and {surface}, so one of them is "
             + "setting type in a face the other does not have");
     }
 
@@ -360,14 +373,103 @@ public class DesignTokenTests
     private static string TokenFile() =>
         Path.Combine(RepoRoot(), "src", "Hephaisto.Agent", "wwwroot", "tokens.css");
 
+    /// <summary>
+    /// Every surface that ships its own copy of the token file and the fonts beside it.
+    /// </summary>
+    /// <remarks>
+    /// A surface is a directory containing <c>tokens.css</c> and <c>fonts/</c>. The console is not
+    /// on this list because it is the source, not a copy. Adding a deployable surface without
+    /// adding it here is the failure this list exists to prevent: the copy is then never compared
+    /// to anything and drifts silently.
+    /// </remarks>
+    /// <summary>
+    /// The docs site declares the same theme colours, in the shape VitePress wants them.
+    /// </summary>
+    /// <remarks>
+    /// The other two surfaces write <c>&lt;meta&gt;</c> tags directly and are covered by
+    /// <see cref="ThemeColourAgreesWithTheBackgroundToken"/>. VitePress builds its head from a
+    /// config array instead, so the same property needs a different reader - and it needs one at
+    /// all for the same reason: theme-color is read before any CSS, so it cannot be a var(), which
+    /// makes it the one value that can go stale without anything looking wrong.
+    /// </remarks>
+    [Fact]
+    public void TheDocsSiteThemeColourAgreesWithTheBackgroundToken()
+    {
+        var (dark, light) = Themes();
+        var config = File.ReadAllText(
+            Path.Combine(RepoRoot(), "docs-site", ".vitepress", "config.ts"));
+
+        var declared = Regex.Matches(
+                config,
+                """content:\s*'(#[0-9a-fA-F]{6})'\s*,\s*media:\s*'\(prefers-color-scheme:\s*(dark|light)\)'""")
+            .Cast<Match>()
+            .ToDictionary(m => m.Groups[2].Value, m => m.Groups[1].Value, StringComparer.Ordinal);
+
+        declared.Should().ContainKeys(
+            new[] { "dark", "light" },
+            "the docs site should declare a theme colour for each theme");
+
+        declared["dark"].Should().BeEquivalentTo(dark["--bg"],
+            "the docs site's dark theme-color must equal --bg in the dark theme");
+        declared["light"].Should().BeEquivalentTo(light["--bg"],
+            "the docs site's light theme-color must equal --bg in the light theme");
+    }
+
+    private static readonly string[] SurfaceDirectories =
+    [
+        "website",
+        Path.Combine("docs-site", ".vitepress", "theme"),
+    ];
+
+    /// <summary>The two faces every surface ships, self-hosted, with no CDN anywhere.</summary>
+    private static readonly string[] ShippedFaces =
+    [
+        "archivo-latin.woff2",
+        "jetbrains-mono-latin.woff2",
+    ];
+
+    public static TheoryData<string> Surfaces()
+    {
+        var data = new TheoryData<string>();
+
+        foreach (var surface in SurfaceDirectories)
+        {
+            data.Add(surface);
+        }
+
+        return data;
+    }
+
+    /// <summary>The cross product of <see cref="SurfaceDirectories"/> and the shipped faces.</summary>
+    public static TheoryData<string, string> SurfaceFonts()
+    {
+        var data = new TheoryData<string, string>();
+
+        foreach (var surface in SurfaceDirectories)
+        {
+            foreach (var face in ShippedFaces)
+            {
+                data.Add(surface, face);
+            }
+        }
+
+        return data;
+    }
+
     /// <summary>Every stylesheet that CONSUMES the tokens, which is every one but the token file.</summary>
+    /// <remarks>
+    /// A stylesheet missing from this list is silently exempt from
+    /// <see cref="NoColourIsWrittenOutsideTheTokenFile"/> - it is not skipped loudly, it is simply
+    /// never looked at. That makes this list the thing to update in the same commit that adds a
+    /// surface, and the reason each entry names a real file rather than globbing: a glob would
+    /// quietly start covering build output.
+    /// </remarks>
     private static IEnumerable<string> ConsumingStylesheets()
     {
         yield return Path.Combine(RepoRoot(), "src", "Hephaisto.Agent", "wwwroot", "app.css");
         yield return Path.Combine(RepoRoot(), "website", "site.css");
+        yield return Path.Combine(RepoRoot(), "docs-site", ".vitepress", "theme", "custom.css");
     }
-
-    private static string WebsiteTokenFile() => Path.Combine(RepoRoot(), "website", "tokens.css");
 
     private static string StrippedOfComments(string line)
     {

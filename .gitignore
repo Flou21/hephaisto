@@ -30,3 +30,9 @@ tilt_config.json
 # reproducible with `hephaisto-eval record` against the dev cluster.
 cassettes/
 results/
+
+# docs-site (VitePress). The built site is deployed from CI, never committed - the same rule
+# website/ follows, where what is committed is what is served.
+docs-site/node_modules/
+docs-site/.vitepress/dist/
+docs-site/.vitepress/cache/
