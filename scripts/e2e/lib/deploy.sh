@@ -84,6 +84,26 @@ deploy_install() {
         say "investigation wall-clock ceiling: $wall"
     fi
 
+    # The token ceiling, and the axis the two blocks above forgot. Raising MaxSteps to 20
+    # moves the binding constraint here rather than removing it: every round trip resends the
+    # whole transcript, so cumulative input grows with the SQUARE of the step count, and
+    # 400,000 was written against a ceiling of 12. Measured on c12 replay, gpt-oss-120b at 20
+    # steps: 5 of 12 runs breached 400,000 around step 15-17, were forced to conclude early,
+    # and cited excerpts that then failed grounding - so they produced no finding, could not
+    # be graded, and were counted as the planner proposing nothing. backlog #82, #88.
+    #
+    # Same argument as the step ceiling above, one axis over: a ceiling tuned for one model
+    # does not read as a ceiling when another model hits it, it reads as that model being
+    # worse.
+    local tokens="${HEPHAISTO_LLM_MAX_INPUT_TOKENS:-}"
+    if [ -z "$tokens" ] && [ "${HEPHAISTO_LLM_PROVIDER:-gemini}" = "openai" ]; then
+        tokens=1200000
+    fi
+    if [ -n "$tokens" ]; then
+        env_add Llm__Investigation__MaxInputTokens "$tokens"
+        say "investigation input-token ceiling: $tokens"
+    fi
+
     helm_e2e upgrade --install hephaisto "$CHART_REPO/hephaisto" \
         --version "$VERSION" \
         --namespace "$APP_NS" --create-namespace \

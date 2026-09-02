@@ -2540,6 +2540,48 @@ four times; the next thing worth trying is not a fifth wording.
 
 ---
 
+**Corrected again 2026-09-02, and this time the instrument was the larger half.** Three defects
+were found between the model and this number, each of which routes a run into `NoPlan` without
+the planner ever being invoked: the `conclude` schema wrapper that gpt-oss fails on **every**
+first attempt ([#86](#86)), a `confidence` field read from one of the two places it is offered
+([#87](#87)), and an input-token ceiling never co-tuned with the step ceiling it sits beside
+([#82](#82)). [#88](#88) is the pooling itself: `NoPlan` holds four different outcomes and this
+entry read all of them as declines.
+
+Nine of the 24 gpt-oss runs behind "0 of 18" terminated on a budget before phase 2 existed.
+DeepSeek has never hit either ceiling here, because it concludes in 4-7 steps against
+gpt-oss's 15-18 - and #86's forced retry is a large part of that gap. The two arms were also
+run with different `PlanningStructuredOutput` settings, so the comparison moved a model and a
+provider capability at once.
+
+With all three fixed, twelve replays put the planner in front of the incident **11 times out of
+12** rather than 5, and root-cause accuracy rose with it, 5/12 to 11/12 (p = 0.027). Acting,
+now counted over runs where the planner ran, is 1 of 11 against DeepSeek's 4 of 8: **p = 0.11**.
+The **p = 0.0047** this entry leads with does not survive counting the denominator honestly.
+
+**So the sentence "gpt-oss essentially never acts" was over-stated, and the mechanism paragraph
+above was right.** Both things are true. The residual difference is real in direction and no
+longer significant in size, and the mechanism it points at is unchanged and now measured twice:
+across every c12 hypothesis on record, **whether a run acts is predicted by whether the phase-1
+hypothesis says a replacement pod would get a different name.** Within DeepSeek, holding the
+model fixed, that is a perfect split - 4 of 4 acting runs contain the clause, 0 of 4 declining
+runs do (p = 0.029). gpt-oss has now written it 0 times in 38 hypotheses, and its two acting
+runs are the two that never mention the volume at all.
+
+**Which points somewhere nobody has looked.** All four prompt arms - #41's three and this
+entry's one - rewrote `30-planning.md`, the phase 2 prompt. The information is lost in phase 1.
+`20-output-contract.md` asks for a hypothesis "in one or two plain sentences"; gpt-oss obeys it
+at a median 205 characters, DeepSeek ignores it at 496, and the clause that decides the outcome
+does not fit in one sentence. Phase 2 has no tools and cannot recover what phase 1 declined to
+write down. The answer key for c12 already treats that clause as part of the correct root cause
+- *"so any replacement pod has a different name and starts cleanly"* - and `MustMentionAnyOf` is
+loose enough to grade a hypothesis `Correct` without it.
+
+That is a fifth prompt arm, but it is the first one aimed at the phase that loses the
+information rather than the phase that visibly declines. It has not been run.
+
+---
+
 ## The v0.5.0 carry, reviewed 2026-08-31
 
 v0.5.0's rule is that *"an item leaves `backlog.md` by being fixed, or by being reclassified as a
@@ -3321,15 +3363,39 @@ same way. The confound applies to both instruments, which is one fewer reason to
 [#66](#66-the-planner-acts-on-half-of-a-fair-fixture)'s replay and cluster arms are measuring
 different things.
 
-**Fix, not applied here.** Either reserve token headroom the way steps are reserved, or exempt the
-concluding call from the input-token ceiling with its own hard cap. Both are changes to the budget
-path and were deliberately kept out of the prompt experiment that found this, because changing two
-things between a baseline and a treatment measures neither.
+**The coin flip was not a coin flip.** This entry attributes the intermittency to "the model not
+calling the tool cleanly on its first attempt - a text reply, a malformed call, a retry". That
+half is right and the cause is not stochastic: [#86](#86) found that `gpt-oss:120b` fails its
+first `conclude` call **every single time**, on a schema wrapper this repo asked for, in ten of
+ten published demo transcripts. The retry was structural. What was left to chance was only
+whether the two granted turns sufficed to recover from it.
+
+**Fixed 2026-09-02, and the ceilings are co-tuned rather than the rescue widened.** With #86's
+retry gone, twelve c12 replays produced **zero** `TokenBudgetExhausted` terminations, against six
+in the twenty-four runs before it: the reserved step now lands every time. That was not
+sufficient. Five of those twelve still breached 400,000 mid-flight around step 15-17, spent the
+reserved step on a hurried conclusion, and had **every** excerpt fail grounding - so they
+produced no finding, could not be graded, and were counted as the planner proposing nothing.
+The rescue landing is not the same as the run being worth grading.
+
+So the fix is the second half of this entry's own diagnosis - *"`MaxInputTokens` has been 400,000
+since it was written, against a `MaxSteps` that has since changed"* - rather than more headroom
+for the rescue. `MaxInputTokens` defaults to 1,200,000, derived from `MaxSteps` rather than
+picked: the transcript is resent every turn, so cumulative input grows with `n(n+1)/2`, and at
+20 steps and the measured ~2,700 tokens each turn adds that is 567,000 before headroom.
+`scripts/e2e/lib/deploy.sh` sets it per provider in the same block that already co-tunes the step
+and wall-clock ceilings, which had this exact argument written beside them and simply missed the
+third axis. `LlmBudgetRelationshipTests` fails the build if the two numbers drift apart again,
+and also fails if the ceiling is raised until nothing could reach it - it is still a safety
+control.
+
+Raising it does not uncap spend: `MaxCostUsd` and `MaxWallClock` are unchanged, and they are
+what bound the money and the clock.
 
 While here: the XML comment on `TryGrantConcludingStep` still reads "This grants exactly one step
 and never renews", which stopped being true when #78 changed the allowance to two.
 
-**Size.** S for the reserve, M if the ceilings are co-tuned properly.
+**Size.** S. **Fixed 2026-09-02.**
 
 
 ### 83. The in-cluster reachability probe reads 401 as unroutable
@@ -3471,3 +3537,159 @@ prerelease, and it still asks for the tag to be typed back.
 **Size.** S.
 
 **Fixed 2026-09-02.**
+
+### 86. Every gpt-oss run failed its first `conclude` call, on a wrapper we asked for
+
+**Symptom.** Every step list from a `gpt-oss:120b` investigation holds two `conclude` calls,
+the first of them failed:
+
+```
+ERROR: conclude failed: The arguments dictionary is missing a value for the
+required parameter 'request'.
+```
+
+Not intermittently. **Ten of the ten published demo transcripts, and every c12 replay
+examined.** The model reads the error, spends a turn, and calls `conclude` again with the
+wrapper, so a correct conclusion always cost two extra round trips.
+
+**Cause.** The tool was declared
+
+```csharp
+AIFunctionFactory.Create((ConcludeRequest request) => { ... }, "conclude", ...)
+```
+
+which generates a schema whose single property is `request`, wrapping the whole payload.
+gpt-oss sends the payload flat - `{"findings":[...],"summary":"..."}` - and the binder refuses
+it. DeepSeek and Gemini emit the wrapper, so neither has ever paid this, and it is invisible in
+any comparison that reports only the score.
+
+**What it cost, which is more than two round trips.** Every round trip resends the whole
+transcript, so the two wasted turns are the two most expensive turns in the run. That is the
+mechanism behind [#82](#82), which read "the model not calling the tool cleanly on its first
+attempt" as a stochastic property of the model and called the rescue a coin flip. It is
+neither: the first attempt is *never* clean, deterministically, because of this schema. The
+only thing left to chance is whether the two granted concluding turns are enough to recover.
+The same two turns are a large part of why gpt-oss takes 15-18 steps on c12 where
+`deepseek-v4-flash` takes 4-7, and steps are what #82 and [#74](#74) are both about running
+out of.
+
+**Fix.** The schema is flat - `findings`, `summary`, `confidence` as siblings - which is the
+payload the contract already describes and the shape gpt-oss was sending unprompted.
+
+**The binder still accepts the wrapper**, deliberately rather than out of defensive habit. The
+models that send it are DeepSeek and Gemini, both of which cost real money to run, and this
+machine may only drive the local one - so "the wrapper still works" cannot be established by a
+bakeoff and has to be established by a test. `ConcludeToolTests` pins both shapes, pins that
+the schema names the fields rather than a wrapper, and pins that a missing field binds to its
+default instead of failing the call.
+
+**The general lesson.** A single-complex-parameter tool signature is idiomatic C# and a leaky
+wire contract. Every other tool in the agent takes flat primitives and not one of them has
+ever failed this way. Prefer flat parameters on anything a model calls.
+
+**Size.** S. **Fixed 2026-09-02.**
+
+### 87. Confidence is offered in two places and only one of them was read
+
+**Symptom.** A c12 replay concluded cleanly, produced a grounded primary finding, graded
+`Correct` - and scored `NoPlan`, with `terminationReason: Concluded` and
+`investigation.confidence: 0`.
+
+**Cause.** `conclude` accepts a `confidence` on the request *and* a `confidence` on each
+finding. `ConcludeMapper.ToFindings` only ever read the finding's. Both were non-nullable
+`double`, so a model that filled the top-level field and omitted the per-finding one bound the
+primary finding to `0` - indistinguishable from a model asserting its finding is certainly
+wrong. `0` is below `MinConfidenceForPlan` (0.5), which escalates `LowConfidence`, which
+returns before phase 2.
+
+So the run is recorded as one where the planner proposed nothing: the same cell as a planner
+that considered the incident and declined. See [#88](#88), which is that observation
+generalised.
+
+**Why it surfaced now.** It was always latent, and the wrapper in [#86](#86) hid it - nested
+under `request`, the two `confidence` fields sit at visibly different depths. Flattening the
+schema puts `confidence` and `findings` side by side at the top level, and a model reading that
+can reasonably take the top-level one as *the* confidence. The fix for #86 made an existing
+ambiguity easier to fall into, which is a good argument that it was never safe.
+
+**Fix.** Both fields are `double?`, so "did not say" is distinguishable from "said zero", and
+the mapper reads the finding's number first and the request's as a fallback. Not the reverse:
+the top-level field is a fallback rather than an override, so a model that gives per-finding
+confidences keeps them.
+
+**Not fixed by deleting one of the two fields**, which was the first instinct. A model that
+reliably followed the schema would not need the fallback - and #86 is a measured, ten-of-ten
+demonstration that this model does not reliably follow the schema. Deleting the field would
+rest the fix on exactly the assumption already shown false one entry above.
+
+**Size.** S. **Fixed 2026-09-02.**
+
+### 88. `NoPlan` pools four outcomes, and the action rate counted all four as declines
+
+**The finding that reframes [#66](#66-the-planner-acts-on-half-of-a-fair-fixture).**
+`InvestigationRunner` returns before phase 2 on *any* escalation and on any termination that is
+not `Concluded`:
+
+```csharp
+if (escalation is not null || termination != TerminationReason.Concluded)
+{
+    return new InvestigationOutcome { ... };   // phase 2 never runs
+}
+```
+
+`PlanGrader` then scores the missing plan `NoPlan`, correctly and by design - "an investigation
+can end before planning for a dozen legitimate reasons". What was wrong is the reading. #66
+quotes `gpt-oss:120b` at **0 of 18** on c12 and calls that a per-model property of the planner.
+It is not one number. It is at least four distinct outcomes in one cell:
+
+| how the run reached `NoPlan` | did phase 2 run? |
+|---|---|
+| the planner produced a plan with `noActionRequired` | yes - the only real decline, and it grades `MissedAnAction`, not `NoPlan` |
+| a budget ceiling terminated the run ([#82](#82), [#86](#86)) | **no** |
+| every finding lost its evidence to grounding | **no** |
+| the primary finding's confidence read `0` ([#87](#87)) | **no** |
+
+Of the 24 historical gpt-oss c12 runs behind that figure, **6 ended `TokenBudgetExhausted` and
+3 `StepBudgetExhausted`** - nine runs in which the planner was never invoked, scored as though
+it had considered the incident and chosen not to act. `deepseek-v4-flash` has hit neither
+ceiling on this fixture, ever, because it concludes in 4-7 steps where gpt-oss takes 15-18 -
+and #86 is a large part of that gap.
+
+**The published comparison also moved two variables at once.** Every DeepSeek c12 arm ran with
+`Llm:PlanningStructuredOutput=JsonObject`, because DeepSeek answers `400` to a strict schema.
+Every gpt-oss "baseline" arm ran with the default `JsonSchema`. So "4 of 8 against 0 of 18",
+and the `p = 0.0047` computed from it, compare a model *and* a structured-output mode.
+
+**Measured after the three fixes**, twelve c12 replays each, same model, same endpoint, same
+`JsonObject` planning format DeepSeek was run with, `MaxSteps=20`:
+
+| arm | planner ran | acted | root cause correct |
+|---|---|---|---|
+| before, `JsonObject` (`c12-jsonobject`) | 5/12 | 1 | 5/12 |
+| [#86](#86) only (`c12-toolfix`) | 7/12 | 0 | 7/12 |
+| #86 + [#87](#87) + [#82](#82) (`c12-ceilings`) | **11/12** | 1 | **11/12** |
+| `deepseek-v4-flash`, for reference | 8/8 | 4 | 8/8 |
+
+The instrument moved and the model did not. Getting the planner invoked at all went 5/12 to
+11/12, Fisher's exact **p = 0.027**, and root-cause accuracy moved with it because both were
+being lost to the same truncated runs. `TokenBudgetExhausted` went from 6 of 24 runs to **0 of
+24** across both post-fix arms.
+
+**And the headline significance does not survive the correction.** Acting, counted over the
+runs where the planner actually ran, is 1 of 11 for gpt-oss against 4 of 8 for DeepSeek:
+Fisher's exact **p = 0.11**. The published **p = 0.0047** was computed over all runs, nine of
+which never reached the planner. So the number that made this look like a settled per-model
+property was substantially the instrument.
+
+**What this does not claim.** It does not claim gpt-oss acts as often as DeepSeek. The point
+estimates are still 9% against 50% and the direction is unchanged; what changed is that at
+these sample sizes the difference is no longer significant, and the denominator now means what
+it says. Nothing here licenses a published action rate either - it says the previous one was
+measured with a broken instrument, not that a working one has now been read.
+
+**Fix.** The three instrument bugs are fixed (#82, #86, #87). What remains is reporting:
+`terminationReason` beside the verdict, which is [#59](#59) and still open, and a
+`PlanVerdict` that distinguishes "the planner declined" from "the planner never ran". The
+second is the smaller change and the one that would have prevented this entry.
+
+**Size.** S for the reporting split. **Blocks:** the same sentence #66 blocks.

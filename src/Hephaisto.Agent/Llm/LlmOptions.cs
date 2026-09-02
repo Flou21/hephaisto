@@ -335,14 +335,35 @@ public sealed class InvestigationBudgetOptions
     /// </summary>
     /// <remarks>
     /// <b>Cumulative is why this is not a context-window setting</b>, and the distinction
-    /// matters when moving to a model with a smaller window: 400,000 here is spread across up
-    /// to <see cref="MaxSteps"/> turns, so it does not imply any single call carrying 400,000
-    /// tokens, and it does not need lowering to run a 131k-context model. What bounds the
+    /// matters when moving to a model with a smaller window: the figure here is spread across
+    /// up to <see cref="MaxSteps"/> turns, so it does not imply any single call carrying that
+    /// many tokens, and it does not need lowering to run a 131k-context model. What bounds the
     /// largest single turn is the digester's context cap. Lowering this to match a window
     /// would instead cut the investigation short several steps early, for a limit the
     /// provider was never going to hit.
+    ///
+    /// <para>
+    /// <b>It has to be derived from <see cref="MaxSteps"/>, and for three releases it was
+    /// not.</b> The transcript is resent every turn, so cumulative input grows with the
+    /// <i>square</i> of the step count, not linearly. 400,000 was written against
+    /// <see cref="MaxSteps"/> 12 and stayed put when the e2e raised the ceiling to 20 for
+    /// openai-compatible providers - at which point this stopped being a backstop and became
+    /// the binding constraint. Measured on c12 replay, gpt-oss-120b at 20 steps: 5 of 12 runs
+    /// breached 400,000 around step 15-17, were forced into an early conclusion whose excerpts
+    /// then failed grounding, and so produced no finding at all. A run that produces no
+    /// finding cannot be graded and is recorded as the planner proposing nothing. See
+    /// <c>docs/backlog.md</c> #82 and #88.
+    /// </para>
+    /// <para>
+    /// 1,200,000 is <c>n(n+1)/2</c> turns of the ~2,700 tokens of transcript each turn adds,
+    /// at <see cref="MaxSteps"/> 20 (567,000), with headroom for a fixture that gathers more
+    /// than c12 does. <see cref="LlmBudgetRelationshipTests"/> fails the build if a future
+    /// change to <see cref="MaxSteps"/> outgrows it again. Raising it does not uncap spend:
+    /// <see cref="MaxCostUsd"/> and <see cref="MaxWallClock"/> are unchanged and are what
+    /// bound the money and the wall clock.
+    /// </para>
     /// </remarks>
-    public long MaxInputTokens { get; set; } = 400_000;
+    public long MaxInputTokens { get; set; } = 1_200_000;
 
     public decimal MaxCostUsd { get; set; } = 0.50m;
 

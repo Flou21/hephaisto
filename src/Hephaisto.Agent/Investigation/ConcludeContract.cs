@@ -27,9 +27,21 @@ public sealed class ConcludeRequest
     [Description("A short paragraph an on-call engineer can read in ten seconds and act on.")]
     public string Summary { get; set; } = string.Empty;
 
+    /// <summary>
+    /// A fallback for <see cref="FindingDraft.Confidence"/>, not a second number.
+    /// </summary>
+    /// <remarks>
+    /// The schema offers confidence in two places and always has. That is survivable only
+    /// because <see cref="ConcludeMapper"/> reads both: a model that fills this one and
+    /// leaves the finding's empty used to land a primary finding at confidence <c>0</c>,
+    /// which is below <c>MinConfidenceForPlan</c>, which escalates <c>LowConfidence</c> and
+    /// skips planning entirely. The run is then recorded as one where the planner proposed
+    /// nothing, and it is indistinguishable from one where the planner declined. See
+    /// <c>docs/backlog.md</c> #87.
+    /// </remarks>
     [JsonPropertyName("confidence")]
-    [Description("Your confidence in the primary finding, 0.0 to 1.0. Be calibrated; this is scored against human feedback.")]
-    public double Confidence { get; set; }
+    [Description("Your confidence in the primary finding, 0.0 to 1.0, if you did not set one on the finding itself. Be calibrated; this is scored against human feedback.")]
+    public double? Confidence { get; set; }
 
     [JsonPropertyName("findings")]
     [Description("One or more hypotheses. Exactly one must have primary set to true.")]
@@ -46,9 +58,17 @@ public sealed class FindingDraft
     [Description("What is wrong, in one or two plain sentences. Name the object and the mechanism, not the symptom.")]
     public string Hypothesis { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Nullable so that "did not say" is distinguishable from "said zero".
+    /// </summary>
+    /// <remarks>
+    /// A non-nullable double binds an absent field to <c>0</c>, and <c>0</c> is a confidence
+    /// no model ever means - it says the finding is certainly wrong. Conflating the two is
+    /// what let an omitted field silently skip planning.
+    /// </remarks>
     [JsonPropertyName("confidence")]
     [Description("0.0 to 1.0. If you are guessing between two causes, neither gets above 0.6.")]
-    public double Confidence { get; set; }
+    public double? Confidence { get; set; }
 
     [JsonPropertyName("primary")]
     [Description("True for the one finding the plan should be built on. Exactly one.")]
@@ -140,7 +160,7 @@ internal static class ConcludeMapper
                 InvestigationId = investigationId,
                 Category = string.IsNullOrWhiteSpace(draft.Category) ? "unknown" : draft.Category,
                 Hypothesis = draft.Hypothesis,
-                Confidence = Math.Clamp(draft.Confidence, 0, 1),
+                Confidence = Math.Clamp(draft.Confidence ?? request.Confidence ?? 0, 0, 1),
                 IsPrimary = draft.Primary,
             };
 

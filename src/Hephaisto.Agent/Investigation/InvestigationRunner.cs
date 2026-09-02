@@ -415,18 +415,118 @@ public sealed class InvestigationRunner(
     /// The virtual <c>conclude</c> tool. Calling it reaches nothing: it writes into this
     /// run's own state and returns an acknowledgement.
     /// </summary>
-    private static AIFunction CreateConcludeTool(ConclusionHolder holder) =>
+    /// <remarks>
+    /// <para>
+    /// <b>The parameters are flat, and that is load-bearing.</b> Declaring this as
+    /// <c>(ConcludeRequest request)</c> reads better in C# and generates a schema with one
+    /// property called <c>request</c> wrapping the whole payload. Models do not reliably
+    /// emit that wrapper: <c>gpt-oss:120b</c> sends <c>{"findings":[...],"summary":"..."}</c>
+    /// on its first attempt <b>every time</b> - 10 of 10 published demo transcripts and every
+    /// c12 replay - and the binder answers
+    /// <c>"missing a value for the required parameter 'request'"</c>. The model then spends a
+    /// turn reading the error and a second call getting it right, so the wrapper cost two
+    /// steps and their tokens on every single investigation. See <c>docs/backlog.md</c> #86.
+    /// </para>
+    /// <para>
+    /// <b>The binder still accepts the wrapper</b>, because a schema change cannot be
+    /// verified against DeepSeek or Gemini here - both cost real money, and the local model
+    /// is the only one this machine may drive. A model that wraps out of habit must not
+    /// start failing to conclude on the strength of an untested assumption, so each parameter
+    /// is looked up flat first and inside a <c>request</c> object second.
+    /// <c>ConcludeToolTests</c> pins both shapes.
+    /// </para>
+    /// </remarks>
+    internal static AIFunction CreateConcludeTool(ConclusionHolder holder) =>
         AIFunctionFactory.Create(
-            (ConcludeRequest request) =>
+            (
+                [System.ComponentModel.Description(
+                    "One or more hypotheses. Exactly one must have primary set to true.")]
+                List<FindingDraft>? findings,
+                [System.ComponentModel.Description(
+                    "A short paragraph an on-call engineer can read in ten seconds and act on.")]
+                string? summary,
+                [System.ComponentModel.Description(
+                    "Your confidence in the primary finding, 0.0 to 1.0. Be calibrated; this is "
+                    + "scored against human feedback.")]
+                double confidence) =>
             {
-                holder.Value = request;
+                holder.Value = new ConcludeRequest
+                {
+                    Findings = findings ?? [],
+                    Summary = summary ?? string.Empty,
+                    Confidence = confidence,
+                };
 
                 return "Conclusion recorded. Your citations are now checked against what the tools "
                     + "actually returned; any that do not match are discarded. Stop here.";
             },
-            "conclude",
-            "Ends the investigation and records your findings. Call this when you have enough to "
-            + "state a cause, or enough to be sure you cannot. Do not simply stop talking.");
+            new AIFunctionFactoryOptions
+            {
+                Name = "conclude",
+                Description =
+                    "Ends the investigation and records your findings. Call this when you have "
+                    + "enough to state a cause, or enough to be sure you cannot. Do not simply "
+                    + "stop talking.",
+                ConfigureParameterBinding = _ => new AIFunctionFactoryOptions.ParameterBindingOptions
+                {
+                    BindParameter = BindConcludeParameter,
+                },
+            });
+
+    /// <summary>
+    /// Reads one <c>conclude</c> parameter out of whatever shape the model sent.
+    /// </summary>
+    /// <remarks>
+    /// Flat first, then the <c>request</c> wrapper. A parameter present in neither binds to
+    /// its default rather than throwing: a conclusion that named findings and forgot the
+    /// summary is worth grounding, and <see cref="GroundingVerifier"/> is what decides
+    /// whether it survives. Refusing it here would turn one missing field into a whole
+    /// investigation with no findings at all.
+    /// </remarks>
+    private static object? BindConcludeParameter(
+        System.Reflection.ParameterInfo parameter, AIFunctionArguments arguments)
+    {
+        var name = parameter.Name!;
+
+        if (arguments.TryGetValue(name, out var flat) && Convert(flat, parameter.ParameterType) is { } bound)
+        {
+            return bound;
+        }
+
+        if (arguments.TryGetValue("request", out var wrapper)
+            && wrapper is JsonElement { ValueKind: JsonValueKind.Object } element
+            && element.TryGetProperty(name, out var inner)
+            && Convert(inner, parameter.ParameterType) is { } wrapped)
+        {
+            return wrapped;
+        }
+
+        return parameter.ParameterType.IsValueType ? Activator.CreateInstance(parameter.ParameterType) : null;
+    }
+
+    private static object? Convert(object? value, Type target)
+    {
+        try
+        {
+            return value switch
+            {
+                null => null,
+                JsonElement { ValueKind: JsonValueKind.Null } => null,
+                JsonElement element => element.Deserialize(target, ConcludeJson),
+                _ when target.IsInstanceOfType(value) => value,
+                _ => JsonSerializer.SerializeToElement(value, ConcludeJson).Deserialize(target, ConcludeJson),
+            };
+        }
+        catch (JsonException)
+        {
+            // A malformed field is not a malformed conclusion. Binding it to null lets the
+            // rest of the call through to grounding, which reports what actually survived.
+            return null;
+        }
+    }
+
+    private static readonly JsonSerializerOptions ConcludeJson =
+        new(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
 
     // ------------------------------------------------------------------
     // Phase 2
@@ -653,7 +753,7 @@ public sealed class InvestigationRunner(
     /// visible to the loop: <c>FunctionInvokingChatClient</c> may invoke tools on a different
     /// thread, and it may invoke several concurrently.
     /// </summary>
-    private sealed class ConclusionHolder
+    internal sealed class ConclusionHolder
     {
         private ConcludeRequest? _value;
 
