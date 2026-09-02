@@ -2578,7 +2578,20 @@ write down. The answer key for c12 already treats that clause as part of the cor
 loose enough to grade a hypothesis `Correct` without it.
 
 That is a fifth prompt arm, but it is the first one aimed at the phase that loses the
-information rather than the phase that visibly declines. It has not been run.
+information rather than the phase that visibly declines.
+
+**It was run, and the clause turned out to be a correlate rather than a cause** - see
+[#89](#89). Asking phase 1 the replacement question induced the clause in 8 of 9 hypotheses,
+up from 0 of 38, and the action rate went to **0 of 9**. What the arm bought instead is the
+mechanism, because it turned a silent omission into a written wrong answer: of the nine, only
+**two** answered correctly that a replacement would start cleanly, and both of those declined
+anyway. The other seven reason that the lease file persists, therefore the failure persists,
+without carrying through that the comparison is against the pod's own name and the name is the
+half that changes.
+
+So the remaining work is not a sixth wording either. It is a model that completes the
+inference, or a corpus that does not rest its only acting measurement on a fixture this one
+gets wrong 7 times in 9.
 
 ---
 
@@ -3693,3 +3706,77 @@ measured with a broken instrument, not that a working one has now been read.
 second is the smaller change and the one that would have prevented this entry.
 
 **Size.** S for the reporting split. **Blocks:** the same sentence #66 blocks.
+
+### 89. gpt-oss declines c12 because it gets the decisive question wrong, not because nobody asked it
+
+**The fifth prompt arm, and the first aimed at phase 1.** [#66](#66-the-planner-acts-on-half-of-a-fair-fixture)
+observes that across every c12 hypothesis on record, whether a run acts is predicted by whether
+the phase-1 hypothesis says a replacement pod would get a different name. Within
+`deepseek-v4-flash`, holding the model fixed, the split is perfect: 4 of 4 acting runs carry the
+clause, 0 of 4 declining runs do. `gpt-oss:120b` had written it 0 times in 38 hypotheses.
+
+The four earlier arms - #41's three and #66's one - all rewrote `30-planning.md`, the phase 2
+prompt. This one rewrote `20-output-contract.md`, which is where the clause would have to
+originate: phase 2 has no tools, so it cannot recover anything phase 1 declined to write down,
+and that file asks for a hypothesis "in one or two plain sentences". gpt-oss obeys at a median
+205 characters; DeepSeek ignores it at 496.
+
+The change asked the hypothesis to say whether a **freshly created replacement** of the failing
+object would fail the same way, phrased symmetrically and naming the "would fail identically"
+case first, so as not to lean toward acting.
+
+**It did exactly what it was designed to do, and the action rate went to zero.**
+
+| arm | n | wrote the clause | planner ran | acted |
+|---|---|---|---|---|
+| all fixes, shipped prompt (`c12-ceilings`) | 12 | 0/11 | 11/12 | 1 |
+| all fixes, replacement question (`c12-handoff`) | 12 | **8/9** | 9/12 | **0** |
+
+**So the clause is a correlate and not a cause**, which is worth more than the arm cost. Every
+story in #66 up to here - four prompt arms, a threshold, a step budget - assumed the model
+would act if the right thing were in front of it. Induce the clause and it still does not.
+
+**And the reason is visible now, because the wrong answer is written down instead of merely
+absent.** Of the nine hypotheses that reached the question, **two answered it correctly and
+seven did not**:
+
+- *"A fresh replacement pod would have a different name, so it would not see its own name in the
+  lease and would start successfully"* — correct. Declined anyway.
+- *"A new replica using the same PVC will encounter the same stale lease and fail identically."*
+- *"A fresh replacement pod would inherit the same PVC and therefore fail identically."*
+- *"A newly created replacement pod would also read the same stale lease (**different pod name**)
+  and fail unless the file is cleared."* — which notices the name differs and concludes failure
+  in the same sentence.
+- three more that answer "would start successfully **if the lease file were cleared**" or
+  "**using a new PVC**" — conditioning the recovery on clearing the state, which is the same
+  wrong model wearing a hedge.
+
+The failure is one inference, and it is the fixture's whole hinge: gpt-oss reasons *the state
+persists, therefore the failure persists*, and does not carry through that the comparison is
+`holder == my own name` and that the name is the half that changes. It is not missing the
+mechanism - seven of these hypotheses quote the `FATAL` line and name the pod - it is not
+completing it.
+
+**Two independent failures, and neither is a prompt.** The model mostly cannot derive that a
+replacement would succeed; and on the two runs where it did derive it and said so plainly,
+phase 2 declined anyway. The second is the more interesting one and this arm is far too small to
+say anything about it - n = 2 - but it is the first evidence that `30-planning.md`'s "where does
+the bad state live?" routes to a decline even when the hypothesis in front of it says a
+replacement would start cleanly. If that holds up, the phase 2 question is mis-shaped for
+transient faults rather than merely under-informed, and asking it about *state* rather than
+about *recurrence* is the thing to change.
+
+**Reverted, on this file's own rule.** Root-cause accuracy went 11/12 to 9/12 and no-finding 1
+to 3, both within noise, and the action rate did not move. A longer prompt that moves nothing is
+a cost with no benefit - the same judgement #66 made about the fourth arm, on the same evidence
+standard.
+
+**What it changes about the remaining work.** #66 says "the next thing worth trying is not a
+fifth wording". That was right, and this is the measurement that shows why rather than the
+argument that it should be. Five arms have now moved the wording in front of the model and none
+has moved the outcome. The remaining candidates are not prompts: a model that can complete the
+inference, or a fixture set that does not rest the only acting measurement on one that
+`gpt-oss:120b` gets wrong 7 times in 9.
+
+**Size.** S, and spent. **Closed as a measured null 2026-09-02**, with the arm's results kept in
+`results/c12-handoff-*.json`.
