@@ -995,13 +995,25 @@ matched. **The redactor and the scan that checked it agreed the corpus was clean
 shared the pattern.** Unrelated code rendering the same files is what disagreed — a check that
 inherits its subject's bug is not a second opinion.
 
-**Outstanding, and it is the half that gates the claim.** #72 is still unconfirmed on a cluster and
-#66's two numbers still disagree, so the hero's *"It fixes what it can prove"* remains the one
-sentence on the site whose evidence is outstanding. The product screenshots are not captured
-either, for the same reason: both want the one `--full --mode Auto` run, and the `shots` phase it
-would run in is not built yet. **Deploying the site before that run means publishing the claim
-ahead of its evidence**, which is a decision rather than an oversight, and this section exists so
-it is made deliberately.
+**The sites are live, on hephaisto.dev, docs.hephaisto.dev and demo.hephaisto.dev.** Three
+Cloudflare Pages projects, deployed by `deploy.yml` on push to `main`, first proven green on
+2026-09-02. The landing page has been finished since v0.4.0 and undeployed ever since.
+
+**And the decision this section existed to force has now been made, so it is recorded rather than
+left implied.** #66 resolved — the action rate is per-model, and the two numbers that looked like
+disagreeing instruments were two different models. **#72 did not.** It is still unconfirmed on a
+cluster, and confirming it needs a model that acts, which the standing model constraints rule out
+locally.
+
+So the site went up with *"It fixes what it can prove"* still on it, and that sentence's evidence
+is still outstanding. **The claim is published ahead of its evidence.** That was chosen, on the
+grounds that this is v0.x and not a release — but the honest description is the one written here,
+not a softer one. Two things keep it from being a lie by omission: the README states plainly that
+an incident the agent acted on has never been observed reaching `Resolved`, and the demo's own
+index page says in as many words that none of its ten investigations shows the agent acting.
+
+The product screenshots are still not captured, for the reason they always were: they want the one
+`--full --mode Auto` run, and the `shots` phase is not built.
 
 The demo site makes that gap visible rather than papering over it, which is the right outcome but
 worth naming: **none of the ten transcripts shows the agent acting.** `plan.actions[]` is empty in
