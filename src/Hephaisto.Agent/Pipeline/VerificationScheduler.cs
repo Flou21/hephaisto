@@ -223,7 +223,22 @@ public sealed class VerificationScheduler(
             ActionId = action.Id,
             Actor = IncidentStateMachine.VerifierActor,
             Summary = "verification passed",
-            Detail = result.Detail,
+
+            // Serialised, like every other audit site. This one assigned the raw string for
+            // three releases, and because AuditEvent.Detail is a jsonb column Postgres
+            // rejected the whole SaveChanges with `22P02: invalid input syntax for type json,
+            // Token "Deployment" is invalid` - the detail begins "Deployment/foo is settled".
+            //
+            // The transition to Resolved is in that same transaction, so it rolled back with
+            // it, and so did the verification row's own Outcome. The next poll therefore found
+            // the verification still Pending and still due, ran it, passed again, and failed to
+            // save again, forever. The incident sat in Verifying with escalationReason None
+            // while the workload was demonstrably healthy. See docs/backlog.md #72.
+            //
+            // The checks ride along now because they were computed anyway and are the evidence
+            // for the closure - which is what an audit row is for.
+            Detail = JsonSerializer.Serialize(
+                new { detail = result.Detail, checks = result.Checks }, Json),
         });
 
         await db.SaveChangesAsync(ct);

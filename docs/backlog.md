@@ -2950,6 +2950,71 @@ three unit tests and has never been observed end to end**, and it stays that way
 model that completes the inference is available for a cluster run, or a fixture whose acting
 case does not depend on it exists. Both are #66's remaining work, not this entry's.
 
+---
+
+**The fourth cause, found 2026-09-02, and this one is the actual one.** The fixture arrived
+([#90](#90)): c13 puts the wedge on an emptyDir, `gpt-oss:120b` acted on it on the first
+attempt and again on the second, and the confirming run could finally be made to happen on
+demand instead of waited for. It failed, at exactly this assertion, with exactly this message.
+
+Everything in front of it was working. The executed action carried
+`ownerKind: Deployment, ownerName: c13-wedged-lock`, so the owner inheritance above is doing its
+job; the workload recovered in 16s; and the agent's own log says the check **passed**:
+
+```
+Verification 1 of RestartPod on hephaisto-chaos/Deployment/c13-wedged-lock:
+  Passed - Deployment/c13-wedged-lock is settled with 1/1 ready and no container waiting
+```
+
+And immediately after it, swallowed:
+
+```
+Npgsql.PostgresException 22P02: invalid input syntax for type json
+DETAIL: Token "Deployment" is invalid.
+```
+
+**Cause.** `AuditEvent.Detail` is a `jsonb` column. `VerificationScheduler` assigned
+`result.Detail` to it raw - a sentence beginning *"Deployment/c13-wedged-lock is settled"* - and
+it is the **only one of the ten `new AuditEvent` sites in the agent that does not serialise**.
+Every other one calls `JsonSerializer.Serialize`.
+
+**Why that stops the incident closing rather than just losing a log line.** The audit row is
+written in the same transaction as the transition it describes, deliberately, because that is
+what makes "no audit, no action" true. So the rejected insert rolls back the transition to
+`Resolved` - and it rolls back the verification row's own `Outcome` too, since that is the same
+`SaveChanges`. The next poll therefore finds the same verification still `Pending` and still
+due, runs it, passes again, and fails to save again. Every ten seconds, indefinitely.
+
+That is the whole symptom: `state=Verifying`, `escalationReason=None`, a healthy workload, and
+nothing in the incident to say why. `PollAsync`'s catch-all - *"The loop must outlive any single
+bad tick"* - is what keeps the error out of sight, and it is right to exist; what was missing is
+that a persistent failure there is indistinguishable from a scheduler that is simply waiting.
+
+**It also explains [#11](#11).** "There is no production path to `Resolved`" was written before
+`VerificationScheduler` existed and was believed fixed when it landed. The path was built and
+has never once been able to complete, because `incident.resolved` is the only audit type this
+bug can reach - the escalate path writes no audit event, so a *failing* verification would have
+closed the incident fine.
+
+**Why three passes missed it.** Each earlier diagnosis was looking at a real defect that was
+genuinely in front of this one, and fixing each moved the failure one layer deeper while leaving
+the symptom identical. The wait was too short; then the action had no owner; then the owner was
+right and the write failed. None of them could be told apart from the outside, because all three
+present as an incident that sits in `Verifying` for ever.
+
+**What could have caught it.** Nothing in the unit suite - the in-memory provider has no column
+types. Nothing in the e2e either, until a fixture existed that the agent would reliably act on.
+`AuditDetailIsJsonTests` runs against the real schema and reproduces the `22P02` directly.
+
+**Fix.** The call site serialises, and carries the structured `checks` alongside the sentence
+because they were computed anyway and are the evidence for the closure. `AuditRepository.Enlist`
+also wraps a non-JSON detail rather than letting Postgres reject the transaction - the same
+argument as the timestamp it already normalises there, and load-bearing for a different reason:
+an audit write that can fail is a state change that can fail.
+
+**Size.** S, after an M of diagnosis and a fixture. **Status: fixed 2026-09-02, confirming
+cluster run pending a build that contains the fix.**
+
 ### 73. Every red run was reported as ABORTED, including the ones that finished
 
 **Status: fixed 2026-08-31** — see the end of this entry.
@@ -3799,3 +3864,86 @@ inference, or a fixture set that does not rest the only acting measurement on on
 
 **Size.** S, and spent. **Closed as a measured null 2026-09-02**, with the arm's results kept in
 `results/c12-handoff-*.json`.
+
+### 90. The acting path had no fixture that could measure it
+
+**Why this exists.** [#72](#72-an-incident-that-was-successfully-acted-on-sits-in-verifying-forever)
+needed a cluster run in which the agent actually executes something, and could not get one. The
+act phase rested on c12, which `gpt-oss:120b` acts on about 1 run in 11, so confirming a
+post-execution bug meant waiting for a one-in-eleven event at ~25 minutes a try - or retrying
+until it landed, which is selecting the run that agrees with you.
+
+**The fixtures were measuring two things at once.** c11 and c12 both put the state on a PVC. So
+acting on either means acting **against** the rule that PVC contents survive a pod replacement -
+c11 by reconciling a second volume, c12 by noticing the comparison is against the pod's own
+*name* rather than the stored bytes. That rule is correct and an SRE agent should hold it.
+[#89](#89) measured gpt-oss failing c12's override 7 times in 9 when asked point blank, and
+every gpt-oss run that *did* propose a restart was one that had stopped believing the state was
+on a PVC - one hallucinated an emptyDir and acted on that.
+
+So a decline on c11 or c12 is ambiguous between "will not act" and "did not make the
+inference", and the act phase has been reading the first from evidence that only supports the
+second. c12's own header names the trap and then walks into it: it identifies the PVC as the
+reason c11 failed, removes c11's second volume, and keeps the PVC.
+
+**c13.** The same fault with the wedge on an **emptyDir** - a startup lock left behind by an
+abnormal exit, which is the case `30-planning.md` already names ("the process that wedged on a
+stale lock") on a volume it already calls pod-scoped. Nothing to override, nothing to reconcile,
+and the rule the prompt states is sufficient. It measures **willingness to act**; c12 keeps
+measuring the inference.
+
+**It cannot arm itself, and that is not an oversight.** The lock has to be left by an exit the
+workload did not choose, so `chaos_apply` execs a `touch /scratch/crash` once the pod is Ready.
+A fixture that wedged itself deterministically would wedge the replacement pod too - same
+entrypoint, same empty volume - and then a restart would not repair it. That recursion is
+exactly what forces c11 and c12 onto a PVC in the first place, and it is worth writing down
+because it looks like laziness and is not.
+
+**Measured.** Acted on the first cluster run and the second: diagnosed the stale lock, proposed
+`RestartPod`, admitted by policy as low-risk, executed, and the replacement pod was available in
+16-20s. 70 of 71 assertions passed. The one failure was #72, which is what the fixture was built
+to reach - and it reached it on demand, twice, having previously been unreproducible.
+
+**Not a replacement for c12, and this is the part that matters.** c11 and c12 are untouched and
+keep reporting exactly what they reported. Grading the harder fixture as a pass, or widening its
+`AcceptableActions`, would be the bar-lowering [#66](#66-the-planner-acts-on-half-of-a-fair-fixture)
+refuses; adding an easier fixture alongside it is a different act. **The two numbers must be
+quoted separately.** "The agent acts on c13" and "the agent acts on c12 about 1 time in 11" are
+both true, they measure different capabilities, and averaging them would recreate precisely the
+conflation this fixture was added to end.
+
+`ACT_FIXTURE` defaults to c13; c12 and c11 stay selectable.
+
+**Size.** M. **Fixed 2026-09-02.**
+
+### 91. `docker manifest inspect` cannot reach ghcr from here, so the build phase aborts on a published artifact
+
+**Symptom.** Two consecutive e2e runs aborted in phase 2:
+
+```
+waiting for the chart to appear in the registry  ok (1s)
+ok    chart is pullable anonymously
+waiting for the image manifest to appear .... timeout after 180s
+FAIL  image is pullable -- ghcr.io/flou21/hephaisto:0.5.1-main.0.32 not resolvable
+```
+
+The nightly had gone green, and the image **was** published - the registry's own tag list
+returns `0.5.1-main.0.32` to an anonymous `curl` in under a second, as does the token endpoint.
+What fails is `docker manifest inspect`, with `net/http: TLS handshake timeout`, repeatably,
+against a host that `curl` reaches fine from the same shell.
+
+**So the check disagrees with the registry**, and it disagrees in the direction that stops a
+release gate on a good build. The chart half of the same function uses `helm show chart` and
+passes instantly, which is what makes it look like a publish race rather than a client problem.
+
+**Not diagnosed further**, deliberately - it is a docker-CLI networking question on one machine
+and it was in the way of #72 rather than being the work. Worked around with `--from cluster`,
+which skips a phase whose assertion had already been satisfied by other means.
+
+**Worth fixing as a check rather than as a network.** The harness wants to know "can a consumer
+pull this", and it has two clients that answer that; using the one that also serves the chart,
+or falling back to the registry API on a docker failure, would make the gate independent of a
+tool that is not otherwise on the path. As it stands a transient docker fault reads as an
+unpublished image.
+
+**Size.** S. **Open.**
