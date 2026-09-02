@@ -91,11 +91,13 @@ Two very different causes, and they are easy to confuse.
 `400 "This response_format type is unavailable now"`. Phase 1 is unaffected, so the agent
 diagnoses correctly and proposes nothing. Set `Llm:PlanningStructuredOutput=JsonObject`.
 
-**Or the model simply does not propose actions.** This is a real, measured property that varies
-enormously between models — `gpt-oss:120b` proposed an action in 0 of 18 runs on a fixture where
-`deepseek-v4-flash` proposed one in 4 of 8. See
-[the table](/guide/what-it-is#the-row-to-read-carefully). If you need remediation proposals, this
-is a model-selection decision, not a configuration one.
+**Or the model does not propose actions on this shape of fault.** A real, measured property that
+varies between models *and between fixtures* — on `c12-stale-lease`, where acting means overriding
+the correct rule that PVC contents survive a pod replacement, `gpt-oss:120b` proposed an action in
+1 of 11 runs where the planner ran, against `deepseek-v4-flash`'s 4 of 8. On `c13-wedged-lock`,
+where the state is on an `emptyDir` and no override is needed, the same model proposed one 6 times
+out of 6. See [the table](/guide/what-it-is#the-row-to-read-carefully). If you need remediation
+proposals on the harder shape, that is a model-selection decision, not a configuration one.
 
 **Or the policy engine is refusing.** In `Observe` the plan is still generated; check the
 incident's escalation reason. `PolicyDenied` means the plan existed and was rejected.

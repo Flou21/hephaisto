@@ -117,5 +117,8 @@ The executor covers exactly the verbs the write `Role` grants: `RestartPod`, `Ro
 `PatchResources` are **refused before a call is made**, with `outcome=unsupported` and nothing
 attempted.
 
-And the last step of the acting path has never been observed on a cluster: an incident the agent
-acted on reaching `Resolved`. That is stated here rather than left to be discovered.
+The last step of the acting path — an incident the agent acted on reaching `Resolved` — was
+unobserved on a cluster until 2026-09-02, and has now been seen **once**, on one fixture, in 41
+seconds. That is stated here with its denominator rather than left to be discovered, because
+"the path works and has been seen to work" and "the path is reliable" are different claims and
+only the first is supported.

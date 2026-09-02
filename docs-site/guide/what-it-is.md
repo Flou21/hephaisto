@@ -59,7 +59,7 @@ Being precise about this matters, because the difference is the whole safety arg
 | Audit log, budgets, cooldowns, oscillation detection | **works** |
 | Plan generation (schema-constrained, no tools) | **works** |
 | Executing a plan against the cluster | observed on a cluster, five action types |
-| Verification at T+60s / T+5m / T+15m, and rollback | built, never observed closing an incident |
+| Verification at T+60s / T+5m / T+15m, and rollback | observed closing an incident once, on one fixture |
 | Approval workflow — UI and API | **works** |
 | Oscillation detection wired to a workload quarantine | **works** |
 | `SilenceAlert` — always requiring approval | built, needs Alertmanager configured |
@@ -75,21 +75,32 @@ the receiver brought back, and the delivery arriving anyway.
 
 ## The row to read carefully
 
-The agent **has** been observed executing actions against a cluster, and the policy engine that
-gates them is exhaustively unit-tested. What has never been observed is the last step — an
-incident the agent acted on reaching `Resolved`.
+The last step — an incident the agent acted on reaching `Resolved` — went unobserved for four
+releases. It was confirmed on a cluster on 2026-09-02, on the `c13-wedged-lock` fixture:
+`Detected → Triaging → Investigating → Acting → Verifying → Resolved`, 41 seconds after the
+restart, granted by `hephaisto/verifier`. **That is one run on one fixture.** Read it as "this
+path works end to end and has been seen to", not as a rate.
 
-How often the planner proposes an action at all turns out to be a property of the **model**, not
-of the agent. Measured on one fixture, holding everything else fixed:
+Whether the planner proposes an action at all is a property of the **fixture** as much as of the
+model, and the two numbers below measure different questions. They must not be averaged.
 
-| Model | Runs | Proposed an action |
-|---|---|---|
-| `deepseek-v4-flash` | 8 | 4 |
-| `gpt-oss:120b` | 18 | 0 |
-| `gemini-3.7-flash` | 3 | 0 |
+| Fixture | Model | Runs where the planner ran | Proposed an action |
+|---|---|---|---|
+| `c13-wedged-lock` | `gpt-oss:120b` | 6 | 6 |
+| `c12-stale-lease` | `gpt-oss:120b` | 11 | 1 |
+| `c12-stale-lease` | `deepseek-v4-flash` | 8 | 4 |
 
-Fisher's exact test gives p = 0.0047. This is worth knowing before you choose a model: a cheap
-local model can diagnose well and still decline to ever propose a remediation.
+c13 puts the wedge on an `emptyDir`, which the planning prompt already names as pod-scoped state
+a replacement pod does not reproduce — so the rule it needs is one it already holds, and this
+measures **willingness to act**. c12 puts the same fault on a PVC, so acting means overriding the
+*correct* rule that PVC contents survive a replacement; that measures an **inference**, and
+`gpt-oss:120b` gets it wrong 7 times in 9 when asked point blank. On c12 Fisher's exact gives
+p = 0.11.
+
+An earlier **p = 0.0047** was published here, over 24 runs. Nine of those had ended on a token
+budget before the planner ever ran, and were counted as declines; it did not survive counting the
+denominator honestly. Still worth knowing before you choose a model — a cheap local model can
+diagnose well and still decline the harder shape — but the honest statement names its fixture.
 [The evidence page](/internals/evaluation) has the detail.
 
 ## What it deliberately does not do

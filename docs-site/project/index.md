@@ -23,9 +23,10 @@ project can offer in exchange is a complete, specific list of the ways it is cur
 including the ones that block sentences it would like to put on its own landing page.
 
 Two entries have carried a `Blocks:` field pointing at exactly that: one blocked claiming an
-action rate, and one blocks claiming the agent resolves incidents. The first
-[was resolved by finding the entry itself was wrong](/internals/evaluation#what-the-two-instruments-disagreeing-turned-out-to-mean).
-The second is still open.
+action rate, and one blocked claiming the agent resolves incidents. The second was closed by
+confirming it on a cluster, once. The first
+[was corrected twice, and the second correction retired the p-value the first one produced](/internals/evaluation#why-there-is-no-such-thing-as-the-action-rate);
+it is still open, narrowed to why one model declines one fixture.
 
 ## The distinction between history and changelog
 

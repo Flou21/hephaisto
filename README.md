@@ -16,15 +16,26 @@ open in Grafana, step through, and then ask the agent about.
 > local `gpt-oss-120b`; it can also be driven by Gemini, DeepSeek, OpenRouter or any
 > OpenAI-compatible endpoint.
 >
-> **Acting is built, gated, and not yet demonstrated closing an incident.** The executor, the
-> policy engine, verification and rollback are all in place and unit- and integration-tested, and
-> the agent has been observed executing actions on a cluster. What has *not* been observed is an
-> incident it acted on reaching `Resolved` — see
-> [#72](docs/backlog.md#72-an-incident-that-was-successfully-acted-on-sits-in-verifying-forever).
-> How often the planner proposes an action at all turned out to be a property of the **model**
-> rather than of the agent: 4-of-8 for `deepseek-v4-flash`, 0-of-18 for `gpt-oss:120b`, 0-of-3 for
-> `gemini-3.7-flash` (Fisher p = 0.0047). The two numbers that used to be quoted as disagreeing
-> instruments were the two models
+> **Acting has been demonstrated end to end, once.** On `c13-wedged-lock`, the agent diagnosed a
+> stale startup lock, proposed a `RestartPod`, had it admitted by the policy engine, executed it,
+> saw the workload available in 16s, and the incident reached `Resolved` **41 seconds** later,
+> granted by `hephaisto/verifier` — 70 assertions, on 2026-09-02
+> ([#72](docs/backlog.md#72-an-incident-that-was-successfully-acted-on-sits-in-verifying-forever)).
+> That is one run. The executor, the policy engine, verification and rollback are also unit- and
+> integration-tested.
+>
+> **Whether it proposes an action is a property of the fixture and the model, and there is no
+> such thing as "the action rate".** On c13 — a lock on an `emptyDir`, which the planning prompt
+> already names as pod-scoped state a replacement does not reproduce — `gpt-oss:120b` proposed an
+> acceptable action on **6 of 6** cluster runs; n = 6 supports "usually", not "always". On
+> `c12-stale-lease`, the same fault with the state on a PVC so that acting means overriding a
+> *correct* rule, it proposed one in **1 of 11 runs where the planner actually ran**, against
+> `deepseek-v4-flash`'s **4 of 8** (Fisher p = 0.11). The **p = 0.0047** published earlier was
+> computed over 24 runs, nine of which ended on a budget before the planner ran; it did not
+> survive counting the denominator honestly
+> ([#88](docs/backlog.md#88-noplan-pools-four-outcomes-and-the-action-rate-counted-all-four-as-declines)).
+> **The two fixture numbers must not be averaged** — c13 measures willingness to act, c12
+> measures an inference `gpt-oss:120b` gets wrong 7 times in 9
 > ([#66](docs/backlog.md#66-the-planner-acts-on-half-of-a-fair-fixture)).
 >
 > It ships configured to act **nowhere**. `policy.actionableNamespaces` is empty,
@@ -108,7 +119,7 @@ Being precise about this matters, because the difference is the whole safety arg
 | Audit log, budgets, cooldowns, oscillation detection | **works** |
 | Plan generation (schema-constrained, no tools) | **works** |
 | Executing a plan against the cluster | observed on a cluster, five action types — see below |
-| Verification at T+60s / T+5m / T+15m, and rollback | built, never observed closing an incident |
+| Verification at T+60s / T+5m / T+15m, and rollback | observed closing an incident once, on one fixture |
 | Approval workflow — UI and API | **works** |
 | Oscillation detection wired to a workload quarantine | **works** |
 | `SilenceAlert` — always requiring approval | built, needs Alertmanager configured |
@@ -122,18 +133,24 @@ measured against a real cluster over ten seeded scenarios. The delivery path was
 v0.3.0, including the assertion it exists for: the receiver taken down, the agent restarted
 mid-flight, the receiver brought back, and the delivery arriving anyway.
 
-The acting path is the one to read carefully. The agent **has** been observed executing actions
-against a cluster, and the policy engine that gates them is exhaustively unit-tested. What has
-never been observed is the last step — an incident the agent acted on reaching `Resolved`,
-because until v0.5.0 a `RestartPod` could not be verified at all
-([#72](docs/backlog.md#72-an-incident-that-was-successfully-acted-on-sits-in-verifying-forever),
-fixed and not yet confirmed on a cluster). Whether the planner proposes an action on a fair
-fixture is separately measured, and it is a property of the model rather than of the agent —
-4-of-8 for `deepseek-v4-flash` against 0-of-18 for `gpt-oss:120b`, Fisher p = 0.0047. Replay and a
-cluster agree exactly once the model is held fixed; the "disagreeing instruments" this entry used
-to describe were two different models
-([#66](docs/backlog.md#66-the-planner-acts-on-half-of-a-fair-fixture)). If you need the agent to
-propose remediations, that is a model-selection decision.
+The acting path is the one to read carefully. The last step — an incident the agent acted on
+reaching `Resolved` — was unobserved for four releases, because until v0.5.0 a `RestartPod`
+could not be verified at all and after that the resolve transition could not commit
+([#72](docs/backlog.md#72-an-incident-that-was-successfully-acted-on-sits-in-verifying-forever)).
+It was confirmed on a cluster on 2026-09-02: `Detected → Triaging → Investigating → Acting →
+Verifying → Resolved`, 41 seconds after the restart. **That is one run on one fixture**, and it
+took five layered bugs to reach — four of them real, and the fifth an assertion that could never
+pass, which had agreed with the other four for long enough that nobody questioned it.
+
+Whether the planner proposes an action is separately measured, and is a property of the
+**fixture** as much as the model. Do not average the two numbers: on `c13-wedged-lock`
+`gpt-oss:120b` proposed an acceptable action 6 of 6 times, and on `c12-stale-lease` — where
+acting means overriding the correct rule that PVC contents survive a pod replacement — 1 of 11
+times where the planner ran, against `deepseek-v4-flash`'s 4 of 8
+([#66](docs/backlog.md#66-the-planner-acts-on-half-of-a-fair-fixture),
+[#90](docs/backlog.md#90-the-acting-path-had-no-fixture-that-could-measure-it)). c13 measures
+willingness to act; c12 measures an inference. If you need the agent to propose remediations on
+the harder shape, that is a model-selection decision.
 
 `docs/roadmap.md` has the detail, and `docs/backlog.md` has everything known to be broken.
 

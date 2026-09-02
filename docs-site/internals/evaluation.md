@@ -31,33 +31,53 @@ Deliberately — the model is the thing under test. The consequence is that repl
 deterministic and **not** free: it is a live, paid model run over a fixed set of tool responses.
 :::
 
-## What the two instruments disagreeing turned out to mean
+## Why there is no such thing as "the action rate"
 
-For a while this project published two numbers for how often the planner proposes an action: 4 of
-8 in replay, 0 of 4 on a cluster. They disagreed, and neither was quoted as the rate.
+This number has been wrong twice, in two different ways, and both corrections are more useful than
+the number.
 
-Grouping every measurement by **model** dissolved the disagreement:
+**First**, the project published two figures that disagreed — 4 of 8 in replay, 0 of 4 on a
+cluster — and treated that as an instrument problem. It was not. The "4 of 8" was the DeepSeek arm
+in its entirety; the cluster's "0 of 4" was `gpt-oss`, because the gate runs the free local model.
+Hold the model fixed and replay and cluster agree exactly. It was a per-model property recorded as
+the agent's.
 
-| Model | Runs | Proposed an action |
-|---|---|---|
-| `deepseek-v4-flash` | 8 | **4** |
-| `gpt-oss:120b` | 18 | **0** |
-| `gemini-3.7-flash` | 3 | **0** |
+**Second**, the p-value that correction produced did not survive either. It was **p = 0.0047**
+over 24 runs, and nine of those had ended on a token budget *before the planner ever ran* — counted
+as declines, in the denominator, as zeros. Three instrument defects were fixed; the planner
+actually ran in 11 of 12, not 5 of 12, and the corrected comparison on that fixture is 1 of 11
+against DeepSeek's 4 of 8, **p = 0.11**.
 
-Fisher's exact test: **p = 0.0047**.
+**Third**, and the reason this heading is phrased the way it is: the fixture matters as much as the
+model, and one fixture was carrying both questions at once.
 
-The "4 of 8" was the DeepSeek arm in its entirety. The cluster's "0 of 4" was `gpt-oss` — the gate
-runs the free local model. **Hold the model fixed and replay and cluster agree exactly.** There was
-never an instrument disagreement; it was a per-model property recorded as the agent's.
+| Fixture | Model | Runs where the planner ran | Proposed an action |
+|---|---|---|---|
+| `c13-wedged-lock` | `gpt-oss:120b` | 6 | **6** |
+| `c12-stale-lease` | `gpt-oss:120b` | 11 | **1** |
+| `c12-stale-lease` | `deepseek-v4-flash` | 8 | **4** |
 
-This is the third time that pattern has appeared in this project, and it is the single most useful
-thing on this page for somebody choosing a model.
+c12 puts the wedged state on a PVC, so proposing a restart means overriding the rule that PVC
+contents survive a pod replacement — a rule that is **correct** and that an SRE agent should hold.
+A model that declines c12 may simply have failed the override rather than being unwilling to act,
+and `gpt-oss:120b` fails that inference 7 times in 9 when asked point blank. c13 is the same fault
+with the lock on an `emptyDir`, which the planning prompt already names as pod-scoped: nothing to
+override, and the rule it needs is one it already states. So c13 measures **willingness to act** and
+c12 measures an **inference**.
+
+Quote the two separately. Averaging them recreates exactly the conflation c13 was added to end, and
+n = 6 on c13 supports "usually" — the exact one-sided 95% lower bound is 0.61 — not "always".
+
+This pattern, a per-instrument property recorded as the agent's, has now appeared three times in
+this project, and it is the single most useful thing on this page for somebody choosing a model.
 
 ## What this means for you
 
 If you need the agent to propose remediations, **model choice is the decision that determines
 whether it ever does**. A cheap local model can diagnose well — `gpt-oss:120b` is part of how the
-8/10 was reached — and still never propose an action.
+8/10 was reached — and still decline on the harder fixture shape while acting readily on the
+simpler one. Ask which fixture a rate was measured on before you read it as a property of the
+model.
 
 Check `Llm:PlanningStructuredOutput` too: a provider that cannot constrain output to a JSON schema
 produces the same observable behaviour for an entirely different reason. See
