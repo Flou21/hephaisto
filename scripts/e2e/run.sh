@@ -78,9 +78,10 @@ Options:
   --rc                 cut the next release candidate, publish it, test it (prompts)
   --tag <version>      test a version that is already published, e.g. 0.0.1-rc2
   --fixtures <list>    comma-separated chaos fixtures (default: c2,c3,c4,c7)
-  --full               every fixture that can run here: c1,c2,c3,c4,c5,c7,c8,c10,c11,c12.
-                       The release gate. About two hours - c8 alone needs a 30-minute
-                       window. c6 and c9 are excluded and no flag overrides that.
+  --full               every fixture that can run here:
+                       c1,c2,c3,c4,c5,c7,c8,c10,c11,c12,c13. The release gate. About two
+                       hours - c8 alone needs a 30-minute window. c6 and c9 are excluded
+                       and no flag overrides that.
   --k8s <version>      Kubernetes version for the kind node (default: 1.36.4)
   --from <phase>       start at this phase, reusing an existing cluster
   --only <phase>       run just this phase against an existing cluster

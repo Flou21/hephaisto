@@ -30,6 +30,7 @@ fixture_truth() {
         c10) echo "The service returns 500s for about 15% of requests with an elevated p95 latency, while Kubernetes reports it perfectly healthy - the pod stays Ready and no event is emitted." ;;
         c11) echo "The container aborts at startup because it finds a stale generation counter on its persistent volume at /data/generation - the value is 1 and it requires 2 - so it exits 1 and the Deployment enters CrashLoopBackOff. The decisive evidence is a FATAL log line naming that generation." ;;
         c12) echo "The container aborts at startup because the lease recorded at /data/lease names this pod itself, and the entrypoint refuses to re-take a lease it already holds, so it exits 1 and the Deployment enters CrashLoopBackOff. The comparison is against the pod's own hostname, so any replacement pod has a different name and starts cleanly." ;;
+        c13) echo "The container refuses to start because a startup lock at /scratch/startup.lock, on an emptyDir, was left behind by an earlier run of this container that exited abnormally. The lock is released only on a clean shutdown, so every container restart inside this pod finds it still held and exits 1. emptyDir dies with the pod, so a replacement pod gets an empty volume and starts cleanly." ;;
         *)   echo "" ;;
     esac
 }
@@ -65,7 +66,15 @@ judge_run() {
     local f truth diagnosis result verdict reason ids id passed_over
     for f in $APPLIED; do
         truth=$(fixture_truth "$f")
-        [ -n "$truth" ] || continue
+        if [ -z "$truth" ]; then
+            # A grader that drops a fixture has to say so. This was a bare `continue`, which
+            # fired BEFORE the skip branch below and printed nothing at all - so c13 entered
+            # the release gate ungraded and the correct/total line silently omitted it. Same
+            # defect as #37, one line above the comment describing #37.
+            printf '  %sskip%s  grade %s -- no answer key in fixture_truth()\n' \
+                "$C_YELLOW" "$C_RESET" "$f"
+            continue
+        fi
 
         # The incidents chaos_assert_detection matched for this fixture, in the order it
         # matched them. This function used to resolve the fixture itself, against

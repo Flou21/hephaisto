@@ -35,10 +35,10 @@
 # be deleted before it can be re-applied.
 DEFAULT_FIXTURES="c2,c3,c4,c7"
 
-# --full. Every fixture that can run on this hardware, which is ten of the twelve: c6 and c9
-# are excluded for the stated reasons above and no flag overrides that, because neither is a
-# scheduling choice - c6 cannot fire on local-path and c9 evicts the observability stack it
-# would be measured by.
+# --full. Every fixture that can run on this hardware, which is eleven of the thirteen: c6
+# and c9 are excluded for the stated reasons above and no flag overrides that, because neither
+# is a scheduling choice - c6 cannot fire on local-path and c9 evicts the observability stack
+# it would be measured by.
 #
 # This is the release gate, not the inner loop. It is slow on purpose: c8 alone needs a
 # 30-minute window and c10 sits behind 5-minute rate windows, so budget about two hours. The
