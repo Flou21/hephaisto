@@ -54,7 +54,26 @@ public static partial class TranscriptRedactor
     internal static string Scrub(string text) =>
         IpV4().Replace(text, Placeholder);
 
+    /// <summary>
+    /// The boundaries are "not a digit and not a dot", NOT <c>\b</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>\b</c> was wrong in both directions, and it shipped an address to a published page
+    /// before anything noticed. This runs over a SERIALIZED document, where a newline inside an
+    /// evidence blob is the two characters <c>\</c> and <c>n</c> - so a tool result whose next
+    /// line began with an address read as <c>...\n10.42.0.68</c>, and <c>n</c> to <c>1</c> is not
+    /// a word boundary. The address was left in place, in a file whose whole purpose is to be
+    /// published.
+    /// </para>
+    /// <para>
+    /// The same <c>\b</c> also produced a false positive at the other end: in <c>v1.2.3.4.5</c> it
+    /// matched <c>2.3.4.5</c> and rewrote a version string into a placeholder. A lookaround for a
+    /// digit or a dot is what was meant both times - an octet is bounded by something that is not
+    /// part of a number, not by something that is not part of a word.
+    /// </para>
+    /// </remarks>
     [GeneratedRegex(
-        @"\b(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\b")]
+        @"(?<![\d.])(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?![\d.])")]
     private static partial Regex IpV4();
 }

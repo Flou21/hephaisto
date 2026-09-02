@@ -3364,3 +3364,56 @@ Whether the key works is `deps_secrets`' job on the host, and has been since #61
 **Size.** S.
 
 **Fixed 2026-09-02.**
+
+### 84. The redactor's word boundary missed an address, and mangled a version string
+
+**Symptom.** `hephaisto-eval redact` reported all ten transcripts unchanged. The static demo site,
+rendering those same transcripts to HTML, published `10.42.0.68` — a pod address from the
+recording cluster — on the page for `c8`.
+
+**Cause.** `TranscriptRedactor` anchors its dotted-quad pattern on `\b` at both ends. It runs over
+the **serialized** document, where a newline inside an evidence blob is the two characters `\` and
+`n`. A `kubectl`-style table in a tool result therefore serialized as:
+
+```
+...----------  -----\n10.42.0.68  ready...
+```
+
+There is no word boundary between `n` and `1`, so the address never matched. Every address that
+happened to begin a line inside a blob was invisible to the redactor.
+
+The same `\b` was wrong in the other direction, and that half is worse because it was not a miss
+but a corruption: in `v1.2.3.4.5` the pattern matched `2.3.4.5` and rewrote a version string into
+`0.0.0.0`. Redaction became editing — which is precisely what the file's own header argues against,
+since "a transcript whose evidence had been edited would be a mock-up wearing the costume of a
+recording".
+
+**Why it is the same bug twice.** [#81](#81-a-demo-transcript-is-published-evidence-and-only-its-addresses-are-redacted)
+records the first version, which walked a list of fields and missed `Incident.Target.NodeName`.
+Scrubbing the whole serialized document fixed that — and *created this one*, because scrubbing a
+serialized document means the JSON escapes are part of the text being matched. The lesson the first
+fix drew was "a field list has to be re-derived every time the schema grows". The lesson this one
+adds is that the serialized form is not the text a human sees, and a pattern written for prose does
+not transfer to it unexamined.
+
+**It was found by a second reader, not by review.** The redactor and the pre-commit scan agreed the
+corpus was clean because they shared the pattern. Rendering the transcripts through unrelated code
+is what disagreed. A check that inherits its subject's bug is not a second opinion.
+
+**Fix.** The boundaries are `(?<![\d.])` and `(?![\d.])` — not part of a number — rather than `\b`.
+An octet is bounded by something that is not a digit or a dot, which is what was meant both times.
+`999.999.999.999`, `1.28.4` and `10.350197` are still left alone, and `v1.2.3.4.5` now is too.
+`demo-site/build.mjs` carries the same pattern and refuses to render if any transcript still holds
+an address, so the site cannot be built from an unredacted corpus.
+
+`c8.json` was re-redacted. The other nine were already clean.
+
+**Standing limit, unchanged.** Redaction is still addresses only. `nodeName: lima-rancher-desktop`
+— the recording machine's Rancher Desktop VM — remains in the corpus, as
+[#81](#81-a-demo-transcript-is-published-evidence-and-only-its-addresses-are-redacted) records. It
+is a default name, not routable and not a credential, and removing it would mean editing evidence
+rather than protecting it.
+
+**Size.** S.
+
+**Fixed 2026-09-02.**

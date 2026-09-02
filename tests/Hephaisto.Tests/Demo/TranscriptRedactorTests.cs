@@ -50,6 +50,50 @@ public class TranscriptRedactorTests
         Assert.Contains("\"nodeName\":\"0.0.0.0:8080\"", scrubbed, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The address that reached a published page.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Found while building the static demo site, which renders these transcripts to HTML: an
+    /// address appeared in the output that the redactor had reported nothing to do about. The
+    /// cause is that this runs over a SERIALIZED document, so a newline inside an evidence blob
+    /// is the two characters <c>\</c> and <c>n</c> - and a tool result whose next line began
+    /// with an address serializes as <c>...\n10.42.0.68</c>. The old pattern anchored on
+    /// <c>\b</c>, and there is no word boundary between <c>n</c> and <c>1</c>.
+    /// </para>
+    /// <para>
+    /// This is the second bug of exactly this shape. The first was a field list that missed a
+    /// field; scrubbing the whole document fixed that and introduced this, because scrubbing a
+    /// serialized document means the escapes are part of the text being matched.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void An_address_immediately_after_an_escaped_newline_is_still_redacted()
+    {
+        // Exactly the shape found in c8.json: a kubectl-style table inside an evidence blob.
+        const string json = """
+            {"blobs":[{"content":"address     state\n----------  -----\n10.42.0.68  ready"}]}
+            """;
+
+        var scrubbed = TranscriptRedactor.RedactJson(json);
+
+        Assert.DoesNotContain("10.42.0.68", scrubbed, StringComparison.Ordinal);
+        Assert.Contains("0.0.0.0  ready", scrubbed, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The same <c>\b</c> was wrong at the other end too, and this is the more insidious half:
+    /// it did not fail to redact, it redacted something that was not an address. In
+    /// <c>v1.2.3.4.5</c> it matched <c>2.3.4.5</c> and rewrote a version string, which is
+    /// editing the evidence rather than protecting it.
+    /// </summary>
+    [Theory]
+    [InlineData("v1.2.3.4.5")]
+    [InlineData("chart 0.6.0.1.2")]
+    public void A_longer_dotted_run_is_not_an_address(string input) =>
+        Assert.Equal(input, TranscriptRedactor.Scrub(input));
+
     [Fact]
     public void The_evidence_itself_survives()
     {
