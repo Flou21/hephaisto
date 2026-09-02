@@ -31,9 +31,14 @@ tilt_config.json
 cassettes/
 results/
 
+# Anywhere, not just under docs-site/. This was `docs-site/node_modules/` until an npx run from
+# the repo root dropped 227MB of wrangler here and `git add -A` staged every file of it. A
+# root-only miss is invisible right up until it is enormous.
+node_modules/
+
 # docs-site (VitePress). The built site is deployed from CI, never committed - the same rule
-# website/ follows, where what is committed is what is served.
-docs-site/node_modules/
+# website/ follows, where what is committed is what is served. bun.lock IS committed: it is the
+# pinned toolchain that makes `bun install --frozen-lockfile` mean something in CI.
 docs-site/.vitepress/dist/
 docs-site/.vitepress/cache/
 

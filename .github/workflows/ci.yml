@@ -438,19 +438,23 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
+      # bun, not npm - and only here. The visual job below runs inside the pinned Playwright
+      # image, which ships node and NOT bun, so design/visual/ and scripts/e2e/ui/ stay on npm:
+      # installing bun into that image per run would cost time and weaken the thing the pin
+      # exists for, which is byte-identical rendering behind maxDiffPixels: 0.
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: '22'
+          bun-version: latest
 
       - name: the docs build, and every transclusion still resolves
         working-directory: docs-site
         run: |
-          npm ci --no-audit --no-fund
-          npm run build
+          bun install --frozen-lockfile
+          bun run build
 
       - name: the demo renders from the committed transcripts
         working-directory: demo-site
-        run: node build.mjs
+        run: bun run build
 
       # A build that emitted nothing exits 0. Assert it produced pages, the same way
       # visual-test.sh asserts the suite actually compared something.
