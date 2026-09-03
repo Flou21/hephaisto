@@ -117,20 +117,22 @@ networkPolicy:
 # Raised to leave headroom for the widest fixture set while still bounding a loop. If a run ever
 # approaches $3 something is genuinely wrong, which is what the cap is for.
 extraEnv:
-  # The token ceiling, raised because it - not the cost cap - is what binds on a cheap model.
+  # THE TOKEN CEILING OVERRIDE IS GONE, AND ITS ABSENCE IS THE POINT.
   #
-  # Measured on the first full Auto run: 27 investigations, 14 of them refused outright with
-  # TerminationReason.Cancelled and the incidents escalated BudgetExhausted, at a total spend of
-  # $0.066 against a $3.00 hourly cost cap. Nothing was close to the money. What ran out was
-  # MaxTokensPerHour, which defaults to 2,000,000 - and 2M tokens of gpt-oss-120b costs about
-  # six cents, so the two ceilings are calibrated for price points ~45x apart.
+  # This file used to raise Llm__Budget__MaxTokensPerHour to 20,000,000, because the shipped
+  # default of 2,000,000 is what actually bound on a cheap model: the first full Auto run
+  # refused 14 of 27 investigations outright with TerminationReason.Cancelled, escalated them
+  # BudgetExhausted, and did it having spent $0.066 against a $3.00 hourly cost cap. Half the
+  # corpus declined on a budget 2% used.
   #
-  # The caps below were written for gemini-3.7-flash at $0.75/1M. On a model at $0.03/1M the
-  # cost cap is unreachable and the token cap is the whole budget, which is how a full-corpus
-  # run lost half its investigations without spending anything. 20M keeps a real bound and
-  # restores cost as the ceiling that governs.
-  - name: Llm__Budget__MaxTokensPerHour
-    value: "20000000"
+  # That was a workaround in the harness for a defect in the product, and it had the effect of
+  # making the harness the only configuration where the budgets were right - so a stranger
+  # installing the chart got the broken calibration and this file could not see it. Backlog #74.
+  #
+  # v0.7.0 fixed the default (50,000,000 - the smallest round figure that puts cost back in
+  # charge on every priced model, see LlmBudgetOptions.MaxTokensPerHour) and added the
+  # invariant test that was missing. Re-adding an override here would now LOWER the ceiling
+  # below the shipped one, which is how a workaround outlives its bug and becomes the next one.
   - name: Llm__Budget__MaxCostUsdPerIncident
     value: "0.10"
   - name: Llm__Budget__MaxCostUsdPerHour

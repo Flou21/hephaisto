@@ -538,18 +538,56 @@ chaos_await_investigations() {
     # query per fixture: the list is short and a clever single expression here is how the
     # previous version came to be counting something else.
     local done_count=0
+    local missing=""
     local f t
     for f in $APPLIED; do
         t=$(fixture_target "$f")
         if api_array "/api/incidents" \
             | jq -e --arg t "$t" 'any((.targetName // "" | startswith($t)) and .hasDiagnosis)' >/dev/null 2>&1; then
             done_count=$(( done_count + 1 ))
+        else
+            missing="${missing:+$missing }$f"
         fi
     done
 
-    [ "${done_count:-0}" -ge "$want" ] \
-        && pass "$done_count of $want fixture investigation(s) produced a diagnosis" \
-        || fail "only ${done_count:-0} of $want fixture incidents were investigated"
+    if [ "${done_count:-0}" -ge "$want" ]; then
+        pass "$done_count of $want fixture investigation(s) produced a diagnosis"
+        return 0
+    fi
+
+    # NAME THE FIXTURES, AND SAY WHY EACH ONE HAS NO DIAGNOSIS. Backlog #100.
+    #
+    # This assertion is computed from the LIST endpoint's hasDiagnosis, which is
+    # `Investigations.Any(v => v.Findings.Any())` - so by construction it cannot tell
+    # "never investigated" from "investigated and faulted" from "investigated and produced
+    # nothing groundable". All three arrive here as the same bare count, and the run's other
+    # clue - an aggregated `1 Faulted` from a different endpoint - was printed somewhere else
+    # with nothing to join them by. They were probably always the same event.
+    #
+    # `|| true` throughout: this is a diagnostic on a path that has already failed, and it must
+    # not take the suite down with a jq exit code under `set -Eeuo pipefail`.
+    local why=""
+    for f in $missing; do
+        t=$(fixture_target "$f")
+        local reasons
+        reasons=$(jq -r --arg t "$t" '
+            select((.target.name // "") | startswith($t))
+            | .investigations[]?
+            | .terminationReason + (if .error then " (" + (.error | tostring) + ")" else "" end)
+        ' "$WORKDIR/details.jsonl" 2>/dev/null | paste -sd '; ' - || true)
+
+        if [ -n "$reasons" ]; then
+            why="${why:+$why
+}      $f: investigated, no grounded finding -- $reasons"
+        else
+            why="${why:+$why
+}      $f: no investigation row at all"
+        fi
+    done
+
+    fail "only ${done_count:-0} of $want fixture incidents were investigated" \
+         "missing: ${missing:-none}${why:+
+$why}"
 }
 
 # Pulls the full detail for every incident once, so the assertions below and the report and
@@ -586,14 +624,47 @@ chaos_assert_investigations() {
     if [ -z "$bad" ]; then
         pass "every investigation terminated as Concluded"
     else
+        # THE FAULT ITSELF, NAMED AND ATTRIBUTED. Backlog #100.
+        #
+        # This used to print only the aggregated reasons - "1 Faulted (of 36 investigations)" -
+        # which tells you something crashed and nothing whatever about what. The exception has
+        # been in the database all along (Investigation.Error, written by InvestigationRunner's
+        # catch), it is already in the /api/incidents/{id} response, and it is already in the
+        # details.jsonl this function is reading. It was simply never printed.
+        #
+        # Faulted is also NOT a ceiling, and calling it one sent at least one investigation
+        # looking at budgets. Only the four budget reasons are ceilings; a fault is a crash and
+        # Cancelled is a refusal before the run started.
+        jq -r 'select(.investigations | length > 0)
+               | . as $inc
+               | .investigations[]
+               | select(.terminationReason != "Concluded")
+               | "      \(.terminationReason)  \($inc.target.namespace // "-")/\($inc.target.name // "-")"
+                 + (if .error then "\n        error: " + (.error | tostring) else "" end)' \
+            "$details" | while IFS= read -r line; do printf '%s\n' "$line"; done
+
         # One investigation of several exhausting its step budget is a fact about that
         # incident rather than a broken build - the ceiling exists so a hard incident stops
         # instead of running away, and a cluster carrying a dozen concurrent faults will
         # occasionally produce one. Visible either way; only a majority fails the run.
-        local n_bad n_inv
-        n_bad=$(wc -w <<<"$bad" | tr -d ' ')
+        #
+        # n_bad counts INVESTIGATIONS, not words. It used to be `wc -w` over `uniq -c` output,
+        # which is two words per distinct reason - so "1 Faulted" counted as 2 and the
+        # threshold was really "at most one distinct reason" rather than "at most two runs".
+        local n_bad n_inv n_faulted
+        n_bad=$(jq -r 'select(.investigations | length > 0) | .investigations[]
+                       | select(.terminationReason != "Concluded") | .id' "$details" | wc -l | tr -d ' ')
         n_inv=$(jq -r 'select(.investigations | length > 0) | .investigations[] | .id' "$details" | wc -l | tr -d ' ')
-        if [ "${n_bad:-9}" -le 2 ] && [ "${n_inv:-0}" -gt 2 ]; then
+        n_faulted=$(jq -r 'select(.investigations | length > 0) | .investigations[]
+                           | select(.terminationReason == "Faulted") | .id' "$details" | wc -l | tr -d ' ')
+
+        # A crash is never "one of those things". A ceiling is a control working; a fault is a
+        # bug in the agent, and pooling them let a real exception hide behind the tolerance
+        # written for budget exhaustion.
+        if [ "${n_faulted:-0}" -gt 0 ]; then
+            fail "an investigation faulted" \
+                 "$n_faulted of $n_inv threw; the exception is printed above. A fault is a crash, not a ceiling"
+        elif [ "${n_bad:-9}" -le 2 ] && [ "${n_inv:-0}" -gt 2 ]; then
             skip "an investigation ended on a ceiling" "$bad (of ${n_inv} investigations)"
         else
             fail "investigations ended on a ceiling" "$bad (of ${n_inv} investigations)"
