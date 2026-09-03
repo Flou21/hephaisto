@@ -169,6 +169,18 @@ helm install hephaisto <span class="k">oci://ghcr.io/flou21/charts/hephaisto</sp
       way round to start.
     </p>
 
+    <figure class="hp-shot">
+      <img src="shots/console-incidents-all.png" width="1440" height="900" loading="lazy"
+           alt="The Hephaisto console listing twelve incidents. The first is resolved — the agent
+                acted on it and closed it. The second is escalated with PolicyDenied — the same
+                fault, diagnosed, and the fix refused by a safety gate. The remaining ten are
+                escalated with no plan produced." />
+      <figcaption>
+        The first row is an incident it fixed. The second is the same fault on the same workload,
+        diagnosed just as well, where policy refused the fix and it escalated instead.
+      </figcaption>
+    </figure>
+
     <h3 id="demo">Or look first, without a cluster</h3>
     <p class="lede">
       <a href="https://demo.hephaisto.dev">Read all twelve in your browser</a> — no install, no

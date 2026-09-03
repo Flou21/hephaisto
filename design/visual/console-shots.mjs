@@ -69,13 +69,18 @@ const deniedHref = await page.locator('tr').filter({ hasText: 'PolicyDenied' })
     .locator('[data-testid=incident-link]').first().getAttribute('href').catch(() => null)
 
 // The two frames this release turns on, named rather than "whichever row sorts first".
+// Viewport-height, NOT fullPage. A detail page renders every signal the incident carries, and
+// the policy-denied capture carries 211 of them - fullPage produced a 26,586px image, which is
+// a complete record of nothing anybody will look at. The frame that matters is the top: the
+// state, the badges, the callout saying what happened and why. The full trace is a click away
+// on demo.hephaisto.dev, which is what that site is for.
 await go(abs(resolvedHref))
-await page.screenshot({ path: `${out}/console-incident-resolved.png`, fullPage: true })
+await page.screenshot({ path: `${out}/console-incident-resolved.png` })
 console.log(`wrote console-incident-resolved.png (${resolvedHref})`)
 
 if (deniedHref) {
     await go(abs(deniedHref))
-    await page.screenshot({ path: `${out}/console-incident-denied.png`, fullPage: true })
+    await page.screenshot({ path: `${out}/console-incident-denied.png` })
     console.log(`wrote console-incident-denied.png (${deniedHref})`)
 }
 

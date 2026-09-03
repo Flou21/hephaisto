@@ -6,8 +6,9 @@ home: https://hephaisto.dev
 sources:
   - https://github.com/Flou21/hephaisto
 # Artifact Hub renders this beside the chart, and it was blank for four releases because the
-# repository contained no image to point at. Raw GitHub rather than a site URL: the site is not
-# deployed yet, and a chart icon that 404s is worse than the blank tile it replaced.
+# repository contained no image to point at. Raw GitHub rather than a site URL: the sites are
+# live now, but raw.githubusercontent is versioned with the chart and cannot be broken by a
+# redesign of hephaisto.dev, and a chart icon that 404s is worse than the blank tile it replaced.
 icon: https://raw.githubusercontent.com/Flou21/hephaisto/main/design/brand/mark.svg
 
 # Artifact Hub shows this on the chart tile. A URL rather than an email address: the address
@@ -30,6 +31,18 @@ annotations:
       url: https://demo.hephaisto.dev
     - name: support
       url: https://github.com/Flou21/hephaisto/issues
+  # Photographed from the shipping console by scripts/console-shots.sh, against the published
+  # image running demo/compose.yaml - so these are the product, not a mock-up, and they are
+  # regenerated rather than retouched.
+  artifacthub.io/screenshots: |
+    - title: Incidents, including one the agent fixed and one policy refused
+      url: https://raw.githubusercontent.com/Flou21/hephaisto/main/design/shots/console-incidents-all.png
+    - title: An incident the agent acted on, verified and closed
+      url: https://raw.githubusercontent.com/Flou21/hephaisto/main/design/shots/console-incident-resolved.png
+    - title: An incident it diagnosed and was refused by policy
+      url: https://raw.githubusercontent.com/Flou21/hephaisto/main/design/shots/console-incident-denied.png
+    - title: Mode, kill switch, budgets and the alert path
+      url: https://raw.githubusercontent.com/Flou21/hephaisto/main/design/shots/console-status.png
 keywords:
   - sre
   - kubernetes

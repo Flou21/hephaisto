@@ -204,3 +204,24 @@ footer a:hover { color: var(--accent); }
 @media (prefers-reduced-motion: reduce) {
     * { animation: none !important; transition: none !important; }
 }
+
+/* A photograph of the console, not a mock-up: scripts/console-shots.sh renders it from the
+   published image. Bordered rather than floated on the page background, because the shot is
+   dark in both themes and would otherwise bleed into the light one. */
+.hp-shot {
+    margin: 2rem 0;
+}
+
+.hp-shot img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+
+.hp-shot figcaption {
+    margin-top: 0.6rem;
+    color: var(--fg-dim);
+    font-size: var(--text-md);
+}

@@ -43,9 +43,31 @@ open in Grafana, step through, and then ask the agent about.
 > things you have to change before anything can happen. Do not point it at anything you
 > care about.
 
+## What it looks like
+
+![The incident list: one incident the agent fixed, one policy refused, and ten it diagnosed and
+escalated](design/shots/console-incidents-all.png)
+
+The top two rows are the ones worth reading. `+ resolved` is an incident the agent acted on and
+closed; `^ escalated / PolicyDenied` is the same fault on the same workload, diagnosed just as
+correctly, where a safety gate refused the fix. The ten below are `NoPlanProduced` — diagnosed,
+and no action proposed.
+
+<details>
+<summary>The incident it fixed, and the one it was refused</summary>
+
+![An incident the agent acted on, verified and closed](design/shots/console-incident-resolved.png)
+
+![An incident it diagnosed and was refused by policy](design/shots/console-incident-denied.png)
+
+</details>
+
+Photographed from the shipping console by `scripts/console-shots.sh`, against the published image
+running `demo/compose.yaml`. They are regenerated, never retouched.
+
 ## See it without a cluster
 
-Ten real investigations, rendered as static pages: **<https://demo.hephaisto.dev>**. No install, no
+Twelve real investigations, rendered as static pages: **<https://demo.hephaisto.dev>**. No install, no
 account, nothing to run.
 
 To drive the real console instead — two containers, no API key, no Kubernetes, nothing fetched at
