@@ -30,6 +30,32 @@ policy:
   actionableNamespaces:
     - hephaisto-chaos
 
+  # THE ROLLBACK WINDOWS, SHORTENED FOR THE HARNESS. Read this before copying it anywhere.
+  #
+  # The shipped defaults are 30m and 1h. The one-hour minimum cannot be met on a cluster kind
+  # created twenty minutes ago, so with the defaults NO rollback fixture could ever be admitted
+  # here - the policy engine would refuse c14 for an entirely correct reason and the run would
+  # look like a failure of the executor.
+  #
+  # This is the same reasoning that makes the shipped alert rules use `for: 2m` where upstream
+  # uses 15m: the harness runs on a timescale the production defaults were not written for.
+  #
+  # It is a deliberate split of what is tested where. THE GATE is exercised by
+  # PolicyEngineTests, which constructs any revision age it likes in microseconds and asserts
+  # the boundary in both directions. THIS FIXTURE exercises the PIPELINE - detect, correlate,
+  # propose, admit, execute, verify, resolve. Shortening the windows does not weaken the gate's
+  # test, because the gate is not what a chaos run measures.
+  #
+  # previousHealthyMinimum must stay BELOW C14_DWELL in scripts/e2e/lib/chaos.sh (300s), or
+  # the fixture arms itself into a refusal.
+  rollbackPreviousHealthyMinimum: "00:03:00"
+
+  # Widened rather than shortened, and for a different reason: the current revision has to
+  # still be "fresh" when the plan is JUDGED, not when the alert fires. Between the two sit a
+  # 5-minute rate window, Alertmanager's group wait, and a full investigation. Thirty minutes
+  # is comfortable in production and tight here.
+  rollbackFreshRevisionWindow: "02:00:00"
+
 # Observe: detect, investigate, report, mutate nothing. The harness asserts that no action
 # was executed, which is only a meaningful assertion in a mode where one could have been.
 mode: Observe

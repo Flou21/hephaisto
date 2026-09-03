@@ -109,7 +109,7 @@ deploy_install() {
         --namespace "$APP_NS" --create-namespace \
         --values "$E2E_DIR/values-e2e.yaml" \
         --set "mode=${E2E_MODE:-Observe}" \
-        --set "policy.autoEnabledActionTypes={RestartPod}" \
+        --set "policy.autoEnabledActionTypes={$(act_auto_enabled)}" \
         "${extra[@]+"${extra[@]}"}" \
         --wait --timeout 8m \
         || { fail "hephaisto installed" "helm install failed; see kubectl describe"; return 1; }

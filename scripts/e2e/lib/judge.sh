@@ -31,6 +31,7 @@ fixture_truth() {
         c11) echo "The container aborts at startup because it finds a stale generation counter on its persistent volume at /data/generation - the value is 1 and it requires 2 - so it exits 1 and the Deployment enters CrashLoopBackOff. The decisive evidence is a FATAL log line naming that generation." ;;
         c12) echo "The container aborts at startup because the lease recorded at /data/lease names this pod itself, and the entrypoint refuses to re-take a lease it already holds, so it exits 1 and the Deployment enters CrashLoopBackOff. The comparison is against the pod's own hostname, so any replacement pod has a different name and starts cleanly." ;;
         c13) echo "The container refuses to start because a startup lock at /scratch/startup.lock, on an emptyDir, was left behind by an earlier run of this container that exited abnormally. The lock is released only on a clean shutdown, so every container restart inside this pod finds it still held and exits 1. emptyDir dies with the pod, so a replacement pod gets an empty volume and starts cleanly." ;;
+        c14) echo "A second revision of the c14-bad-deploy Deployment was rolled out with a high error rate, and the error-rate spike begins at that rollout. The pods of the new revision are Ready and never restart, so Kubernetes reports the workload healthy throughout; only the span-metric error ratio and the application's own FAULT log lines show the failure. The previous revision served the same traffic without errors." ;;
         *)   echo "" ;;
     esac
 }

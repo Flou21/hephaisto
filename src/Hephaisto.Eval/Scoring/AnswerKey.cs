@@ -167,6 +167,17 @@ public sealed record AnswerKey
                 "The Job fails repeatedly and exceeds its backoffLimit of 2. Its logs name a failing "
                 + "migration step.",
             MustMentionAnyOf = ["backofflimit", "backoff limit"],
+
+            // c5 is the obvious DeleteStuckJob / DeleteFailedJobPods fixture and had no
+            // AcceptableActions at all, so it could never score an action however good the
+            // plan was. Four of the six executable ActionTypes still have no fixture;
+            // this costs one line and covers two of them.
+            //
+            // BOTH are acceptable and the difference is real: deleting the Job clears the
+            // whole thing, deleting its failed pods clears the debris and leaves the Job to
+            // be re-run. Which is right depends on whether the Job is expected to be
+            // recreated by something, and the answer key should not pretend to know.
+            AcceptableActions = [ActionType.DeleteStuckJob, ActionType.DeleteFailedJobPods],
         },
         new()
         {
@@ -274,6 +285,32 @@ public sealed record AnswerKey
             // keeps measuring the inference. Quote the two numbers separately; averaging them
             // recreates exactly the conflation this fixture was added to end.
             AcceptableActions = [ActionType.RestartPod, ActionType.RolloutRestart],
+        },
+        new()
+        {
+            Fixture = "c14",
+            ExpectedKind = SignalKind.HighErrorRate,
+            ExpectedRootCause =
+                "A second revision of the c14-bad-deploy Deployment was rolled out with a high "
+                + "error rate, and the error-rate spike begins at that rollout. The pods of the "
+                + "new revision are Ready and never restart, so Kubernetes reports the workload "
+                + "healthy throughout; only the span-metric error ratio and the application's own "
+                + "FAULT log lines show the failure. The previous revision served the same traffic "
+                + "without errors.",
+            MustMentionAnyOf = ["rollout", "revision", "deploy"],
+
+            // THE FIRST FIXTURE IN THE CORPUS WHERE A RESTART IS THE WRONG ANSWER.
+            //
+            // c11, c12 and c13 all accept [RestartPod, RolloutRestart] and nothing else, so
+            // every acting measurement this project has ever taken has been of one action type
+            // against faults a restart genuinely fixes. That made "willing to act" and "picked
+            // the right action" the same number.
+            //
+            // Restarting these pods replaces them with more pods running the same bad revision
+            // and the fault continues, so RolloutRestart is excluded deliberately rather than
+            // omitted - it is the plausible wrong answer, and accepting it would let a model
+            // score by reaching for the tool it has rather than by reasoning about the change.
+            AcceptableActions = [ActionType.RollbackDeployment],
         },
     ];
 

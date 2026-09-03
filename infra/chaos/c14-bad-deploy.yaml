@@ -1,0 +1,264 @@
+# =============================================================================
+# C14 - bad-deploy  (THE FIRST FIXTURE WITH A HISTORY)
+# =============================================================================
+# WHAT IT BREAKS
+#   Nothing, at first. That is the entire point.
+#
+#   This deploys the same OpenTelemetry-instrumented ASP.NET Core app that C10
+#   uses, at ERROR_RATE=0.0 - a healthy service, serving steady traffic through
+#   the same wget sidecar, producing a clean three-signal trail and no alert.
+#
+#   The fault arrives later, as a SECOND REVISION. The harness dwells, then
+#   sets ERROR_RATE high, which rolls out revision 2 and starts the error-rate
+#   spike. See chaos_arm_c14 in scripts/e2e/lib/chaos.sh.
+#
+# WHY THIS FIXTURE EXISTS
+#   Every one of the thirteen fixtures before it injects a fault that is simply
+#   THERE. Not one performs a rollout or creates a second revision - across all
+#   thirteen files the only occurrence of the word "rollout" is an incidental
+#   comment about an update strategy in c6.
+#
+#   So the corpus could not ask the question an on-call engineer asks first:
+#   WHAT CHANGED? A fixture with no history cannot pose it, and an agent cannot
+#   be measured on an answer it was never asked for. Production incidents
+#   overwhelmingly start when something changes; every fixture here started
+#   already broken.
+#
+#   C14 is also the first fixture whose correct answer is not a restart. C11,
+#   C12 and C13 all accept [RestartPod, RolloutRestart] and nothing else. This
+#   one accepts RollbackDeployment, which is what makes it a test of judgement
+#   rather than of willingness: restarting these pods replaces them with more
+#   pods running the same bad revision, and the fault continues.
+#
+# THE FIVE-HOP TRAIL, INHERITED FROM C10
+#   Same image, same instrumentation, so the same alert -> exemplar -> trace ->
+#   log -> cause path is available. What C14 adds is a SIXTH thing to find: a
+#   ReplicaSet whose creation timestamp sits a few minutes before the onset.
+#
+#   The agent is handed that correlation for free in the incident card (see
+#   ClusterFactsGatherer.RecentRolloutAsync), because backlog #74 established
+#   that step budget is the binding constraint on accuracy. Being told a
+#   rollout happened is not the same as concluding it was the cause - the card
+#   says so explicitly, and the judgement being measured is whether the model
+#   confirms it against the trail rather than accepting it.
+#
+# WHY THE OTEL SERVICE NAME IS c14-bad-deploy AND NOT SOMETHING PRETTIER
+#   Read this before renaming it.
+#
+#   C10's incident opens on `faulty-service`, because a span-metrics series
+#   identifies a workload only by its `service` label, and C10 sets
+#   OTEL_SERVICE_NAME=faulty-service. That is why chaos.sh needs a
+#   fixture_target special case for c10, and getting it wrong reported C10 as
+#   undetected across two release candidates while its incident existed the
+#   whole time.
+#
+#   Naming this one after the fixture makes the incident open on
+#   `c14-bad-deploy`, which the default `c<N>-` mapping already matches. No
+#   special case, and the trap cannot be re-sprung by someone adding a fifteenth
+#   fixture and copying this file.
+#
+# EXPECTED KUBERNETES EVENTS
+#   Scheduled / Pulled / Created / Started, twice - once on apply and once when
+#   the second revision rolls out. Both pods stay Ready throughout; Kubernetes
+#   considers this service perfectly healthy while most of its requests fail.
+#   An events-only agent sees a successful rollout and reports nothing wrong.
+#
+# EXPECTED SIGNAL
+#   ServiceHighErrorRate / ServiceCriticalErrorRate, from the shipped SLO rules
+#   in charts/hephaisto/files/alerts/slo-rules.yaml:
+#     sum by (service, k8s_namespace_name) (
+#       rate(traces_spanmetrics_calls_total{
+#         service="c14-bad-deploy", status_code="STATUS_CODE_ERROR"}[5m]))
+#     / sum by (service, k8s_namespace_name) (
+#         rate(traces_spanmetrics_calls_total{service="c14-bad-deploy"}[5m]))
+#     > 0.05
+#
+#   Kubernetes-level, for contrast - these stay GREEN on purpose:
+#     kube_deployment_status_replicas_available{
+#       namespace="hephaisto-chaos", deployment="c14-bad-deploy"} == 1
+#     kube_pod_container_status_restarts_total{
+#       namespace="hephaisto-chaos", container="app"} == 0
+#
+# EXPECTED LOG SIGNAL
+#   {k8s_namespace_name="hephaisto-chaos",
+#    k8s_deployment_name="c14-bad-deploy", k8s_container_name="app"} |= "FAULT"
+#     FAULT /flaky failed: inventory backend returned 500 (error_rate=0.9)
+#
+# TIMING - READ THIS BEFORE CHANGING THE DWELL
+#   The policy engine admits rollback_deployment only when BOTH hold:
+#     - the current revision is younger than policy.rollbackFreshRevisionWindow
+#     - the previous revision was live for at least
+#       policy.rollbackPreviousHealthyMinimum
+#
+#   The shipped defaults are 30 minutes and 1 hour. A one-hour minimum cannot
+#   be met on a cluster kind created twenty minutes ago, so scripts/e2e/
+#   values-e2e.yaml shortens both for the harness - the same reasoning that
+#   makes the shipped alert rules use `for: 2m` where upstream uses 15m.
+#
+#   That is a deliberate split of what is being tested where. The GATE is
+#   exercised by PolicyEngineTests, which can construct any revision age it
+#   likes in microseconds. This fixture exercises the PIPELINE: detect,
+#   correlate, propose, admit, execute, verify, resolve. Shortening the windows
+#   does not weaken the gate's test, because the gate is not what this measures.
+#
+#   Get it wrong in the other direction and the fixture proves nothing while
+#   looking like a failure: the policy engine refuses for an entirely CORRECT
+#   reason, and a refusal is then ambiguous between "would not act" and "was
+#   not allowed to". That ambiguity is exactly what C13 was created to escape.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: c14-bad-deploy
+  namespace: hephaisto-chaos
+  labels:
+    app.kubernetes.io/name: c14-bad-deploy
+    hephaisto.chaos/scenario: c14
+    hephaisto.chaos/fault: bad-deploy
+  annotations:
+    kubernetes.io/change-cause: "revision 1: healthy baseline, ERROR_RATE=0.0"
+spec:
+  replicas: 1
+  # Keep enough history for a rollback to have somewhere to go. The default is
+  # 10; stating it makes the fixture's dependency on it explicit, because a
+  # cluster configured with revisionHistoryLimit: 0 would delete the previous
+  # ReplicaSet and there would be nothing to roll back TO.
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: c14-bad-deploy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: c14-bad-deploy
+        hephaisto.chaos/scenario: c14
+        hephaisto.chaos/fault: bad-deploy
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: app
+          image: hephaisto/faulty-service:dev
+          # MUST stay IfNotPresent: this image exists only in the local daemon
+          # and is loaded into kind by chaos_build_images.
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            # ---- fault knobs ------------------------------------------------
+            # ZERO. Revision 1 is healthy, and must stay healthy long enough to
+            # count as a revision worth rolling back to. chaos_arm_c14 raises
+            # this, which is the rollout that causes the incident.
+            - name: ERROR_RATE
+              value: "0.0"
+            - name: LATENCY_MS
+              value: "50"
+            # ---- OpenTelemetry ----------------------------------------------
+            # Named after the fixture on purpose - see the header.
+            - name: OTEL_SERVICE_NAME
+              value: c14-bad-deploy
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.hephaisto-obs:4318
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: http/protobuf
+            - name: OTEL_METRIC_EXPORT_INTERVAL
+              value: "15000"
+            - name: OTEL_TRACES_SAMPLER
+              value: always_on
+            - name: K8S_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: >-
+                service.namespace=hephaisto-chaos,
+                deployment.environment=chaos,
+                k8s.pod.name=$(K8S_POD_NAME),
+                k8s.namespace.name=$(K8S_NAMESPACE),
+                k8s.deployment.name=c14-bad-deploy
+            - name: ASPNETCORE_HTTP_PORTS
+              value: "8080"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            # /healthz never fails, in either revision. A restart here would
+            # turn a service-level fixture into an infrastructure-level one and
+            # the agent would correctly propose a restart, which is the wrong
+            # answer to the question this fixture asks.
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+
+        - name: traffic
+          # Steady load so the 5-minute SLO windows always have a denominator,
+          # and so the error ratio moves promptly when revision 2 lands.
+          image: busybox:1.37
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              until wget -q -T 2 -O /dev/null http://127.0.0.1:8080/healthz 2>/dev/null; do
+                sleep 2
+              done
+              echo "INFO: load generator started against 127.0.0.1:8080"
+              n=0
+              while true; do
+                # Heavier on /flaky than C10's mix. C10 wants a breach that is
+                # not pinned at 100%; this one wants the ratio to move sharply
+                # and unambiguously the moment the bad revision lands, because
+                # what is being measured is the CORRELATION IN TIME between the
+                # rollout and the onset. A gentle ramp would blur the edge the
+                # agent is supposed to notice.
+                for path in ok flaky flaky flaky; do
+                  wget -q -T 5 -O /dev/null "http://127.0.0.1:8080/$path" 2>/dev/null || true
+                done
+                n=$((n + 4))
+                if [ $((n % 400)) -eq 0 ]; then
+                  echo "INFO: load generator has issued $n requests"
+                fi
+                sleep 1
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: c14-bad-deploy
+  namespace: hephaisto-chaos
+  labels:
+    app.kubernetes.io/name: c14-bad-deploy
+    hephaisto.chaos/scenario: c14
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: c14-bad-deploy
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

@@ -35,7 +35,7 @@
 # be deleted before it can be re-applied.
 DEFAULT_FIXTURES="c2,c3,c4,c7"
 
-# --full. Every fixture that can run on this hardware, which is eleven of the thirteen: c6
+# --full. Every fixture that can run on this hardware, which is twelve of the fourteen: c6
 # and c9 are excluded for the stated reasons above and no flag overrides that, because neither
 # is a scheduling choice - c6 cannot fire on local-path and c9 evicts the observability stack
 # it would be measured by.
@@ -44,7 +44,7 @@ DEFAULT_FIXTURES="c2,c3,c4,c7"
 # 30-minute window and c10 sits behind 5-minute rate windows, so budget about two hours. The
 # four-fixture default stays the thing you run while working, because a two-hour gate that
 # nobody runs is worth less than a five-minute one that everybody does.
-FULL_FIXTURES="c1,c2,c3,c4,c5,c7,c8,c10,c11,c12,c13"
+FULL_FIXTURES="c1,c2,c3,c4,c5,c7,c8,c10,c11,c12,c13,c14"
 
 # Fixture -> the SignalKind the shipped rules attach via hephaisto_kind.
 # A case statement rather than `declare -A`, for the bash 3.2 reason in common.sh.
@@ -68,6 +68,11 @@ fixture_kind() {
         # instead of a PVC, so the rule 30-planning.md already states is enough
         # to solve it - see infra/chaos/c13-wedged-lock.yaml and #89.
         c13) echo CrashLoopBackOff ;;
+        # Same shipped SLO rule as c10 - it is an error-rate breach on span
+        # metrics. What differs is not the signal, it is that c14 has a SECOND
+        # REVISION behind it, so the answer is a rollback rather than a restart.
+        # See infra/chaos/c14-bad-deploy.yaml.
+        c14) echo HighErrorRate ;;
         *)   echo "" ;;
     esac
 }
@@ -82,12 +87,16 @@ fixture_kind() {
 chaos_build_images() {
     local fixtures="$1"
 
+    # c14 runs the same image as c10 at a different ERROR_RATE, so either fixture needs it
+    # built and loaded. Asking for c14 without this produced a pod stuck in ImagePullBackOff -
+    # which is not merely a missing fixture, it opens a REAL incident of the wrong kind and the
+    # harness then grades the agent on diagnosing the test rig.
     case ",$fixtures," in
-        *,c10,*) ;;
+        *,c10,*|*,c14,*) ;;
         *) return 0 ;;
     esac
 
-    say "building hephaisto/faulty-service:dev for c10"
+    say "building hephaisto/faulty-service:dev for c10/c14"
 
     # The build context is the REPO ROOT, not the Dockerfile's directory: the Dockerfile
     # copies infra/chaos/faulty-service/ by a repo-relative path.
@@ -131,6 +140,7 @@ fixture_workload() {
         c11) echo c11-transient ;;
         c12) echo c12-stale-lease ;;
         c13) echo c13-wedged-lock ;;
+        c14) echo c14-bad-deploy ;;
         *)   echo "" ;;
     esac
 }
@@ -156,6 +166,25 @@ fixture_workload() {
 # anyone made - it was the only transient fixture that existed at the time.
 ACT_FIXTURE="${ACT_FIXTURE:-c13}"
 
+# The action types the act phase promotes to unattended, which depend on WHICH fixture is
+# being acted on.
+#
+# This was hardcoded to RestartPod, which was correct while every actable fixture wanted a
+# restart - c11, c12 and c13 all do. c14 does not: restarting its pods replaces them with more
+# pods running the same bad revision and the fault continues, so a run that auto-enabled only
+# RestartPod would refuse the one correct action and report the fixture as un-acted-on.
+#
+# Deliberately narrow rather than promoting both. The answer key accepts only
+# RollbackDeployment for c14, so enabling RestartPod alongside it would let a model score by
+# reaching for the tool it has rather than by reasoning about the change - and the harness
+# would grade that as a pass.
+act_auto_enabled() {
+    case "$ACT_FIXTURE" in
+        c14) echo "RollbackDeployment" ;;
+        *)   echo "RestartPod" ;;
+    esac
+}
+
 # c13 is the one fixture that cannot arm itself, and the reason is worth stating because it
 # looks like an omission. Its wedge is a startup lock on an emptyDir, left behind by an exit
 # the workload did not choose. A fixture that wedged itself deterministically would wedge the
@@ -177,6 +206,57 @@ chaos_arm_c13() {
         say "armed c13: abnormal exit simulated, lock left held"
     else
         warn "could not arm c13; it will stay healthy and prove nothing"
+    fi
+}
+
+# c14 is the only fixture whose SETUP HAS A TIMELINE.
+#
+# Every other fixture is applied and is immediately wrong. c14 is applied HEALTHY, has to stay
+# healthy long enough to count as a revision worth rolling back to, and only then is broken -
+# by a rollout, which is the thing being measured. `kubectl set env` is what creates the second
+# revision; nothing else about the Deployment changes.
+#
+# THE DWELL IS LOAD-BEARING AND IS NOT A SLEEP FOR NEATNESS. The policy engine admits
+# rollback_deployment only when the previous revision was live for at least
+# policy.rollbackPreviousHealthyMinimum, measured between the two ReplicaSet creation
+# timestamps. Dwell for less than that window and the engine refuses for an entirely CORRECT
+# reason - and a refusal is then ambiguous between "would not act" and "was not allowed to",
+# which is precisely the ambiguity c13 was created to escape. scripts/e2e/values-e2e.yaml sets
+# that window shorter than the shipped default for this reason, and says so.
+C14_DWELL="${C14_DWELL:-300}"
+
+chaos_arm_c14() {
+    say "arming c14: revision 1 must be healthy before it can be worth rolling back to"
+
+    if ! kc -n "$CHAOS_NS" rollout status deploy/c14-bad-deploy --timeout=120s >/dev/null 2>&1; then
+        warn "c14 revision 1 never became Ready; not arming it"
+        return 0
+    fi
+
+    # Confirm revision 1 is genuinely serving before starting the clock. Dwelling from apply
+    # rather than from Ready would measure image-pull time as "healthy", and on a cold cluster
+    # that is most of the window.
+    say "c14: revision 1 healthy, dwelling ${C14_DWELL}s before the bad rollout"
+    sleep "$C14_DWELL"
+
+    # THE ROLLOUT. This is the fault, and its timestamp is the fact the agent has to correlate
+    # the error-rate onset against.
+    if kc -n "$CHAOS_NS" set env deploy/c14-bad-deploy ERROR_RATE=0.9 >/dev/null 2>&1 \
+       && kc -n "$CHAOS_NS" annotate deploy/c14-bad-deploy \
+            kubernetes.io/change-cause="revision 2: ERROR_RATE raised to 0.9" \
+            --overwrite >/dev/null 2>&1; then
+        say "armed c14: revision 2 rolled out with ERROR_RATE=0.9"
+    else
+        warn "could not arm c14; it will stay healthy and prove nothing"
+        return 0
+    fi
+
+    if ! kc -n "$CHAOS_NS" rollout status deploy/c14-bad-deploy --timeout=120s >/dev/null 2>&1; then
+        # Not fatal: the fixture's whole claim is that the BAD revision rolls out SUCCESSFULLY
+        # and Kubernetes reports everything healthy while the requests fail. If the rollout
+        # genuinely stalled, that is a different fault and the run should say so rather than
+        # silently grade it as this one.
+        warn "c14 revision 2 did not complete its rollout; the incident it opens may not be a bad deploy"
     fi
 }
 
@@ -217,6 +297,7 @@ chaos_apply() {
     say "applied $(applied_count) fixture(s): $APPLIED"
 
     case " $APPLIED " in *" c13 "*) chaos_arm_c13 ;; esac
+    case " $APPLIED " in *" c14 "*) chaos_arm_c14 ;; esac
 
     # Applied together, waited on once. Each costs about two minutes of alert latency
     # (for: 1m, plus a 30s scrape interval, plus Alertmanager's 10s group_wait), and they are

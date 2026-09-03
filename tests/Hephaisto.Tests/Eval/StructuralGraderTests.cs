@@ -197,11 +197,11 @@ public class StructuralGraderTests
     }
 
     [Fact]
-    public void The_answer_key_covers_the_eleven_gradeable_fixtures_and_omits_c6_and_c9()
+    public void The_answer_key_covers_the_twelve_gradeable_fixtures_and_omits_c6_and_c9()
     {
-        AnswerKey.All.Should().HaveCount(11);
+        AnswerKey.All.Should().HaveCount(12);
         AnswerKey.All.Select(k => k.Fixture).Should().BeEquivalentTo(
-            ["c1", "c2", "c3", "c4", "c5", "c7", "c8", "c10", "c11", "c12", "c13"]);
+            ["c1", "c2", "c3", "c4", "c5", "c7", "c8", "c10", "c11", "c12", "c13", "c14"]);
 
         // c6 cannot fire on local-path and c9 is node-wide; neither is gradeable, and pretending
         // otherwise is how a corpus of 8 gets reported as 10.
@@ -233,9 +233,34 @@ public class StructuralGraderTests
         // not act" and "did not make the inference", and only c13 separates them. Adding it
         // is not widening AcceptableActions on a fixture that was failing - c11 and c12 are
         // untouched and keep reporting what they report. See #90.
+        //
+        // v0.7.0 adds two, and they widen this in a direction the three above could not.
+        //
+        // c14 is the FIRST FIXTURE WHERE A RESTART IS THE WRONG ANSWER. All three above accept
+        // [RestartPod, RolloutRestart], so every acting number this project has ever quoted was
+        // of one action type against faults a restart genuinely fixes - which made "willing to
+        // act" and "chose the right action" the same measurement. c14 accepts only
+        // RollbackDeployment, and RolloutRestart is excluded deliberately rather than
+        // forgotten: restarting its pods replaces them with more pods running the same bad
+        // revision, so accepting it would let a model score by reaching for the tool it has.
+        //
+        // c5 is a much smaller thing: it already existed, is the obvious DeleteStuckJob /
+        // DeleteFailedJobPods fixture, and simply had no AcceptableActions - so it could never
+        // score an action however good the plan was.
         AnswerKey.All.Where(k => k.AcceptableActions.Count > 0)
             .Select(k => k.Fixture)
-            .Should().BeEquivalentTo(["c11", "c12", "c13"]);
+            .Should().BeEquivalentTo(["c5", "c11", "c12", "c13", "c14"]);
+
+        // The corpus no longer measures a single action type. Four of the six executable
+        // ActionTypes had no fixture at all before this; these three cover three of them.
+        AnswerKey.All.SelectMany(k => k.AcceptableActions).Distinct()
+            .Should().Contain([
+                ActionType.RestartPod,
+                ActionType.RolloutRestart,
+                ActionType.RollbackDeployment,
+                ActionType.DeleteStuckJob,
+                ActionType.DeleteFailedJobPods,
+            ]);
 
         // And the other direction stays asserted: the four fixtures a restart would answer
         // plausibly and wrongly still forbid it.
