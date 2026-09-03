@@ -113,6 +113,32 @@ scripts/e2e/run.sh --tag 0.0.1-rc2 --from validate --keep-cluster
 scripts/e2e/run.sh --tag 0.0.1-rc2 --only ui
 ```
 
+## Run it in tmux, not as a background job
+
+A `--full` run is two to four hours. **Start it in a detached tmux session.**
+
+```sh
+tmux new-session -d -s e2e 'cd ~/hephaisto && scripts/e2e/run.sh --tag <version> --full 2>&1 | tee /tmp/e2e.log'
+tmux capture-pane -pt e2e | tail -40    # progress without attaching
+tmux attach -t e2e                      # live
+```
+
+This is not a style preference. A run backgrounded from a shell gets SIGTERM'd: on 2026-09-03 two
+consecutive `--full` runs were killed mid-investigation, the second twenty-one minutes into a phase
+that needs about three hours, each after every phase that takes real setup had already passed. Both
+tore down cleanly and deleted their clusters — the trap is that nothing looks broken, you simply
+lose the hour.
+
+`nohup` and `disown` do not help, because the signal goes to the process group. `setsid(1)` would,
+and does not exist on macOS. tmux does it properly and gives you scrollback.
+
+The same applies to the machine's other long-lived process: Tilt runs in a detached tmux session in
+`~/dev` for exactly this reason.
+
+**A background or non-interactive session also cannot unlock the login keychain**, so `docker pull`
+fails against docker.io even for public images. Put a stub `docker-credential-osxkeychain` early on
+`PATH` that answers `get` with `credentials not found in native keychain` on stdout and exits 1.
+
 ## Requirements
 
 `kind`, `kubectl`, `helm`, `gh`, `docker`, `jq`, `git`, `curl`. Runs on stock macOS bash 3.2 -
