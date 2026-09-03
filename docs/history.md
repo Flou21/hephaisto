@@ -765,3 +765,54 @@ once the incident leaves `Detected`/`Triaging`, and an investigation starts with
 detection while the competing signal is minutes away. The safety argument for that gate still
 holds. It simply means the gate must not be relied on to correct a signal that arrives first and
 is wrong.
+
+
+---
+
+## v0.7.0 — `c1` has been graded against another fixture's incident since c10 existed
+
+Found while reading a puzzling line in the second gate run:
+
+```
+skip  c1 classified as HighErrorRate, expected OomKilled
+```
+
+`c1-oomkill` has no error rate. It has no traces at all. The incident being graded was **c14's**.
+
+**Cause.** The harness matched a fixture to its incident with a bare prefix test:
+
+```jq
+select(.targetName // "" | startswith($t))
+```
+
+`c1` is a prefix of `c10`, `c11`, `c12`, `c13` and `c14`. So the assertion for c1 collected every
+incident belonging to five other fixtures, and `.[0].kind` graded whichever one the API happened
+to return first.
+
+**This is not new, and that is the uncomfortable part.** It has been true since c10 was added —
+`c1`'s classification assertion has been reporting another fixture's kind for several releases,
+and the `fixture-incidents.tsv` map that the judge and the report both read has been attributing
+other fixtures' incidents to c1 as well. Backlog [#34](backlog.md#34) records "c1 →
+`CrashLoopBackOff`, expected on this node" as a property of the node; it is at least as likely to
+have been c11, c12 or c13's incident being read through this collision.
+
+**The trap was already documented — in the other instrument.** `AnswerKey.ForCassette`'s comment
+says it in as many words:
+
+> It is deliberately a prefix up to the first `-` and not a "starts with" test, because `c1`
+> starts with the same characters as `c10` and a "starts with" test would grade one fixture
+> against the other's answer.
+
+The eval harness guarded against it. The e2e harness, which grades the same fixtures, did not, and
+the two were never compared. **A rule written down in one instrument does not protect the other
+one**, which is the same shape as backlog #33 — where the reader was fixed, the fact was recorded
+as solved, and the rules that fed it were never changed.
+
+**Fix.** All eight matching sites now require the fixture token to be followed by a `-`, or to
+match exactly — the latter for `c10`, whose incident opens on `faulty-service` rather than on
+anything with a `c<N>-` prefix.
+
+**Why it surfaced now.** c14 is the first fixture added since c10 whose incident target carries a
+`c<N>-` name, and it is the first one whose kind differs sharply from c1's. c11, c12 and c13 all
+classify `CrashLoopBackOff`, which is what a genuinely OOM-killed pod on this node reports too, so
+the collision produced a plausible answer every previous time it fired.

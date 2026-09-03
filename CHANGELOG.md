@@ -134,6 +134,13 @@ release rather than by anyone running it.
   name" column is now labelled as the specification it is: **not one** of those `Chaos*` names is
   implemented by any `PrometheusRule`, and reading it as an inventory is what produced #70's wrong
   cause and left it standing for four releases.
+- **The e2e harness graded `c1` against another fixture's incident.** It matched a fixture to its
+  incident with a bare `startswith`, and `c1` is a prefix of `c10` through `c14` — so c1's
+  assertion collected five other fixtures' incidents and graded whichever the API returned first.
+  True since c10 was added, and invisible because c11–c13 all classify `CrashLoopBackOff`, which is
+  a plausible answer for an OOM-killed pod. The eval harness's answer key had guarded against this
+  exact trap, in a comment naming `c1` and `c10`; the e2e harness had not, and the two were never
+  compared.
 - **`c5` could never score an action.** It is the obvious `DeleteStuckJob` / `DeleteFailedJobPods`
   fixture and had no `AcceptableActions` at all.
 - **Four documentation surfaces described a harness and two limitations that no longer exist**:

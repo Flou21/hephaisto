@@ -365,7 +365,7 @@ chaos_await_incidents() {
     fi
 
     wait_for "an incident for each of: $APPLIED" "${INCIDENT_TIMEOUT:-$derived}" \
-        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents?limit=100' | jq -e --argjson want '$want_json' 'type == \"array\" and (. as \$inc | \$want | all(. as \$t | \$inc | any(.targetName // \"\" | startswith(\$t))))' >/dev/null" \
+        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents?limit=100' | jq -e --argjson want '$want_json' 'type == \"array\" and (. as \$inc | \$want | all(. as \$t | \$inc | any(.targetName // \"\" | . == \$t or startswith(\$t + \"-\"))))' >/dev/null" \
         || warn "not every fixture opened an incident within the deadline; see the per-fixture results below"
 
     local got
@@ -421,7 +421,7 @@ chaos_assert_detection() {
         # incident each of the right kind is a different thing from one fixture producing two.
         local target; target=$(fixture_target "$f")
 
-        found=$(jq --arg t "$target" '[.[] | select(.targetName // "" | startswith($t))] | length' \
+        found=$(jq --arg t "$target" '[.[] | select(.targetName // "" | . == $t or startswith($t + "-"))] | length' \
                 <<<"$incidents")
 
         # Every match, in the order the API returned them - not just the one whose kind is
@@ -429,13 +429,13 @@ chaos_assert_detection() {
         # only the first has no way to tell "this fixture produced no diagnosis" from "the
         # row I happened to pick did not carry it".
         jq -r --arg f "$f" --arg t "$target" \
-            '.[] | select(.targetName // "" | startswith($t)) | "\($f)\t\(.id)"' \
+            '.[] | select(.targetName // "" | . == $t or startswith($t + "-")) | "\($f)\t\(.id)"' \
             <<<"$incidents" >> "$WORKDIR/fixture-incidents.tsv"
 
         if [ "${found:-0}" -ge 1 ]; then
             local got_kind
             got_kind=$(jq -r --arg t "$target" \
-                '[.[] | select(.targetName // "" | startswith($t))] | .[0].kind' <<<"$incidents")
+                '[.[] | select(.targetName // "" | . == $t or startswith($t + "-"))] | .[0].kind' <<<"$incidents")
             if [ "$got_kind" = "$kind" ]; then
                 pass "$f opened an incident classified $kind"
             else
@@ -531,7 +531,7 @@ chaos_await_investigations() {
     # The per-fixture check below then reports precisely which fixture is missing, which is the
     # useful output.
     wait_for "every fixture's investigation to conclude (expecting $want)" "$deadline" \
-        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents' | jq -e --argjson want '$diag_want' 'type == \"array\" and (. as \$inc | \$want | all(. as \$t | \$inc | any((.targetName // \"\" | startswith(\$t)) and .hasDiagnosis)))' >/dev/null" \
+        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents' | jq -e --argjson want '$diag_want' 'type == \"array\" and (. as \$inc | \$want | all(. as \$t | \$inc | any((.targetName // \"\" | (. == \$t or startswith(\$t + \"-\"))) and .hasDiagnosis)))' >/dev/null" \
         || warn "not every fixture concluded within the deadline; the per-fixture result below says which"
 
     # How many of the applied fixtures have an incident carrying a diagnosis. Plainly, one
@@ -543,7 +543,7 @@ chaos_await_investigations() {
     for f in $APPLIED; do
         t=$(fixture_target "$f")
         if api_array "/api/incidents" \
-            | jq -e --arg t "$t" 'any((.targetName // "" | startswith($t)) and .hasDiagnosis)' >/dev/null 2>&1; then
+            | jq -e --arg t "$t" 'any((.targetName // "" | (. == $t or startswith($t + "-"))) and .hasDiagnosis)' >/dev/null 2>&1; then
             done_count=$(( done_count + 1 ))
         else
             missing="${missing:+$missing }$f"
@@ -571,7 +571,7 @@ chaos_await_investigations() {
         t=$(fixture_target "$f")
         local reasons
         reasons=$(jq -r --arg t "$t" '
-            select((.target.name // "") | startswith($t))
+            select((.target.name // "") | . == $t or startswith($t + "-"))
             | .investigations[]?
             | .terminationReason + (if .error then " (" + (.error | tostring) + ")" else "" end)
         ' "$WORKDIR/details.jsonl" 2>/dev/null | paste -sd '; ' - || true)
