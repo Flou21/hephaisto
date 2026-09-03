@@ -2593,6 +2593,53 @@ So the remaining work is not a sixth wording either. It is a model that complete
 inference, or a corpus that does not rest its only acting measurement on a fixture this one
 gets wrong 7 times in 9.
 
+**Closed 2026-09-03, on the second of those two disjuncts.** [c13](#90) is a corpus that does not
+rest its only acting measurement on c12. That was argued in `c13-wedged-lock.yaml`'s header and in
+`AnswerKey.cs` *before* any result was known, which is the standard this corpus is held to - the
+fixture was not chosen after seeing which way it went.
+
+**What the entry was blocking, and what may now be said.** Three numbers, never averaged:
+
+| fixture | model | runs where the planner ran | proposed an action |
+|---|---|---|---|
+| `c13-wedged-lock` | `gpt-oss:120b` | 6 | **6** |
+| `c12-stale-lease` | `gpt-oss:120b` | 11 | **1** |
+| `c12-stale-lease` | `deepseek-v4-flash` | 8 | **4** |
+
+Plus, end to end and once: a `RestartPod` proposed, admitted, executed, the workload available in
+16s and the incident `Resolved` 41 seconds later. c13 measures **willingness to act**; c12 measures
+an **inference**. Averaging them recreates the conflation c13 was added to end.
+
+**Three things had to land before this could close, and they are the reason it took a milestone
+rather than a wording change:**
+
+- **[#88](#88)'s reporting split.** The denominator now means what it says. `PlannerNeverRan` is
+  separate from a decline, so a run cut off by a token budget is no longer counted as the agent
+  choosing not to act - which is what produced the published `p = 0.0047` over 24 runs, nine of
+  which never reached phase 2.
+- **The `judge.sh` gap.** c13 had an answer key and no `fixture_truth` arm, and the guard above the
+  loop dropped it with no line printed. The release gate was scoring a denominator that silently
+  omitted the fixture this entry now closes on. Fixed, and a test now asserts the two graders agree.
+- **[#97](#97).** `--full --mode Auto` cannot demonstrate acting at all, because the run's own
+  breadth trips the cluster-health gate. Every measurement above comes from focused runs, and the
+  procedure now says so.
+
+**What is NOT claimed, and must not be sanded off downstream.** `6 of 6` is a statement about what
+the planner **proposed**; runs 3 and 4 of that six were denied by [#92](#92) before executing. End
+to end the number is **1 of 1**. And n = 6 supports "usually", not "always" - the exact one-sided
+95% lower bound is 0.61.
+
+**The residual limitation, stated rather than left to be found.** c13 has **one instrument and one
+model**. c11 and c12 each have a cluster arm and a replay arm; c13 has only the cluster, because
+`cassettes/c13.json` does not exist. This entry's own history is two consecutive corrections caused
+by trusting a single instrument, so closing it while that is true is worth naming loudly rather
+than burying. It is [#101](#101), and it is the first thing to do if any of these numbers is ever
+disputed.
+
+**Size.** M. **Status: closed 2026-09-03.** The `Blocks:` field is discharged: the site may state
+an action rate, provided it names its fixture, its model and its denominator - which is the same
+sentence this entry has been making since its first correction.
+
 ---
 
 ## The v0.5.0 carry, reviewed 2026-08-31
@@ -4416,3 +4463,25 @@ shown this either way.
 
 **Size.** S to surface the exception; unknown for the fault itself. **Open.**
 
+### 101. c13 is measured by one instrument and one model
+
+**Why this exists.** [#66](#66) closed on c13, and c13 has a cluster arm and nothing else. There is
+no `cassettes/c13.json`, so `hephaisto-eval run` cannot replay it, and every number the project now
+publishes about willingness to act comes from one instrument observing one model.
+
+c11 and c12 both have two arms. The value of the second is not redundancy - it is that #66's entire
+history is **two consecutive corrections** caused by reading a single instrument as though it
+described the agent. First replay-versus-cluster was called an instrument disagreement when it was
+two models; then the per-model figure was called a property of the model when a third of its
+denominator had never reached the planner. Both were found by comparing measurements, and c13 has
+nothing to compare against.
+
+**What it costs to fix:** tokens and a dev-cluster incident, no release time. Record once with
+`hephaisto-eval record --fixture c13 --incident <guid>`, then a labelled replay arm. Recording is
+the only half that needs a cluster.
+
+**What it does not block.** The published claim already names its fixture, its model and its
+denominator, and a replay arm would add a second denominator rather than change the first. This is
+the guard against the *next* correction, not a defect in the current numbers.
+
+**Size.** S. **Open.**
