@@ -10,6 +10,130 @@ broken, with the evidence for each.
 Versions are set by the git tag through MinVer; the chart version and the app version are always
 the same number.
 
+## v0.7.0 — unreleased
+
+**It survives a bad deploy.** The agent can now roll a Deployment back, there is finally a
+fixture whose fault has a *cause* rather than merely a presence, and the incident card says when
+a rollout preceded the incident.
+
+Two defects in this list reached every install of the chart and were found while planning the
+release rather than by anyone running it.
+
+### Added
+- **`rollback_deployment` can actually be carried out.** Everything around this action was built
+  two releases ago and unit-tested — the policy gate with its two tuned windows, the revision
+  facts, the `get_rollout_history` tool, the RBAC grant, the runbook guidance, the model-facing
+  description — and the only thing between the model and a rollback it had correctly reasoned its
+  way to was `ActionCapability.IsImplemented` returning false, which rendered the action to the
+  planner as *"Not available in this build."*
+
+  Three things worth knowing if you enable it. There is **no rollback subresource** — Kubernetes
+  removed that API in 1.16, so a rollback is a client-side patch of the previous ReplicaSet's pod
+  template, which is why the existing `patch` grant was already sufficient and **no RBAC
+  changed**. The `pod-template-hash` label is stripped, because the controller owns it. And a
+  rollback **does not restore the old revision number** — rolling back from revision 3 to 2
+  produces revision *4* — so verification asserts on the **ReplicaSet**, which the controller
+  re-scales rather than recreating. The obvious predicate would have failed on every successful
+  rollback and rolled the cluster forward onto the revision that caused the incident.
+
+  A rollback has **no inverse, deliberately**. `ActionRollback` is only ever called because a
+  verification failed, which for a rollback means the previous revision is not healthy either —
+  so the one situation where rolling forward is reachable is exactly the situation where it is
+  the worst available move. It escalates instead.
+- **`c14-bad-deploy`, the first fixture whose setup has a timeline.** All thirteen fixtures before
+  it inject a fault that is simply *there*; not one performs a rollout. So the corpus could not
+  ask the question an on-call engineer asks first — **what changed?** c14 deploys healthy, dwells,
+  and is then broken by a rollout. It is also the first fixture where a **restart is the wrong
+  answer**: its answer key accepts `RollbackDeployment` and nothing else, because restarting its
+  pods replaces them with more pods running the same bad revision.
+- **Change correlation in the incident card.** An incident on a workload whose current revision is
+  minutes old now says so, with the revision, the images and the gap, *before* the investigation
+  starts — because #74 established that step budget is the binding constraint on accuracy, and a
+  fact given for free is a step not spent. It is phrased as evidence with its own caveat rather
+  than as a conclusion, and a rollout that happened *after* the incident opened is never offered,
+  since that is often somebody deploying the fix.
+- **The console shows whether an action worked.** `AgentAction.Verifications` has carried the
+  T+60s / T+5m / T+15m outcomes since v0.2.0, persisted and read by nothing — while *"everything
+  it does is verified, then reverted if it did not work"* is the safety claim on the landing page.
+  The rows now render, `hephaisto-eval export` carries them into transcripts, and the design
+  gallery photographs them.
+- **Five runbooks**, for kinds that shipped an alert rule and fell through to the default one:
+  `HighLatency`, `TargetDown`, `ReplicaMismatch`, `RestartStorm` and the new `PodNotReady`. The
+  default runbook is Kubernetes-shaped — *who owns this, get_events, previous-container logs* —
+  which is not merely unhelpful for a burn-rate alert computed from span metrics, it points the
+  investigation at the wrong evidence.
+- **`SignalKind.PodNotReady`**, so `ReadinessFlapping` means flapping again. See Changed.
+- **Three policy settings became chart values**: `policy.rollbackFreshRevisionWindow`,
+  `policy.rollbackPreviousHealthyMinimum` and `policy.clusterUnhealthyCeiling`. They were code
+  defaults with no way to reach them, which was defensible only while `rollback_deployment` was
+  unimplemented.
+
+### Changed
+- **An incident's kind is no longer decided permanently by whichever signal opened it.**
+  `IncidentTriage.Attach` folded every later signal in while updating only `LastSignalAt` and
+  `Severity`. It now also re-labels upward when a later signal identifies the failure more
+  specifically — a `PodNotReady` incident becomes `ImagePullBackOff` when the signal that knows
+  the mechanism arrives. Since `SignalKind` selects the runbook, a stale kind did not merely
+  mislabel the incident, it handed the model instructions written for a different failure.
+
+  Re-labelling stops once the incident leaves `Detected`/`Triaging`: after a runbook has been read
+  into a prompt, changing the label underneath it conceals that the investigation ran against the
+  wrong instructions rather than correcting it. The change is audited.
+- **BREAKING for anyone matching on it — `KubePodNotReady` now declares
+  `hephaisto_kind: PodNotReady`, not `ReadinessFlapping`.** Two rules shared one kind and only one
+  of them meant it: flapping is *intermittent*, and that rule fires on a pod that is persistently
+  **stuck**. A stuck pod was being handed a runbook whose entire argument is that the fault is
+  intermittent and a restart will not help. Nothing needs doing unless you filter on that label.
+- **`Llm:Budget:MaxTokensPerHour` defaults to 50,000,000, up from 2,000,000.** See Fixed.
+- **`--full` runs twelve fixtures**, adding c14. The acting gate is still a separate run per #97,
+  and is now two runs testing two different action types.
+
+### Fixed
+- **A shipped alert rule named a chaos fixture and fired forever on every other cluster.**
+  `ServiceNoTraffic` asserted `absent(traces_spanmetrics_calls_total{service="faulty-service"})`,
+  and `alerts.slo` defaults to **true** — so on any install that is not this repo's dev cluster
+  running c10, the series is permanently absent, the alert fires after five minutes and never
+  stops. It carries `hephaisto_kind: TargetDown`, so the agent did not merely log it: it opened an
+  incident, spent its budget investigating a workload that does not exist, escalated, and
+  repeated. The rule moved to its own file behind `alerts.noTraffic`, defaulting to **false**.
+  **This one directly undercut v0.6.0's whole theme, and nobody could have hit it here.**
+- **Every latency incident was un-actionable by construction.** The three latency rules aggregated
+  `sum by (service)` while the error-rate rules twenty lines above used
+  `sum by (service, k8s_namespace_name)`. An empty namespace fails the policy engine's allow-list
+  gate, is part of the signal fingerprint, and is what notification routes filter on. #33 fixed
+  the *reader* half of this in v0.3.0 and everyone recorded "namespace: solved"; the rules were
+  never fixed to emit what the reader reads.
+- **The hourly token cap was the real budget, and the cost cap was decoration.** The two caps imply
+  a price — $3.00 over 2M tokens is $1.50/1M — which is *exactly* `gemini-3.7-flash`'s blended
+  rate. On `gpt-oss-120b` at $0.065/1M, 2M tokens is thirteen cents, so the first full `--mode
+  Auto` run refused **14 of 27** investigations outright, escalating them `BudgetExhausted`,
+  having spent **$0.066 against a $3.00 cap**. It cost a milestone rather than a run: the MVP bar
+  reported *"not applicable: 8 scenarios scored, the bar needs 10"* with accuracy at 7 of 8. The
+  harness had worked around it, which made the harness the only configuration where the budgets
+  were right — so a stranger installing the chart got the broken calibration. That workaround is
+  now deleted rather than adjusted.
+- **A crashed investigation was reported as a budget ceiling, with no exception.** `Faulted` is not
+  a ceiling — a ceiling is a control working, a fault is a bug — and pooling them let a real
+  exception hide behind a tolerance written for budget exhaustion. The exception was in the
+  database, in the API response, and in the harness's own snapshot the whole time; it was simply
+  never printed. The run report now names the fault, attributes it to a fixture, and prints the
+  message, and *"only 10 of 11 fixture incidents were investigated"* now says which and why.
+- **Verification predicates were workload-shaped**, which is right for a restart — the pod is gone
+  by definition — and wrong for a rollback, whose previous revision's pods were Ready throughout.
+  A predicate that passes on a no-op is worse than none, because it closes the incident.
+- **`c13` was absent from `infra/chaos/README.md`** — no row, no listing, and the header still said
+  "Twelve" — while `CLAUDE.md` calls that table the agent's regression suite. The "Expected alert
+  name" column is now labelled as the specification it is: **not one** of those `Chaos*` names is
+  implemented by any `PrometheusRule`, and reading it as an inventory is what produced #70's wrong
+  cause and left it standing for four releases.
+- **`c5` could never score an action.** It is the obvious `DeleteStuckJob` / `DeleteFailedJobPods`
+  fixture and had no `AcceptableActions` at all.
+- **Four documentation surfaces described a harness and two limitations that no longer exist**:
+  `docs/verification.md`'s fixture set and `ACT_FIXTURE` default, a limitation on
+  `docs-site/reference/agent-options.md` closed by #82, `docs-site/project/index.md` calling a
+  closed backlog entry open, and `TryGrantConcludingStep`'s own comment claiming it grants one
+  step when it has granted two since #78.
+
 ## v0.6.0 — 2026-09-03
 
 **Someone else can run it.** Three public sites, a demo that runs on a laptop with one command
