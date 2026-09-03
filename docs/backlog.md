@@ -734,6 +734,67 @@ table looks entirely correct. `NotificationRouter` reports that case separately
 (`SuppressedByUnknownNamespace`) and the interceptor logs it by incident id, so the two halves
 fail loudly rather than quietly.
 
+### 104. The three latency rules drop the namespace, so every latency incident is un-actionable
+
+**Symptom.** An incident opened by `ServiceLatencyBudgetBurnFast`, `ServiceLatencyBudgetBurnSlow`
+or `ServiceLatencyExtreme` carries an empty namespace, exactly as the metric-derived incidents in
+[#33](#33) did before it was fixed.
+
+**Cause.** [#33](#33) fixed the reader. It did not fix the rules. `AlertmanagerEndpoints`
+now reads `namespace`, then `exported_namespace`, then `k8s_namespace_name` — and the three
+latency rules in `charts/hephaisto/files/alerts/slo-rules.yaml` aggregate
+
+```promql
+sum by (service) (rate(traces_spanmetrics_latency_bucket{le="0.256"}[1h]))
+```
+
+so `k8s_namespace_name` is dropped *by the rule* before the reader ever sees the alert. The two
+error-rate rules in the same file, twenty lines above, correctly aggregate
+`sum by (service, k8s_namespace_name)`. The label is present on the series — that is what makes
+the error-rate half work — and is discarded only in the latency half's own `sum by`.
+
+**Why it matters.** The namespace is not prose. It is checked against `Policy:AllowedNamespaces`
+in gate 2, it is part of the signal fingerprint, it is what every tool call needs as an argument,
+and it is what notification routes filter on — `NotificationRouter` reports that case as
+`SuppressedByUnknownNamespace`. So a latency incident is not merely awkward to investigate: the
+policy engine cannot admit an action on it, and it reaches nobody.
+
+**Why it was not noticed.** No fixture fires a latency rule. c10 produces elevated p95 and is
+graded on `HighErrorRate`, whose rules carry the label; `HighLatency` is one of the eight
+`SignalKind`s with no fixture at all, so the path has never been exercised end to end.
+
+**Fix.** Add `k8s_namespace_name` to the `sum by` of all three rules and their traffic floors.
+The workload *name* stays unrecoverable — a spanmetrics series identifies the workload only as
+`service` — which is [#33](#33)'s permanent half and is why `fixture_target()` maps c10 by hand.
+
+**Size.** S.
+
+### 105. Four `SignalKind`s ship alert rules and no runbook
+
+**Symptom.** `SignalKind` has eighteen members. `src/Hephaisto.Agent/Runbooks/` has ten named
+files plus `_Default.md`. `HighLatency`, `TargetDown`, `ReplicaMismatch` and `RestartStorm` all
+have **shipped alert rules that can fire** and are handed the default runbook.
+
+**Evidence.** `PromptComposer.ReadRunbook` is a filename convention — `Runbooks/{kind}.md`, silent
+fallback to `_Default.md`, logged at Debug. A missing runbook is a normal state, not an error, so
+nothing says anything. `ShippedAlertRulesTests` asserts that every alert's `hephaisto_kind` parses
+and does not classify as `Unknown`; it does not assert that the kind has a runbook.
+
+**Why it matters.** `_Default.md` is entirely Kubernetes-shaped — who owns this, `get_events`,
+`get_pod_logs previous:true`. For a burn-rate alert derived from span metrics that is not merely
+unhelpful, it is a set of instructions pointing away from the evidence. `HighLatency` is the
+sharpest case: `HighErrorRate.md`'s own title is *"High error rate / high latency (span metrics)"*,
+so the right runbook exists and is simply unreachable from the kind.
+
+**The rule this breaks.** `SignalKind`'s own doc comment states it: *"This is the key the runbook
+lookup and the chaos fixtures are both written against, so adding a member means adding a
+runbook."* These four predate the rule rather than defying it.
+
+**Fix.** Author the four. Consider a test asserting that every kind emitted by a shipped alert rule
+has a runbook file, which is the same shape as `ShippedAlertRulesTests` and would have caught this.
+
+**Size.** S.
+
 ---
 
 ## Telemetry drift
@@ -1090,6 +1151,59 @@ route names a channel that is not registered.
 when written and is now false. Removed in this restructure; recorded here so the correction is
 traceable.
 
+### 106. c13 is absent from `infra/chaos/README.md`, the table that is meant to be the contract
+
+**Symptom.** `c13-wedged-lock.yaml` exists on disk and appears nowhere in
+`infra/chaos/README.md` — no table row, no directory listing entry, no expected alert, no expected
+PromQL or LogQL. The file's first line still reads *"Twelve hand-written Kubernetes
+fault-injection fixtures"* and its table stops at C12. `grep -c 'c13\|C13' infra/chaos/README.md`
+returns **0**.
+
+**Why it matters.** `CLAUDE.md` says of that table: *"`infra/chaos/README.md` maps each scenario to
+the alert, PromQL, LogQL and Kubernetes event it should produce. That table is the agent's
+regression suite; keep it accurate."* c13 is the fixture the entire v0.6.0 acting claim rests on —
+the one that separates *willingness to act* from *an inference the model gets wrong*
+([#90](#90)) — and it is the only fixture whose known-correct answer lives nowhere in the document
+that is supposed to hold every known-correct answer.
+
+It is documented in its own 200-line YAML header, in `judge.sh`'s `fixture_truth()` and in
+`AnswerKey.cs`, so nothing is broken by it. What is lost is the property the README exists for:
+that one file states the contract for all of them.
+
+**Fix.** A table row, a listing entry, and the header count. Worth doing in the same pass as
+[#107](#107).
+
+**Size.** S.
+
+### 107. Four documentation surfaces describe a harness and limitations that no longer exist
+
+**Symptom.** Four separate places assert something that was true and is not.
+
+- `docs/verification.md:329` — *"`c1,c2,c3,c4,c5,c7,c8,c10,c11,c12`, ten of the twelve"*. `--full`
+  has run eleven of thirteen since v0.6.0 added c13.
+- `docs/verification.md:338` — *"`ACT_FIXTURE` names it, c12 by default"*. It has defaulted to c13
+  since v0.6.0, which is the change that made the acting path measurable at all.
+- `docs-site/reference/agent-options.md:59` — the concluding-step rescue *"cannot land when the
+  exhausted ceiling is tokens — a known limitation, recorded in the backlog"*. That is
+  [#82](#82), closed 2026-09-02.
+- `docs-site/project/index.md:29` — of [#66](#66), *"it is still open, narrowed to why one model
+  declines one fixture"*. #66 closed 2026-09-03.
+- `docs-site/internals/runbooks/index.md:3` — *"The agent ships eleven runbooks, one per member of
+  `SignalKind`, plus a fallback."* There are eighteen members, ten named runbooks and a fallback;
+  the "one per member" clause is the claim [#105](#105) is about.
+
+**Why it matters more than a typo.** Two of the five are on the **public documentation site**, and
+one of them tells a reader that a limitation constrains a build where it no longer does. This
+repository's stated argument is that its docs are checked against the code rather than believed;
+`docs-site` was built with `ignoreDeadLinks: false` precisely so a moved file breaks the build —
+but nothing checks a sentence that is merely false.
+
+**Why it is still open.** Each was written correctly and outlived its subject. The v0.6.0 milestone
+changed `ACT_FIXTURE`, closed #82 and closed #66 within about thirty hours of each other, and the
+prose that referred to all three lives in four files none of those changes touched.
+
+**Size.** S.
+
 ---
 
 ## Chart and deployment
@@ -1099,6 +1213,13 @@ traceable.
 `extraEnv` (added 2026-08-29) makes `Llm__Budget__*` settable, which unblocked the e2e harness, but
 they are still not first-class values. Someone reading `values.yaml` cannot tell a budget exists.
 Worth promoting the four caps once their names have settled. **Size.** S.
+
+**Two more of the same class, found while planning v0.7.0.** `PolicyOptions` carries
+`ClusterUnhealthyCeiling` (0.3), `RollbackFreshRevisionWindow` (30m) and
+`RollbackPreviousHealthyMinimum` (1h) as code defaults with no chart value and no mention in
+`values.yaml`. The first is the gate that correctly refuses every action in a `--full` run
+([#97](#97)); the second and third decide whether a rollback is admitted at all, and become the
+knobs an operator most needs the moment `RollbackDeployment` is implemented ([#39](#39)).
 
 ### 23. NetworkPolicy enforcement is unproven
 
@@ -1135,6 +1256,50 @@ Two related limitations from the same file, both deliberate and worth keeping vi
 events are collected), and scraped stdout logs carry no `trace_id` — only OTLP-shipped logs do.
 
 **Size.** M, and it is a prerequisite for ever scaling this cluster.
+
+### 103. `ServiceNoTraffic` names a chaos fixture, so every install fires it forever
+
+**Symptom.** A fresh `helm install` of the chart, on a cluster that has never run this repository's
+chaos fixtures, raises an incident within five minutes and keeps raising it. The agent investigates
+a service that does not exist, finds nothing, escalates, and repeats for as long as it runs.
+
+**Cause.** `charts/hephaisto/files/alerts/slo-rules.yaml`:
+
+```promql
+absent(traces_spanmetrics_calls_total{service="faulty-service"})
+```
+
+`faulty-service` is `infra/chaos/c10-faulty-service.yaml` — a **development fixture**, named in a
+rule that ships to consumers. On any cluster not running c10 the series is absent, so `absent()`
+is `1`, permanently. `alerts.slo` defaults to **`true`** in `values.yaml`, and the rule carries
+`hephaisto_kind: TargetDown`, so it is not merely noise in Alertmanager: it is ingested, opens an
+incident, and spends investigation budget on every firing.
+
+**The rule's own comment says why it is shaped this way**, and the reasoning about `absent()` is
+correct — a service that stops entirely takes its series with it, so `rate(...) == 0` would go
+quiet at exactly the moment it should shout. What is wrong is not the operator but the subject:
+the rule is scoped to a fixture and shipped to everyone. The comment even says *"Add a copy per
+service that is expected to have continuous traffic"*, which is the right instruction addressed to
+the wrong audience.
+
+**The same defect was already reasoned about correctly elsewhere.** `alerts.observabilitySelfcheck`
+ships **off**, with this comment: *"OFF by default, and it should stay off unless you run this
+repo's exact collector topology. Its alerts assert facts about OUR pipeline; on a different stack
+they fire permanently — and are then fed to the agent as incidents, which is worse than useless."*
+That is a precise description of this rule, in a file that ships on.
+
+**Why it was not noticed.** Every environment that has ever evaluated these rules — the dev
+cluster and the e2e harness — runs c10, or runs a fixture set where an extra firing alert is
+indistinguishable from the ones under test. The one configuration that exposes it is the one
+nobody on this project has: a stranger's cluster. v0.6.0 was the release that first invited one.
+
+**Fix.** Either scope the rule out of the shipped set (a `values.yaml` toggle defaulting off, the
+way the selfcheck rules are handled), or make the series it asserts on configurable, or drop it
+and keep the reasoning in the chart README as the pattern to copy. **The verification needs no
+cluster**: render the chart with default values against a stack that has never run c10, and
+confirm nothing fires.
+
+**Size.** S.
 
 ---
 
