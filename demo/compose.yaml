@@ -4,9 +4,11 @@
 #   open http://localhost:8080
 #
 # What you get is the real published image, the real schema, the real Blazor console and the
-# real query layer, loaded with ten investigations that a real agent ran against a real k3s
-# cluster full of real seeded faults. The only thing that is not real is the clock: every
-# timestamp is shifted forward so the rows are not older than the evidence-retention window.
+# real query layer, loaded with twelve investigations that a real agent ran against a real k3s
+# cluster full of real seeded faults - ten replayed from recorded tool traces, and two exported
+# from the agent's own database after a run in which it acted. The only thing that is not real
+# is the clock: every timestamp is shifted forward so the rows are not older than the
+# evidence-retention window.
 # Each incident's timeline says, in its first entry, which cassette it came from, which model
 # investigated it and how it was graded.
 #

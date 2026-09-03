@@ -96,7 +96,7 @@ jobs:
           test -s website/index.html
           test -s docs-site/.vitepress/dist/index.html
           test -s demo-site/dist/index.html
-          test "$(find demo-site/dist/i -name '*.html' | wc -l)" -ge 10
+          test "$(find demo-site/dist/i -name '*.html' | wc -l)" -ge 12
           echo "landing, docs and $(find demo-site/dist/i -name '*.html' | wc -l) demo pages present"
 
       - name: hephaisto.dev

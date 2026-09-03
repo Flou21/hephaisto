@@ -171,20 +171,24 @@ helm install hephaisto <span class="k">oci://ghcr.io/flou21/charts/hephaisto</sp
 
     <h3 id="demo">Or look first, without a cluster</h3>
     <p class="lede">
-      <a href="https://demo.hephaisto.dev">Read ten of them in your browser</a> — no install, no
+      <a href="https://demo.hephaisto.dev">Read all twelve in your browser</a> — no install, no
       account. Or run the real console locally: two containers, no API key, no Kubernetes, loaded
-      with the same ten investigations the agent ran against a cluster full of seeded faults — the
-      step trace, the diagnosis, and every citation linking back to the raw tool output it came
-      from.
+      with the same twelve investigations the agent ran against a cluster full of seeded faults —
+      the step trace, the diagnosis, and every citation linking back to the raw tool output it
+      came from.
     </p>
 <pre><span class="c"># then open http://localhost:8080</span>
 curl -fsSL <span class="k">https://raw.githubusercontent.com/Flou21/hephaisto/main/demo/compose.yaml</span> \
   | docker compose -f - up</pre>
     <p class="lede" style="margin-bottom:0">
-      Nine of the ten were graded correct against a written answer key. The tenth is in there
-      too, labelled — a demo showing only what worked would be a different claim. Connected to
-      nothing, it detects nothing and refuses every action: this is the output, not the agent
-      running.
+      Ten of them were replayed from recorded tool traces, and nine of those ten were graded
+      correct against a written answer key. The tenth is in there too, labelled — a demo showing
+      only what worked would be a different claim. Those ten are the output of a replay, not an
+      agent running: connected to nothing, it detects nothing and refuses every action.
+      <strong>The other two are live captures</strong>, exported from the agent's own database
+      after a real run on a real cluster — one where it restarted a wedged pod and the incident
+      reached <code>Resolved</code>, and one where it diagnosed the same fault, proposed the same
+      fix, and policy refused it.
     </p>
   </section>
 

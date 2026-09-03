@@ -8,8 +8,8 @@ There are two ways around it, and neither needs an account.
 
 ## The hosted demo
 
-<https://demo.hephaisto.dev> renders ten investigations the agent actually ran, as static pages.
-Nothing to install, nothing to run, no key.
+<https://demo.hephaisto.dev> renders twelve investigations the agent actually ran, as static
+pages. Nothing to install, nothing to run, no key.
 
 ## The local stack
 
@@ -26,10 +26,12 @@ investigations the agent actually ran** against a k3s cluster full of seeded fau
 trace, the diagnosis, and every evidence excerpt linking back to the untruncated tool output it
 came from.
 
-Each incident's timeline says, in its first entry, which fixture it was replayed from, which model
-investigated it and how it was graded. Nine of the ten were graded correct; the tenth is in there
-too, labelled, because a demo showing only the ones that worked would be a different claim from
-the one this project publishes.
+Each incident's timeline says, in its first entry, where it came from, which model investigated
+it and how it was graded. Ten are replays of recorded tool traces, and nine of those ten were
+graded correct; the tenth is in there too, labelled, because a demo showing only the ones that
+worked would be a different claim from the one this project publishes. The other two are live
+captures, exported from the agent's database after a real run, and they are not scored against
+the answer key - a replay and a cluster run are not the same measurement.
 
 ## Why this had to be built rather than recorded
 
@@ -50,9 +52,13 @@ is the product's output, not the product running.
 
 Two consequences worth naming rather than discovering:
 
-- **No transcript shows the agent acting.** Every one of the ten either correctly declined to act
-  or produced no plan. That is a real property of the model the corpus was replayed against, not a
-  limitation of the viewer — see [What it is](/guide/what-it-is#the-row-to-read-carefully).
+- **No *replayed* transcript shows the agent acting.** Every one of the ten either correctly
+  declined to act or produced no plan, which is a real property of the model the corpus was
+  replayed against rather than a limitation of the viewer — see
+  [What it is](/guide/what-it-is#the-row-to-read-carefully). It is also a limit of replay itself:
+  `run --transcripts` constructs an investigation runner and no executor, no policy engine and no
+  state machine, so a replay has nothing to act with. The two live captures are there because
+  that is the only way this corpus can show an executed action or a refused one.
 - `Kubernetes:Enabled=false` is what makes booting without a kubeconfig possible, and it is **not
   a setting to put on a deployed agent**. One that watches nothing while reporting itself healthy
   is the worst failure mode this project has, so it says so at warning level on every start.

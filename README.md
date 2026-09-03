@@ -62,10 +62,13 @@ investigations the agent actually ran** against a k3s cluster full of seeded fau
 trace, the diagnosis, and every evidence excerpt linking back to the untruncated tool output it
 came from.
 
-Each incident's timeline says, in its first entry, which fixture it was replayed from, which
-model investigated it and how it was graded. Nine of the ten were graded correct; the tenth is
-in there too, labelled, because a demo showing only the ones that worked would be a different
-claim from the one this project publishes.
+Each incident's timeline says, in its first entry, where it came from, which model investigated
+it and how it was graded. Ten are replays of recorded tool traces, and nine of those ten were
+graded correct; the tenth is in there too, labelled, because a demo showing only the ones that
+worked would be a different claim from the one this project publishes. The other two are live
+captures from a real cluster run - one the agent restarted and saw through to `Resolved`, and
+one where policy refused the same fix - and neither is scored against the answer key, because a
+replay and a cluster run are not the same measurement.
 
 **What it cannot show you:** the agent is connected to nothing, so it detects nothing and the
 executor refuses every action. It is the product's output, not the product running.

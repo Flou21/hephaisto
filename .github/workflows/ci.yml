@@ -464,7 +464,7 @@ jobs:
           test -s docs-site/.vitepress/dist/index.html
           test -s demo-site/dist/index.html
           pages=$(find demo-site/dist/i -name '*.html' | wc -l)
-          test "$pages" -ge 10 || { echo "only $pages demo pages rendered"; exit 1; }
+          test "$pages" -ge 12 || { echo "only $pages demo pages rendered"; exit 1; }
           echo "docs ok, $pages demo pages"
 
   # assertions passes just as happily against a console whose layout has collapsed.

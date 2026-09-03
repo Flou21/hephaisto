@@ -43,9 +43,10 @@ reaching `Resolved`.
   termination reason, and the summary prints the histogram — with the number that matters beside
   it: how many attempts the planner actually ran in.
 - **A demo that needs no cluster.** `demo/compose.yaml` brings up Postgres and the published
-  image with ten recorded investigations loaded — the step trace, the diagnosis, and every
+  image with twelve recorded investigations loaded — the step trace, the diagnosis, and every
   evidence excerpt linked back to the raw tool output it came from. No API key, no Kubernetes,
-  nothing fetched at runtime.
+  nothing fetched at runtime. Ten are replays; two are live captures of the agent acting and of
+  policy refusing it, which a replay cannot produce.
 - **`Kubernetes:Enabled`.** The agent can now start without a cluster, which it could not before:
   the RBAC self-check ran forty-odd access reviews at boot and building a client outside a pod
   fell back to a kubeconfig that was not there. Disabling it skips the watchers and leaves the
