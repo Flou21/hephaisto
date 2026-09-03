@@ -4241,8 +4241,20 @@ are 31% of the pods, which is over the ceiling. So:
 
 **This is why the act assertion has only ever passed on narrow runs.** [#90](#90) records c13
 acting "on the first cluster run and the second" - both with a small fixture set - and
-[#72](#72)'s confirming run was the act phase, not the full corpus. Nobody had run `--full
---mode Auto` end to end before, so the two flags had never been in the same room.
+[#72](#72)'s confirming run was the act phase, not the full corpus.
+
+**And it is why v0.5.0's green run does not contradict any of this.** `roadmap.md` records
+`run.sh --tag 0.5.0-rc5 --full --mode Auto` exiting **0** on 2026-09-01: 77 assertions, 0 failed,
+**8 skipped**. One of those skips was the act assertion, on the "planner proposed nothing" branch
+- `ACT_FIXTURE` was c12 then, and `gpt-oss:120b` proposes on c12 about one run in eleven. The
+planner never got as far as proposing, so nothing was ever submitted to the policy engine, so
+gate 7 was never reached.
+
+**The conflict was therefore latent, and hidden by a second defect.** It could only surface once
+the planner reliably proposed something, which is exactly what c13 was added to make true. Fixing
+"the agent will not act" is what exposed "the gate the agent acts through refuses everything in
+this configuration" - two bugs in a queue, where the first one masked the second and the run
+looked green throughout.
 
 **What must not be done about it.** Raising `ClusterUnhealthyCeiling` in `values-e2e.yaml`
 would make the assertion pass by weakening a safety gate until the test agrees with us, which

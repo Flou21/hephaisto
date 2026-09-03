@@ -68,9 +68,24 @@ Excluded by default: **c9 is node-wide** and would evict Prometheus and the agen
 harness refuses it even if asked); c6 does not fire on `local-path`; c1's OOM event is
 unreliable on containerd; c8 needs 30 minutes; c10 needs a local image build.
 
-**`--full` is the release gate**: `c1,c2,c3,c4,c5,c7,c8,c10,c11,c12` — every fixture that can
-run on this hardware, which is ten of the twelve and the denominator the MVP bar was always
-written against. c6 and c9 stay out and no flag overrides that; neither is a scheduling choice.
+**`--full` is the DIAGNOSIS gate**: `c1,c2,c3,c4,c5,c7,c8,c10,c11,c12,c13` — every fixture that
+can run on this hardware, which is eleven of the thirteen and the denominator the MVP bar was
+always written against. c6 and c9 stay out and no flag overrides that; neither is a scheduling
+choice.
+
+**It is not the acting gate, and it cannot be.** `--full` applies its fixtures *simultaneously*,
+and on a single node that many broken workloads is over `policy.clusterUnhealthyCeiling` — so the
+policy engine correctly refuses every action as a cluster-wide event, and the act assertion can
+never pass in a `--full` run. The harness now says so rather than failing, but the consequence for
+the procedure is that **a release needs two runs**:
+
+```sh
+scripts/e2e/run.sh --tag <version> --full                       # diagnosis, ~2-4 h
+scripts/e2e/run.sh --tag <version> --fixtures c13 --mode Auto   # acting, ~25 min
+```
+
+See backlog #97. Measured on v0.6.0: the wide run scored 8/8 correct and could not act; the
+focused run passed 70 assertions in 24m37s, executing a `RestartPod` and closing the incident.
 
 Budget **about two hours**. c8 alone cannot open an incident sooner than thirty minutes, because
 its rule needs `changes(...)[30m] >= 4` — thirty minutes of evidence before the expression can
@@ -143,8 +158,11 @@ before every release. No key is involved:
 HEPHAISTO_LLM_PROVIDER=openai \
 HEPHAISTO_LLM_ENDPOINT=http://100.91.41.104:11434/v1 \
 HEPHAISTO_LLM_MODEL=gpt-oss:120b \
-    scripts/e2e/run.sh --nightly --full --mode Auto
+    scripts/e2e/run.sh --nightly --full
 ```
+
+Note `--full` without `--mode Auto`: the two do not combine, for the reason above. Run the acting
+half separately with `--fixtures c13 --mode Auto`.
 
 Two things have to be true, and both were false on a fresh install:
 

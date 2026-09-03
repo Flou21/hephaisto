@@ -296,7 +296,8 @@ kind cluster and prints a verdict:
 scripts/e2e/run.sh                    # dispatch a nightly build and test it
 scripts/e2e/run.sh --rc               # cut a real release candidate and test it
 scripts/e2e/run.sh --tag 0.0.1-rc2    # test something already published
-scripts/e2e/run.sh --nightly --full   # the release gate: ten fixtures, about two hours
+scripts/e2e/run.sh --nightly --full   # diagnosis gate: eleven fixtures, two hours or more
+scripts/e2e/run.sh --tag <v> --fixtures c13 --mode Auto   # acting gate: about 25 minutes
 ```
 
 It covers steps 1, 2, 5, 6, 9, 11, 12, 14 and 16 above, plus the parts CI cannot reach: that the
@@ -341,7 +342,17 @@ affordable before every release:
 
 ```sh
 HEPHAISTO_LLM_PROVIDER=openai HEPHAISTO_LLM_ENDPOINT=http://100.91.41.104:11434/v1 \
-HEPHAISTO_LLM_MODEL=gpt-oss:120b scripts/e2e/run.sh --nightly --full --mode Auto
+HEPHAISTO_LLM_MODEL=gpt-oss:120b scripts/e2e/run.sh --nightly --full
+```
+
+**`--full` and `--mode Auto` do not combine.** Eleven simultaneous fixtures put the cluster over
+`policy.clusterUnhealthyCeiling`, so every action is correctly denied as a cluster-wide event and
+the acting path goes untested. Run it separately, which is also far cheaper:
+
+```sh
+HEPHAISTO_LLM_PROVIDER=openai HEPHAISTO_LLM_ENDPOINT=http://100.91.41.104:11434/v1 \
+HEPHAISTO_LLM_MODEL=gpt-oss:120b \
+  scripts/e2e/run.sh --tag <version> --fixtures c13 --mode Auto
 ```
 
 The endpoint has to be an address the **cluster** can reach — `localhost` from a pod is the pod,
