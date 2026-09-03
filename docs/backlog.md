@@ -4059,6 +4059,13 @@ or falling back to the registry API on a docker failure, would make the gate ind
 tool that is not otherwise on the path. As it stands a transient docker fault reads as an
 unpublished image.
 
+**Did not reproduce on 2026-09-03.** Three invocations across the v0.6.0 gate runs, same machine
+and same docker: `waiting for the image manifest to appear ok (2s)` and `ok (3s)`, both platforms
+resolved, no workaround needed. So "transient" was the right word and the entry stays open for the
+right reason - the check is still built on the one client that has been observed to fail against a
+registry the other two clients reach fine. It is not urgent; it is a gate that can stop a good
+release on a client fault, and it will do it again eventually.
+
 **Size.** S. **Open.**
 
 ### 92. An `instance` label became a node name, and default-deny did the rest
@@ -4334,11 +4341,23 @@ It matches on the reason **text**, because the incident API exposes `decisionRea
 and carries no reason code. That is worth fixing the next time that payload changes; a
 `PolicyReasonCode` on the wire would make this robust rather than merely careful.
 
-**Still open:** the release procedure itself. `docs/roadmap.md` and the README describe one gate
-command, and it needs to be two - `--full` for the diagnosis corpus and a focused
-`--fixtures c13 --mode Auto` for the acting path.
+**The procedure landed 2026-09-03 too.** `scripts/e2e/README.md` and `docs/verification.md` now
+document two runs rather than one, with the v0.6.0 measurements beside them, and the local-model
+example no longer combines the two flags.
 
-**Size.** S for the skip (done); S for the docs. **Open**, for the procedure.
+**One thing found while writing that, and it is the reason nobody knew.** `roadmap.md` records
+v0.5.0's `--full --mode Auto` exiting **0** on 2026-09-01 - 77 assertions, 0 failed, *8 skipped*.
+One of those skips was this very assertion, on the "planner proposed nothing" branch:
+`ACT_FIXTURE` was c12, and `gpt-oss:120b` proposes on c12 about one run in eleven. Nothing was
+ever submitted to the policy engine, so gate 7 was never reached.
+
+**So the conflict was latent, and masked by a second defect.** It could only surface once the
+planner reliably proposed something - which is exactly what c13 was added to make true. Fixing
+"the agent will not act" is what exposed "the gate it acts through refuses everything in this
+configuration", and the run looked green throughout. Two bugs in a queue, the first hiding the
+second.
+
+**Size.** S for the skip, S for the docs. **Status: fixed 2026-09-03.**
 
 ### 98. The redactor's lookbehind lost to `\u0022`, which is [#84](#84) for the second time
 
@@ -4485,3 +4504,99 @@ denominator, and a replay arm would add a second denominator rather than change 
 the guard against the *next* correction, not a defect in the current numbers.
 
 **Size.** S. **Open.**
+
+---
+
+## The v0.6.0 carry, reviewed 2026-09-03
+
+The rule this file states at the top, and which v0.5.0's carry pass established as a milestone
+exit: *an item leaves by being fixed, or by being reclassified as a deliberate limitation and
+written down somewhere permanent. It does not leave by being ignored.* This is that pass for
+v0.6.0 — every entry still open, given one fresh sentence saying why.
+
+**Twenty-eight open, and the shape has changed.** v0.5.0 carried a list dominated by "real, small,
+not reached". v0.6.0's additions are dominated by **instruments that were wrong about the agent** —
+which is what happens when a milestone spends itself on measurement.
+
+### Closed this milestone
+
+[#66](#66) (the last `Blocks:` field), [#71](#71), [#72](#72), [#82](#82), [#83](#83), [#84](#84),
+[#85](#85), [#86](#86), [#87](#87), [#88](#88), [#89](#89), [#90](#90), [#92](#92), [#93](#93),
+[#94](#94), [#95](#95), [#97](#97), [#98](#98). Eighteen, of which **eight were defects in the
+instrument rather than in the product** — and two of those eight (#93, #98) were the *second*
+instance of a defect this project had already fixed once.
+
+### Opened by v0.6.0, and carried
+
+- **[#96](#96) The console does not render an action's verifications.** Noticed rather than hunted,
+  while deciding what `export` should carry. Verification is the load-bearing half of the safety
+  argument and the one screen a human looks at an action on does not show it. S, and it should go
+  early in v0.7.0 because the demo now has an acted-on incident to show it against.
+- **[#99](#99) `hourlyCostUtilization` disagreed with the ledger by 40x.** On the wide run only; it
+  did not reproduce on the focused run twenty minutes later. Undiagnosed deliberately — chasing it
+  means another multi-hour run — but it is a *money* gauge reading low, so it is the most
+  uncomfortable thing on this list. Read it beside [#15](#15).
+- **[#100](#100) One fixture of eleven was never investigated**, and one investigation of
+  thirty-six terminated `Faulted`. Probably the same event, and the report does not say so. What is
+  missing to close it is the exception itself, which is recorded and never surfaced.
+- **[#101](#101) c13 is measured by one instrument and one model.** The limitation [#66](#66) closed
+  in spite of, named loudly rather than buried. Tokens and a dev-cluster incident, no release time.
+
+### Blocked on something outside this repository
+
+- **[#23](#23) NetworkPolicy enforcement is unproven.** kind's CNI accepts the objects and ignores
+  them, and that policy is the Alertmanager webhook's entire authentication. Still the harness's
+  own stated uncovered limit, printed at the end of every run. Needs Calico, which is a `--enforce-netpol` tier rather than a fix.
+- **[#29](#29) `CS0618` on `WatcherExt.WatchAsync`.** KubernetesClient still ships no replacement.
+- **[#31](#31) grafana-mcp exposes no Tempo tools.** c10's three-signal trail is still unreachable,
+  and the cheap half — making the absence loud — is still not done.
+- **[#91](#91) `docker manifest inspect` cannot reach ghcr from here.** Did **not** reproduce across
+  three invocations this milestone, which confirms "transient" and does not make the check sound.
+
+### Correct as designed; the entry exists so the tradeoff stays visible
+
+[#24](#24) (the webhook CIDR on a single-tenant node), [#25](#25) (an orphaned PVC one `kubectl`
+away), [#34](#34) (c1 cannot produce an `OomKilled` on this node, now measured rather than argued),
+[#49](#49) (a spec that cannot fire below 100 open incidents).
+
+### Deliberately excluded by this release's own rule
+
+- **[#39](#39) Three refused action types.** `PatchResources` is capability, and v0.6.0 said no new
+  capability ships in it. Named again because it is *why* c4 and c7 are permanently "diagnose
+  correctly, propose nothing" — the corpus cannot grade the action that is actually right for them.
+- **[#42](#42)** is gated behind #39 and moves when it does.
+- **[#57](#57)'s second half.** The seam shipped; which embedding model ships as the default is
+  still blocked on a search-quality measurement that does not exist.
+
+### Real, small, and simply not reached — the honest category
+
+[#15](#15) (duplicate instruments; now with #99 as a possible symptom), [#21](#21) (a recorded
+correction whose parent restructure shipped as `docs-site/` — arguably closeable, left because its
+stated purpose is to remain traceable), [#22](#22) (budget values write-only, and this milestone
+leaned on `extraEnv` again), [#26](#26) (`k8s_events` on a second node), [#28](#28)
+(`list_alert_rules` empty, now caveated for two model families), [#30](#30) (a credential-carrying
+tarball on one machine — **not a code change, and the only entry here that closes by somebody
+deleting a file**), [#44](#44) (nothing sweeps `AwaitingApproval`), [#60](#60) (provider-specific
+request options).
+
+### Measurement debt, which is this milestone's signature
+
+- **[#55](#55) The corpus grades the model that recorded it**, and **[#80](#80) every cassette is
+  stale against the shipped prompts.** Both bear directly on numbers this release publishes, and
+  #80's own text says it blocks nothing that ships in v0.6.0 — which remains true and is worth
+  re-reading every time it is quoted.
+- **[#59](#59)** is now *half* closed and the entry says so: `terminationReason` is reported
+  ([#88](#88)), and the per-model `MaxSteps` beside each model's price is not.
+- **[#70](#70) A generic rule with a shorter `for:` mislabels fixtures.** Measured again this
+  milestone: c1, c3 and c4 all classified by the wrong rule in the `--full` run, and c13's own
+  resolved capture is labelled `ReadinessFlapping`. Three occurrences is no longer a footnote.
+- **[#74](#74)** ceilings calibrated 45x apart; the harness works around it, the product default
+  does not.
+
+### The one that is not on this list
+
+`docs/history.md` still stops at v0.4.0, and `CHANGELOG.md`'s header promises it as a companion for
+"what was learned doing the work". Two releases of that promise are now unmet. It is not a backlog
+entry because it is not a defect, but it is the largest piece of unwritten record in the repository
+and this milestone produced more of it than most.
+
