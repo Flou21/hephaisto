@@ -43,6 +43,11 @@ public class PromptComposerTests
     [InlineData(SignalKind.NodePressure)]
     [InlineData(SignalKind.PvcNearlyFull)]
     [InlineData(SignalKind.HighErrorRate)]
+    [InlineData(SignalKind.HighLatency)]
+    [InlineData(SignalKind.TargetDown)]
+    [InlineData(SignalKind.ReplicaMismatch)]
+    [InlineData(SignalKind.RestartStorm)]
+    [InlineData(SignalKind.PodNotReady)]
     public void Picks_the_runbook_for_the_signal_kind(SignalKind kind)
     {
         // Compared against the file itself rather than a marker string: the runbooks are
@@ -58,10 +63,6 @@ public class PromptComposerTests
 
     [Theory]
     [InlineData(SignalKind.Unknown)]
-    [InlineData(SignalKind.RestartStorm)]
-    [InlineData(SignalKind.ReplicaMismatch)]
-    [InlineData(SignalKind.TargetDown)]
-    [InlineData(SignalKind.HighLatency)]
     [InlineData(SignalKind.ObservabilityDegraded)]
     [InlineData(SignalKind.BudgetExhausted)]
     [InlineData(SignalKind.Watchdog)]

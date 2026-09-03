@@ -87,6 +87,64 @@ public class ShippedAlertRulesTests
             + "written for its failure mode.");
     }
 
+    /// <summary>
+    /// Every kind a shipped alert rule can produce has a runbook written for it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Backlog #105. <see cref="SignalKind"/>'s own doc comment states the contract - "adding
+    /// a member means adding a runbook" - and four members predated the rule:
+    /// <c>HighLatency</c>, <c>TargetDown</c>, <c>ReplicaMismatch</c> and <c>RestartStorm</c>
+    /// all shipped an alert rule and fell through to <c>_Default.md</c>.
+    /// </para>
+    /// <para>
+    /// The fallback is not neutral. It is entirely Kubernetes-shaped - who owns this,
+    /// get_events, get_pod_logs previous:true - which is useless advice for a burn-rate alert
+    /// computed from span metrics, where there is usually no Kubernetes symptom at all. So the
+    /// investigation was not merely unguided, it was actively pointed at the wrong evidence.
+    /// </para>
+    /// <para>
+    /// Scoped to kinds a shipped rule can actually produce. Falling through is legitimate for
+    /// the kinds that describe Hephaisto's own health and for <c>Unknown</c>; it is not
+    /// legitimate for a kind this repo ships a rule to raise.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_kind_a_shipped_rule_can_produce_has_its_own_runbook()
+    {
+        var runbooks = Path.Combine(
+            new FileInfo(typeof(ShippedAlertRulesTests).Assembly.Location).Directory!.FullName,
+            "Runbooks");
+
+        var declared = Directory.EnumerateFiles(AlertsDirectory(), "*.yaml")
+            .SelectMany(File.ReadLines)
+            .Select(line => KindLine.Match(line))
+            .Where(m => m.Success)
+            .Select(m => m.Groups[1].Value)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        // Guards the guard, for the same reason the theories above have one.
+        declared.Should().HaveCountGreaterThan(5);
+
+        var missing = declared
+            // Kinds that describe Hephaisto's own health rather than a workload's are allowed
+            // to fall through. _Default.md's advice - reason about the controller, read events,
+            // read previous-container logs - is not wrong for them, it is simply about a
+            // different subject, and an incident about the agent's own budget is escalated to a
+            // human rather than investigated for a root cause in the cluster.
+            .Where(kind => !(Enum.TryParse<SignalKind>(kind, ignoreCase: true, out var k)
+                             && SignalKindSpecificity.IsAboutHephaistoItself(k)))
+            .Where(kind => !File.Exists(Path.Combine(runbooks, $"{kind}.md")))
+            .OrderBy(k => k, StringComparer.Ordinal)
+            .ToArray();
+
+        missing.Should().BeEmpty(
+            "a shipped rule raises these kinds, and a kind with no runbook is handed _Default.md "
+            + "- which tells the model to read events and previous-container logs, advice that is "
+            + "wrong rather than merely absent for a span-metrics alert");
+    }
+
     [Fact]
     public void The_alert_rule_files_are_where_this_test_thinks_they_are()
     {

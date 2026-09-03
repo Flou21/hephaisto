@@ -44,6 +44,28 @@ public enum SignalKind
     ObservabilityDegraded = 15,
     BudgetExhausted = 16,
     Watchdog = 17,
+
+    /// <summary>
+    /// A pod is stuck in <c>Pending</c> or <c>Unknown</c> and nothing has said why yet.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deliberately generic, and deliberately separate from
+    /// <see cref="ReadinessFlapping"/>. The <c>KubePodNotReady</c> rule carried the flapping
+    /// label until v0.7.0, which meant two rules shared one kind and only one of them meant
+    /// it - a stuck pod was handed a runbook whose whole argument is that the fault is
+    /// intermittent and a restart will not help. That was wrong information, and only
+    /// accidentally harmless.
+    /// </para>
+    /// <para>
+    /// This kind is expected to be superseded. It sits at the bottom of
+    /// <see cref="SignalKindSpecificity"/>, so an incident opened on it is re-labelled the
+    /// moment a signal that knows more - <see cref="ImagePullBackOff"/>,
+    /// <see cref="Unschedulable"/>, <see cref="ConfigError"/> - arrives for the same
+    /// workload. See backlog #70.
+    /// </para>
+    /// </remarks>
+    PodNotReady = 18,
 }
 
 public enum Severity

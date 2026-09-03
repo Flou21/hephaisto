@@ -52,7 +52,12 @@ public static class AlertClassifier
             var n when Has(n, "imagepull") || Has(n, "errimage") => SignalKind.ImagePullBackOff,
             var n when Has(n, "unschedulable") || Has(n, "pending") => SignalKind.Unschedulable,
             var n when Has(n, "configerror") || Has(n, "createcontainerconfig") => SignalKind.ConfigError,
-            var n when Has(n, "readiness") || Has(n, "notready") => SignalKind.ReadinessFlapping,
+            var n when Has(n, "readiness") => SignalKind.ReadinessFlapping,
+            // "not ready" is a stuck pod, not a flapping one - the same split the
+            // shipped rules make since backlog #70. Dead code for anything carrying a
+            // hephaisto_kind label, which every rule in this repo does, and kept honest
+            // anyway because the guess is what a foreign rule falls back to.
+            var n when Has(n, "notready") || Has(n, "podnotready") => SignalKind.PodNotReady,
             var n when Has(n, "jobfailed") || Has(n, "jobfailure") => SignalKind.JobFailed,
             var n when Has(n, "restart") => SignalKind.RestartStorm,
             var n when Has(n, "nodepressure") || Has(n, "nodememory") || Has(n, "nodedisk") => SignalKind.NodePressure,

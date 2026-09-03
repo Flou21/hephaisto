@@ -3,6 +3,7 @@ using Hephaisto.Agent.Options;
 using Hephaisto.Agent.Persistence.Repositories;
 using Hephaisto.Core;
 using Hephaisto.Core.Abstractions;
+using Hephaisto.Core.Classification;
 using Hephaisto.Core.Domain;
 using Hephaisto.Core.Fingerprinting;
 
@@ -200,12 +201,71 @@ public sealed class IncidentTriage(
         // later turns critical must not stay filed as a warning.
         if (signal.Severity > incident.Severity)
             incident.Severity = signal.Severity;
+
+        Relabel(incident, signal);
     }
+
+    /// <summary>
+    /// Re-labels an incident when a later signal identifies the failure more specifically
+    /// than the one that happened to open it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Backlog #70. The kind used to be written once, by whichever signal won the race to
+    /// open the incident, and never reconsidered - so <c>KubePodNotReady</c> (generic,
+    /// <c>for: 2m</c>) beating <c>KubeContainerWaiting</c> (specific, <c>for: 1m</c>) under
+    /// load permanently labelled a bad image tag as a readiness problem. Since
+    /// <see cref="SignalKind"/> selects the runbook, the investigation was then handed
+    /// instructions written for a different failure.
+    /// </para>
+    /// <para>
+    /// The precedent is directly above: severity is already promoted on attach, for the same
+    /// reason and with the same shape. The kind is the more consequential of the two.
+    /// </para>
+    /// <para>
+    /// <b>Only before the investigation starts.</b> Once a runbook has been read into a
+    /// prompt, changing the label underneath it does not correct the investigation - it
+    /// conceals that the investigation was run against the wrong instructions, which is
+    /// strictly worse than leaving the wrong label where somebody can see it. The signals
+    /// that race are all early anyway: the shortest generic rule is <c>for: 2m</c> and the
+    /// correlation window is ten minutes.
+    /// </para>
+    /// <para>
+    /// The re-label is audited rather than silent. An incident whose kind changed after it
+    /// opened is exactly the kind of thing that should be visible when someone is working out
+    /// why a runbook was chosen.
+    /// </para>
+    /// </remarks>
+    private void Relabel(Incident incident, Signal signal)
+    {
+        if (incident.State is not (IncidentState.Detected or IncidentState.Triaging))
+        {
+            return;
+        }
+
+        if (!SignalKindSpecificity.ShouldReplace(incident.Kind, signal.Kind))
+        {
+            return;
+        }
+
+        var was = incident.Kind;
+
+        incident.Kind = signal.Kind;
+        incident.Title = TitleFor(signal.Kind, incident.Target);
+
+        EnlistAudit(
+            incident,
+            "incident.reclassified",
+            $"{was} -> {signal.Kind} ({signal.Reason})");
+    }
+
+    private static string TitleFor(SignalKind kind, TargetRef target) =>
+        $"{kind} on {target.OwnerName ?? target.Name} ({target.Namespace})";
 
     private static Incident OpenIncident(Signal signal, DateTimeOffset now) => new()
     {
         CorrelationKey = SignalFingerprinter.CorrelationKey(signal),
-        Title = $"{signal.Kind} on {signal.Target.OwnerName ?? signal.Target.Name} ({signal.Target.Namespace})",
+        Title = TitleFor(signal.Kind, signal.Target),
         Kind = signal.Kind,
         Severity = signal.Severity,
         State = IncidentState.Detected,

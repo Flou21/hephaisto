@@ -3002,6 +3002,29 @@ changes who wins. That is why a full-corpus run finds things a four-fixture one 
 ReadinessFlapping runbook. That is wrong information, and only accidentally harmless: the flap
 runbook says restarting will not help, which happens to be true for both.
 
+**Correction, 2026-09-03, found while planning v0.7.0.** The paragraph above names
+`ChaosPodUnschedulable` and `ChaosImagePullFailure` as the specific rules the generic one beats.
+**Those rules do not exist.** `grep -rn "alert: Chaos"` over the repository returns nothing; the
+two names appear only in `infra/chaos/README.md`, in a column headed *"Expected alert name"* — they
+are aspirational entries in the fixture spec table that no `PrometheusRule` ever implemented. The
+real races are different, and only one of them is between two Prometheus rules:
+
+- **c4** is a genuine rule-versus-rule race, between `KubePodNotReady` (`for: 2m`, generic) and
+  `KubeContainerWaiting` (`for: 1m`, `ImagePullBackOff`). Note that the *specific* rule has the
+  **shorter** `for:`, so it ought to win; under load it evidently does not.
+- **c3 is not a race between rules at all.** No rule in this repo emits
+  `hephaisto_kind: Unschedulable`. The only producer of that kind anywhere is the Kubernetes watch
+  path (`SignalMapper`, from a `FailedScheduling` event reason and from the pod condition). So c3's
+  classification depends on the watcher beating Alertmanager to the two-minute mark — a race
+  between two *ingestion paths*.
+
+**And the mechanism is one layer below either race.** `IncidentTriage.Attach` folds every later
+signal into the open incident while updating only `LastSignalAt` and `Severity`. It does not touch
+`Kind`. So the kind is not merely decided by the first rule to fire — it is decided by it
+**permanently**, and no amount of subsequent evidence revises it. The severity branch immediately
+above it carries a comment explaining why a warning that later turns critical must not stay filed
+as a warning; exactly the same argument applies to the kind, and was never made.
+
 **Deliberately not fixed in v0.5.0.** Changing what an alert rule means is a detection-semantics
 change, it is not what this milestone is for, and the harness records these as `skip` rather than
 `fail`, so the gate is not blocked on it. Fixing it wants a decision about whether the generic
