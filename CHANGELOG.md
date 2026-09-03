@@ -118,6 +118,14 @@ release rather than by anyone running it.
   database, in the API response, and in the harness's own snapshot the whole time; it was simply
   never printed. The run report now names the fault, attributes it to a fixture, and prints the
   message, and *"only 10 of 11 fixture incidents were investigated"* now says which and why.
+- **A single readiness-probe failure was classified as "flapping", so every ordinary rollout
+  opened a spurious incident — and captured every real one that followed it.** `SignalMapper` has
+  two detectors for `ReadinessFlapping`: one counts ready-transitions and refuses to claim it
+  below four, and the other claimed it from **one** `Unhealthy` event. A probe fails once on any
+  pod slower to start than its `initialDelaySeconds`, so the spurious incident opened *first* —
+  seconds in, against minutes for anything metric-derived — and every later signal correlated into
+  an incident already carrying the wrong kind and therefore the wrong runbook. The event path now
+  requires the same repetition count as the detector beside it.
 - **Verification predicates were workload-shaped**, which is right for a restart — the pod is gone
   by definition — and wrong for a rollback, whose previous revision's pods were Ready throughout.
   A predicate that passes on a no-op is worse than none, because it closes the incident.
