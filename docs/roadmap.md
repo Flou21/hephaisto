@@ -843,6 +843,17 @@ three. These are their successors, and the same rule applies: the site does not 
 the instrument does. `website/index.html` currently leads with **"It fixes what it can prove"** —
 the one claim in the repo whose evidence is still outstanding.
 
+> **Both are closed, and the paragraphs above are left as they were written.** #72 was confirmed on
+> a cluster on 2026-09-02 and #66 closed on 2026-09-03. The description of #66 above is itself
+> superseded twice over: "replay says 4 of 8, a cluster says 0 of 4" was never an instrument
+> disagreement — it was DeepSeek against gpt-oss — and the per-model p-value that correction
+> produced did not survive counting a denominator that had nine budget-truncated runs in it
+> ([#88](backlog.md#88-noplan-pools-four-outcomes-and-the-action-rate-counted-all-four-as-declines)).
+> What actually closed it was neither: a fixture that could separate *willingness to act* from *an
+> inference the model gets wrong*
+> ([#90](backlog.md#90-the-acting-path-had-no-fixture-that-could-measure-it)). The hero sentence is
+> now behind its evidence rather than ahead of it.
+
 ### What ships
 
 **Truth first.** The roadmap and the README describe the release they ship with. The README is
@@ -909,7 +920,20 @@ investigation on their laptop with one command and no API key, and install the c
 README that describes the release it ships with — and every claim on that page names its
 measurement, its denominator and the instrument that produced it.
 
-### Where it stands — in progress
+### Done when — status
+
+| Clause | |
+|---|---|
+| find the page | **met.** Three sites on `hephaisto.dev`, `docs.` and `demo.`, live since 2026-09-02. |
+| see what the console actually looks like | **not met.** `scripts/console-shots.sh` exists and is verified; no images are committed, because the transcripts ship inside the image and a pre-release photograph publishes a smaller demo than the site describes. Run it against the rc. |
+| run a real recorded investigation, one command, no key | **met.** `demo/compose.yaml` — two containers, twelve investigations, no cluster and no API key. |
+| install the current chart from a README that describes the release | **met at the tag.** The README describes v0.6.0 and pins it; both become true the hour `v0.6.0` publishes. |
+| every claim names its measurement, its denominator and its instrument | **met.** This is the clause #66 and #88 were both gating, and it is the one that cost the most: the action rate is now quoted per fixture and per model with the denominator named, the published `p = 0.0047` is retired with the reason it did not survive, and the demo corpus states which of its two sets carries the accuracy figure. |
+
+Four of five. The outstanding one is a photograph, and it is sequenced after the rc rather than
+skipped — which is a different thing from the three releases where it was simply not done.
+
+### Where it stands — shipped 2026-09-03
 
 **Shipped.** The demo works and was verified rather than assumed: the agent booted with no cluster
 against a scratch database, seeded ten recorded investigations, and served them — 10 incidents, 30
@@ -999,31 +1023,58 @@ inherits its subject's bug is not a second opinion.
 Cloudflare Pages projects, deployed by `deploy.yml` on push to `main`, first proven green on
 2026-09-02. The landing page has been finished since v0.4.0 and undeployed ever since.
 
-**And the decision this section existed to force has now been made, so it is recorded rather than
-left implied.** #66 resolved — the action rate is per-model, and the two numbers that looked like
-disagreeing instruments were two different models. **#72 did not.** It is still unconfirmed on a
-cluster, and confirming it needs a model that acts, which the standing model constraints rule out
-locally.
+**And the decision this section existed to force was made twice, in opposite directions, inside
+thirty hours. Both are recorded, because the first one was published.**
 
-So the site went up with *"It fixes what it can prove"* still on it, and that sentence's evidence
-is still outstanding. **The claim is published ahead of its evidence.** That was chosen, on the
-grounds that this is v0.x and not a release — but the honest description is the one written here,
-not a softer one. Two things keep it from being a lie by omission: the README states plainly that
-an incident the agent acted on has never been observed reaching `Resolved`, and the demo's own
-index page says in as many words that none of its ten investigations shows the agent acting.
+On 2026-09-02 this section read: *"#72 did not [resolve]. It is still unconfirmed on a cluster, and
+confirming it needs a model that acts, which the standing model constraints rule out locally."* The
+site went up with *"It fixes what it can prove"* on it and that sentence's evidence outstanding —
+**the claim published ahead of its evidence**, chosen deliberately on the grounds that this is v0.x,
+and named here rather than softened.
 
-The product screenshots are still not captured, for the reason they always were: they want the one
-`--full --mode Auto` run, and the `shots` phase is not built.
+**That is no longer true, and the paragraph above is kept because it was.** #72 was confirmed on a
+cluster the same evening and closed: `Detected → Triaging → Investigating → Acting → Verifying →
+Resolved`, 41 seconds after the restart, granted by `hephaisto/verifier`. What made it reachable
+was not a different model. It was
+[#90](backlog.md#90-the-acting-path-had-no-fixture-that-could-measure-it) — a fixture that could
+measure the acting path at all. c11 and c12 both put the wedged state on a PVC, so acting means
+overriding a rule that is *correct*, and a decline there is ambiguous between "will not act" and
+"did not make the inference". c13 puts the same fault on an `emptyDir`, which the planning prompt
+already calls pod-scoped. The confirming run stopped being a one-in-eleven event and became
+something that happens on demand.
 
-The demo site makes that gap visible rather than papering over it, which is the right outcome but
-worth naming: **none of the ten transcripts shows the agent acting.** `plan.actions[]` is empty in
-every one — eight correctly declined, two judged to have missed an action, one produced no finding.
-So a visitor reads ten investigations in which the agent never acts, on a site whose hero says *"It
-fixes what it can prove."* The index page says so in as many words.
+**The standing model constraint was wrong, and it was wrong because of an instrument.** "gpt-oss
+never acts" rested on 0 of 18, and nine of those runs had ended on a token budget before the planner
+ran and were counted as declines
+([#88](backlog.md#88-noplan-pools-four-outcomes-and-the-action-rate-counted-all-four-as-declines)).
+On c13 the same model proposed an acceptable action on six of six cluster runs, and on a seventh it
+executed one and saw the incident through to `Resolved`.
 
-A transcript that shows an action is one `hephaisto-eval run --transcripts` away, on the c12
-fixture, driven by a model that acts. That is a model-choice decision rather than engineering work,
-and it is the same decision #66 and #72 both reduce to.
+**The v0.6.0 gate run then found the last piece of this, and it is not a defect.** `--full --mode
+Auto` failed its act assertion because eleven simultaneous fixtures put 31% of the cluster unhealthy,
+past `ClusterUnhealthyCeiling`, so the policy engine correctly refused every action as a cluster-wide
+event ([#97](backlog.md#97-full-and-mode-auto-defeat-each-other-and-the-release-gate-cannot-confirm-acting)).
+The breadth that makes `--full` the diagnosis gate is what makes the acting assertion impossible, and
+the release procedure is therefore two runs rather than one. The focused run passed: 70 assertions,
+24m37s.
+
+**The demo site no longer has the gap this section used to describe.** It had one, honestly: ten
+transcripts with `plan.actions[]` empty in every one, on a site whose hero says *"It fixes what it
+can prove."* The reason was structural rather than a model choice — `hephaisto-eval run` constructs
+an investigation runner and no executor, no policy engine and no state machine, so a replay has
+nothing to act with. The answer was a new verb rather than a different model: `hephaisto-eval
+export` lifts a finished incident out of the database, and the corpus is now twelve in two disjoint
+sets — ten replays carrying the 9-of-10 grading, and two live captures, one where the agent acted
+and reached `Resolved` and one where policy refused the same fix. Neither capture is scored against
+the answer key, because a replay and a cluster run are not the same measurement.
+
+The product screenshots are the one clause still outstanding, and the reason has changed. The
+`shots` e2e phase is deliberately **not** built: it wanted the one `--full --mode Auto` run, which
+is the most expensive and least repeatable run in the project and, per #97, cannot demonstrate
+acting anyway. `scripts/console-shots.sh` photographs the shipping console against
+`demo/compose.yaml` instead — two containers, no cluster, no key. No images are committed yet: the
+transcripts ship *inside* the image, so a photograph of a pre-release build would publish a picture
+of a smaller demo than the site describes.
 
 ---
 
