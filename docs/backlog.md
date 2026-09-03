@@ -4522,9 +4522,15 @@ which is what happens when a milestone spends itself on measurement.
 
 [#66](#66) (the last `Blocks:` field), [#71](#71), [#72](#72), [#82](#82), [#83](#83), [#84](#84),
 [#85](#85), [#86](#86), [#87](#87), [#88](#88), [#89](#89), [#90](#90), [#92](#92), [#93](#93),
-[#94](#94), [#95](#95), [#97](#97), [#98](#98). Eighteen, of which **eight were defects in the
-instrument rather than in the product** — and two of those eight (#93, #98) were the *second*
-instance of a defect this project had already fixed once.
+[#94](#94), [#95](#95), [#97](#97), [#98](#98), [#102](#102). Nineteen, of which **eight were
+defects in the instrument rather than in the product** — and two of those eight (#93, #98) were the
+*second* instance of a defect this project had already fixed once.
+
+[#102](#102) arrived last and by a route none of the others did: it was found by **photographing
+the console for the release notes**. The console had been telling every escalated incident that no
+diagnosis was produced, over the top of the diagnosis. No suite could have caught it, and none of
+the four people-facing surfaces this milestone built would have either — it took pointing a camera
+at the product and looking at the result.
 
 ### Opened by v0.6.0, and carried
 
@@ -4592,6 +4598,14 @@ request options).
   resolved capture is labelled `ReadinessFlapping`. Three occurrences is no longer a footnote.
 - **[#74](#74)** ceilings calibrated 45x apart; the harness works around it, the product default
   does not.
+
+### What the two release candidates were for
+
+`v0.6.0-rc1` published, was photographed, and the photograph contained [#102](#102).
+`v0.6.0-rc2` was cut with the fix and photographed again. Both are permanent public prereleases
+and neither was wasted: the README describes an rc as "a genuine rehearsal of the publish path
+rather than a simulation of one", and this pair also rehearsed the thing rehearsals are actually
+for, which is finding something.
 
 ### The one that is not on this list
 

@@ -925,13 +925,13 @@ measurement, its denominator and the instrument that produced it.
 | Clause | |
 |---|---|
 | find the page | **met.** Three sites on `hephaisto.dev`, `docs.` and `demo.`, live since 2026-09-02. |
-| see what the console actually looks like | **not met.** `scripts/console-shots.sh` exists and is verified; no images are committed, because the transcripts ship inside the image and a pre-release photograph publishes a smaller demo than the site describes. Run it against the rc. |
+| see what the console actually looks like | **met.** Five frames in `design/shots/`, photographed by `scripts/console-shots.sh` from the published `v0.6.0-rc2` image running `demo/compose.yaml`, consumed in the README, the landing page and the chart's Artifact Hub tile. |
 | run a real recorded investigation, one command, no key | **met.** `demo/compose.yaml` — two containers, twelve investigations, no cluster and no API key. |
 | install the current chart from a README that describes the release | **met at the tag.** The README describes v0.6.0 and pins it; both become true the hour `v0.6.0` publishes. |
 | every claim names its measurement, its denominator and its instrument | **met.** This is the clause #66 and #88 were both gating, and it is the one that cost the most: the action rate is now quoted per fixture and per model with the denominator named, the published `p = 0.0047` is retired with the reason it did not survive, and the demo corpus states which of its two sets carries the accuracy figure. |
 
-Four of five. The outstanding one is a photograph, and it is sequenced after the rc rather than
-skipped — which is a different thing from the three releases where it was simply not done.
+**Five of five.** The last one was sequenced after the rc rather than skipped, and taking it
+found a product bug — see below.
 
 ### Where it stands — shipped 2026-09-03
 
@@ -1068,13 +1068,25 @@ sets — ten replays carrying the 9-of-10 grading, and two live captures, one wh
 and reached `Resolved` and one where policy refused the same fix. Neither capture is scored against
 the answer key, because a replay and a cluster run are not the same measurement.
 
-The product screenshots are the one clause still outstanding, and the reason has changed. The
-`shots` e2e phase is deliberately **not** built: it wanted the one `--full --mode Auto` run, which
-is the most expensive and least repeatable run in the project and, per #97, cannot demonstrate
+**The product screenshots exist, three releases after they were first wanted.** The `shots` e2e
+phase is deliberately **not** built: it wanted the one `--full --mode Auto` run, which is the most
+expensive and least repeatable run in the project and, per [#97](backlog.md#97), cannot demonstrate
 acting anyway. `scripts/console-shots.sh` photographs the shipping console against
-`demo/compose.yaml` instead — two containers, no cluster, no key. No images are committed yet: the
-transcripts ship *inside* the image, so a photograph of a pre-release build would publish a picture
-of a smaller demo than the site describes.
+`demo/compose.yaml` instead — two containers, no cluster, no key, and reproducible by anyone who
+read the README.
+
+**Taking them found a product bug, which is the argument for doing it more often than once a
+release.** The console told every escalated incident that *"no diagnosis was produced"*, on a page
+whose primary finding sat directly below the banner at 0.92 confidence
+([#102](backlog.md#102-the-console-told-every-escalated-incident-that-no-diagnosis-was-produced)).
+`CanReinvestigate` checked the state and never checked for an answer; the block's own comment had
+said "for the incidents that never got an answer" since it was written. Nothing automated could
+have caught it — `scripts/e2e/ui` asserts behaviour against a live agent, and this is a correct
+statement about a rendered element that is lying about a different element.
+
+That is also what the two release candidates were for. `v0.6.0-rc1` was photographed, the bug was
+found in the photograph, and `v0.6.0-rc2` was cut with the fix and photographed again. A candidate
+that never finds anything is a candidate nobody needed.
 
 ---
 

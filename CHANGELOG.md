@@ -64,6 +64,11 @@ reaching `Resolved`.
   search without a Google account. The default is unchanged.
 - **`hephaisto-eval run --transcripts`**, and a `redact` verb. Recording what a replay computes
   and then discards is what makes the demo possible.
+- **Screenshots of the shipping console**, in `design/shots/`, photographed by
+  `scripts/console-shots.sh` from the published image running `demo/compose.yaml` — so they are
+  the product rather than a rendering of the design system, and they are regenerated rather than
+  retouched. Taking them found a bug: the console told every escalated incident that no diagnosis
+  had been produced, over the top of the diagnosis.
 - **A vulnerability reporting path** — [`SECURITY.md`](SECURITY.md), through GitHub private
   advisories.
 - A README for the chart, so Artifact Hub stops rendering an empty page.
@@ -128,8 +133,14 @@ reaching `Resolved`.
   `docs/design.md` names as its owner, instead of copied.
 - **A seeded replay was reported as `PolicyDenied`** by a policy engine the demo stack never
   constructs.
+- **The console told every escalated incident that "no diagnosis was produced"**, on pages whose
+  primary finding sat directly below the banner. An incident escalates for eleven reasons and only
+  some of them mean nothing was produced — one refused by the policy engine is escalated *and*
+  fully diagnosed.
 - **The redactor's `\b` missed an address that reached a rendered page**, because `\n` before a
-  digit is not a word boundary.
+  digit is not a word boundary — and then its replacement lost to `\u0022`, which the serializer
+  writes for a nested quote and which ends in a digit. The same defect twice, from the same cause:
+  this runs over an escaped document, and an escape ends in whatever the encoder chose.
 - **`--nightly` published the branch it claimed to be testing**, not the one asked for.
 - The README announced `Status: v0.2.0` on a v0.5.0 repository and its install command pinned
   `--version 0.2.0`, so anyone following it installed a three-release-old chart.
