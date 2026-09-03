@@ -303,6 +303,12 @@ grafana:
 alerts:
   kubernetes: true
   slo: true
+  # OFF by default. `absent()` needs a concrete series to assert the absence of, so this
+  # rule names ONE service - and on any install not running that exact service the series
+  # is permanently absent, so it fires after 5m and never stops, feeding the agent an
+  # incident about a workload that does not exist. Edit files/alerts/no-traffic.yaml to
+  # name your own continuously-served services before turning this on. See backlog #103.
+  noTraffic: false
   # The dead-man's switch. An always-firing alert whose ABSENCE is the signal: if it stops
   # arriving, the whole alert path between Prometheus and the agent is broken. Leave it on.
   watchdog: true

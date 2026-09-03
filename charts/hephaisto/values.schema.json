@@ -222,6 +222,7 @@
       "properties": {
         "kubernetes": { "type": "boolean" },
         "slo": { "type": "boolean" },
+        "noTraffic": { "type": "boolean" },
         "watchdog": { "type": "boolean" },
         "observabilitySelfcheck": { "type": "boolean" }
       }

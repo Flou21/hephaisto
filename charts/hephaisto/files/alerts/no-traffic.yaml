@@ -1,0 +1,55 @@
+# A service that was serving and has gone silent
+# ---------------------------------------------------------------------------------------
+# OFF BY DEFAULT, AND THAT IS THE POINT OF THIS FILE EXISTING SEPARATELY.
+# ---------------------------------------------------------------------------------------
+# `absent()` cannot be written generically: it needs a concrete series to assert the
+# absence of, so this rule names one service. Any install that does not run THAT service
+# has a permanently-absent series, so the rule fires after 5 minutes and never stops - and
+# because it carries a `hephaisto_kind`, the agent opens an incident on it, spends its
+# budget investigating a workload that does not exist, escalates, and repeats forever.
+#
+# That is exactly the failure mode `alerts.observabilitySelfcheck` is off for, and this
+# rule used to ship inside slo-rules.yaml, which is on. It named this repo's C10 chaos
+# fixture. See backlog #103.
+#
+# So: the service below is a placeholder naming the fixture this repo happens to run.
+# `alerts.noTraffic` defaults to false. Turning it on without editing the expression is
+# not useful. To use it, copy the rule once per service you expect continuous traffic
+# from, and name that service.
+#
+# Nothing in this repo's own regression suite depends on this alert firing - c10 is
+# detected through its error-rate and latency signals, not through this one.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: hephaisto-no-traffic
+  namespace: hephaisto-obs
+  labels:
+    release: hephaisto
+    app.kubernetes.io/part-of: hephaisto
+spec:
+  groups:
+    # ===================================================================================
+    - name: hephaisto.slo.traffic
+      interval: 30s
+      rules:
+        - alert: ServiceNoTraffic
+          # `absent()` rather than `== 0`: when a service stops entirely, its span metrics
+          # series stop being produced and DISAPPEAR. A rule written as `rate(...) == 0`
+          # matches nothing once the series is gone, so it would go quiet at exactly the
+          # moment it should shout. This is the same trap as `up == 0` versus `absent(up)`.
+          expr: |
+            absent(traces_spanmetrics_calls_total{service="faulty-service"})
+          for: 5m
+          labels:
+            severity: warning
+            hephaisto_kind: TargetDown
+          annotations:
+            summary: 'No span metrics from faulty-service for 5 minutes'
+            description: >-
+              This service is expected to produce continuous traffic, so its span metrics
+              should never stop. Silence means one of: the service is down, the collector
+              is not forwarding traces, or Tempo's metrics-generator has stopped
+              remote-writing. Check HephaistoSpanMetricsMissing and the otelcol_* alerts in
+              observability-selfcheck.yaml before concluding the service itself is at fault.

@@ -9,6 +9,15 @@
 # healthy traffic and the alert under-fires, and `{{ $labels.service_name }}` renders empty
 # in the message. Verified against the running generator on 2026-08-28.
 #
+# NOTE ON THE NAMESPACE LABEL. Every `sum by (...)` below pairs `service` with
+# `k8s_namespace_name`, and it is not decoration. The namespace is part of the signal
+# fingerprint, it is what the policy engine's allow-list gate is checked against, it is an
+# argument every tool call needs, and it is what a notification route filters on - so a rule
+# that aggregates it away produces an incident that can be neither acted on nor escalated to
+# anybody. The three latency rules did exactly that until v0.7.0 while the error-rate rules
+# directly above them did not, which is backlog #104. The shipped-rules test fails the build
+# if a new rule drops it again.
+#
 # Every expression below is built on `traces_spanmetrics_*`, which Tempo's metrics-generator
 # derives from the spans it receives. Nothing here depends on a service exporting a
 # request-count metric, naming its histogram a particular way, or agreeing on label names.
@@ -169,22 +178,22 @@ spec:
             (
               (
                 1 - (
-                  sum by (service) (rate(traces_spanmetrics_latency_bucket{le="0.256"}[1h]))
+                  sum by (service, k8s_namespace_name) (rate(traces_spanmetrics_latency_bucket{le="0.256"}[1h]))
                   /
-                  sum by (service) (rate(traces_spanmetrics_latency_count[1h]))
+                  sum by (service, k8s_namespace_name) (rate(traces_spanmetrics_latency_count[1h]))
                 )
               ) > (14.4 * 0.05)
               and
               (
                 1 - (
-                  sum by (service) (rate(traces_spanmetrics_latency_bucket{le="0.256"}[5m]))
+                  sum by (service, k8s_namespace_name) (rate(traces_spanmetrics_latency_bucket{le="0.256"}[5m]))
                   /
-                  sum by (service) (rate(traces_spanmetrics_latency_count[5m]))
+                  sum by (service, k8s_namespace_name) (rate(traces_spanmetrics_latency_count[5m]))
                 )
               ) > (14.4 * 0.05)
             )
             and
-            sum by (service) (rate(traces_spanmetrics_latency_count[5m])) > 0.05
+            sum by (service, k8s_namespace_name) (rate(traces_spanmetrics_latency_count[5m])) > 0.05
           for: 2m
           labels:
             severity: critical
@@ -193,8 +202,9 @@ spec:
           annotations:
             summary: 'Service {{ $labels.service }} is burning its latency budget 14.4x too fast'
             description: >-
-              {{ $value | printf "%.1f%%" }} of requests to {{ $labels.service }} are
-              slower than the 256ms SLO threshold, sustained over an hour and still
+              {{ $value | printf "%.1f%%" }} of requests to {{ $labels.service }} in
+              namespace {{ $labels.k8s_namespace_name }} are slower than the 256ms SLO
+              threshold, sustained over an hour and still
               happening now. Every latency histogram carries exemplars, so the slowest
               actual traces are one click away in Grafana -- use those rather than guessing
               which endpoint regressed.
@@ -207,22 +217,22 @@ spec:
             (
               (
                 1 - (
-                  sum by (service) (rate(traces_spanmetrics_latency_bucket{le="0.256"}[6h]))
+                  sum by (service, k8s_namespace_name) (rate(traces_spanmetrics_latency_bucket{le="0.256"}[6h]))
                   /
-                  sum by (service) (rate(traces_spanmetrics_latency_count[6h]))
+                  sum by (service, k8s_namespace_name) (rate(traces_spanmetrics_latency_count[6h]))
                 )
               ) > (6 * 0.05)
               and
               (
                 1 - (
-                  sum by (service) (rate(traces_spanmetrics_latency_bucket{le="0.256"}[30m]))
+                  sum by (service, k8s_namespace_name) (rate(traces_spanmetrics_latency_bucket{le="0.256"}[30m]))
                   /
-                  sum by (service) (rate(traces_spanmetrics_latency_count[30m]))
+                  sum by (service, k8s_namespace_name) (rate(traces_spanmetrics_latency_count[30m]))
                 )
               ) > (6 * 0.05)
             )
             and
-            sum by (service) (rate(traces_spanmetrics_latency_count[30m])) > 0.05
+            sum by (service, k8s_namespace_name) (rate(traces_spanmetrics_latency_count[30m])) > 0.05
           for: 5m
           labels:
             severity: warning
@@ -231,7 +241,8 @@ spec:
           annotations:
             summary: 'Service {{ $labels.service }} is burning its latency budget 6x too fast'
             description: >-
-              A sustained, low-grade latency regression on {{ $labels.service }}:
+              A sustained, low-grade latency regression on {{ $labels.service }} in
+              namespace {{ $labels.k8s_namespace_name }}:
               {{ $value | printf "%.1f%%" }} of requests over the last 6 hours exceeded
               256ms. Not an outage. Compare against a deploy or config change 6h back --
               this alert's whole value is that it surfaces slow drift, so the answer is
@@ -248,13 +259,13 @@ spec:
           expr: |
             (
               1 - (
-                sum by (service) (rate(traces_spanmetrics_latency_bucket{le="1.024"}[5m]))
+                sum by (service, k8s_namespace_name) (rate(traces_spanmetrics_latency_bucket{le="1.024"}[5m]))
                 /
-                sum by (service) (rate(traces_spanmetrics_latency_count[5m]))
+                sum by (service, k8s_namespace_name) (rate(traces_spanmetrics_latency_count[5m]))
               )
             ) > 0.5
             and
-            sum by (service) (rate(traces_spanmetrics_latency_count[5m])) > 0.05
+            sum by (service, k8s_namespace_name) (rate(traces_spanmetrics_latency_count[5m])) > 0.05
           for: 2m
           labels:
             severity: critical
@@ -262,35 +273,8 @@ spec:
           annotations:
             summary: 'Over half of requests to {{ $labels.service }} take longer than 1s'
             description: >-
-              {{ $value | printf "%.0f%%" }} of requests exceed 1 second. At this magnitude
+              {{ $value | printf "%.0f%%" }} of requests to {{ $labels.service }} in namespace
+              {{ $labels.k8s_namespace_name }} exceed 1 second. At this magnitude
               look for a blocked dependency or a saturated resource, not a code regression.
               The service graph (traces_service_graph_request_*) shows which downstream
               edge grew.
-
-    # ===================================================================================
-    - name: hephaisto.slo.traffic
-      interval: 30s
-      rules:
-        - alert: ServiceNoTraffic
-          # `absent()` rather than `== 0`: when a service stops entirely, its span metrics
-          # series stop being produced and DISAPPEAR. A rule written as `rate(...) == 0`
-          # matches nothing once the series is gone, so it would go quiet at exactly the
-          # moment it should shout. This is the same trap as `up == 0` versus `absent(up)`.
-          #
-          # Scoped to the C10 fixture because absent() cannot be written generically -- it
-          # needs a concrete series to assert the absence of. Add a copy per service that
-          # is expected to have continuous traffic.
-          expr: |
-            absent(traces_spanmetrics_calls_total{service="faulty-service"})
-          for: 5m
-          labels:
-            severity: warning
-            hephaisto_kind: TargetDown
-          annotations:
-            summary: 'No span metrics from faulty-service for 5 minutes'
-            description: >-
-              The C10 fixture generates continuous traffic through a sidecar, so its span
-              metrics should never stop. Silence means one of: the fixture is down, the
-              collector is not forwarding traces, or Tempo's metrics-generator has stopped
-              remote-writing. Check HephaistoSpanMetricsMissing and the otelcol_* alerts in
-              observability-selfcheck.yaml before concluding the service itself is at fault.

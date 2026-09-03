@@ -165,4 +165,70 @@ public class ShippedAlertRulesTests
             + "reads, or the incident it opens has no namespace and can be neither acted on "
             + "nor routed to anybody");
     }
+
+    /// <summary>
+    /// Every span-metrics aggregation groups by the namespace as well as the service.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The theory above catches a namespace label spelled a way the ingest cannot read. This
+    /// catches the other half, which is backlog #104: a rule that spells it correctly
+    /// everywhere and then aggregates it away. The three latency rules did that for four
+    /// releases while the error-rate rules twenty lines above them did not, so reading either
+    /// one in isolation looked right.
+    /// </para>
+    /// <para>
+    /// Scoped to <c>traces_spanmetrics_*</c> deliberately. That is the family whose identity
+    /// is the pair (service, namespace) - the observability self-check rules aggregate by
+    /// <c>exporter</c> and <c>processor</c> and correctly have no namespace at all, so a
+    /// blanket rule over every aggregation would assert something false.
+    /// </para>
+    /// <para>
+    /// The consequence of getting it wrong is not cosmetic and not deferred: an empty
+    /// namespace fails <c>Policy:AllowedNamespaces</c>, so every latency incident this repo
+    /// could ever raise was un-actionable by construction.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_span_metrics_aggregation_groups_by_namespace_as_well_as_service()
+    {
+        // `sum by (<labels>) (` immediately preceding, or wrapping, a spanmetrics selector.
+        var aggregation = new Regex(
+            @"sum\s+by\s*\(([^)]*)\)\s*\(\s*(?:rate|increase|irate)?\(?\s*traces_spanmetrics_",
+            RegexOptions.Compiled);
+
+        string[] understood = ["namespace", "exported_namespace", "k8s_namespace_name"];
+
+        var offenders = new List<string>();
+        var checkedCount = 0;
+
+        foreach (var file in Directory.EnumerateFiles(AlertsDirectory(), "*.yaml"))
+        {
+            var text = File.ReadAllText(file);
+
+            foreach (var match in aggregation.Matches(text).Cast<Match>())
+            {
+                checkedCount++;
+
+                var labels = match.Groups[1].Value
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+                if (!labels.Any(l => understood.Contains(l, StringComparer.Ordinal)))
+                {
+                    offenders.Add($"{Path.GetFileName(file)}: sum by ({match.Groups[1].Value})");
+                }
+            }
+        }
+
+        // Guards the guard: a regex that matches nothing is a test that asserts nothing, and
+        // this one is matching against a file it does not own.
+        checkedCount.Should().BeGreaterThan(10,
+            "the aggregation pattern no longer matches the shipped span-metrics rules, so this "
+            + "test has silently stopped checking them");
+
+        offenders.Should().BeEmpty(
+            "a span-metrics rule that aggregates the namespace away produces an incident with "
+            + "an empty namespace, which fails Policy:AllowedNamespaces, matches no "
+            + "notification route, and gives every tool call an argument it cannot use");
+    }
 }
