@@ -72,8 +72,23 @@ public static partial class TranscriptRedactor
     /// digit or a dot is what was meant both times - an octet is bounded by something that is not
     /// part of a number, not by something that is not part of a word.
     /// </para>
+    /// <para>
+    /// <b>And then the lookbehind was defeated the same way <c>\b</c> had been.</b> The serializer
+    /// escapes a quote inside an evidence blob as <c>\u0022</c>, so embedded JSON reaches this
+    /// function as <c>\u0022instance\u0022: \u002210.244.0.5:8080\u0022</c> - and the character
+    /// immediately before the address is the <c>2</c> that ends the escape. A digit. The lookbehind
+    /// refuses to start there, exactly as <c>\b</c> refused to start after the <c>n</c> of
+    /// <c>\n</c>, and the address survives into a published file.
+    /// </para>
+    /// <para>
+    /// It is the same defect twice because the cause is the same both times: this runs over an
+    /// ESCAPED document, and an escape sequence ends in whatever character the encoder chose.
+    /// So the boundary is now "not a digit and not a dot, <i>or</i> the end of a <c>\uXXXX</c>
+    /// escape". Over-redacting one character into a placeholder would be a cosmetic bug; leaving
+    /// a pod IP on demo.hephaisto.dev is not, so the alternation is deliberately generous.
+    /// </para>
     /// </remarks>
     [GeneratedRegex(
-        @"(?<![\d.])(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?![\d.])")]
+        @"(?:(?<=\\u[0-9a-fA-F]{4})|(?<![\d.]))(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?![\d.])")]
     private static partial Regex IpV4();
 }

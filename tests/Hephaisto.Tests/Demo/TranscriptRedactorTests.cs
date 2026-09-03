@@ -105,4 +105,50 @@ public class TranscriptRedactorTests
         Assert.Contains("busybox:this-tag-does-not-exist", scrubbed, StringComparison.Ordinal);
         Assert.DoesNotContain("10.42.0.9", scrubbed, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// An address immediately after an escaped quote is still an address.
+    /// </summary>
+    /// <remarks>
+    /// This is backlog #84 a second time, and the shape is identical. That entry replaced
+    /// <c>\b</c> because a newline reaches this function as the two characters <c>\</c> and
+    /// <c>n</c>, and <c>n</c> to <c>1</c> is not a word boundary. The replacement lookbehind
+    /// then lost to <c>\u0022</c>, which the serializer writes for a quote inside an evidence
+    /// blob and which ends in the digit <c>2</c>.
+    ///
+    /// It was found by exporting a real incident: Prometheus alert JSON nested in a blob came
+    /// out as <c>\u0022instance\u0022: \u002210.244.0.5:8080\u0022</c>, and the pod IP
+    /// survived 66 times into a file whose entire purpose is to be published.
+    /// </remarks>
+    [Theory]
+    [InlineData("\\u0022instance\\u0022: \\u002210.244.0.5:8080\\u0022")]
+    [InlineData("\\u002210.244.0.5\\u0022")]
+    [InlineData("\\n10.42.0.68")]
+    [InlineData("prefix \\u0022 10.244.0.5")]
+    public void An_address_after_an_escape_sequence_is_still_redacted(string escaped)
+    {
+        var scrubbed = TranscriptRedactor.Scrub(escaped);
+
+        scrubbed.Should().NotContain("10.244.0.5");
+        scrubbed.Should().NotContain("10.42.0.68");
+        scrubbed.Should().Contain(TranscriptRedactor.Placeholder);
+    }
+
+    /// <summary>
+    /// The widened boundary does not start eating version strings.
+    /// </summary>
+    /// <remarks>
+    /// The alternation only adds ONE new place a match may begin - immediately after a complete
+    /// <c>\uXXXX</c> escape. Everywhere else the old "not a digit and not a dot" still applies,
+    /// which is what keeps <c>v1.2.3.4.5</c> intact.
+    /// </remarks>
+    [Theory]
+    [InlineData("v1.2.3.4.5")]
+    [InlineData("chart 0.6.0.1.2")]
+    [InlineData("took 10.350197 seconds")]
+    [InlineData("kubernetes 1.36.4")]
+    public void The_widened_boundary_still_leaves_numbers_alone(string text)
+    {
+        TranscriptRedactor.Scrub(text).Should().Be(text);
+    }
 }

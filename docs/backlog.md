@@ -4196,3 +4196,130 @@ at is real, so it is written down instead of being quietly worked around. Fixing
 the prerequisite; the exporter follows.
 
 **Size.** S for the console, S to add them to the export afterwards. **Open.**
+
+### 97. `--full` and `--mode Auto` defeat each other, and the release gate cannot confirm acting
+
+**Symptom.** The v0.6.0 release gate, run exactly as the roadmap's procedure says to run it:
+
+```
+scripts/e2e/run.sh --tag 0.6.0-main.0.47 --full --mode Auto
+
+  waiting for an action to be executed .......... timeout after 180s
+  FAIL  c13 was not acted on -- 1 action(s) were proposed and none executed -
+        admission or the executor refused a plan the planner did make
+  skip  c13 is available after the restart
+  skip  c13's incident reached Resolved
+```
+
+Eleven fixtures diagnosed, eight graded correct, and the one assertion the release needed
+failed. The planner **did** propose a `RestartPod` on c13 - so this is not [#66](#66)'s
+willingness question, and not [#89](#89)'s inference either. Something refused a correct plan.
+
+**The reason, from the action row:**
+
+```json
+{"type": "RestartPod", "decision": "Deny", "state": "Denied", "dryRun": false,
+ "decisionReasons": ["31 % of the cluster is unhealthy: cluster-wide event,
+                     not a pod-level problem"]}
+```
+
+**Nothing is broken.** That is gate 7, `PolicyEngine.cs:203`, against
+`PolicyOptions.ClusterUnhealthyCeiling = 0.3`, and it is arguably the most important gate in
+the file: restarting one pod is the wrong response to a cluster that is coming apart, and an
+agent that cheerfully did it anyway would be worse than one that does nothing. It fired
+correctly, recorded its reason, and escalated to a human. The incident ended `Escalated` /
+`PolicyDenied`, which is exactly what it should be.
+
+**The conflict is between two flags, and it is structural.** `--full` applies eleven fixtures
+*simultaneously* - that is the point of it, and `chaos_apply` says so: "applied 11 chaos
+fixtures simultaneously". On a single-node kind cluster eleven deliberately broken workloads
+are 31% of the pods, which is over the ceiling. So:
+
+> **The breadth that makes `--full` the diagnosis gate is precisely what makes the act
+> assertion impossible.** Every action in a `--full` run is denied, correctly, and the acting
+> path cannot be confirmed by the command documented to confirm it.
+
+**This is why the act assertion has only ever passed on narrow runs.** [#90](#90) records c13
+acting "on the first cluster run and the second" - both with a small fixture set - and
+[#72](#72)'s confirming run was the act phase, not the full corpus. Nobody had run `--full
+--mode Auto` end to end before, so the two flags had never been in the same room.
+
+**What must not be done about it.** Raising `ClusterUnhealthyCeiling` in `values-e2e.yaml`
+would make the assertion pass by weakening a safety gate until the test agrees with us, which
+is the bar-lowering [#66](#66) refuses in a different costume. The gate is right. The fixture
+is right. The assertion is right. Only the *combination* is incoherent.
+
+**Fix, in the shape this file already uses.** `chaos.sh:806-811` already skips rather than
+fails when the planner proposed nothing, on the grounds that it is "a model judgement, not a
+fault in the acting path", and the comment fifty lines below explains why a report that is
+wrong about *why* is worse than one that is merely incomplete. A correct policy denial is the
+same kind of thing. The act phase should read the denial reason and, when it is
+`ClusterWideEvent`, **skip with that reason** - naming the fact that the run's own breadth
+caused it - rather than failing as though the executor were broken.
+
+Then the release procedure is two runs, and the docs should say so: `--full` for the diagnosis
+corpus, and a focused `--fixtures c13 --mode Auto` for the acting path, which needs about
+twenty minutes and does not trip the ceiling.
+
+**Also worth keeping:** this produced the project's first genuine end-to-end policy denial on a
+cluster - investigated fully, refused for a stated reason, escalated. It is a better answer to
+"what stops it?" than any of the constructed examples, and it is a candidate for the demo site.
+
+**Size.** S for the skip; S for the docs. **Fixed:** no. **Open.**
+
+### 98. The redactor's lookbehind lost to `\u0022`, which is [#84](#84) for the second time
+
+**Symptom.** The first transcript ever produced by `hephaisto-eval export` carried a pod IP
+**66 times**. The redactor ran - `Transcript.Save` always runs it - and replaced 98 other
+addresses in the same file correctly.
+
+```
+\u0022endpoint\u0022: \u0022http\u0022, \u0022instance\u0022: \u002210.244.0.5:8080\u0022
+                                                                  ^^^^^^^^^^ survived
+```
+
+**The cause is the one [#84](#84) already fixed, one level down.** That entry replaced `\b`
+because this runs over a SERIALIZED document, where a newline is the two characters `\` and
+`n`, so `...\n10.42.0.68` had no word boundary and the address survived. The replacement was
+`(?<![\d.])` - "not preceded by a digit or a dot".
+
+An escape sequence ends in whatever character the encoder chose, and `System.Text.Json` writes
+a quote inside an evidence blob as `\u0022`. **That ends in the digit `2`.** So the lookbehind
+refuses to begin a match at the `1` of `10.244.0.5`, for exactly the reason `\b` refused to
+begin one after the `n` of `\n`. Same defect, same file, same class of blindness, fifteen
+lines below the comment describing the first instance.
+
+**The guard agreed with it, again, for the same reason.** `demo-site/build.mjs` re-scans every
+transcript before rendering, and its comment says in as many words: *"This guard originally
+used `\b` and agreed with the redactor that c8.json was clean; it was not. A check that shares
+its predecessor's bug is not a second opinion."* It then copied the replacement lookbehind, and
+so shared the replacement's bug: the site built the leaking file without complaint.
+
+**Fix.** Two changes, deliberately different from each other:
+
+- `TranscriptRedactor` matches after a complete `\uXXXX` escape as well as at the old
+  boundary. Over-redacting a character would be cosmetic; leaving a pod IP on a published page
+  is not, so the alternation is generous.
+- `build.mjs` stops reasoning about boundaries in an escaped document at all. It **decodes**
+  the escapes and scans what the text means, which is a different question from the one the
+  redactor answers. Sharing the premise is how it agreed with the bug twice.
+
+Verified both directions: the leaking file now fails the build with
+`c13-denied.json contains 66 unredacted IPv4 address(es)`, and re-exporting after the fix
+yields 164 addresses of which every one is the placeholder.
+
+**Why the committed corpus was never affected.** All ten replayed transcripts are clean, checked
+by decoding every escape and re-scanning. Replay serves recorded tool output; this leaked on the
+export path, whose blobs come straight from the database and include Prometheus alert JSON with
+an `instance` label. [#81](#81) said the corpus's redaction was "sound for THIS corpus only" and
+that a new source of content would need re-examining. It was right, and the new source arrived
+as a new command rather than as a new fixture.
+
+**What this says about the rule.** Scrubbing a serialized document is still the correct design -
+enumerating fields is the rule that goes stale, and that argument in `TranscriptRedactor`'s
+remarks stands. But it means the scrubber reads text the encoder wrote, and every escape the
+encoder emits is a boundary the pattern has to survive. That is now two bugs from one cause, so
+it is written down rather than fixed a third time by accident.
+
+**Size.** S. **Fixed 2026-09-03.**
+

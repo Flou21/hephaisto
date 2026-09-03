@@ -648,12 +648,21 @@ function main() {
 
     // The redactor replaces IPv4 with 0.0.0.0. Publishing a transcript that slipped through would
     // be publishing an address, so the build refuses rather than trusting that redact was run.
-    // Boundaries are "not a digit and not a dot", matching TranscriptRedactor exactly. This
-    // guard originally used \b and agreed with the redactor that c8.json was clean; it was not.
-    // A check that shares its predecessor's bug is not a second opinion.
+    //
+    // THIS CHECK HAS NOW BEEN WRONG TWICE, both times by agreeing with the redactor. First it
+    // used \b, which is what the redactor used, and both called c8.json clean when it was not.
+    // Then it copied the replacement lookbehind - and both missed a pod IP 66 times in the first
+    // exported transcript, because the serializer writes a quote as \u0022 and the boundary
+    // before the address is therefore the digit 2.
+    //
+    // So it no longer reasons about boundaries in an escaped document at all. It DECODES the
+    // \uXXXX escapes first and scans what the text means. That is a different question from the
+    // one the redactor answers, which is the whole point of a second opinion: sharing the
+    // premise is how it agreed with the bug twice.
     const IPV4 = /(?<![\d.])(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?![\d.])/g
+    const decodeEscapes = (s) => s.replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
     for (const [i, t] of all.entries()) {
-        const raw = readFileSync(join(TRANSCRIPTS, files[i]), 'utf8')
+        const raw = decodeEscapes(readFileSync(join(TRANSCRIPTS, files[i]), 'utf8'))
         const leaked = [...raw.matchAll(IPV4)].map((m) => m[0]).filter((a) => a !== '0.0.0.0')
         if (leaked.length > 0) {
             throw new Error(
