@@ -10,7 +10,7 @@ broken, with the evidence for each.
 Versions are set by the git tag through MinVer; the chart version and the app version are always
 the same number.
 
-## Unreleased
+## v0.6.0 — 2026-09-03
 
 **Someone else can run it.** Three public sites, a demo that runs on a laptop with one command
 and no API key, and — for the first time in the project's life — an incident the agent acted on
@@ -21,7 +21,15 @@ reaching `Resolved`.
   `Detected → Triaging → Investigating → Acting → Verifying → Resolved`, 41 seconds after the
   restart, granted by `hephaisto/verifier`, 70 assertions. **This retires v0.5.0's "Not
   established" line below.** It is one run on one fixture; the acting path is now demonstrated
-  end to end rather than reliable, and the docs say which.
+  end to end rather than reliable, and the docs say which. Reproduced on the release gate:
+  `--fixtures c13 --mode Auto` passed 70 assertions in 24m37s, executing a `RestartPod` and
+  closing the incident.
+- **The release gate is two runs, not one.** `--full` applies its fixtures simultaneously, which
+  on a single node crosses `policy.clusterUnhealthyCeiling` — so the policy engine correctly
+  refuses every action as a cluster-wide event and the acting path cannot be tested in the same
+  run that tests diagnosis. Diagnosis: `--full`, which scored **8/8 correct** over 85 assertions.
+  Acting: `--fixtures c13 --mode Auto`. The harness now says so instead of reporting a working
+  safety gate as a broken executor.
 - **Three sites**, on Cloudflare Pages: [hephaisto.dev](https://hephaisto.dev),
   [docs.hephaisto.dev](https://docs.hephaisto.dev) and
   [demo.hephaisto.dev](https://demo.hephaisto.dev). The docs site *transcludes* the repository —
