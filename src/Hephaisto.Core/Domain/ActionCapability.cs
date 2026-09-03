@@ -18,6 +18,15 @@ namespace Hephaisto.Core.Domain;
 /// spends the scarcest thing in an incident, which is a human's attention.
 /// </para>
 /// <para>
+/// That example is now historical: <c>RollbackDeployment</c> was implemented in v0.7.0. It is
+/// left standing because it is the clearest statement of what this type is for, and because
+/// everything around that action - the policy gate and its two windows, the revision facts, the
+/// <c>get_rollout_history</c> tool, the RBAC grant, the runbook guidance and the model-facing
+/// description - had been built and unit-tested a release ahead of the executor arm. For two
+/// releases the only thing standing between the model and a rollback it had correctly reasoned
+/// its way to was this switch returning false.
+/// </para>
+/// <para>
 /// Being absent here is a statement about this build, not about the action. It is separate from
 /// <see cref="IsPermanentlyDenied"/>, which is a statement about the action itself and will not
 /// change.
@@ -41,6 +50,7 @@ public static class ActionCapability
             or ActionType.ScaleWorkload
             or ActionType.DeleteStuckJob
             or ActionType.DeleteFailedJobPods
+            or ActionType.RollbackDeployment
             or ActionType.SilenceAlert => true,
 
         _ => false,

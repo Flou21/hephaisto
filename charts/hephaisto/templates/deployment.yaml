@@ -165,6 +165,18 @@ spec:
               value: {{ $type | quote }}
             {{- end }}
 
+            # The rollback gate's two windows, and the cluster-wide escalation ceiling. Emitted
+            # unconditionally rather than `if`-guarded: a values file that sets one of these to
+            # something the operator intended and a template that quietly drops it is the exact
+            # failure mode backlog #22 is about - a setting with a reader in src/ and no way to
+            # reach it.
+            - name: Policy__RollbackFreshRevisionWindow
+              value: {{ .Values.policy.rollbackFreshRevisionWindow | quote }}
+            - name: Policy__RollbackPreviousHealthyMinimum
+              value: {{ .Values.policy.rollbackPreviousHealthyMinimum | quote }}
+            - name: Policy__ClusterUnhealthyCeiling
+              value: {{ .Values.policy.clusterUnhealthyCeiling | quote }}
+
             # ---------------------------------------------------------------------------
             # Database
             # ---------------------------------------------------------------------------

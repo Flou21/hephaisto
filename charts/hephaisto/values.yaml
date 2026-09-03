@@ -99,6 +99,41 @@ policy:
   # them here does nothing.
   autoEnabledActionTypes: []
 
+  # THE TWO WINDOWS THAT DECIDE WHETHER A ROLLBACK MAY RUN UNATTENDED.
+  #
+  # Both are read by the policy engine's rollback_deployment gate, and BOTH must hold: the
+  # current revision has to be younger than freshRevisionWindow (this is a fresh deploy, so
+  # rolling back is the obvious move rather than a guess), and the previous revision has to
+  # have been healthy for at least previousHealthyMinimum (there is somewhere known-good to
+  # go back TO). Fail either and the action is refused with the reason recorded - which is a
+  # working gate, not a bug, and is the most likely explanation for a rollback you expected
+  # and did not get.
+  #
+  # They were code defaults with no chart value until v0.7.0, which was defensible only while
+  # rollback_deployment was unimplemented. The moment the executor arm shipped these became
+  # the two knobs an operator most needs to reach.
+  #
+  # .NET TimeSpan format - "hh:mm:ss", NOT Go/Prometheus duration. "30m" does not parse and
+  # the agent would fail to start with a binding error. values.schema.json enforces the shape
+  # so `helm template` catches it first.
+  #
+  # WIDENING freshRevisionWindow is the dangerous direction: it lets the agent roll back a
+  # revision that has been serving for hours, where "it started at the deploy" is a much
+  # weaker claim. Shortening previousHealthyMinimum is the other one - it permits a rollback
+  # onto a revision that was never proven good.
+  rollbackFreshRevisionWindow: "00:30:00"
+  rollbackPreviousHealthyMinimum: "01:00:00"
+
+  # Above this fraction of unhealthy pods, EVERYTHING escalates: the agent treats it as a
+  # cluster-wide event and refuses to act, because a fleet-wide fault is not something to
+  # start restarting pods into.
+  #
+  # Also a code default with no chart value until v0.7.0. Note before raising it: the e2e
+  # release gate crosses this ceiling on purpose when it applies eleven chaos fixtures at
+  # once, and the correct response to "no action was taken in the --full run" is a separate
+  # single-fixture acting run, NOT a wider ceiling. See backlog #97.
+  clusterUnhealthyCeiling: 0.3
+
 # -----------------------------------------------------------------------------------------
 # Mode
 # -----------------------------------------------------------------------------------------

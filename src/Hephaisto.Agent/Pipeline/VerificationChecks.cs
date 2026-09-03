@@ -59,6 +59,9 @@ public sealed class VerificationChecks(
                 ActionType.DeleteStuckJob or ActionType.DeleteFailedJobPods =>
                     await JobIsNoLongerFailingAsync(action.Target, ct).ConfigureAwait(false),
 
+                ActionType.RollbackDeployment =>
+                    await RollbackLandedAsync(action, ct).ConfigureAwait(false),
+
                 _ => await WorkloadIsHealthyAsync(action.Target, ct).ConfigureAwait(false),
             };
         }
@@ -74,6 +77,147 @@ public sealed class VerificationChecks(
                 Outcome = VerificationOutcome.Inconclusive,
                 Detail = $"the check could not run: {ex.Message}",
             };
+        }
+    }
+
+    /// <summary>
+    /// The revision we asked for is the one now serving, and the workload is healthy on it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the half of backlog #42 that moves with the rollback executor. Every other
+    /// predicate here is workload-shaped, and for a restart that is right - the pod is gone by
+    /// definition, so the workload is the only thing left to check. For a rollback it is
+    /// <b>not enough</b>: the pods of the previous revision were Ready throughout, so
+    /// "the workload is healthy" is true before the action, during it, and after a rollback
+    /// that did nothing at all. A predicate that passes on a no-op is worse than none, because
+    /// it closes the incident.
+    /// </para>
+    /// <para>
+    /// <b>The trap: a rollback does not restore the old revision number.</b> Rolling back from
+    /// revision 3 to revision 2 produces revision <b>4</b>, whose template happens to equal
+    /// revision 2's. So asserting <c>current revision == the one we rolled back to</c> is not
+    /// merely fragile, it fails every single time, and it fails on a rollback that worked
+    /// perfectly - which would revert a correct fix at T+60s.
+    /// </para>
+    /// <para>
+    /// What is stable is the <b>ReplicaSet</b>. When a template matches one that already
+    /// exists, the controller scales that existing ReplicaSet back up rather than creating a
+    /// new one, so the object named in <c>PostState</c> is exactly the one that must end up
+    /// carrying the replicas. That is the assertion.
+    /// </para>
+    /// <para>
+    /// A missing or unreadable <c>PostState</c> is Inconclusive rather than Failed, for the
+    /// same reason the catch in <see cref="RunAsync"/> is: a check that could not run has
+    /// learned nothing, and treating that as "the fix did not work" rolls forward onto the
+    /// revision that caused the incident.
+    /// </para>
+    /// </remarks>
+    private async Task<CheckResult> RollbackLandedAsync(AgentAction action, CancellationToken ct)
+    {
+        var target = action.Target;
+        var name = target.OwnerName is { Length: > 0 } on ? on : target.Name;
+
+        if (RolledBackToReplicaSet(action.PostState) is not { Length: > 0 } expected)
+        {
+            return new CheckResult
+            {
+                Outcome = VerificationOutcome.Inconclusive,
+                Detail = "the action recorded no ReplicaSet to verify against",
+            };
+        }
+
+        var deployment = await api.Apps
+            .ReadNamespacedDeploymentAsync(name, target.Namespace, cancellationToken: ct)
+            .ConfigureAwait(false);
+
+        var desired = deployment.Spec?.Replicas ?? 0;
+
+        var replicaSet = await api.Apps
+            .ReadNamespacedReplicaSetAsync(expected, target.Namespace, cancellationToken: ct)
+            .ConfigureAwait(false);
+
+        var ready = replicaSet.Status?.ReadyReplicas ?? 0;
+        var scheduled = replicaSet.Spec?.Replicas ?? 0;
+
+        var checks = new
+        {
+            replicaSet = expected,
+            desiredReplicas = desired,
+            replicaSetScaledTo = scheduled,
+            replicaSetReady = ready,
+        };
+
+        if (scheduled == 0)
+        {
+            // The rolled-back-to ReplicaSet is still at zero: the patch did not take, or
+            // something rolled forward again on top of it.
+            return new CheckResult
+            {
+                Outcome = VerificationOutcome.Failed,
+                Detail =
+                    $"ReplicaSet {expected} is still scaled to 0, so the rollback did not take effect",
+                Checks = checks,
+            };
+        }
+
+        if (ready < desired)
+        {
+            return new CheckResult
+            {
+                Outcome = VerificationOutcome.Failed,
+                Detail =
+                    $"ReplicaSet {expected} has {ready} of {desired} replicas ready, so the revision "
+                    + "rolled back to is not healthy either",
+                Checks = checks,
+            };
+        }
+
+        // The revision landed. Now the ordinary question - is the workload actually well - and
+        // it is asked second rather than instead, because on its own it cannot tell a rollback
+        // from a no-op.
+        var health = await WorkloadIsHealthyAsync(target, ct).ConfigureAwait(false);
+
+        return health with
+        {
+            Detail = health.Outcome == VerificationOutcome.Passed
+                ? $"rolled back onto {expected}, {ready} of {desired} replicas ready; {health.Detail}"
+                : health.Detail,
+        };
+    }
+
+    /// <summary>
+    /// The ReplicaSet name the executor recorded, or null if it recorded nothing usable.
+    /// </summary>
+    internal static string? RolledBackToReplicaSet(string? postState)
+    {
+        if (string.IsNullOrWhiteSpace(postState))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(postState);
+
+            // Both guards are load-bearing and were both found by a test rather than by
+            // reading: TryGetProperty throws on a root that is not an object (PostState can be
+            // an array or a bare string), and GetString throws when the property is present
+            // with a non-string value. Either would surface as an unhandled exception inside a
+            // verification, which is reported as Inconclusive and leaves the incident sitting
+            // in Verifying.
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                   && doc.RootElement.TryGetProperty("replicaSet", out var rs)
+                   && rs.ValueKind == JsonValueKind.String
+                ? rs.GetString()
+                : null;
+        }
+        catch (JsonException)
+        {
+            // PostState falls back to a snapshot of the target for action types that do not
+            // record their own after-state, so a non-rollback shape here is a real possibility
+            // rather than corruption.
+            return null;
         }
     }
 
