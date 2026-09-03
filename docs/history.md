@@ -793,8 +793,14 @@ to return first.
 `c1`'s classification assertion has been reporting another fixture's kind for several releases,
 and the `fixture-incidents.tsv` map that the judge and the report both read has been attributing
 other fixtures' incidents to c1 as well. Backlog [#34](backlog.md#34) records "c1 →
-`CrashLoopBackOff`, expected on this node" as a property of the node; it is at least as likely to
-have been c11, c12 or c13's incident being read through this collision.
+`CrashLoopBackOff`, expected on this node" as a property of the node, and the obvious suspicion on
+finding this was that #34 had been the collision all along.
+
+**It was not, and the fixed run says so.** With the prefix test corrected, c1 is graded against its
+own incident and still classifies `CrashLoopBackOff`. So #34 is a genuine property of the node — no
+pod-scoped `OOMKilling` event is emitted, the container simply restarts — and the collision was a
+second, independent defect sitting on top of it. Worth recording, because the tempting move on
+finding a measurement bug is to assume it explains the anomalies you already had.
 
 **The trap was already documented — in the other instrument.** `AnswerKey.ForCassette`'s comment
 says it in as many words:
