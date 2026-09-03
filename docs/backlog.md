@@ -4265,7 +4265,21 @@ twenty minutes and does not trip the ceiling.
 cluster - investigated fully, refused for a stated reason, escalated. It is a better answer to
 "what stops it?" than any of the constructed examples, and it is a candidate for the demo site.
 
-**Size.** S for the skip; S for the docs. **Fixed:** no. **Open.**
+**The skip landed 2026-09-03.** `chaos_assert_acting` now has a fourth branch: an action denied
+with a reason naming a cluster-wide event is a `skip` that says the run's own breadth caused it
+and points at `--fixtures $ACT_FIXTURE`, rather than a `fail` that reads as a broken executor.
+Verified against this run's own `details.jsonl`, where the new detection returns 1 - so the
+branch would have fired on the run that produced this entry.
+
+It matches on the reason **text**, because the incident API exposes `decisionReasons` as strings
+and carries no reason code. That is worth fixing the next time that payload changes; a
+`PolicyReasonCode` on the wire would make this robust rather than merely careful.
+
+**Still open:** the release procedure itself. `docs/roadmap.md` and the README describe one gate
+command, and it needs to be two - `--full` for the diagnosis corpus and a focused
+`--fixtures c13 --mode Auto` for the acting path.
+
+**Size.** S for the skip (done); S for the docs. **Open**, for the procedure.
 
 ### 98. The redactor's lookbehind lost to `\u0022`, which is [#84](#84) for the second time
 

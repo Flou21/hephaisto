@@ -786,6 +786,9 @@ chaos_assert_action_executed() {
     #   nothing proposed        -> skip, and report the rate. The planner declined; that is a
     #                              measurement, not a defect, and the repo already treats model
     #                              judgement this way - the root-cause judge never gates either.
+    #   denied cluster-wide     -> skip. Gate 7 refused because the CLUSTER is unhealthy, which
+    #                              this run made true by breaking eleven things at once. The
+    #                              gate is right and the acting path is untested (#97).
     #   proposed, none executed -> FAIL. Admission or the executor refused a plan the planner
     #                              made, which is exactly how #77 surfaced.
     #   executed                -> assert attribution, recovery and closure, hard.
@@ -800,6 +803,27 @@ chaos_assert_action_executed() {
         shape="dry-run"
     fi
 
+    # A FOURTH outcome, and like the second it is not a defect: the policy engine refused
+    # because the CLUSTER is unhealthy, not because anything about the action was wrong.
+    # --full applies eleven fixtures simultaneously - that is the point of it - and on a single
+    # node eleven deliberately broken workloads are over ClusterUnhealthyCeiling, so gate 7
+    # denies every action in a --full run. Correctly: restarting one pod is the wrong answer to
+    # a cluster coming apart.
+    #
+    # Failing here sends a reader looking for a broken executor when the finding is that the
+    # run's own breadth made acting impossible, which is the same "wrong about why" this file
+    # already refuses to do fifty lines below. See #97 - the fix for the procedure is two runs,
+    # --full for diagnosis and a focused --fixtures c13 for the acting path.
+    #
+    # Matched on the reason TEXT, because the incident API exposes decisionReasons as strings
+    # and carries no reason code. A code on the wire would make this robust rather than merely
+    # careful, and is worth doing the next time that payload changes.
+    local cluster_wide
+    cluster_wide=$(jq -r --arg t "$target" \
+        'select(.target.name != null and (.target.name | contains($t)))
+         | .actions[]? | select(.decision == "Deny") | .decisionReasons[]?' \
+        "$details" 2>/dev/null | grep -c "cluster-wide event" || true)
+
     if [ "${executed:-0}" -ge 1 ]; then
         ACT_EXECUTED=1
         pass "$ACT_FIXTURE was acted on ($executed $shape action(s) executed)"
@@ -809,6 +833,12 @@ chaos_assert_action_executed() {
              "the planner proposed nothing for it - a model judgement, not a fault in the acting path; see #66 for the measured rate"
         record pass "$CURRENT_PHASE" "action rate on $ACT_FIXTURE: 0 proposed" \
             "reported only - whether the planner acts is measured, not gated"
+    elif [ "${cluster_wide:-0}" -ge 1 ]; then
+        ACT_EXECUTED=0
+        skip "$ACT_FIXTURE was acted on" \
+             "policy denied it as a cluster-wide event: this run broke enough of the cluster to cross ClusterUnhealthyCeiling, so the gate is right and the acting path is untested rather than broken - use --fixtures $ACT_FIXTURE to test it (#97)"
+        record pass "$CURRENT_PHASE" "policy refused $ACT_FIXTURE as a cluster-wide event" \
+            "the gate behaved correctly; the run's own breadth is what made acting impossible"
     else
         ACT_EXECUTED=0
         fail "$ACT_FIXTURE was not acted on" \
