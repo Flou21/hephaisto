@@ -76,7 +76,16 @@ public sealed class InvestigationRunner(
     /// <summary>The model this runner investigates with, for callers that report on a run.</summary>
     public string ModelId => clients.InvestigationModelId;
 
-    public async Task<InvestigationOutcome> RunAsync(Incident incident, CancellationToken ct)
+    /// <param name="rollout">
+    /// A rollout that preceded this incident, when one did. Passed in rather than read here on
+    /// purpose: this runner is also constructed by <c>hephaisto-eval run</c> to replay a
+    /// cassette, where there is no cluster to ask. A caller with a cluster supplies it; replay
+    /// supplies null and the incident card simply goes without the line.
+    /// </param>
+    public async Task<InvestigationOutcome> RunAsync(
+        Incident incident,
+        CancellationToken ct,
+        RolloutCorrelation? rollout = null)
     {
         ArgumentNullException.ThrowIfNull(incident);
 
@@ -144,7 +153,7 @@ public sealed class InvestigationRunner(
         try
         {
             termination = await InvestigateAsync(
-                incident, opts, llm, recorder, budget, conclusion, ct).ConfigureAwait(false);
+                incident, opts, llm, recorder, budget, conclusion, rollout, ct).ConfigureAwait(false);
         }
         catch (BudgetExhaustedException ex)
         {
@@ -259,6 +268,7 @@ public sealed class InvestigationRunner(
         InvestigationRecorder recorder,
         InvestigationBudget budget,
         ConclusionHolder conclusion,
+        RolloutCorrelation? rollout,
         CancellationToken ct)
     {
         var tools = await BuildToolsAsync(llm, budget, recorder, conclusion, ct).ConfigureAwait(false);
@@ -276,7 +286,7 @@ public sealed class InvestigationRunner(
 
         var messages = new List<ChatMessage>
         {
-            new(ChatRole.System, prompts.ComposeInvestigationPrompt(incident)),
+            new(ChatRole.System, prompts.ComposeInvestigationPrompt(incident, rollout: rollout)),
             new(ChatRole.User, opts.OpeningMessage),
         };
 

@@ -237,6 +237,113 @@ public sealed class ClusterFactsGatherer(
     }
 
     /// <summary>
+    /// A rollout close enough to this incident to be worth stating in the prompt, or null.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deliberately narrow, and deliberately separate from <see cref="GatherAsync"/>. The full
+    /// fact-gathering runs immediately before the policy engine judges a plan, which is after
+    /// the investigation has finished - far too late to save the investigation a step. This is
+    /// two API reads against one Deployment, run before the investigation prompt is composed.
+    /// </para>
+    /// <para>
+    /// <b>Never throws.</b> Its caller is composing a prompt, not judging an action, so the
+    /// asymmetry that governs <c>GatherAsync</c> is inverted here: an unread fact there means
+    /// default-deny, because acting on an unknown cluster is unsafe. Here it means one fewer
+    /// hint in a prompt, and failing an investigation because a convenience read failed would
+    /// be a bad trade. Anything unexpected returns null and is logged.
+    /// </para>
+    /// </remarks>
+    public async Task<RolloutCorrelation?> RecentRolloutAsync(Incident incident, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(incident);
+
+        var target = incident.Target;
+        var kind = target.OwnerKind is { Length: > 0 } ok ? ok : target.Kind;
+        var name = target.OwnerName is { Length: > 0 } on ? on : target.Name;
+
+        // Deployments only. StatefulSet and DaemonSet history is in ControllerRevisions, which
+        // carry no images and no useful "what changed" - and rollback_deployment, the action
+        // this fact exists to inform, is Deployment-only anyway.
+        if (kind != "Deployment")
+        {
+            return null;
+        }
+
+        try
+        {
+            var deployment = await api.Apps
+                .ReadNamespacedDeploymentAsync(name, target.Namespace, cancellationToken: ct)
+                .ConfigureAwait(false);
+
+            var uid = deployment.Metadata?.Uid;
+
+            if (uid is null)
+            {
+                return null;
+            }
+
+            var replicaSets = await api.Apps
+                .ListNamespacedReplicaSetAsync(target.Namespace, cancellationToken: ct)
+                .ConfigureAwait(false);
+
+            var owned = replicaSets.Items
+                .Where(rs => rs.Metadata?.OwnerReferences?.Any(o => o.Uid == uid) == true)
+                .OrderByDescending(ClusterFactsRules.RevisionOf)
+                .ToList();
+
+            if (owned.Count == 0 || owned[0].Metadata?.CreationTimestamp is not { } rolledOutAt)
+            {
+                return null;
+            }
+
+            var rolledOut = new DateTimeOffset(DateTime.SpecifyKind(rolledOutAt, DateTimeKind.Utc));
+            var openedAfter = incident.OpenedAt - rolledOut;
+
+            // Negative means the rollout happened AFTER the incident opened - which is a real
+            // case, because the agent may be looking at a workload somebody is mid-deploy on.
+            // That is not a cause, and offering it as one would invite a rollback of the fix.
+            if (openedAfter < TimeSpan.Zero || openedAfter > RolloutCorrelation.RelevanceWindow)
+            {
+                return null;
+            }
+
+            TimeSpan? previousLasted = owned.Count >= 2
+                && owned[1].Metadata?.CreationTimestamp is { } previousCreated
+                    ? rolledOutAt - previousCreated
+                    : null;
+
+            return new RolloutCorrelation
+            {
+                Revision = ClusterFactsRules.RevisionOf(owned[0]),
+                IncidentOpenedAfter = openedAfter,
+                PreviousRevisionLastedFor = previousLasted,
+                Images = Images(owned[0]),
+            };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogDebug(
+                ex, "Could not read rollout history for {Workload}; the incident card goes without it.",
+                target.WorkloadKey);
+
+            return null;
+        }
+    }
+
+    private static string? Images(k8s.Models.V1ReplicaSet replicaSet)
+    {
+        var containers = replicaSet.Spec?.Template?.Spec?.Containers;
+
+        if (containers is null || containers.Count == 0)
+        {
+            return null;
+        }
+
+        return string.Join(", ", containers.Select(c => c.Image).Where(i => !string.IsNullOrWhiteSpace(i)));
+    }
+
+    /// <summary>
     /// Age of the current revision, and how long the one before it lasted.
     /// </summary>
     /// <remarks>

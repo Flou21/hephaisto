@@ -421,7 +421,7 @@ public sealed class ActionExecutor(
         // get_rollout_history, which is the tool the model used to decide to propose this.
         var owned = replicaSets.Items
             .Where(rs => rs.Metadata?.OwnerReferences?.Any(o => o.Uid == uid) == true)
-            .OrderByDescending(rs => RevisionOf(rs.Metadata))
+            .OrderByDescending(ClusterFactsRules.RevisionOf)
             .ToList();
 
         if (owned.Count < 2)
@@ -435,7 +435,7 @@ public sealed class ActionExecutor(
         var current = owned[0];
         var previous = owned[1];
 
-        var previousRevision = RevisionOf(previous.Metadata);
+        var previousRevision = ClusterFactsRules.RevisionOf(previous);
 
         var template = previous.Spec?.Template
             ?? throw new InvalidOperationException(
@@ -459,7 +459,7 @@ public sealed class ActionExecutor(
 
         logger.LogInformation(
             "Rolled {Namespace}/{Name} back from revision {From} to {To} ({FromRs} -> {ToRs}){DryRun}",
-            target.Namespace, name, RevisionOf(current.Metadata), previousRevision,
+            target.Namespace, name, ClusterFactsRules.RevisionOf(current), previousRevision,
             current.Metadata?.Name, previous.Metadata?.Name,
             dryRun is null ? string.Empty : " [dry run]");
 
@@ -470,27 +470,11 @@ public sealed class ActionExecutor(
             new
             {
                 rolledBackTo = previousRevision,
-                rolledBackFrom = RevisionOf(current.Metadata),
+                rolledBackFrom = ClusterFactsRules.RevisionOf(current),
                 replicaSet = previous.Metadata?.Name,
             },
             Json);
     }
-
-    /// <summary>
-    /// The revision number a ReplicaSet carries, or 0 when it carries none.
-    /// </summary>
-    /// <remarks>
-    /// Deliberately a duplicate of the helper in <c>KubernetesReadTools</c> rather than a shared
-    /// one: that class is the read-only tool surface handed to the model and this is the
-    /// executor, and making the executor depend on the tool surface to perform a mutation is a
-    /// coupling worth more than the six lines it saves.
-    /// </remarks>
-    private static long RevisionOf(V1ObjectMeta? meta) =>
-        meta?.Annotations is { } a
-        && a.TryGetValue("deployment.kubernetes.io/revision", out var raw)
-        && long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var revision)
-            ? revision
-            : 0;
 
     /// <summary>
     /// Stamps <c>kubectl.kubernetes.io/restartedAt</c> on the pod template, which is exactly
