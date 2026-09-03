@@ -1172,9 +1172,25 @@ else
     /// The in-flight check is a courtesy, not the guard: the state machine refuses
     /// Investigating -&gt; Investigating regardless of what this button believes.
     /// </remarks>
+    /// <summary>
+    /// A retry is offered when the incident ended without an answer, and only then.
+    /// </summary>
+    /// <remarks>
+    /// The third clause is the one that was missing, and its absence made the callout beside
+    /// it state something false. An incident escalates for several reasons and only some of
+    /// them mean "nothing was produced": a run that faults or exhausts its budget leaves
+    /// nothing to read, but an incident escalated because the POLICY ENGINE refused the plan
+    /// has a complete diagnosis, a hypothesis and cited evidence sitting directly below this
+    /// banner saying no diagnosis was produced. Every escalated incident in the demo corpus
+    /// showed it, including one whose finding carries 0.92 confidence.
+    ///
+    /// The block's own comment always said "for the incidents that never got an answer" -
+    /// the condition just never checked for one.
+    /// </remarks>
     private bool CanReinvestigate =>
         _incident is { InProgress: null } incident
-        && incident.State is IncidentState.Escalated or IncidentState.Expired;
+        && incident.State is IncidentState.Escalated or IncidentState.Expired
+        && incident.Investigations.All(v => v.PrimaryFinding is null);
 
     private async Task ReinvestigateAsync()
     {

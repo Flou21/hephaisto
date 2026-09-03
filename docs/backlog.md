@@ -4600,3 +4600,47 @@ request options).
 entry because it is not a defect, but it is the largest piece of unwritten record in the repository
 and this milestone produced more of it than most.
 
+### 102. The console told every escalated incident that no diagnosis was produced
+
+**Symptom.** The incident detail page renders a retry callout that says, in bold:
+
+> **no diagnosis was produced.** Re-investigating starts a fresh attempt and spends the budget
+> again.
+
+It appeared on an incident whose primary finding sits **directly below it**, at 0.92 confidence,
+with sixteen steps and cited evidence. The banner denies the existence of the thing it is
+printed on top of.
+
+**Cause.** `IncidentDetail.razor`'s `CanReinvestigate` never checked whether an answer existed:
+
+```csharp
+_incident is { InProgress: null } incident
+&& incident.State is IncidentState.Escalated or IncidentState.Expired;
+```
+
+An incident escalates for **eleven** reasons and only some of them mean nothing was produced.
+`BudgetExhausted` and `InvestigationFailed` do. `PolicyDenied` emphatically does not - that
+incident was diagnosed correctly, proposed the right remediation, and was refused by a safety
+gate. So did `NoPlanProduced`, which means the planner declined, not that the investigation
+failed.
+
+**The block's own comment had it right the whole time:** *"A retry, for the incidents that never
+got an answer. An investigation that faults, stalls or exhausts its budget leaves the incident
+escalated with nothing to read."* The intent was written down; the condition just never checked
+for an answer.
+
+**How it was found, which is the part worth keeping.** By photographing the shipping console for
+the v0.6.0 release notes. Every one of the demo corpus's escalated incidents showed it - all ten
+replays and the policy-denied live capture - and none of the automated suites had an opinion,
+because `scripts/e2e/ui` asserts behaviour against a live agent and this is a true statement
+about a rendered element that is lying about a different element. Photographing the product for
+marketing found a product bug, which is an argument for doing it more often than once a release.
+
+**Fix.** A third clause: `incident.Investigations.All(v => v.PrimaryFinding is null)`.
+`IncidentDetailRetryTests` pins the predicate - offered when a run left nothing to read, not
+offered when a diagnosis exists, never offered on a resolved or in-flight incident.
+
+**Found in `v0.6.0-rc1` and fixed before `v0.6.0`**, which is what a release candidate is for.
+
+**Size.** S. **Fixed 2026-09-03.**
+
