@@ -119,13 +119,22 @@ chaos_build_images() {
 # The target an incident opens under, which is NOT always the fixture's own name.
 #
 # Workload-derived fixtures are detected from a pod, so the incident carries that pod's name
-# and a `c<N>-` prefix matches. c10 is derived from a METRIC - Tempo's span metrics - whose
-# only identity label is `service`, so its incident opens on `faulty-service` with an EMPTY
-# namespace. That is docs/backlog.md #33, and no namespace fallback can rescue it: the
-# spanmetrics series carries no namespace label at all, so there is nothing to fall back to.
+# and a `c<N>-` prefix matches. c10 is derived from a METRIC - Tempo's span metrics - whose only
+# workload-identity label is `service`, so its incident opens on `faulty-service` rather than on
+# anything with a c10 prefix.
+#
+# NOTE, corrected in v0.7.0: this comment used to add "with an EMPTY namespace ... the
+# spanmetrics series carries no namespace label at all". That is not what backlog #33 says and
+# it is not true. #33 separates two halves and only one of them is unfixable: the NAMESPACE is
+# carried, as `k8s_namespace_name`, and was fixed on 2026-08-30 by teaching
+# AlertmanagerEndpoints.ResolveTarget that spelling; the workload NAME is what the series
+# genuinely cannot express, and that is why this mapping has to exist at all.
 #
 # The agent is right in both cases; only the harness's fixture-to-incident mapping was wrong,
 # and it reported c10 as undetected across two release candidates while the incident existed.
+#
+# c14 avoids the trap rather than adding a second special case: it sets
+# OTEL_SERVICE_NAME=c14-bad-deploy, so the default `c<N>-` mapping already matches.
 fixture_target() {
     case "$1" in
         c10) echo faulty-service ;;

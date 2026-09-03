@@ -321,21 +321,33 @@ Three things it deliberately does **not** cover, and neither does anything else:
   card's shape and its credential handling are unit-tested; that Microsoft accepts the envelope
   is not, and is worth re-checking against current documentation rather than assumed — Microsoft
   retired the connector this replaces.
-- **Root cause quality.** The harness grades each diagnosis against the answer key in
-  `infra/chaos/README.md` and reports a score, but never fails on it. The MVP bar — ≥ 7/10 over
+- **Root cause quality.** The harness grades each diagnosis against the answer key — which lives
+  in `scripts/e2e/lib/judge.sh`'s `fixture_truth()` and `src/Hephaisto.Eval/Scoring/AnswerKey.cs`,
+  kept in agreement by `AnswerKeyParityTests`, not in `infra/chaos/README.md` — and reports a
+  score, but never fails on it. The MVP bar — ≥ 7/10 over
   ≥ 10 scenarios — is still a judgement someone makes by reading.
 
 The default fixture set is four; **`--full`** runs every one that can be recorded on this
-hardware — `c1,c2,c3,c4,c5,c7,c8,c10,c11,c12`, ten of the twelve. That is the denominator the MVP
-bar was always written against, and the report now says whether the bar was met rather than only
-printing the ratio: `7/9` fails it on the count while looking like a pass on the proportion. It
-takes about two hours, because c8's rule needs thirty minutes of evidence before it can fire. The 22/24 replay number was measured on the first eight, so a
-live run compared against it should name the same eight — c11 and c12 are transient faults a
-restart repairs, and folding them into a diagnosis-accuracy figure measured without them would
-change the denominator and the difficulty at once.
+hardware — `c1,c2,c3,c4,c5,c7,c8,c10,c11,c12,c13,c14`, twelve of the fourteen. c6 and c9 are
+excluded and no flag overrides that: c6 cannot fire on local-path, and c9 evicts the very
+observability stack it would be measured by. That is the denominator the MVP bar was always
+written against, and the report says whether the bar was met rather than only printing the ratio:
+`7/9` fails it on the count while looking like a pass on the proportion. It takes about two hours,
+because c8's rule needs thirty minutes of evidence before it can fire and c10 and c14 sit behind
+five-minute rate windows. The 22/24 replay number was measured on the first eight, so a live run
+compared against it should name the same eight — the later fixtures are transient faults a restart
+or a rollback repairs, and folding them into a diagnosis-accuracy figure measured without them
+would change the denominator and the difficulty at once.
 
 `--mode Auto` and `--mode DryRun` both add the acting fixture, whether or not fixtures were
-named explicitly; `ACT_FIXTURE` names it, c12 by default.
+named explicitly; `ACT_FIXTURE` names it, **c13 by default**, with c11, c12 and c14 selectable.
+
+**The acting gate is two runs, and since v0.7.0 they test two different action types.**
+`--fixtures c13 --mode Auto` measures a `RestartPod`; `--fixtures c14 --mode Auto` measures a
+`RollbackDeployment`, which is the first fixture in the corpus where a restart is the wrong
+answer. The action types promoted to unattended follow `ACT_FIXTURE` rather than being fixed at
+`RestartPod`, because enabling a restart alongside a rollback would let a model score by reaching
+for the tool it has rather than by reasoning about the change.
 
 **Running it on a local model costs nothing per token**, which is what makes a two-hour gate
 affordable before every release:

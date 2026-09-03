@@ -56,9 +56,14 @@ or name is dropped before an executor sees it.
 | `MaxCostUsd` | decimal | `0.50` |
 | `MaxConsecutiveNoToolTurns` | int | `2` |
 
-A reserved concluding step lets a run that hits `MaxSteps` still write a finding. That rescue
-cannot land when the exhausted ceiling is **tokens**, because the concluding call resends the
-conversation — a known limitation, recorded in the backlog.
+A reserved concluding step lets a run that hits `MaxSteps` still write a finding. It releases two
+calls rather than one, because the conclusion is taken through the `conclude` tool and a tool call
+is two model round trips; reserving a single step paid for the first and refused the second, which
+is [#78](https://github.com/hephaisto-dev/hephaisto/blob/main/docs/backlog.md).
+
+That rescue used not to be able to land when the exhausted ceiling was **tokens**, because the
+concluding call resends the conversation. That limitation was closed by #82 — the conversation is
+trimmed for the concluding call — and this page went on describing it for two releases after.
 
 ### `Llm:Budget` — the rolling global budget, counted in Postgres
 

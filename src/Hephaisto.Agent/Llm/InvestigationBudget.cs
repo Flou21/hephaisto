@@ -198,7 +198,13 @@ public sealed class InvestigationBudget(InvestigationBudgetOptions options, IClo
     /// reaching the end of its budget with the answer unspoken.
     /// </para>
     /// <para>
-    /// This grants exactly one step and never renews. The token and cost ceilings are
+    /// This is granted once and never renews. It releases
+    /// <see cref="ConcludingCallAllowance"/> calls rather than one, because taking the
+    /// conclusion through the <c>conclude</c> TOOL costs two model round trips - one where the
+    /// model emits the call and one where it answers after the framework has run it. Reserving
+    /// a single step paid for the first and refused the second, so the tool never returned and
+    /// the run reported nothing; that was backlog #78, and this comment said "exactly one step"
+    /// for two releases after it was fixed. The token and cost ceilings are
     /// deliberately not consulted: they are already overshot by at most one call by design
     /// (see <see cref="EnsureCanStartStep"/>), and one more short, tool-less call to record a
     /// conclusion is a far better use of that overshoot than discarding the whole run. The
