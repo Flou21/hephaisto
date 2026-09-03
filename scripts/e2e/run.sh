@@ -79,9 +79,10 @@ Options:
   --tag <version>      test a version that is already published, e.g. 0.0.1-rc2
   --fixtures <list>    comma-separated chaos fixtures (default: c2,c3,c4,c7)
   --full               every fixture that can run here:
-                       c1,c2,c3,c4,c5,c7,c8,c10,c11,c12,c13. The release gate. About two
-                       hours - c8 alone needs a 30-minute window. c6 and c9 are excluded
-                       and no flag overrides that.
+                       c1,c2,c3,c4,c5,c7,c8,c10,c11,c12,c13,c14. The release gate. About two
+                       hours - c8 alone needs a 30-minute window, and c10 and c14 sit behind
+                       5-minute rate windows. c6 and c9 are excluded and no flag overrides
+                       that.
   --k8s <version>      Kubernetes version for the kind node (default: 1.36.4)
   --from <phase>       start at this phase, reusing an existing cluster
   --only <phase>       run just this phase against an existing cluster
@@ -294,8 +295,11 @@ fi
 # --- chaos --------------------------------------------------------------------------------
 CURRENT_PHASE=chaos
 if should_run chaos; then
-    # An acting run needs a fixture a restart actually fixes; a containment run has no use
-    # for one. ACT_FIXTURE names it (c13 by default; c12 and c11 remain selectable), and adding it
+    # An acting run needs a fixture whose fault an action actually fixes; a containment run has
+    # no use for one. ACT_FIXTURE names it (c13 by default; c11, c12 and c14 remain selectable),
+    # and since v0.7.0 the choice also decides WHICH action types are promoted to unattended -
+    # see act_auto_enabled, because c14's correct answer is a rollback and a restart would be
+    # the plausible wrong one. Adding it
     # here rather than naming a fixture twice keeps the thing injected and the thing asserted
     # from drifting apart.
     # This has to hold however the fixture list was chosen. It used to apply only when

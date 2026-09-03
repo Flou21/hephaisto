@@ -17,6 +17,19 @@ against the code rather than believed — see [backlog #9](backlog.md#9-semantic
 
 ## Where it stands
 
+`v0.6.0` shipped on 2026-09-03. **Someone else can run it.** Three public sites, a demo that comes
+up on a laptop with one command and no API key, and — for the first time in the project's life —
+an incident the agent acted on reaching `Resolved`: `c13-wedged-lock`, 41 seconds after the
+restart, granted by `hephaisto/verifier`, reproduced on the release gate at 70 assertions in
+24m37s. That retires v0.5.0's "not established" paragraph below. It is one run on one fixture, so
+the acting path is **demonstrated end to end rather than reliable**, and the docs say which.
+
+It also established that **the release gate is two runs, not one**. `--full` applies its fixtures
+simultaneously, which on a single node crosses `policy.clusterUnhealthyCeiling` — so the policy
+engine correctly refuses every action as a cluster-wide event, and the acting path cannot be
+tested in the same run that tests diagnosis ([#97](backlog.md#97)). Diagnosis scored **8/8** over
+85 assertions.
+
 `v0.5.0` shipped on 2026-09-01. **The list got shorter, and the gate went green.** The release
 whose feature was that it shipped no feature: eighteen fixes, most of them in the instrument that
 measures everything else, and `scripts/e2e/run.sh` exiting **0** on the full ten-fixture corpus for
