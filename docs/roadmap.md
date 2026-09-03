@@ -1103,6 +1103,103 @@ that never finds anything is a candidate nobody needed.
 
 ---
 
+## v0.7.0 — It survives a bad deploy
+
+**The first release in three to add a capability, and the one that gives the corpus a fault with a
+cause.** v0.5.0 was debt paydown and v0.6.0 was an audience release; both said "no new capability"
+out loud and meant it. A third freeze would have been a decision about the project rather than
+about the release.
+
+The scope proposal this was agreed from is [`v0.7.0.md`](v0.7.0.md), kept as the argument rather
+than duplicated here.
+
+### The finding the release is built on
+
+**The machinery for "a bad deploy caused this, roll it back" was already built, and had never once
+fired.** `ActionType.RollbackDeployment`, a policy gate with two tuned windows and its own unit
+tests, `CurrentRevisionAge` / `PreviousRevisionHealthyFor` already gathered, the
+`get_rollout_history` tool, the RBAC grant, the model-facing description, and runbook guidance in
+`HighErrorRate.md` telling the model *"a sharp edge is a deploy"* and pointing it at
+`rollback_deployment`. All of it shipped a release ahead of the action, the way the policy engine
+itself did.
+
+`ActionCapability.IsImplemented` returned false, so the planning prompt rendered that action as
+**"Not available in this build."** The gap was at the two ends: an executor arm, and a fixture with
+a history.
+
+### The second finding, which decided the shape
+
+**Every fault this project could detect was one that was simply *there*.** All thirteen chaos
+fixtures inject a steady-state fault and wait; across all thirteen files the only occurrence of the
+word "rollout" is an incidental comment in c6. So the corpus could not ask the question an on-call
+engineer asks first — **what changed?** — and an agent cannot be measured on an answer it was never
+asked for.
+
+### What ships
+
+Six features: the `RollbackDeployment` executor arm and its revision-aware verification;
+`c14-bad-deploy`, the first fixture whose setup has a timeline; change correlation as a free fact in
+the incident card; the console rendering an action's verifications ([#96](backlog.md#96)); five
+runbooks for kinds that shipped an alert rule and no runbook; and an absent allowlisted tool
+becoming a warning that names the capability lost.
+
+Ten bug fixes, of which **two were found while planning the release and reached every install of
+the chart** — [#103](backlog.md#103), a shipped alert rule naming a chaos fixture and firing forever
+on anyone else's cluster, and [#104](backlog.md#104), three latency rules aggregating away the
+namespace and making every latency incident un-actionable by construction.
+
+### The two production failure modes it was asked to cover
+
+**An API stops returning successful requests after an update** ships, as c14 plus the rollback.
+
+**A service's throughput drops after an update — a Kafka consumer falling behind — is deferred to
+v0.8.0**, and the reasoning is recorded so it is argued once. It is entirely greenfield: a broker in
+the chaos namespace, a producer, a consumer whose second revision is slower, a new `SignalKind` and
+its runbook in the same commit, new alert rules, and a scrape path that attaches the consumer's
+namespace rather than the exporter's.
+
+The part that makes it a release rather than a fixture is verification.
+`VerificationChecks.WorkloadIsHealthyAsync` reports **Passed** for a consumer that has been scaled
+up while its lag is still climbing — every replica is Ready and nothing restarted. An action that
+verifies green while the incident continues is the one failure mode this project's safety argument
+cannot tolerate, and fixing it means `VerificationChecks` reaching outside the Kubernetes API to
+Prometheus for the first time. That is a design decision, not a line of code, and it is the c10 trap
+one layer down.
+
+### What did not ship, and why
+
+**`PatchResources`**, [#39](backlog.md#39)'s other half. It is the actual remediation for c4 and c7
+— the two fixtures where diagnosis succeeds and the planner has nothing to offer — and it needs a
+restricted, typed vocabulary rather than an arbitrary merge patch, because applying a model-authored
+JSON patch verbatim would hand the model the mutating handle the three-phase split exists to deny
+it. Doing both halves of #39 in one release makes the executor the whole release.
+
+**[#23](backlog.md#23)**, NetworkPolicy enforcement. It needs Calico under kind; it is an
+`--enforce-netpol` tier rather than a fix, and it remains the harness's own printed uncovered limit.
+
+### Done when
+
+An error-rate spike that began at a rollout is detected, correlated to the revision that caused it,
+remediated by a `RollbackDeployment` that the policy engine admitted on its freshness gate and the
+executor carried out, and verified through to `Resolved` — **observed on a cluster, with the run's
+assertion count and duration recorded the way c13's were**.
+
+The release gate becomes **three runs**, extending [#97](backlog.md#97) rather than contradicting
+it:
+
+```sh
+scripts/e2e/run.sh --tag <version> --full                        # diagnosis
+scripts/e2e/run.sh --tag <version> --fixtures c13 --mode Auto    # acting: RestartPod
+scripts/e2e/run.sh --tag <version> --fixtures c14 --mode Auto    # acting: RollbackDeployment
+```
+
+Per #97 the acting assertion cannot pass inside a `--full` run: simultaneous fixtures cross
+`policy.clusterUnhealthyCeiling`, so the policy engine correctly refuses every action as a
+cluster-wide event. **That is a working safety gate and must not be "fixed" by widening the
+ceiling.**
+
+---
+
 ## The project track — landing page, docs, and the rest
 
 **Scheduled into v0.6.0 above**; this section is retained as the reference material for it, because
