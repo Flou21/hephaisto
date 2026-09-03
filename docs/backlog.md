@@ -4337,3 +4337,70 @@ it is written down rather than fixed a third time by accident.
 
 **Size.** S. **Fixed 2026-09-03.**
 
+### 99. `hourlyCostUtilization` disagreed with the ledger by 40x, on the wide run only
+
+**Symptom.** In the v0.6.0 `--full` gate run:
+
+```
+FAIL  hourlyCostUtilization is 0.001359, ledger implies .054677
+      -- budget reporting disagrees with what was actually spent
+```
+
+A factor of forty. The ledger is the sum of what the investigations actually cost, and the
+gauge is what the agent reports about its own hourly spend - so one of the two is wrong about
+money, and the gauge is the one a human would look at to decide whether the agent is running
+away with itself.
+
+**It did not reproduce on the focused run**, twenty minutes later, same build, same model:
+
+```
+ok    hourlyCostUtilization agrees with the ledger (0.006664 vs .006664)
+```
+
+So it is not simply broken arithmetic. The difference between the two runs is breadth and
+time: eleven fixtures over 221 minutes with 36 investigations and an agent restarted mid-run
+by the notify phase, against one fixture over 25 minutes with one investigation and no
+restart. **The restart is the most interesting of those**, because an hourly figure is a
+rolling window and a process that restarts has to reconstruct it from the database rather than
+from memory. That is a hypothesis and nothing here tests it.
+
+**Related, and worth checking together:** [#15](#15) records four instruments registered twice
+under the same meter with conflicting types and units, two of which are double-counted. A gauge
+that reads low by a large factor while a ledger reads correctly is the shape that would produce.
+
+**Not diagnosed further** - it was found by a release gate that was looking for something else,
+and chasing it would have meant another two-hour run. Recorded so the next `--full` run knows
+to look, rather than rediscovering it.
+
+**Size.** M, mostly to reproduce. **Open.**
+
+### 100. One fixture in eleven opened an incident and never got investigated
+
+**Symptom.** Same run:
+
+```
+FAIL  only 10 of 11 fixture incidents were investigated
+skip  an investigation ended on a ceiling --    1 Faulted  (of 36 investigations)
+```
+
+Detection was complete - all eleven fixtures opened an incident, asserted and passed earlier in
+the same phase. One of them then never produced a diagnosis, and separately one investigation
+of thirty-six terminated `Faulted`.
+
+**Those two lines are probably the same event**, and the report does not say so. `Faulted` is
+the termination reason for an investigation that threw, and an incident whose only
+investigation faulted has no diagnosis to collect. If that is right, the honest reading is "one
+investigation crashed" rather than "a fixture was ignored", and the assertion is describing a
+symptom two steps downstream of the cause - the same complaint [#93](#93) makes about an
+assertion that pointed at the wrong thing for four bugs in a row.
+
+**What is missing to close it** is the exception. `Faulted` is recorded on the investigation
+and the message is in the agent's logs, and neither is surfaced in the run report - so a
+`Faulted` count of 1 tells you something crashed and nothing about what. Reporting the
+termination reason beside the verdict landed in [#88](#88); reporting the *fault* did not.
+
+**Not reproduced.** The focused run had one fixture and one investigation, so it could not have
+shown this either way.
+
+**Size.** S to surface the exception; unknown for the fault itself. **Open.**
+
