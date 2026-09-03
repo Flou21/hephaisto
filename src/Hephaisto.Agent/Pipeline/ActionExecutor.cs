@@ -399,7 +399,17 @@ public sealed class ActionExecutor(
         var kind = target.OwnerKind is { Length: > 0 } ok ? ok : target.Kind;
         var name = target.OwnerName is { Length: > 0 } on ? on : target.Name;
 
-        if (kind != "Deployment")
+        // StatefulSet and DaemonSet are refused because their history lives in
+        // ControllerRevisions rather than ReplicaSets - a different read and a different patch.
+        //
+        // Anything ELSE falls through to the read below rather than being refused here, and the
+        // distinction matters. A span-metrics alert identifies a workload only by its `service`
+        // label, so the incident it opens carries kind=Service with no owner - and that is
+        // exactly the incident an error-rate spike after a bad deploy produces. Refusing on the
+        // kind string would have made this action unreachable on the one class of incident it
+        // was built for. By convention the service name and the Deployment name are the same
+        // string; if they are not, the read below 404s and says so.
+        if (kind is "StatefulSet" or "DaemonSet")
         {
             throw new InvalidOperationException(
                 $"cannot roll back a {kind}; rollback_deployment supports Deployment only, because "

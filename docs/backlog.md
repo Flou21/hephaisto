@@ -4634,6 +4634,41 @@ from memory. That is a hypothesis and nothing here tests it.
 under the same meter with conflicting types and units, two of which are double-counted. A gauge
 that reads low by a large factor while a ledger reads correctly is the shape that would produce.
 
+---
+
+**Corrected 2026-09-03, on the v0.7.0 gate. This is a defect in the ASSERTION, not in the gauge,
+and the evidence was already in the paragraphs above.**
+
+`hourlyCostUtilization` is `Ratio(SumAsync(now - 1h).Cost, MaxCostUsdPerHour)` — a **rolling
+hour**. The assertion compared it against the sum of `costUsd` across **every investigation in the
+run**. Those two agree only when the whole run fits inside one hour.
+
+Which is exactly what this entry already records and reads past: it did not reproduce on a focused
+run *"over 25 minutes"*, and did reproduce on a wide run *"over 221 minutes"*. Twenty-five minutes
+fits in a rolling hour. Two hundred and twenty-one does not. The entry names the difference as
+"breadth and time" and then reaches for the restart hypothesis and for #15's double-registered
+instruments — the window itself is the one explanation it does not name.
+
+Measured on the v0.7.0 `--full` run:
+
+| | |
+|---|---|
+| gauge reported | `0.004985` |
+| whole run, $0.197352 / $3.00 | `0.065784` ← what the assertion compared against |
+| **last hour, $0.012133 / $3.00** | **`0.004044`** ← what the gauge is named after |
+
+0.004985 against 0.004044, inside the assertion's own 0.05 tolerance. **The gauge was right.**
+
+The assertion now compares the hourly gauge against the last hour of the ledger, and additionally
+checks `dailyCostUtilization` against the whole run — which is the stronger of the two, because a
+run is far shorter than a day, so every dollar it spent is still inside that window. That second
+assertion is what would actually catch a gauge reading low.
+
+**Left open** until a `--full` run passes both, because this entry has been wrong once already and
+the thing that made it wrong was reasoning rather than measurement. What can be retired now is the
+alarm: a money gauge under-reporting spend is frightening because that is the direction a budget
+runs away in, and it was not doing that.
+
 **Not diagnosed further** - it was found by a release gate that was looking for something else,
 and chasing it would have meant another two-hour run. Recorded so the next `--full` run knows
 to look, rather than rediscovering it.

@@ -564,25 +564,54 @@ chaos_await_investigations() {
     # clue - an aggregated `1 Faulted` from a different endpoint - was printed somewhere else
     # with nothing to join them by. They were probably always the same event.
     #
+    # ASKED OF THE LIVE API, NOT OF details.jsonl. The first version of this read the snapshot,
+    # which chaos_collect_details writes LATER in the run - so the file was absent, every lookup
+    # came back empty, and the diagnostic confidently reported "no investigation row at all" for
+    # a fixture that had one. A diagnostic that invents a second failure to explain the first is
+    # worse than no diagnostic, and this one did it on its first outing.
+    #
     # `|| true` throughout: this is a diagnostic on a path that has already failed, and it must
     # not take the suite down with a jq exit code under `set -Eeuo pipefail`.
     local why=""
+    local all; all=$(api "/api/incidents?limit=100" || true)
+
     for f in $missing; do
         t=$(fixture_target "$f")
-        local reasons
-        reasons=$(jq -r --arg t "$t" '
-            select((.target.name // "") | . == $t or startswith($t + "-"))
-            | .investigations[]?
-            | .terminationReason + (if .error then " (" + (.error | tostring) + ")" else "" end)
-        ' "$WORKDIR/details.jsonl" 2>/dev/null | paste -sd '; ' - || true)
 
-        if [ -n "$reasons" ]; then
+        local ids
+        ids=$(jq -r --arg t "$t" \
+            '.[]? | select((.targetName // "") | . == $t or startswith($t + "-")) | .id' \
+            <<<"$all" 2>/dev/null || true)
+
+        if [ -z "$ids" ]; then
             why="${why:+$why
-}      $f: investigated, no grounded finding -- $reasons"
-        else
-            why="${why:+$why
-}      $f: no investigation row at all"
+}      $f: no incident at all -- it was detected earlier, so this is a matching problem"
+            continue
         fi
+
+        local reasons=""
+        local i
+        for i in $ids; do
+            local r
+            r=$(api "/api/incidents/$i" 2>/dev/null | jq -r '
+                .investigations[]?
+                | "\(.terminationReason) findings=\([.findings[]?] | length)"
+                  + (if .error then " (" + (.error | tostring) + ")" else "" end)' 2>/dev/null || true)
+            reasons="${reasons:+$reasons; }${r:-none}"
+        done
+
+        case "$reasons" in
+            *none*|"")
+                why="${why:+$why
+}      $f: an incident exists and nothing investigated it" ;;
+            *)
+                # The common case, and the one worth naming precisely: the investigation RAN and
+                # produced nothing groundable. hasDiagnosis is Findings.Any(), so a run that
+                # concluded with no finding is indistinguishable from one that never happened
+                # unless the reason is printed.
+                why="${why:+$why
+}      $f: investigated, but no finding survived -- $reasons" ;;
+        esac
     done
 
     fail "only ${done_count:-0} of $want fixture incidents were investigated" \
@@ -774,8 +803,30 @@ chaos_assert_budget() {
     fi
 
     # --- The API agrees with the ledger --------------------------------------------------------
-    local hourly max_hour expected
+    #
+    # THE WINDOWS HAVE TO MATCH, AND THEY DID NOT. hourlyCostUtilization is
+    # Ratio(SumAsync(now - 1h).Cost, MaxCostUsdPerHour) - a ROLLING HOUR. This assertion used to
+    # compare it against the sum of costUsd across EVERY investigation in the run, which for a
+    # --full gate is three hours of spend. The two can only agree when the whole run fits inside
+    # one hour, and the fast four-fixture default does, which is why this looked correct.
+    #
+    # On the v0.7.0 --full gate it failed: 0.004985 against an "implied" 0.065784. Nothing was
+    # wrong with the gauge. $0.197 had been spent over about three hours and $0.015 of it inside
+    # the last one, and the gauge reported the second number because that is the number it is
+    # named after.
+    #
+    # This is very likely all that backlog #99 ever was - "hourlyCostUtilization disagreed with
+    # the ledger by 40x, a money gauge reading low", recorded as the most uncomfortable item on
+    # the list. A gauge reading low is frightening precisely because under-reporting spend is the
+    # direction that lets a budget run away, which is why it earned that description and why it
+    # is worth being sure rather than assuming.
+    #
+    # So: the hourly gauge is checked against the last hour, and the DAILY gauge against the
+    # whole run - which is the stronger of the two assertions, because a run shorter than a day
+    # makes the whole ledger the correct numerator for it.
+    local hourly daily max_hour max_day expected recent
     hourly=$(api /api/status | jq -r '.hourlyCostUtilization')
+    daily=$(api /api/status | jq -r '.dailyCostUtilization')
 
     # Read the cap from the same values file the release was installed with, rather than
     # restating it here. Two copies of a budget number is how an assertion ends up passing
@@ -787,15 +838,36 @@ chaos_assert_budget() {
     # makes this branch unreachable rather than merely unlikely.
     [ -n "$max_hour" ] || die "could not read Llm__Budget__MaxCostUsdPerHour from values-e2e.yaml"
 
-    expected=$(echo "scale=6; $total / $max_hour" | bc -l)
+    max_day=$(yq -r '.extraEnv[] | select(.name == "Llm__Budget__MaxCostUsdPerDay") | .value' \
+              "$E2E_DIR/values-e2e.yaml" 2>/dev/null | head -1)
+    [ -n "$max_day" ] || die "could not read Llm__Budget__MaxCostUsdPerDay from values-e2e.yaml"
+
+    # Only what was spent in the last hour, to match the gauge's own window. completedAt is the
+    # closest thing the snapshot has to when the charge landed.
+    recent=$(jq -s --arg cutoff "$(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)" \
+        '[.[] | .investigations[]? | select((.completedAt // "") >= $cutoff) | .costUsd] | add // 0' "$details")
+
+    expected=$(echo "scale=6; $recent / $max_hour" | bc -l)
 
     # Tolerance, not equality: the window slides, and a few seconds pass between reading the
     # ledger and reading the status endpoint.
     if (( $(echo "($hourly - $expected) < 0.05 && ($expected - $hourly) < 0.05" | bc -l) )); then
-        pass "hourlyCostUtilization agrees with the ledger ($hourly vs $expected)"
+        pass "hourlyCostUtilization agrees with the last hour of the ledger ($hourly vs $expected)"
     else
-        fail "hourlyCostUtilization is $hourly, ledger implies $expected" \
-             "budget reporting disagrees with what was actually spent"
+        fail "hourlyCostUtilization is $hourly, the last hour of the ledger implies $expected" \
+             "budget reporting disagrees with what was actually spent in the same window"
+    fi
+
+    # The whole-run assertion, which is the one that would catch a genuinely broken gauge: a run
+    # is far shorter than a day, so every dollar it spent is still inside the daily window.
+    local expected_day
+    expected_day=$(echo "scale=6; $total / $max_day" | bc -l)
+
+    if (( $(echo "($daily - $expected_day) < 0.05 && ($expected_day - $daily) < 0.05" | bc -l) )); then
+        pass "dailyCostUtilization agrees with the whole run ($daily vs $expected_day)"
+    else
+        fail "dailyCostUtilization is $daily, the run's total implies $expected_day" \
+             "the daily window covers this entire run, so these must agree"
     fi
 }
 

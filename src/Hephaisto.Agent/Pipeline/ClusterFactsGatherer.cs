@@ -227,12 +227,54 @@ public sealed class ClusterFactsGatherer(
             }
 
             default:
+            {
+                // A SERVICE-SHAPED TARGET IS NOT A DEAD END. A span-metrics alert identifies a
+                // workload only by its `service` label, so the incident it opens carries
+                // kind=Service with no ownerKind and no ownerName - and those are precisely the
+                // incidents where the rollout gates matter most, because Kubernetes reports the
+                // pods perfectly healthy while the requests fail.
+                //
+                // Returning (null, null) here does not merely lose a fact. WorkloadFacts being
+                // null makes the rollback gate's freshness and previous-healthy checks both
+                // false, so rollback_deployment is DENIED - with a reason that reads like the
+                // policy engine working correctly. On the v0.7.0 gate that would have made c14,
+                // the fixture built to prove the rollback path, fail in exactly the ambiguous
+                // way c13 was created to escape: unable to tell "would not act" from "was not
+                // allowed to".
+                //
+                // So a name that might be a Deployment gets one read before giving up. By OTel
+                // convention here the service name and the Deployment name are the same string.
+                var resolved = await TryReadDeploymentAsync(name, ns, ct).ConfigureAwait(false);
+
+                if (resolved is not null)
+                {
+                    var (current, previous) = await RevisionAgesAsync(resolved, now, ct).ConfigureAwait(false);
+
+                    logger.LogDebug(
+                        "Target {Kind}/{Name} resolved to Deployment/{Name} for workload facts.", kind, name, name);
+
+                    return (new WorkloadFacts
+                    {
+                        Key = target.WorkloadKey,
+                        Kind = "Deployment",
+                        DesiredReplicas = resolved.Spec?.Replicas ?? 0,
+                        ReadyReplicas = resolved.Status?.ReadyReplicas ?? 0,
+                        UpdatedReplicas = resolved.Status?.UpdatedReplicas ?? 0,
+                        Generation = resolved.Metadata?.Generation ?? 0,
+                        ObservedGeneration = resolved.Status?.ObservedGeneration ?? 0,
+                        YoungestPodAge = await YoungestPodAgeAsync(ns, resolved.Spec?.Selector, now, ct).ConfigureAwait(false),
+                        CurrentRevisionAge = current,
+                        PreviousRevisionHealthyFor = previous,
+                    }, resolved.Metadata?.Labels);
+                }
+
                 // A bare Pod, a Job, or something with no controller. There is no replica set
                 // to reason about, so the blast-radius and rollout gates have nothing to say -
                 // which is honest here, unlike a workload read that failed.
                 logger.LogDebug(
                     "No workload facts for kind {Kind}; blast-radius and rollout gates will not apply.", kind);
                 return (null, null);
+            }
         }
     }
 
@@ -265,7 +307,23 @@ public sealed class ClusterFactsGatherer(
         // Deployments only. StatefulSet and DaemonSet history is in ControllerRevisions, which
         // carry no images and no useful "what changed" - and rollback_deployment, the action
         // this fact exists to inform, is Deployment-only anyway.
-        if (kind != "Deployment")
+        //
+        // BUT NOT "the target must already SAY Deployment", which is what this used to require
+        // and which made the whole feature miss the incidents it was built for. A span-metrics
+        // alert identifies a workload only by its `service` label, so the incident it opens has
+        // kind=Service, no ownerKind and no ownerName - and those are exactly the incidents
+        // where "what changed?" is the entire question, because Kubernetes reports the pods
+        // perfectly healthy throughout.
+        //
+        // Measured on the v0.7.0 gate: c14's incident opened as
+        // `kind=[Service] name=[c14-bad-deploy] ownerKind=[]`, so this returned null and the
+        // fixture built to exercise change correlation ran without it.
+        //
+        // So a non-workload kind is a reason to go LOOKING for the Deployment, not to give up.
+        // The OTel service name and the Deployment name are the same string by convention here
+        // (c14 sets OTEL_SERVICE_NAME to its own name for exactly this kind of reason), and a
+        // name that resolves to no Deployment simply 404s into the catch below.
+        if (kind is "StatefulSet" or "DaemonSet")
         {
             return null;
         }
@@ -341,6 +399,34 @@ public sealed class ClusterFactsGatherer(
         }
 
         return string.Join(", ", containers.Select(c => c.Image).Where(i => !string.IsNullOrWhiteSpace(i)));
+    }
+
+    /// <summary>
+    /// Reads a Deployment by name, returning null when there is not one.
+    /// </summary>
+    /// <remarks>
+    /// A 404 is an ordinary answer here, not a failure: the caller is asking "is this name a
+    /// Deployment?" about a target that may well be a bare Pod or a Job. Anything else is
+    /// swallowed for the same reason the callers swallow it - these are facts that improve a
+    /// decision, and none of them is worth failing an incident over.
+    /// </remarks>
+    private async Task<V1Deployment?> TryReadDeploymentAsync(string name, string ns, CancellationToken ct)
+    {
+        try
+        {
+            return await api.Apps
+                .ReadNamespacedDeploymentAsync(name, ns, cancellationToken: ct)
+                .ConfigureAwait(false);
+        }
+        catch (HttpOperationException ex) when (ex.Response?.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogDebug(ex, "Could not read Deployment {Namespace}/{Name}.", ns, name);
+            return null;
+        }
     }
 
     /// <summary>
