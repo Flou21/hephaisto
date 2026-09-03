@@ -311,6 +311,29 @@ ${body}
 
 // ------------------------------------------------------------------- index
 
+/**
+ * One sentence about what the live captures show, in whichever combination exists.
+ *
+ * Built rather than concatenated from optional clauses: with no executed action the old
+ * version rendered "1 shows it being refused", where "it" had lost its antecedent along with
+ * the clause that vanished.
+ */
+function headline(acted, denied, n) {
+    const verb = (k) => (k === 1 ? 'shows' : 'show')
+
+    if (acted > 0 && denied > 0) {
+        return `${acted} of these ${n} ${verb(acted)} the agent acting, and ${denied} `
+            + `${verb(denied)} it refused by policy.`
+    }
+
+    if (acted > 0) {
+        return `${acted} of these ${n} ${verb(acted)} the agent acting.`
+    }
+
+    return `${denied} of these ${n} ${verb(denied)} the agent refused by policy - it diagnosed `
+        + 'the fault, proposed a fix, and was not allowed to apply it.'
+}
+
 function renderIndex(all) {
     const rows = all.map((t) => {
         const inv = t.investigation
@@ -396,14 +419,12 @@ ${rows}
 
 <section class="hp-section">
 <h2>What this shows, and what it does not</h2>
-${acted + denied > 0
-  ? `<p>
-  <strong>${acted > 0 ? `${acted} of these ${n} shows the agent acting.` : ''}${denied > 0
-    ? ` ${denied} shows it being refused.` : ''}</strong>
+${acted + denied > 0 ? `<p>
+  <strong>${headline(acted, denied, n)}</strong>
   ${acted + denied === 1 ? 'That one was' : 'Those were'} exported from the agent's own database
-  after a real run, which is the only way this page can show an executed action at all: a replay
-  serves a recorded tool trace to a live model and constructs no executor, no policy engine and
-  no state machine, so it has nothing to execute with and nothing to be refused by.
+  after a real run, which is the only way this page can show either: a replay serves a recorded
+  tool trace to a live model and constructs no executor, no policy engine and no state machine,
+  so it has nothing to act with and nothing to be refused by.
 </p>` : ''}
 <p>
   <strong>None of the ${replays.length} replayed investigations shows the agent acting.</strong>
