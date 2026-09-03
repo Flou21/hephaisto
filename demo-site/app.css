@@ -380,6 +380,42 @@ h4 {
 .dec-approval { color: var(--yellow); }
 .dec-deny { color: var(--red); }
 
+/* Verification outcomes. Inconclusive is BLUE and not red, deliberately: a check that could
+   not run has learned nothing, and the agent does not roll back on it. Rendering it in the
+   failure colour would tell a reader the opposite of what happened. */
+.ver-passed .glyph { color: var(--green); }
+.ver-failed .glyph { color: var(--red); }
+.ver-inconclusive .glyph { color: var(--blue); }
+.ver-pending .glyph { color: var(--fg-faint); }
+
+.hp-verifications {
+    margin-top: 0.4rem;
+    padding-left: 0.6rem;
+    border-left: 2px solid var(--border);
+}
+
+.hp-ver-head {
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.hp-ver-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.4rem;
+    font-size: var(--text-xs);
+    padding: 0.1rem 0;
+}
+
+.hp-ver-row .glyph { font-family: var(--mono); font-weight: 600; }
+.hp-ver-when { color: var(--fg-dim); min-width: 4.5rem; }
+.hp-ver-outcome { color: var(--fg); }
+.hp-ver-detail { color: var(--fg-dim); }
+.hp-ver-checks { width: 100%; }
+.hp-ver-none { font-size: var(--text-xs); margin-top: 0.4rem; }
+
 .hp-yes { color: var(--green); font-family: var(--mono); font-size: var(--text-lg); }
 .hp-no { color: var(--fg-faint); font-family: var(--mono); font-size: var(--text-lg); }
 .hp-partial { color: var(--yellow); font-family: var(--mono); font-size: var(--text-lg); }

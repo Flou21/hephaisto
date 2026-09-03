@@ -299,6 +299,15 @@ internal sealed class DemoSeeder(
             candidates.Add(plan.CreatedAt);
             candidates.AddRange(plan.Actions.Where(a => a.ApprovedAt is not null).Select(a => a.ApprovedAt!.Value));
             candidates.AddRange(plan.Actions.Where(a => a.ExecutedAt is not null).Select(a => a.ExecutedAt!.Value));
+
+            // A verification runs AFTER the action it checks - up to fifteen minutes after - so
+            // anchoring on the action alone would place the last check in the future and render
+            // a completed incident as still waiting on one.
+            candidates.AddRange(
+                plan.Actions
+                    .SelectMany(a => a.Verifications)
+                    .Where(v => v.RanAt is not null)
+                    .Select(v => v.RanAt!.Value));
         }
 
         return candidates.Max();
@@ -359,6 +368,20 @@ internal sealed class DemoSeeder(
                 if (action.ExecutedAt is { } executed)
                 {
                     action.ExecutedAt = executed + shift;
+                }
+
+                // Shifted for exactly the reason the plan is. Verifications began travelling in
+                // transcripts in v0.7.0 (#96), and an unshifted one renders as a check that ran
+                // weeks before the action it checks - which on the one page whose subject is
+                // "the agent fixed it, and here is the proof" is worse than showing nothing.
+                foreach (var verification in action.Verifications)
+                {
+                    verification.DueAt += shift;
+
+                    if (verification.RanAt is { } ran)
+                    {
+                        verification.RanAt = ran + shift;
+                    }
                 }
             }
         }

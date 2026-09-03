@@ -153,6 +153,13 @@ internal static partial class ExportCommand
                 .ThenInclude(f => f.Evidence)
             .Include(v => v.Plan!)
                 .ThenInclude(p => p.Actions)
+                    // The T+60s / T+5m / T+15m checks. Deliberately NOT exported until v0.7.0,
+                    // on the sound grounds that an artifact should not ship fields nothing
+                    // reads - and that reasoning expired the moment IncidentDetail.razor began
+                    // rendering them (#96). Without these, a transcript of an incident the
+                    // agent acted on and resolved cannot show the evidence that it worked,
+                    // which is the half of the safety argument the demo could not make.
+                    .ThenInclude(a => a.Verifications)
             .AsSplitQuery()
             .OrderBy(v => v.StartedAt)
             .ToListAsync(ct)

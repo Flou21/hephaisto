@@ -91,6 +91,41 @@ public static class Display
         _ => "dec-deny",
     };
 
+    public static string VerificationGlyph(VerificationOutcome outcome) => outcome switch
+    {
+        VerificationOutcome.Passed => "+",
+        VerificationOutcome.Failed => "x",
+        VerificationOutcome.Inconclusive => "?",
+        _ => "\u00b7",
+    };
+
+    /// <summary>
+    /// Inconclusive gets its own class rather than sharing Failed's.
+    /// </summary>
+    /// <remarks>
+    /// The distinction is the whole point of the outcome existing. A check that could not run
+    /// has learned nothing, and rendering it in the same red as a check that ran and found the
+    /// fix did not work would tell a reader the opposite of what happened - the agent does not
+    /// roll back on Inconclusive, and a page implying it should have is a page that produces
+    /// the wrong follow-up.
+    /// </remarks>
+    public static string VerificationClass(VerificationOutcome outcome) => outcome switch
+    {
+        VerificationOutcome.Passed => "ver-passed",
+        VerificationOutcome.Failed => "ver-failed",
+        VerificationOutcome.Inconclusive => "ver-inconclusive",
+        _ => "ver-pending",
+    };
+
+    /// <summary>Which of the three scheduled checks this is, as the schedule names them.</summary>
+    public static string VerificationWhen(int attempt) => attempt switch
+    {
+        1 => "T+60s",
+        2 => "T+5m",
+        3 => "T+15m",
+        _ => $"attempt {attempt}",
+    };
+
     /// <summary>Compact and monotonic: 4s, 3m12s, 2h05m, 3d04h. Never "a few minutes ago" -
     /// during an incident the difference between 9 and 14 minutes is the whole question.</summary>
     public static string Duration(TimeSpan span)

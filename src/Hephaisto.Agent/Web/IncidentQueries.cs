@@ -192,6 +192,7 @@ public sealed class IncidentQueries(
                 .ThenInclude(f => f.Evidence)
             .Include(v => v.Plan!)
                 .ThenInclude(p => p.Actions)
+                    .ThenInclude(a => a.Verifications)
             .AsSplitQuery()
             .OrderBy(v => v.StartedAt)
             .ToListAsync(ct);
@@ -987,6 +988,18 @@ public sealed class IncidentQueries(
         ExecutedAt = a.ExecutedAt,
         Outcome = a.Outcome,
         Error = a.Error,
+        Verifications = [.. a.Verifications.OrderBy(v => v.Attempt).Select(MapVerification)],
+    };
+
+    private static VerificationView MapVerification(Verification v) => new()
+    {
+        Id = v.Id,
+        Attempt = v.Attempt,
+        DueAt = v.DueAt,
+        RanAt = v.RanAt,
+        Outcome = v.Outcome,
+        Checks = v.Checks,
+        Detail = v.Detail,
     };
 
     private static FeedbackView MapFeedback(HumanFeedback f) => new()
