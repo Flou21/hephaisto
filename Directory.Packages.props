@@ -21,7 +21,7 @@
 
   <ItemGroup Label="LLM">
     <!-- Google.GenAI ships AsIChatClient(model) in-box, so no adapter layer. -->
-    <PackageVersion Include="Google.GenAI" Version="1.20.0" />
+    <PackageVersion Include="Google.GenAI" Version="1.21.0" />
     <PackageVersion Include="Microsoft.Extensions.AI" Version="10.9.0" />
     <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.9.0" />
     <!-- The OpenAI wire format, which is what DeepSeek, OpenRouter, Ollama and LM Studio all
