@@ -1127,9 +1127,27 @@ _act_available() {
     local w; w=$(fixture_workload "$ACT_FIXTURE")
 
     [ "$(kc -n "$CHAOS_NS" get deploy "$w" \
-        -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo 0)" -ge 1 ] \
-        && [ "$(kc -n "$CHAOS_NS" get pods -l "app.kubernetes.io/name=$w" \
-            -o jsonpath='{.items[*].status.containerStatuses[*].ready}' 2>/dev/null)" = "true" ]
+        -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo 0)" -ge 1 ] || return 1
+
+    # EVERY container ready, however many there are - not a string that equals "true".
+    #
+    # That comparison assumed exactly ONE container status across all matching pods. c13 has
+    # one container so it held; c14 has two (the app and its traffic sidecar), so the jsonpath
+    # yields "true true" and the test could never pass however healthy the workload was.
+    #
+    # It cost a 240-second timeout and a FAIL saying "the action ran but the workload did not
+    # recover" on a run where the workload had recovered completely: availableReplicas=1,
+    # ready=1, both containers true, and ERROR_RATE back to 0.0 because the rollback had
+    # restored revision 1. The incident had already reached Resolved by then, so the harness
+    # contradicted itself in adjacent lines - which is the shape to look for when one assertion
+    # disagrees with the verifier about the same workload.
+    local flags
+    flags=$(kc -n "$CHAOS_NS" get pods -l "app.kubernetes.io/name=$w" \
+        -o jsonpath='{.items[*].status.containerStatuses[*].ready}' 2>/dev/null)
+
+    # Non-empty, so "no pods at all" cannot pass by vacuous truth, and no container reporting
+    # false.
+    [ -n "$flags" ] && ! printf '%s' "$flags" | grep -q false
 }
 
 # The fixture is actually healthy afterwards. This is the half that distinguishes "the agent

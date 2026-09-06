@@ -141,6 +141,13 @@ release rather than by anyone running it.
   a plausible answer for an OOM-killed pod. The eval harness's answer key had guarded against this
   exact trap, in a comment naming `c1` and `c10`; the e2e harness had not, and the two were never
   compared.
+- **The acting gate's availability check could never pass for a multi-container fixture.** It
+  compared the joined container-ready flags against the literal string `"true"`, which assumes
+  exactly one container. c13 has one, so it held; c14 has two (its app and a traffic sidecar), so
+  the check yielded `"true true"` and failed however healthy the workload was — burning a
+  240-second timeout to report "the action ran but the workload did not recover" on a run where
+  the rollback had fully succeeded and the incident had already reached `Resolved` two lines
+  later.
 - **Grading read a snapshot that no longer described the run, and hid a correct diagnosis.** The
   fixture-to-incident map is written during the validate phase; a fixture whose alert re-fires past
   the correlation window opens a *new* incident afterwards. c14 opened three, the judge saw only
