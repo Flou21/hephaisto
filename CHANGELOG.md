@@ -141,6 +141,13 @@ release rather than by anyone running it.
   a plausible answer for an OOM-killed pod. The eval harness's answer key had guarded against this
   exact trap, in a comment naming `c1` and `c10`; the e2e harness had not, and the two were never
   compared.
+- **Grading read a snapshot that no longer described the run, and hid a correct diagnosis.** The
+  fixture-to-incident map is written during the validate phase; a fixture whose alert re-fires past
+  the correlation window opens a *new* incident afterwards. c14 opened three, the judge saw only
+  the one in the map, and it had no finding — while a later one carried the correct answer at 0.73
+  confidence, naming the revision and the rollout. So the release's headline fixture was reported
+  ungradeable while its diagnosis was sitting in the database. The judge now re-resolves a
+  fixture's incidents against the live API and grades all of them.
 - **`c5` could never score an action.** It is the obvious `DeleteStuckJob` / `DeleteFailedJobPods`
   fixture and had no `AcceptableActions` at all.
 - **Four documentation surfaces described a harness and two limitations that no longer exist**:

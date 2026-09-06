@@ -88,6 +88,29 @@ judge_run() {
         ids=$(awk -F'\t' -v f="$f" '$1 == f {print $2}' \
               "$WORKDIR/fixture-incidents.tsv" 2>/dev/null || true)
 
+        # ...PLUS anything that opened AFTER the detection snapshot was taken, which is where
+        # the answer can actually be. fixture-incidents.tsv is written during validate; a
+        # fixture whose alert re-fires past the correlation window opens a NEW incident later,
+        # and that incident is invisible to a map captured earlier.
+        #
+        # Measured on the v0.7.0 gate: c14 opened three incidents. The one in the map had no
+        # finding, so the fixture was reported ungradeable - while a later one carried the
+        # correct diagnosis at 0.73 confidence, naming revision 2 and the rollout, which is
+        # precisely what that fixture exists to measure. The judge graded 10 scenarios and the
+        # release's headline fixture was not one of them, because the instrument was reading a
+        # snapshot that no longer described the run.
+        #
+        # Same family as three other defects this release: the c1 prefix collision, the cost
+        # window mismatch, and a diagnostic that read a file written later. Re-resolving here
+        # rather than re-writing the map, because the map is also the thing chaos_assert_detection
+        # asserted against and rewriting it would erase what was true at detection time.
+        local late
+        late=$(jq -r --arg t "$(fixture_target "$f")" \
+            '.[]? | select((.targetName // "") | . == $t or startswith($t + "-")) | .id' \
+            <<<"$(api "/api/incidents?limit=100" || echo '[]')" 2>/dev/null || true)
+
+        ids=$(printf '%s\n%s\n' "$ids" "$late" | awk 'NF && !seen[$0]++')
+
         # The primary hypothesis plus its evidence excerpts - what a human would read.
         #
         # First incident that carries one, rather than first incident: a fixture routinely
