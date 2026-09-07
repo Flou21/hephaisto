@@ -1,3 +1,4 @@
+using System.ClientModel;
 using System.Net;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
@@ -203,6 +204,34 @@ public sealed class TransientRetryChatClient(
                 if (http.StatusCode is null)
                 {
                     return "transport";
+                }
+            }
+
+            // THE OPENAI-COMPATIBLE PATH DOES NOT THROW HttpRequestException, and until v0.7.0
+            // nothing here noticed. Every provider reached through Microsoft.Extensions.AI.OpenAI
+            // - DeepSeek, OpenRouter, Ollama, LM Studio - surfaces a failed call as
+            // ClientResultException, which carries its status as `Status` (an int) rather than
+            // as `StatusCode`. So the branch above never matched, the message markers below do
+            // not match "HTTP 500 (api_error: )" either, and a plain server error was classified
+            // as permanent.
+            //
+            // Measured on the v0.7.0 c14 gate: gpt-oss-120b intermittently emits a tool call
+            // Ollama cannot parse, Ollama answers 500, and TWO OF FIVE investigations in one run
+            // were discarded outright - no retry logged, because none was attempted. The class's
+            // own warning says "Without this the whole investigation would be discarded", which
+            // is exactly what happened, on the provider family the eval harness actually runs on.
+            if (ex is ClientResultException client)
+            {
+                // Status 0 means the call never got an HTTP response at all, which is the same
+                // transport case as a null StatusCode above.
+                if (client.Status == 0)
+                {
+                    return "transport";
+                }
+
+                if (IsRetryableStatus((HttpStatusCode)client.Status))
+                {
+                    return $"http {client.Status}";
                 }
             }
         }
