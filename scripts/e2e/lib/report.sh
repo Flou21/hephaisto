@@ -79,14 +79,33 @@ report_render() {
     # Budget, per incident. The invariant is asserted elsewhere; this is the number.
     if [ -s "$WORKDIR/details.jsonl" ] && [ "${LLM_AVAILABLE:-0}" = "1" ]; then
         printf '  %sllm accounting%s\n' "$C_BOLD" "$C_RESET"
-        printf '    %-28s %8s %9s %7s\n' "incident" "steps" "tokens" "usd"
+        printf '    %-28s %8s %9s %7s  %s\n' "incident" "steps" "tokens" "usd" "termination"
+        # The termination column is not decoration. Without it this table showed a Faulted
+        # investigation as a perfectly ordinary row of small numbers - a crash rendered as
+        # three steps and two cents - and the only trace of the fault was an aggregated count
+        # printed elsewhere with nothing to join it to an incident. Backlog #100.
         jq -r '
             select(.investigations | length > 0)
             | . as $inc
             | .investigations[]
-            | "    \($inc.target.name[0:28] | .+ (" " * (28 - length))) \(.stepsUsed|tostring|(" "*(8-length))+.) \((.inputTokens+.outputTokens)|tostring|(" "*(9-length))+.) \(.costUsd|tostring|(" "*(7-length))+.)"
+            | "    \($inc.target.name[0:28] | .+ (" " * (28 - length))) \(.stepsUsed|tostring|(" "*(8-length))+.) \((.inputTokens+.outputTokens)|tostring|(" "*(9-length))+.) \(.costUsd|tostring|(" "*(7-length))+.)  \(.terminationReason)"
         ' "$WORKDIR/details.jsonl" 2>/dev/null || true
         printf '\n'
+
+        # And the exception itself, which lives on the same row and had no reader anywhere.
+        # It is `ex.Message` only - no type, no stack - which is a separate half of #100.
+        if jq -e 'select(.investigations | length > 0) | .investigations[] | select(.error)' \
+               "$WORKDIR/details.jsonl" >/dev/null 2>&1; then
+            printf '  %sinvestigations that did not finish cleanly%s\n' "$C_BOLD" "$C_RESET"
+            jq -r '
+                select(.investigations | length > 0)
+                | . as $inc
+                | .investigations[]
+                | select(.error)
+                | "    \($inc.target.namespace // "-")/\($inc.target.name // "-")  [\(.terminationReason)]\n      \(.error)"
+            ' "$WORKDIR/details.jsonl" 2>/dev/null || true
+            printf '\n'
+        fi
     fi
 
     # Limits, restated every run. A green tick means only as much as what was actually

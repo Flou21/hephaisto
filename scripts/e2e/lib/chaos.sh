@@ -35,7 +35,7 @@
 # be deleted before it can be re-applied.
 DEFAULT_FIXTURES="c2,c3,c4,c7"
 
-# --full. Every fixture that can run on this hardware, which is eleven of the thirteen: c6
+# --full. Every fixture that can run on this hardware, which is twelve of the fourteen: c6
 # and c9 are excluded for the stated reasons above and no flag overrides that, because neither
 # is a scheduling choice - c6 cannot fire on local-path and c9 evicts the observability stack
 # it would be measured by.
@@ -44,7 +44,7 @@ DEFAULT_FIXTURES="c2,c3,c4,c7"
 # 30-minute window and c10 sits behind 5-minute rate windows, so budget about two hours. The
 # four-fixture default stays the thing you run while working, because a two-hour gate that
 # nobody runs is worth less than a five-minute one that everybody does.
-FULL_FIXTURES="c1,c2,c3,c4,c5,c7,c8,c10,c11,c12,c13"
+FULL_FIXTURES="c1,c2,c3,c4,c5,c7,c8,c10,c11,c12,c13,c14"
 
 # Fixture -> the SignalKind the shipped rules attach via hephaisto_kind.
 # A case statement rather than `declare -A`, for the bash 3.2 reason in common.sh.
@@ -68,6 +68,11 @@ fixture_kind() {
         # instead of a PVC, so the rule 30-planning.md already states is enough
         # to solve it - see infra/chaos/c13-wedged-lock.yaml and #89.
         c13) echo CrashLoopBackOff ;;
+        # Same shipped SLO rule as c10 - it is an error-rate breach on span
+        # metrics. What differs is not the signal, it is that c14 has a SECOND
+        # REVISION behind it, so the answer is a rollback rather than a restart.
+        # See infra/chaos/c14-bad-deploy.yaml.
+        c14) echo HighErrorRate ;;
         *)   echo "" ;;
     esac
 }
@@ -82,12 +87,16 @@ fixture_kind() {
 chaos_build_images() {
     local fixtures="$1"
 
+    # c14 runs the same image as c10 at a different ERROR_RATE, so either fixture needs it
+    # built and loaded. Asking for c14 without this produced a pod stuck in ImagePullBackOff -
+    # which is not merely a missing fixture, it opens a REAL incident of the wrong kind and the
+    # harness then grades the agent on diagnosing the test rig.
     case ",$fixtures," in
-        *,c10,*) ;;
+        *,c10,*|*,c14,*) ;;
         *) return 0 ;;
     esac
 
-    say "building hephaisto/faulty-service:dev for c10"
+    say "building hephaisto/faulty-service:dev for c10/c14"
 
     # The build context is the REPO ROOT, not the Dockerfile's directory: the Dockerfile
     # copies infra/chaos/faulty-service/ by a repo-relative path.
@@ -110,13 +119,22 @@ chaos_build_images() {
 # The target an incident opens under, which is NOT always the fixture's own name.
 #
 # Workload-derived fixtures are detected from a pod, so the incident carries that pod's name
-# and a `c<N>-` prefix matches. c10 is derived from a METRIC - Tempo's span metrics - whose
-# only identity label is `service`, so its incident opens on `faulty-service` with an EMPTY
-# namespace. That is docs/backlog.md #33, and no namespace fallback can rescue it: the
-# spanmetrics series carries no namespace label at all, so there is nothing to fall back to.
+# and a `c<N>-` prefix matches. c10 is derived from a METRIC - Tempo's span metrics - whose only
+# workload-identity label is `service`, so its incident opens on `faulty-service` rather than on
+# anything with a c10 prefix.
+#
+# NOTE, corrected in v0.7.0: this comment used to add "with an EMPTY namespace ... the
+# spanmetrics series carries no namespace label at all". That is not what backlog #33 says and
+# it is not true. #33 separates two halves and only one of them is unfixable: the NAMESPACE is
+# carried, as `k8s_namespace_name`, and was fixed on 2026-08-30 by teaching
+# AlertmanagerEndpoints.ResolveTarget that spelling; the workload NAME is what the series
+# genuinely cannot express, and that is why this mapping has to exist at all.
 #
 # The agent is right in both cases; only the harness's fixture-to-incident mapping was wrong,
 # and it reported c10 as undetected across two release candidates while the incident existed.
+#
+# c14 avoids the trap rather than adding a second special case: it sets
+# OTEL_SERVICE_NAME=c14-bad-deploy, so the default `c<N>-` mapping already matches.
 fixture_target() {
     case "$1" in
         c10) echo faulty-service ;;
@@ -131,6 +149,7 @@ fixture_workload() {
         c11) echo c11-transient ;;
         c12) echo c12-stale-lease ;;
         c13) echo c13-wedged-lock ;;
+        c14) echo c14-bad-deploy ;;
         *)   echo "" ;;
     esac
 }
@@ -156,6 +175,25 @@ fixture_workload() {
 # anyone made - it was the only transient fixture that existed at the time.
 ACT_FIXTURE="${ACT_FIXTURE:-c13}"
 
+# The action types the act phase promotes to unattended, which depend on WHICH fixture is
+# being acted on.
+#
+# This was hardcoded to RestartPod, which was correct while every actable fixture wanted a
+# restart - c11, c12 and c13 all do. c14 does not: restarting its pods replaces them with more
+# pods running the same bad revision and the fault continues, so a run that auto-enabled only
+# RestartPod would refuse the one correct action and report the fixture as un-acted-on.
+#
+# Deliberately narrow rather than promoting both. The answer key accepts only
+# RollbackDeployment for c14, so enabling RestartPod alongside it would let a model score by
+# reaching for the tool it has rather than by reasoning about the change - and the harness
+# would grade that as a pass.
+act_auto_enabled() {
+    case "$ACT_FIXTURE" in
+        c14) echo "RollbackDeployment" ;;
+        *)   echo "RestartPod" ;;
+    esac
+}
+
 # c13 is the one fixture that cannot arm itself, and the reason is worth stating because it
 # looks like an omission. Its wedge is a startup lock on an emptyDir, left behind by an exit
 # the workload did not choose. A fixture that wedged itself deterministically would wedge the
@@ -177,6 +215,57 @@ chaos_arm_c13() {
         say "armed c13: abnormal exit simulated, lock left held"
     else
         warn "could not arm c13; it will stay healthy and prove nothing"
+    fi
+}
+
+# c14 is the only fixture whose SETUP HAS A TIMELINE.
+#
+# Every other fixture is applied and is immediately wrong. c14 is applied HEALTHY, has to stay
+# healthy long enough to count as a revision worth rolling back to, and only then is broken -
+# by a rollout, which is the thing being measured. `kubectl set env` is what creates the second
+# revision; nothing else about the Deployment changes.
+#
+# THE DWELL IS LOAD-BEARING AND IS NOT A SLEEP FOR NEATNESS. The policy engine admits
+# rollback_deployment only when the previous revision was live for at least
+# policy.rollbackPreviousHealthyMinimum, measured between the two ReplicaSet creation
+# timestamps. Dwell for less than that window and the engine refuses for an entirely CORRECT
+# reason - and a refusal is then ambiguous between "would not act" and "was not allowed to",
+# which is precisely the ambiguity c13 was created to escape. scripts/e2e/values-e2e.yaml sets
+# that window shorter than the shipped default for this reason, and says so.
+C14_DWELL="${C14_DWELL:-300}"
+
+chaos_arm_c14() {
+    say "arming c14: revision 1 must be healthy before it can be worth rolling back to"
+
+    if ! kc -n "$CHAOS_NS" rollout status deploy/c14-bad-deploy --timeout=120s >/dev/null 2>&1; then
+        warn "c14 revision 1 never became Ready; not arming it"
+        return 0
+    fi
+
+    # Confirm revision 1 is genuinely serving before starting the clock. Dwelling from apply
+    # rather than from Ready would measure image-pull time as "healthy", and on a cold cluster
+    # that is most of the window.
+    say "c14: revision 1 healthy, dwelling ${C14_DWELL}s before the bad rollout"
+    sleep "$C14_DWELL"
+
+    # THE ROLLOUT. This is the fault, and its timestamp is the fact the agent has to correlate
+    # the error-rate onset against.
+    if kc -n "$CHAOS_NS" set env deploy/c14-bad-deploy ERROR_RATE=0.9 >/dev/null 2>&1 \
+       && kc -n "$CHAOS_NS" annotate deploy/c14-bad-deploy \
+            kubernetes.io/change-cause="revision 2: ERROR_RATE raised to 0.9" \
+            --overwrite >/dev/null 2>&1; then
+        say "armed c14: revision 2 rolled out with ERROR_RATE=0.9"
+    else
+        warn "could not arm c14; it will stay healthy and prove nothing"
+        return 0
+    fi
+
+    if ! kc -n "$CHAOS_NS" rollout status deploy/c14-bad-deploy --timeout=120s >/dev/null 2>&1; then
+        # Not fatal: the fixture's whole claim is that the BAD revision rolls out SUCCESSFULLY
+        # and Kubernetes reports everything healthy while the requests fail. If the rollout
+        # genuinely stalled, that is a different fault and the run should say so rather than
+        # silently grade it as this one.
+        warn "c14 revision 2 did not complete its rollout; the incident it opens may not be a bad deploy"
     fi
 }
 
@@ -217,6 +306,7 @@ chaos_apply() {
     say "applied $(applied_count) fixture(s): $APPLIED"
 
     case " $APPLIED " in *" c13 "*) chaos_arm_c13 ;; esac
+    case " $APPLIED " in *" c14 "*) chaos_arm_c14 ;; esac
 
     # Applied together, waited on once. Each costs about two minutes of alert latency
     # (for: 1m, plus a 30s scrape interval, plus Alertmanager's 10s group_wait), and they are
@@ -275,7 +365,7 @@ chaos_await_incidents() {
     fi
 
     wait_for "an incident for each of: $APPLIED" "${INCIDENT_TIMEOUT:-$derived}" \
-        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents?limit=100' | jq -e --argjson want '$want_json' 'type == \"array\" and (. as \$inc | \$want | all(. as \$t | \$inc | any(.targetName // \"\" | startswith(\$t))))' >/dev/null" \
+        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents?limit=100' | jq -e --argjson want '$want_json' 'type == \"array\" and (. as \$inc | \$want | all(. as \$t | \$inc | any(.targetName // \"\" | . == \$t or startswith(\$t + \"-\"))))' >/dev/null" \
         || warn "not every fixture opened an incident within the deadline; see the per-fixture results below"
 
     local got
@@ -331,7 +421,7 @@ chaos_assert_detection() {
         # incident each of the right kind is a different thing from one fixture producing two.
         local target; target=$(fixture_target "$f")
 
-        found=$(jq --arg t "$target" '[.[] | select(.targetName // "" | startswith($t))] | length' \
+        found=$(jq --arg t "$target" '[.[] | select(.targetName // "" | . == $t or startswith($t + "-"))] | length' \
                 <<<"$incidents")
 
         # Every match, in the order the API returned them - not just the one whose kind is
@@ -339,13 +429,13 @@ chaos_assert_detection() {
         # only the first has no way to tell "this fixture produced no diagnosis" from "the
         # row I happened to pick did not carry it".
         jq -r --arg f "$f" --arg t "$target" \
-            '.[] | select(.targetName // "" | startswith($t)) | "\($f)\t\(.id)"' \
+            '.[] | select(.targetName // "" | . == $t or startswith($t + "-")) | "\($f)\t\(.id)"' \
             <<<"$incidents" >> "$WORKDIR/fixture-incidents.tsv"
 
         if [ "${found:-0}" -ge 1 ]; then
             local got_kind
             got_kind=$(jq -r --arg t "$target" \
-                '[.[] | select(.targetName // "" | startswith($t))] | .[0].kind' <<<"$incidents")
+                '[.[] | select(.targetName // "" | . == $t or startswith($t + "-"))] | .[0].kind' <<<"$incidents")
             if [ "$got_kind" = "$kind" ]; then
                 pass "$f opened an incident classified $kind"
             else
@@ -441,25 +531,92 @@ chaos_await_investigations() {
     # The per-fixture check below then reports precisely which fixture is missing, which is the
     # useful output.
     wait_for "every fixture's investigation to conclude (expecting $want)" "$deadline" \
-        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents' | jq -e --argjson want '$diag_want' 'type == \"array\" and (. as \$inc | \$want | all(. as \$t | \$inc | any((.targetName // \"\" | startswith(\$t)) and .hasDiagnosis)))' >/dev/null" \
+        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents' | jq -e --argjson want '$diag_want' 'type == \"array\" and (. as \$inc | \$want | all(. as \$t | \$inc | any((.targetName // \"\" | (. == \$t or startswith(\$t + \"-\"))) and .hasDiagnosis)))' >/dev/null" \
         || warn "not every fixture concluded within the deadline; the per-fixture result below says which"
 
     # How many of the applied fixtures have an incident carrying a diagnosis. Plainly, one
     # query per fixture: the list is short and a clever single expression here is how the
     # previous version came to be counting something else.
     local done_count=0
+    local missing=""
     local f t
     for f in $APPLIED; do
         t=$(fixture_target "$f")
         if api_array "/api/incidents" \
-            | jq -e --arg t "$t" 'any((.targetName // "" | startswith($t)) and .hasDiagnosis)' >/dev/null 2>&1; then
+            | jq -e --arg t "$t" 'any((.targetName // "" | (. == $t or startswith($t + "-"))) and .hasDiagnosis)' >/dev/null 2>&1; then
             done_count=$(( done_count + 1 ))
+        else
+            missing="${missing:+$missing }$f"
         fi
     done
 
-    [ "${done_count:-0}" -ge "$want" ] \
-        && pass "$done_count of $want fixture investigation(s) produced a diagnosis" \
-        || fail "only ${done_count:-0} of $want fixture incidents were investigated"
+    if [ "${done_count:-0}" -ge "$want" ]; then
+        pass "$done_count of $want fixture investigation(s) produced a diagnosis"
+        return 0
+    fi
+
+    # NAME THE FIXTURES, AND SAY WHY EACH ONE HAS NO DIAGNOSIS. Backlog #100.
+    #
+    # This assertion is computed from the LIST endpoint's hasDiagnosis, which is
+    # `Investigations.Any(v => v.Findings.Any())` - so by construction it cannot tell
+    # "never investigated" from "investigated and faulted" from "investigated and produced
+    # nothing groundable". All three arrive here as the same bare count, and the run's other
+    # clue - an aggregated `1 Faulted` from a different endpoint - was printed somewhere else
+    # with nothing to join them by. They were probably always the same event.
+    #
+    # ASKED OF THE LIVE API, NOT OF details.jsonl. The first version of this read the snapshot,
+    # which chaos_collect_details writes LATER in the run - so the file was absent, every lookup
+    # came back empty, and the diagnostic confidently reported "no investigation row at all" for
+    # a fixture that had one. A diagnostic that invents a second failure to explain the first is
+    # worse than no diagnostic, and this one did it on its first outing.
+    #
+    # `|| true` throughout: this is a diagnostic on a path that has already failed, and it must
+    # not take the suite down with a jq exit code under `set -Eeuo pipefail`.
+    local why=""
+    local all; all=$(api "/api/incidents?limit=100" || true)
+
+    for f in $missing; do
+        t=$(fixture_target "$f")
+
+        local ids
+        ids=$(jq -r --arg t "$t" \
+            '.[]? | select((.targetName // "") | . == $t or startswith($t + "-")) | .id' \
+            <<<"$all" 2>/dev/null || true)
+
+        if [ -z "$ids" ]; then
+            why="${why:+$why
+}      $f: no incident at all -- it was detected earlier, so this is a matching problem"
+            continue
+        fi
+
+        local reasons=""
+        local i
+        for i in $ids; do
+            local r
+            r=$(api "/api/incidents/$i" 2>/dev/null | jq -r '
+                .investigations[]?
+                | "\(.terminationReason) findings=\([.findings[]?] | length)"
+                  + (if .error then " (" + (.error | tostring) + ")" else "" end)' 2>/dev/null || true)
+            reasons="${reasons:+$reasons; }${r:-none}"
+        done
+
+        case "$reasons" in
+            *none*|"")
+                why="${why:+$why
+}      $f: an incident exists and nothing investigated it" ;;
+            *)
+                # The common case, and the one worth naming precisely: the investigation RAN and
+                # produced nothing groundable. hasDiagnosis is Findings.Any(), so a run that
+                # concluded with no finding is indistinguishable from one that never happened
+                # unless the reason is printed.
+                why="${why:+$why
+}      $f: investigated, but no finding survived -- $reasons" ;;
+        esac
+    done
+
+    fail "only ${done_count:-0} of $want fixture incidents were investigated" \
+         "missing: ${missing:-none}${why:+
+$why}"
 }
 
 # Pulls the full detail for every incident once, so the assertions below and the report and
@@ -496,14 +653,47 @@ chaos_assert_investigations() {
     if [ -z "$bad" ]; then
         pass "every investigation terminated as Concluded"
     else
+        # THE FAULT ITSELF, NAMED AND ATTRIBUTED. Backlog #100.
+        #
+        # This used to print only the aggregated reasons - "1 Faulted (of 36 investigations)" -
+        # which tells you something crashed and nothing whatever about what. The exception has
+        # been in the database all along (Investigation.Error, written by InvestigationRunner's
+        # catch), it is already in the /api/incidents/{id} response, and it is already in the
+        # details.jsonl this function is reading. It was simply never printed.
+        #
+        # Faulted is also NOT a ceiling, and calling it one sent at least one investigation
+        # looking at budgets. Only the four budget reasons are ceilings; a fault is a crash and
+        # Cancelled is a refusal before the run started.
+        jq -r 'select(.investigations | length > 0)
+               | . as $inc
+               | .investigations[]
+               | select(.terminationReason != "Concluded")
+               | "      \(.terminationReason)  \($inc.target.namespace // "-")/\($inc.target.name // "-")"
+                 + (if .error then "\n        error: " + (.error | tostring) else "" end)' \
+            "$details" | while IFS= read -r line; do printf '%s\n' "$line"; done
+
         # One investigation of several exhausting its step budget is a fact about that
         # incident rather than a broken build - the ceiling exists so a hard incident stops
         # instead of running away, and a cluster carrying a dozen concurrent faults will
         # occasionally produce one. Visible either way; only a majority fails the run.
-        local n_bad n_inv
-        n_bad=$(wc -w <<<"$bad" | tr -d ' ')
+        #
+        # n_bad counts INVESTIGATIONS, not words. It used to be `wc -w` over `uniq -c` output,
+        # which is two words per distinct reason - so "1 Faulted" counted as 2 and the
+        # threshold was really "at most one distinct reason" rather than "at most two runs".
+        local n_bad n_inv n_faulted
+        n_bad=$(jq -r 'select(.investigations | length > 0) | .investigations[]
+                       | select(.terminationReason != "Concluded") | .id' "$details" | wc -l | tr -d ' ')
         n_inv=$(jq -r 'select(.investigations | length > 0) | .investigations[] | .id' "$details" | wc -l | tr -d ' ')
-        if [ "${n_bad:-9}" -le 2 ] && [ "${n_inv:-0}" -gt 2 ]; then
+        n_faulted=$(jq -r 'select(.investigations | length > 0) | .investigations[]
+                           | select(.terminationReason == "Faulted") | .id' "$details" | wc -l | tr -d ' ')
+
+        # A crash is never "one of those things". A ceiling is a control working; a fault is a
+        # bug in the agent, and pooling them let a real exception hide behind the tolerance
+        # written for budget exhaustion.
+        if [ "${n_faulted:-0}" -gt 0 ]; then
+            fail "an investigation faulted" \
+                 "$n_faulted of $n_inv threw; the exception is printed above. A fault is a crash, not a ceiling"
+        elif [ "${n_bad:-9}" -le 2 ] && [ "${n_inv:-0}" -gt 2 ]; then
             skip "an investigation ended on a ceiling" "$bad (of ${n_inv} investigations)"
         else
             fail "investigations ended on a ceiling" "$bad (of ${n_inv} investigations)"
@@ -613,8 +803,30 @@ chaos_assert_budget() {
     fi
 
     # --- The API agrees with the ledger --------------------------------------------------------
-    local hourly max_hour expected
+    #
+    # THE WINDOWS HAVE TO MATCH, AND THEY DID NOT. hourlyCostUtilization is
+    # Ratio(SumAsync(now - 1h).Cost, MaxCostUsdPerHour) - a ROLLING HOUR. This assertion used to
+    # compare it against the sum of costUsd across EVERY investigation in the run, which for a
+    # --full gate is three hours of spend. The two can only agree when the whole run fits inside
+    # one hour, and the fast four-fixture default does, which is why this looked correct.
+    #
+    # On the v0.7.0 --full gate it failed: 0.004985 against an "implied" 0.065784. Nothing was
+    # wrong with the gauge. $0.197 had been spent over about three hours and $0.015 of it inside
+    # the last one, and the gauge reported the second number because that is the number it is
+    # named after.
+    #
+    # This is very likely all that backlog #99 ever was - "hourlyCostUtilization disagreed with
+    # the ledger by 40x, a money gauge reading low", recorded as the most uncomfortable item on
+    # the list. A gauge reading low is frightening precisely because under-reporting spend is the
+    # direction that lets a budget run away, which is why it earned that description and why it
+    # is worth being sure rather than assuming.
+    #
+    # So: the hourly gauge is checked against the last hour, and the DAILY gauge against the
+    # whole run - which is the stronger of the two assertions, because a run shorter than a day
+    # makes the whole ledger the correct numerator for it.
+    local hourly daily max_hour max_day expected recent
     hourly=$(api /api/status | jq -r '.hourlyCostUtilization')
+    daily=$(api /api/status | jq -r '.dailyCostUtilization')
 
     # Read the cap from the same values file the release was installed with, rather than
     # restating it here. Two copies of a budget number is how an assertion ends up passing
@@ -626,15 +838,36 @@ chaos_assert_budget() {
     # makes this branch unreachable rather than merely unlikely.
     [ -n "$max_hour" ] || die "could not read Llm__Budget__MaxCostUsdPerHour from values-e2e.yaml"
 
-    expected=$(echo "scale=6; $total / $max_hour" | bc -l)
+    max_day=$(yq -r '.extraEnv[] | select(.name == "Llm__Budget__MaxCostUsdPerDay") | .value' \
+              "$E2E_DIR/values-e2e.yaml" 2>/dev/null | head -1)
+    [ -n "$max_day" ] || die "could not read Llm__Budget__MaxCostUsdPerDay from values-e2e.yaml"
+
+    # Only what was spent in the last hour, to match the gauge's own window. completedAt is the
+    # closest thing the snapshot has to when the charge landed.
+    recent=$(jq -s --arg cutoff "$(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)" \
+        '[.[] | .investigations[]? | select((.completedAt // "") >= $cutoff) | .costUsd] | add // 0' "$details")
+
+    expected=$(echo "scale=6; $recent / $max_hour" | bc -l)
 
     # Tolerance, not equality: the window slides, and a few seconds pass between reading the
     # ledger and reading the status endpoint.
     if (( $(echo "($hourly - $expected) < 0.05 && ($expected - $hourly) < 0.05" | bc -l) )); then
-        pass "hourlyCostUtilization agrees with the ledger ($hourly vs $expected)"
+        pass "hourlyCostUtilization agrees with the last hour of the ledger ($hourly vs $expected)"
     else
-        fail "hourlyCostUtilization is $hourly, ledger implies $expected" \
-             "budget reporting disagrees with what was actually spent"
+        fail "hourlyCostUtilization is $hourly, the last hour of the ledger implies $expected" \
+             "budget reporting disagrees with what was actually spent in the same window"
+    fi
+
+    # The whole-run assertion, which is the one that would catch a genuinely broken gauge: a run
+    # is far shorter than a day, so every dollar it spent is still inside the daily window.
+    local expected_day
+    expected_day=$(echo "scale=6; $total / $max_day" | bc -l)
+
+    if (( $(echo "($daily - $expected_day) < 0.05 && ($expected_day - $daily) < 0.05" | bc -l) )); then
+        pass "dailyCostUtilization agrees with the whole run ($daily vs $expected_day)"
+    else
+        fail "dailyCostUtilization is $daily, the run's total implies $expected_day" \
+             "the daily window covers this entire run, so these must agree"
     fi
 }
 
@@ -894,9 +1127,27 @@ _act_available() {
     local w; w=$(fixture_workload "$ACT_FIXTURE")
 
     [ "$(kc -n "$CHAOS_NS" get deploy "$w" \
-        -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo 0)" -ge 1 ] \
-        && [ "$(kc -n "$CHAOS_NS" get pods -l "app.kubernetes.io/name=$w" \
-            -o jsonpath='{.items[*].status.containerStatuses[*].ready}' 2>/dev/null)" = "true" ]
+        -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo 0)" -ge 1 ] || return 1
+
+    # EVERY container ready, however many there are - not a string that equals "true".
+    #
+    # That comparison assumed exactly ONE container status across all matching pods. c13 has
+    # one container so it held; c14 has two (the app and its traffic sidecar), so the jsonpath
+    # yields "true true" and the test could never pass however healthy the workload was.
+    #
+    # It cost a 240-second timeout and a FAIL saying "the action ran but the workload did not
+    # recover" on a run where the workload had recovered completely: availableReplicas=1,
+    # ready=1, both containers true, and ERROR_RATE back to 0.0 because the rollback had
+    # restored revision 1. The incident had already reached Resolved by then, so the harness
+    # contradicted itself in adjacent lines - which is the shape to look for when one assertion
+    # disagrees with the verifier about the same workload.
+    local flags
+    flags=$(kc -n "$CHAOS_NS" get pods -l "app.kubernetes.io/name=$w" \
+        -o jsonpath='{.items[*].status.containerStatuses[*].ready}' 2>/dev/null)
+
+    # Non-empty, so "no pods at all" cannot pass by vacuous truth, and no container reporting
+    # false.
+    [ -n "$flags" ] && ! printf '%s' "$flags" | grep -q false
 }
 
 # The fixture is actually healthy afterwards. This is the half that distinguishes "the agent

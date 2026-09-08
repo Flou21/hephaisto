@@ -1,3 +1,4 @@
+using Hephaisto.Agent.Persistence;
 using Hephaisto.Agent.Llm;
 
 namespace Hephaisto.Tests.Llm;
@@ -63,5 +64,89 @@ public class LlmBudgetRelationshipTests
     {
         new InvestigationBudgetOptions().MaxInputTokens
             .Should().BeLessThan(CumulativeInputFor(40));
+    }
+
+    // ---------------------------------------------------------------------------------
+    // The HOURLY pair, which had no test at all until v0.7.0. Backlog #74.
+    // ---------------------------------------------------------------------------------
+    //
+    // The three above relate the per-investigation token ceiling to the per-investigation
+    // step ceiling. Nothing related the hourly TOKEN cap to the hourly COST cap, and that
+    // is the pair that refused 14 of 27 investigations at 2% of the money spent.
+    //
+    // A token cap and a cost cap standing side by side IMPLY A PRICE. If that implied price
+    // is far above what the model actually charges, the token cap silently becomes the whole
+    // budget and the cost cap is decoration - and because CheckAsync tests tokens first, the
+    // block that gets reported names tokens while everybody is looking at the money.
+
+    /// <summary>Blended per-token cost, on the 3:1 input:output ratio these runs show.</summary>
+    private static decimal BlendedPerMillion(string model)
+    {
+        var price = new LlmOptions().Pricing[model];
+
+        return ((price.InputPerMillionUsd * 3) + price.OutputPerMillionUsd) / 4;
+    }
+
+    private static decimal ImpliedPricePerMillion(LlmBudgetOptions budget) =>
+        budget.MaxCostUsdPerHour / ((decimal)budget.MaxTokensPerHour / 1_000_000m);
+
+    [Theory]
+    [InlineData("gemini-3.7-flash")]
+    [InlineData("gpt-oss-120b")]
+    public void Cost_is_the_ceiling_that_binds_first_on_every_supported_model(string model)
+    {
+        // The property that was broken. Whichever model is configured, spending the hourly
+        // TOKEN allowance must cost at least the hourly COST allowance - otherwise tokens run
+        // out while the money is untouched, which is precisely what happened.
+        var budget = new LlmBudgetOptions();
+
+        var costOfSpendingEveryToken =
+            (decimal)budget.MaxTokensPerHour / 1_000_000m * BlendedPerMillion(model);
+
+        costOfSpendingEveryToken.Should().BeGreaterThanOrEqualTo(
+            budget.MaxCostUsdPerHour,
+            $"on {model}, exhausting MaxTokensPerHour costs ${costOfSpendingEveryToken:F2} against "
+            + $"a ${budget.MaxCostUsdPerHour} hourly cost cap - so the token cap is the real "
+            + "budget and the cost cap never binds. That is backlog #74, which refused 14 of 27 "
+            + "investigations having spent $0.066");
+    }
+
+    [Fact]
+    public void The_implied_price_is_not_far_above_what_the_cheapest_supported_model_charges()
+    {
+        // The direction the 2,000,000 default failed in, stated as the number rather than as
+        // the story: $3.00 over 2M tokens implies $1.50/1M, which is 45x gpt-oss-120b's real
+        // blended rate. Anything within an order of magnitude leaves cost governing.
+        var implied = ImpliedPricePerMillion(new LlmBudgetOptions());
+
+        implied.Should().BeLessThan(
+            BlendedPerMillion("gpt-oss-120b") * 10,
+            "the two hourly caps imply a price far above what the cheapest supported model "
+            + "charges, so on that model the token cap binds long before the cost cap and the "
+            + "budget stops meaning what values.yaml says it means");
+    }
+
+    [Fact]
+    public void The_hourly_token_cap_still_bounds_a_runaway()
+    {
+        // The other direction, and it is not hypothetical: a model with no entry in the price
+        // table bills as $0, so MaxCostUsdPerHour can never bind and this is the only backstop
+        // left. "Make it enormous" is not available.
+        var budget = new LlmBudgetOptions();
+
+        // A full twelve-fixture corpus run is on the order of 4M tokens.
+        budget.MaxTokensPerHour.Should().BeLessThan(100_000_000);
+        budget.MaxTokensPerHour.Should().BeGreaterThan(4_000_000);
+    }
+
+    [Fact]
+    public void An_hour_of_investigations_is_not_refused_before_the_daily_cost_cap_matters()
+    {
+        var budget = new LlmBudgetOptions();
+
+        budget.MaxCostUsdPerDay.Should().BeGreaterThan(
+            budget.MaxCostUsdPerHour,
+            "a daily cap at or below the hourly one makes the hourly cap unreachable and the "
+            + "daily one the only real control, which is not what either name says");
     }
 }

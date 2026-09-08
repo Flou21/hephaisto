@@ -107,6 +107,18 @@ spec:
           # Deliberately excludes Succeeded/Failed pods (completed Jobs are not "not
           # ready", they are done) but does NOT exclude Pending -- Pending is precisely the
           # state the C3 unschedulable fixture sits in, and it must alert.
+          #
+          # KIND: PodNotReady, not ReadinessFlapping. It carried the flapping label until
+          # v0.7.0, which made TargetFlapping (further down, and the rule that actually means
+          # flapping) and this one indistinguishable to the agent. Flapping means intermittent;
+          # this fires on a pod that is persistently STUCK, and the flap runbook's whole
+          # argument is that the fault is intermittent and a restart will not help. Backlog
+          # #70.
+          #
+          # It stays deliberately generic. PodNotReady sits at the bottom of
+          # SignalKindSpecificity, so an incident opened by this rule is re-labelled as soon
+          # as a signal that knows the mechanism - KubeContainerWaiting, a FailedScheduling
+          # event - arrives for the same workload.
           expr: |
             sum by (namespace, pod, cluster) (
               max by (namespace, pod, cluster) (
@@ -117,7 +129,7 @@ spec:
           for: 2m
           labels:
             severity: warning
-            hephaisto_kind: ReadinessFlapping
+            hephaisto_kind: PodNotReady
           annotations:
             summary: 'Pod {{ $labels.namespace }}/{{ $labels.pod }} has been non-ready for >2m'
             description: >-

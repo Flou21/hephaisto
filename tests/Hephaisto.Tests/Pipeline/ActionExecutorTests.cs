@@ -72,7 +72,6 @@ public sealed class ActionExecutorTests : IDisposable
     [InlineData(ActionType.DrainNode)]
     [InlineData(ActionType.SilenceAlert)]
     [InlineData(ActionType.PatchResources)]
-    [InlineData(ActionType.RollbackDeployment)]
     [InlineData(ActionType.DeletePvc)]
     [InlineData(ActionType.DeleteWorkload)]
     public async Task An_action_this_build_cannot_perform_is_refused_before_anything_is_attempted(ActionType type)
@@ -113,6 +112,7 @@ public sealed class ActionExecutorTests : IDisposable
                 ActionType.ScaleWorkload,
                 ActionType.DeleteStuckJob,
                 ActionType.DeleteFailedJobPods,
+                ActionType.RollbackDeployment,
                 ActionType.SilenceAlert,
             ]);
 

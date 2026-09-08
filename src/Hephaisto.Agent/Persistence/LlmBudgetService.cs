@@ -15,7 +15,53 @@ public sealed class LlmBudgetOptions
 {
     public const string SectionName = "Llm:Budget";
 
-    public long MaxTokensPerHour { get; set; } = 2_000_000;
+    /// <summary>
+    /// A runaway backstop, deliberately NOT the ceiling that governs day to day.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This was 2,000,000, and backlog #74 is what that cost. A token cap and a cost cap
+    /// standing side by side <b>imply a price</b>: $3.00 over 2M tokens is $1.50 per 1M. On a
+    /// 3:1 input:output blend that is <b>exactly</b> gemini-3.7-flash's rate ($0.75 / $3.75),
+    /// which is the default model - so on the default model the two caps were precisely
+    /// commensurate and cost bound first, as intended. The coincidence is not a coincidence:
+    /// they were chosen together, for that model, and nothing recorded that they were a pair.
+    /// </para>
+    /// <para>
+    /// gpt-oss-120b blends to $0.065 per 1M, so 2M tokens is <b>thirteen cents</b>. The token
+    /// cap bound first by a wide margin, and because <c>CheckAsync</c> tests tokens before cost
+    /// the reported block named tokens while every human involved was looking at the money.
+    /// The first full <c>--mode Auto</c> run refused <b>14 of 27</b> investigations outright,
+    /// escalating them <c>BudgetExhausted</c>, having spent <b>$0.066 against a $3.00 hourly
+    /// cap</b> - half the corpus declined on a budget 2% used.
+    /// </para>
+    /// <para>
+    /// It cost a milestone rather than a run: the MVP bar reported "not applicable: 8 scenarios
+    /// scored, the bar needs 10". Accuracy was 7 of 8. This number dropped the denominator.
+    /// </para>
+    /// <para>
+    /// <b>50M is the smallest round figure that puts cost back in charge on every priced model
+    /// this repo supports.</b> Reaching $3.00 takes 46.2M tokens at gpt-oss-120b's rate, so 50M
+    /// costs $3.25 there and the cost cap binds first. At gemini-3.7-flash 50M would cost $75,
+    /// far beyond the same cap, so cost binds first there too and <b>nothing about a hosted
+    /// install changes</b>. Tokens stop being the budget and go back to being a bound.
+    /// </para>
+    /// <para>
+    /// <b>Not raised further, and not removed.</b> A model with no entry in the price table
+    /// bills as $0, so <see cref="MaxCostUsdPerHour"/> can never bind and the utilisation gauge
+    /// reads 0% forever - see <c>OpenAiChatClientFactory</c>. For an unpriced model this cap is
+    /// the only backstop left standing, and 50M is roughly twelve times a full twelve-fixture
+    /// corpus run.
+    /// </para>
+    /// <para>
+    /// The properly general fix is to DERIVE this from the cost cap and the resolved price,
+    /// with a constant fallback when the model is unpriced. That is a design change and stays
+    /// open on #74. This is the recalibration, and <c>LlmBudgetRelationshipTests</c> now fails
+    /// if the pair drifts back into implying a price no supported model charges - an invariant
+    /// that did not exist while the per-investigation ceilings had three.
+    /// </para>
+    /// </remarks>
+    public long MaxTokensPerHour { get; set; } = 50_000_000;
 
     public decimal MaxCostUsdPerHour { get; set; } = 3.00m;
 

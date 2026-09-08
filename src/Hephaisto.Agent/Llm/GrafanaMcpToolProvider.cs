@@ -225,14 +225,23 @@ public sealed class GrafanaMcpToolProvider(
 
                 if (missing.Length > 0)
                 {
-                    // Not an error: mcp-grafana's tool set varies with which datasources and
-                    // feature flags the server was started with. Worth saying out loud once
-                    // per cache window, because "the model never queried traces" and "the
-                    // trace tools were never offered" look identical from the outside.
-                    _logger.LogInformation(
-                        "grafana-mcp offers {Available} tools; {Missing} allowlisted tools are absent: {Names}",
+                    // WARNING, not Information, and it names the capability rather than only
+                    // the tool names. See DescribeLostCapabilities: an absent tool is a silent
+                    // amputation of an investigation, and at Information it read as routine
+                    // startup noise for four releases while c10 could not do the one thing it
+                    // exists to prove.
+                    //
+                    // Still not an error: mcp-grafana's tool set varies with which datasources
+                    // and feature flags the server was started with, so this is a statement
+                    // about that server's configuration, not a fault here.
+                    _logger.LogWarning(
+                        "grafana-mcp offers {Available} tools but {Missing} allowlisted tools are "
+                        + "absent, so this agent cannot {LostCapabilities}. Any investigation that "
+                        + "needed them will conclude without them rather than fail, and the two "
+                        + "are indistinguishable from the outside. Absent tools: {Names}",
                         tools.Count,
                         missing.Length,
+                        DescribeLostCapabilities(missing),
                         string.Join(", ", missing));
                 }
 
@@ -261,6 +270,65 @@ public sealed class GrafanaMcpToolProvider(
         }
 
         return [];
+    }
+
+    /// <summary>
+    /// Names what the model can no longer do, rather than only which tool names went missing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The tool names alone are not actionable by the person reading the log. Nobody scanning
+    /// startup output knows that <c>query_tempo_traceql</c> is the second hop of the five-hop
+    /// correlation the c10 fixture exists to prove; they know that traces are missing, if you
+    /// tell them that traces are missing.
+    /// </para>
+    /// <para>
+    /// This is backlog #31's cheap half. grafana-mcp ships here started with Tempo
+    /// unconfigured, so the four Tempo tools are never registered, so c10 - the fixture whose
+    /// own header calls it "THE IMPORTANT ONE", built to prove alert to exemplar to trace to
+    /// log to cause - cannot reach hops two, three and four. Recording it spent thirteen steps
+    /// and sixteen tool calls and produced no primary finding, the only fixture of eight to
+    /// produce none, and every replay of it still scores NoFinding. The line that would have
+    /// explained all of that was logged at Information and read like routine startup noise.
+    /// </para>
+    /// <para>
+    /// Matching is by substring on the tool name because the allowlist is grouped by backend
+    /// and the names carry the backend in them. A tool that matches nothing falls into the
+    /// generic clause rather than being dropped, so a new allowlist entry cannot silently
+    /// produce a warning that names no capability at all.
+    /// </para>
+    /// </remarks>
+    internal static string DescribeLostCapabilities(IReadOnlyCollection<string> missing)
+    {
+        ArgumentNullException.ThrowIfNull(missing);
+
+        // Ordered by how much the investigation loses, not alphabetically.
+        (string Fragment, string Capability)[] families =
+        [
+            ("tempo", "follow an exemplar into a trace, which is how a metric is tied to the request that caused it"),
+            ("loki", "read logs"),
+            ("prometheus", "query metrics"),
+            ("grafana_api_request", "read its own alert rules"),
+            ("dashboard", "read the queries behind a dashboard panel"),
+            ("datasources", "discover which datasources exist"),
+            ("deeplink", "hand a human a link back into Grafana"),
+        ];
+
+        var lost = families
+            .Where(f => missing.Any(n => n.Contains(f.Fragment, StringComparison.OrdinalIgnoreCase)))
+            .Select(f => f.Capability)
+            .ToList();
+
+        var unrecognised = missing
+            .Where(n => !families.Any(f => n.Contains(f.Fragment, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+        if (unrecognised.Count > 0)
+        {
+            lost.Add($"use {string.Join(", ", unrecognised)}");
+        }
+
+        return lost.Count > 0 ? string.Join("; nor ", lost) : "use some allowlisted capability";
     }
 
     private async Task<McpClient> ConnectAsync(GrafanaOptions o, CancellationToken ct)

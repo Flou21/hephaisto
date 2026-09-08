@@ -103,7 +103,13 @@ public sealed class InvestigationCoordinator(
 
         try
         {
-            outcome = await runner.RunAsync(incident, ct).ConfigureAwait(false);
+            // Change correlation, read before the investigation rather than during it. Two
+            // API reads against one Deployment, and a fact the model would otherwise spend a
+            // step discovering - which backlog #74 established is the binding constraint on
+            // accuracy. Never throws; a null just means the card goes without the line.
+            var rollout = await facts.RecentRolloutAsync(incident, ct).ConfigureAwait(false);
+
+            outcome = await runner.RunAsync(incident, ct, rollout).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

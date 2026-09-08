@@ -323,6 +323,60 @@ Events:
       <div class="hp-callout callout-error"><span class="glyph">!!</span> <strong>error</strong> — the investigation could not complete.</div>
     </section>
 
+    <section class="g-sec">
+      <h2>Verification rows</h2>
+      <p class="g-note">
+        The T+60s / T+5m / T+15m checks on an executed action. This is the evidence for
+        &ldquo;everything it does is verified, then reverted if it did not work&rdquo; &mdash; the
+        safety claim on the landing page &mdash; and until v0.7.0 it was written to the database
+        and rendered nowhere (backlog #96). All four outcomes appear here because the one that is
+        easy to get wrong is <em>inconclusive</em>: it is blue rather than red on purpose, because
+        a check that could not run has learned nothing and the agent does not roll back on it.
+      </p>
+      <div class="hp-verifications" data-testid="verifications">
+        <div class="hp-muted hp-ver-head">verification</div>
+        <div class="hp-ver-row ver-passed" data-testid="verification">
+          <span class="glyph">+</span>
+          <span class="mono hp-ver-when">T+60s</span>
+          <span class="hp-ver-outcome">passed</span>
+          <span class="hp-muted mono">14:02:11</span>
+          <span class="hp-ver-detail">rolled back onto api-6d4cbbf8b9, 3 of 3 replicas ready</span>
+        </div>
+        <div class="hp-ver-row ver-failed" data-testid="verification">
+          <span class="glyph">x</span>
+          <span class="mono hp-ver-when">T+5m</span>
+          <span class="hp-ver-outcome">failed</span>
+          <span class="hp-muted mono">14:06:11</span>
+          <span class="hp-ver-detail">2 of 3 replicas ready, and 4 restarts since the action</span>
+          <details class="hp-ver-checks">
+            <summary>checks</summary>
+            <pre class="hp-code">{ "desiredReplicas": 3, "readyReplicas": 2, "restartsSince": 4 }</pre>
+          </details>
+        </div>
+        <div class="hp-ver-row ver-inconclusive" data-testid="verification">
+          <span class="glyph">?</span>
+          <span class="mono hp-ver-when">T+15m</span>
+          <span class="hp-ver-outcome">inconclusive</span>
+          <span class="hp-muted mono">14:16:11</span>
+          <span class="hp-ver-detail">the check could not run: the API server timed out</span>
+        </div>
+        <div class="hp-ver-row ver-pending" data-testid="verification">
+          <span class="glyph">&middot;</span>
+          <span class="mono hp-ver-when">T+15m</span>
+          <span class="hp-ver-outcome">pending</span>
+          <span class="hp-muted mono">due 14:16:11</span>
+        </div>
+      </div>
+      <p class="g-note" style="margin-top:.8rem">
+        And the case with no rows at all, which is not a cosmetic gap: an executed action with no
+        verification scheduled is one nothing will ever check and nothing will roll back.
+      </p>
+      <div class="hp-muted hp-ver-none" data-testid="verifications-missing">
+        No verification was scheduled for this action.
+      </div>
+    </section>
+
+
   </main>
 </div>
 </body>

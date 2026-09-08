@@ -699,3 +699,126 @@ hephaisto end-to-end: 0.4.0-main.0.24     channel nightly, mode Observe
 second time in three releases, since v0.3.0's MinVer divergence would have left `v0.2.1-rc1`
 tagged with nothing behind it. Both workflows build from the same `./Dockerfile` with the same
 context, so a green nightly is genuine evidence about the rc's image rather than a rehearsal.
+
+---
+
+## v0.7.0 — one word, two thresholds — **found 2026-09-03**
+
+The expensive finding of this release was not the feature. It was that
+`SignalKind.ReadinessFlapping` had **two detectors that disagreed about what flapping means**,
+three hundred lines apart in the same file.
+
+`SignalMapper` classifies a pod's condition history and refuses to call anything flapping below
+`SignalThresholds.ReadinessFlapCount` — four ready-transitions in the trend window. That is a real
+measurement of oscillation, and its comment says so.
+
+`SignalMapper.EventKind` classified a **single** `Unhealthy` warning as the same kind:
+
+```csharp
+"Unhealthy" when message.Contains("Readiness probe", StringComparison.OrdinalIgnoreCase)
+    => SignalKind.ReadinessFlapping,
+```
+
+Two thresholds for one word: **four, and one.**
+
+**Why it had never been noticed.** Every fixture that produced this event was one where the pod
+really was unhealthy, so the label was wrong and the conclusion happened to be right. It took a
+fixture whose pods are *deliberately healthy* to expose it.
+
+**What it cost, measured.** A readiness probe fails once on any pod that takes longer to start
+than its `initialDelaySeconds` — which is every ordinary rollout. On the v0.7.0 gate, `c14`'s
+incident was opened **21 seconds** after its deliberate bad deploy, by an `Unhealthy` event,
+classified `ReadinessFlapping`:
+
+```
+target: hephaisto-chaos/Pod/c14-bad-deploy-6d47849bf5-rtj67
+signals: 2026-09-03T11:30:29  kind=ReadinessFlapping  reason=Unhealthy  src=KubernetesWatch
+```
+
+The error-rate alert the fixture exists to raise needs a five-minute rate window plus `for: 2m`,
+so it arrived roughly seven minutes later and **correlated into an incident that was already
+labelled a flap**. Since `SignalKind` selects the runbook, the investigation was handed
+`ReadinessFlapping.md`, whose entire argument is that the fault is intermittent and that
+restarting will not help — against a fixture whose correct answer is a rollback.
+
+**This is the third distinct mechanism behind [#70](backlog.md#70), and the one that entry never
+reached.** Its recorded cause was a race between two Prometheus rules, and the two rules it named
+do not exist. The correction found that c3's real race was between two *ingestion paths*. This is
+a third: **an ingestion path that fires within seconds on a normal rollout, and beats every
+metric-derived signal by minutes because a metric needs a window and an event does not.**
+
+That asymmetry is the durable lesson. An event-derived signal is always going to win a race
+against a rate-derived one, so an event-derived signal that overclaims is not merely wrong about
+its own incident — it captures every incident that follows it on that workload.
+
+**The fix** is that the event path now requires `Count >= ReadinessFlapEventCount`, deliberately
+the same number as the condition detector's, so the two agree on what the word requires.
+Kubernetes aggregates repeated identical events, so `Count` *is* the evidence of repetition; a
+null `Count` is read as one occurrence, because absent evidence of repetition must not be read as
+evidence of it. Nothing is lost for a genuinely stuck pod: the event repeats, `Count` climbs, and
+the shipped `KubePodNotReady` rule covers it at two minutes as `PodNotReady`.
+
+**The v0.7.0 relabelling change does not rescue this, and that is worth stating** rather than
+discovering twice. `IncidentTriage` now re-labels an incident upward when a more specific signal
+arrives, and `HighErrorRate` outranks `ReadinessFlapping` — but re-labelling deliberately stops
+once the incident leaves `Detected`/`Triaging`, and an investigation starts within seconds of
+detection while the competing signal is minutes away. The safety argument for that gate still
+holds. It simply means the gate must not be relied on to correct a signal that arrives first and
+is wrong.
+
+
+---
+
+## v0.7.0 — `c1` has been graded against another fixture's incident since c10 existed
+
+Found while reading a puzzling line in the second gate run:
+
+```
+skip  c1 classified as HighErrorRate, expected OomKilled
+```
+
+`c1-oomkill` has no error rate. It has no traces at all. The incident being graded was **c14's**.
+
+**Cause.** The harness matched a fixture to its incident with a bare prefix test:
+
+```jq
+select(.targetName // "" | startswith($t))
+```
+
+`c1` is a prefix of `c10`, `c11`, `c12`, `c13` and `c14`. So the assertion for c1 collected every
+incident belonging to five other fixtures, and `.[0].kind` graded whichever one the API happened
+to return first.
+
+**This is not new, and that is the uncomfortable part.** It has been true since c10 was added —
+`c1`'s classification assertion has been reporting another fixture's kind for several releases,
+and the `fixture-incidents.tsv` map that the judge and the report both read has been attributing
+other fixtures' incidents to c1 as well. Backlog [#34](backlog.md#34) records "c1 →
+`CrashLoopBackOff`, expected on this node" as a property of the node, and the obvious suspicion on
+finding this was that #34 had been the collision all along.
+
+**It was not, and the fixed run says so.** With the prefix test corrected, c1 is graded against its
+own incident and still classifies `CrashLoopBackOff`. So #34 is a genuine property of the node — no
+pod-scoped `OOMKilling` event is emitted, the container simply restarts — and the collision was a
+second, independent defect sitting on top of it. Worth recording, because the tempting move on
+finding a measurement bug is to assume it explains the anomalies you already had.
+
+**The trap was already documented — in the other instrument.** `AnswerKey.ForCassette`'s comment
+says it in as many words:
+
+> It is deliberately a prefix up to the first `-` and not a "starts with" test, because `c1`
+> starts with the same characters as `c10` and a "starts with" test would grade one fixture
+> against the other's answer.
+
+The eval harness guarded against it. The e2e harness, which grades the same fixtures, did not, and
+the two were never compared. **A rule written down in one instrument does not protect the other
+one**, which is the same shape as backlog #33 — where the reader was fixed, the fact was recorded
+as solved, and the rules that fed it were never changed.
+
+**Fix.** All eight matching sites now require the fixture token to be followed by a `-`, or to
+match exactly — the latter for `c10`, whose incident opens on `faulty-service` rather than on
+anything with a `c<N>-` prefix.
+
+**Why it surfaced now.** c14 is the first fixture added since c10 whose incident target carries a
+`c<N>-` name, and it is the first one whose kind differs sharply from c1's. c11, c12 and c13 all
+classify `CrashLoopBackOff`, which is what a genuinely OOM-killed pod on this node reports too, so
+the collision produced a plausible answer every previous time it fired.

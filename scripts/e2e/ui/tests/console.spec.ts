@@ -43,15 +43,29 @@ test.describe('the console', () => {
     // waiting for its image - and those are perfectly real detections that sort above the
     // seeded faults and have no finding yet. The spec then failed on a page that was
     // rendering correctly.
-    const res = await page.request.get('/api/incidents?limit=100');
-    const withDiagnosis = (await res.json()).filter((i: { hasDiagnosis: boolean }) => i.hasDiagnosis);
+    // Open AND resolved, because a successful acting run REMOVES its own precondition.
+    //
+    // /api/incidents defaults to OpenOnly, and "open" is the seven live states - Resolved is
+    // not one of them. In an --mode Auto run the fixture's incident is investigated, acted on,
+    // verified and resolved, at which point the only incident carrying a diagnosis drops out of
+    // the default list. This spec then failed on a run where everything worked, and the failure
+    // read as "no incident has been investigated" - the opposite of what had happened.
+    //
+    // It survived until v0.7.0 because the agent's incidental incidents (Grafana, coredns,
+    // the storage provisioner) usually carry a diagnosis too and kept the list non-empty. On
+    // the run that exposed it, the one such investigation had faulted, so there was nothing
+    // left to find.
+    const openRes = await page.request.get('/api/incidents?limit=100');
+    const resolvedRes = await page.request.get('/api/incidents?state=Resolved&limit=100');
+    const withDiagnosis = [...(await openRes.json()), ...(await resolvedRes.json())]
+      .filter((i: { hasDiagnosis: boolean }) => i.hasDiagnosis);
     // Not a skip. `ui/run.sh` fails the phase on any skip at all - that is #1's fix and it is
     // load-bearing - so a spec that opts out on a missing precondition takes the whole phase
     // down with it while reporting nothing about why. The earlier `validate` phase has already
     // asserted that diagnoses exist by the time this runs, so reaching this line means
     // something upstream broke, and saying that is more useful than skipping.
     expect(withDiagnosis.length,
-      'no incident has been investigated, so there is no diagnosis for the console to show')
+      'no incident, open or resolved, carries a diagnosis for the console to show')
       .toBeGreaterThan(0);
 
     await open(page, `/incidents/${withDiagnosis[0].id}`);

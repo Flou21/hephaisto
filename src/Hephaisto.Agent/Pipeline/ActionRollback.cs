@@ -81,8 +81,23 @@ public sealed class ActionRollback(
     /// The typed revert for an action, or null when there is not one.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Deliberately a short list. Adding to it means being able to state, in code rather than
     /// in a JSON blob a model wrote, what returning to the previous state consists of.
+    /// </para>
+    /// <para>
+    /// <b><see cref="ActionType.RollbackDeployment"/> is deliberately absent, and it is the one
+    /// most likely to be added by mistake.</b> Its inverse is expressible - roll forward to the
+    /// revision we came from - which makes it look like the obvious next entry. It must not be.
+    /// </para>
+    /// <para>
+    /// This method is only ever called because a verification FAILED. For a rollback, that means
+    /// the previous revision is not healthy either. Rolling forward would then return the
+    /// cluster, automatically and unattended, to the revision the agent had already concluded
+    /// caused the incident - so the one situation where the inverse is reachable is exactly the
+    /// situation where it is the worst available move. Escalation is the correct answer, and it
+    /// is what returning null produces.
+    /// </para>
     /// </remarks>
     private AgentAction? Build(AgentAction action)
     {
@@ -113,6 +128,8 @@ public sealed class ActionRollback(
                 };
             }
 
+            // RollbackDeployment: no inverse ON PURPOSE. See the remarks above - rolling
+            // forward here would restore the revision that caused the incident.
             default:
                 return null;
         }

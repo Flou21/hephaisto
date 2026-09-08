@@ -1,6 +1,6 @@
 # Hephaisto chaos fixtures
 
-Twelve hand-written Kubernetes fault-injection fixtures, one per file, all in namespace
+Fourteen hand-written Kubernetes fault-injection fixtures, one per file, all in namespace
 `hephaisto-chaos`. They exist to give the Hephaisto agent a stable, reproducible set
 of failures with a **known-correct answer**, so its diagnoses can be regression-tested
 rather than eyeballed.
@@ -11,6 +11,18 @@ comments and this table are the contract** the agent's regression tests assert a
 Where a signal does not behave the way the textbook says on this particular cluster,
 the file says so explicitly rather than quietly shipping a rule that never fires — see
 C6 in particular.
+
+> **The "Expected alert name" column is a specification, not an inventory.** Not one of the
+> `Chaos*` names below is implemented by any `PrometheusRule` in this repository —
+> `grep -rn "alert: Chaos"` returns nothing. These fixtures are detected by the *generic*
+> shipped rules in `charts/hephaisto/files/alerts/`, which is the intended design: rules that
+> name no fixture are rules that work on somebody else's cluster too.
+>
+> This is worth stating loudly because reading the column as an inventory produced a wrong
+> diagnosis that stood for four releases. Backlog #70 recorded that a generic rule "beats the
+> specific `ChaosPodUnschedulable` and `ChaosImagePullFailure` rules" — there are no such
+> rules to beat, and the real cause was one layer down, in how an incident's kind was frozen
+> at open. See #70's correction.
 
 ---
 
@@ -69,6 +81,8 @@ MVP-critical: they carry information that exists in **no metric at all**.
 | C10 | faulty-service — 15% 500s, 750ms p95, 503 window | `ChaosServiceErrorBudgetBurn` | `sum(rate(traces_spanmetrics_calls_total{service_name="faulty-service",status_code="STATUS_CODE_ERROR"}[5m])) / sum(rate(traces_spanmetrics_calls_total{service_name="faulty-service"}[5m])) > 0.05` | `{k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c10-faulty-service", k8s_container_name="app"} \|= "FAULT"` | *(none — deliberately event-silent; the pod stays Ready)* |
 | C11 | Transient - first pod wedged, any later pod healthy | `ChaosPodCrashLooping` | `kube_pod_container_status_waiting_reason{namespace="hephaisto-chaos",container="app",reason="CrashLoopBackOff"} == 1` (and `kube_deployment_status_replicas_available{deployment="c11-transient"} == 1` once restarted) | `{k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c11-transient"} \|= "FATAL"` | `Warning BackOff` until the pod is replaced |
 | C12 | Stale lease — the lease file on the PVC names the pod's own hostname | `ChaosPodCrashLooping` | `kube_pod_container_status_waiting_reason{namespace="hephaisto-chaos",container="app",reason="CrashLoopBackOff"} == 1` | `{k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c12-stale-lease"} \|= "FATAL"` | `Warning BackOff` until the pod is replaced |
+| C13 | Wedged lock on an **emptyDir** — the same fault as C11/C12 with pod-scoped state | `ChaosPodCrashLooping` | `kube_pod_container_status_waiting_reason{namespace="hephaisto-chaos",container="app",reason="CrashLoopBackOff"} == 1` | `{k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c13-wedged-lock"} \|= "FATAL"` | `Warning BackOff` until the pod is replaced |
+| C14 | **Bad deploy** — a healthy revision 1, then a revision 2 at `ERROR_RATE=0.9` | `ChaosServiceErrorBudgetBurn` | `sum by (service, k8s_namespace_name) (rate(traces_spanmetrics_calls_total{service="c14-bad-deploy",status_code="STATUS_CODE_ERROR"}[5m])) / sum by (service, k8s_namespace_name) (rate(traces_spanmetrics_calls_total{service="c14-bad-deploy"}[5m])) > 0.05` | `{k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="c14-bad-deploy", k8s_container_name="app"} \|= "FAULT"` | *(none — the rollout succeeds and both pods stay Ready)* |
 
 ### Secondary expressions worth asserting
 

@@ -87,6 +87,64 @@ public class ShippedAlertRulesTests
             + "written for its failure mode.");
     }
 
+    /// <summary>
+    /// Every kind a shipped alert rule can produce has a runbook written for it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Backlog #105. <see cref="SignalKind"/>'s own doc comment states the contract - "adding
+    /// a member means adding a runbook" - and four members predated the rule:
+    /// <c>HighLatency</c>, <c>TargetDown</c>, <c>ReplicaMismatch</c> and <c>RestartStorm</c>
+    /// all shipped an alert rule and fell through to <c>_Default.md</c>.
+    /// </para>
+    /// <para>
+    /// The fallback is not neutral. It is entirely Kubernetes-shaped - who owns this,
+    /// get_events, get_pod_logs previous:true - which is useless advice for a burn-rate alert
+    /// computed from span metrics, where there is usually no Kubernetes symptom at all. So the
+    /// investigation was not merely unguided, it was actively pointed at the wrong evidence.
+    /// </para>
+    /// <para>
+    /// Scoped to kinds a shipped rule can actually produce. Falling through is legitimate for
+    /// the kinds that describe Hephaisto's own health and for <c>Unknown</c>; it is not
+    /// legitimate for a kind this repo ships a rule to raise.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_kind_a_shipped_rule_can_produce_has_its_own_runbook()
+    {
+        var runbooks = Path.Combine(
+            new FileInfo(typeof(ShippedAlertRulesTests).Assembly.Location).Directory!.FullName,
+            "Runbooks");
+
+        var declared = Directory.EnumerateFiles(AlertsDirectory(), "*.yaml")
+            .SelectMany(File.ReadLines)
+            .Select(line => KindLine.Match(line))
+            .Where(m => m.Success)
+            .Select(m => m.Groups[1].Value)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        // Guards the guard, for the same reason the theories above have one.
+        declared.Should().HaveCountGreaterThan(5);
+
+        var missing = declared
+            // Kinds that describe Hephaisto's own health rather than a workload's are allowed
+            // to fall through. _Default.md's advice - reason about the controller, read events,
+            // read previous-container logs - is not wrong for them, it is simply about a
+            // different subject, and an incident about the agent's own budget is escalated to a
+            // human rather than investigated for a root cause in the cluster.
+            .Where(kind => !(Enum.TryParse<SignalKind>(kind, ignoreCase: true, out var k)
+                             && SignalKindSpecificity.IsAboutHephaistoItself(k)))
+            .Where(kind => !File.Exists(Path.Combine(runbooks, $"{kind}.md")))
+            .OrderBy(k => k, StringComparer.Ordinal)
+            .ToArray();
+
+        missing.Should().BeEmpty(
+            "a shipped rule raises these kinds, and a kind with no runbook is handed _Default.md "
+            + "- which tells the model to read events and previous-container logs, advice that is "
+            + "wrong rather than merely absent for a span-metrics alert");
+    }
+
     [Fact]
     public void The_alert_rule_files_are_where_this_test_thinks_they_are()
     {
@@ -164,5 +222,71 @@ public class ShippedAlertRulesTests
             "every namespace-shaped label in a shipped rule must be one AlertmanagerEndpoints "
             + "reads, or the incident it opens has no namespace and can be neither acted on "
             + "nor routed to anybody");
+    }
+
+    /// <summary>
+    /// Every span-metrics aggregation groups by the namespace as well as the service.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The theory above catches a namespace label spelled a way the ingest cannot read. This
+    /// catches the other half, which is backlog #104: a rule that spells it correctly
+    /// everywhere and then aggregates it away. The three latency rules did that for four
+    /// releases while the error-rate rules twenty lines above them did not, so reading either
+    /// one in isolation looked right.
+    /// </para>
+    /// <para>
+    /// Scoped to <c>traces_spanmetrics_*</c> deliberately. That is the family whose identity
+    /// is the pair (service, namespace) - the observability self-check rules aggregate by
+    /// <c>exporter</c> and <c>processor</c> and correctly have no namespace at all, so a
+    /// blanket rule over every aggregation would assert something false.
+    /// </para>
+    /// <para>
+    /// The consequence of getting it wrong is not cosmetic and not deferred: an empty
+    /// namespace fails <c>Policy:AllowedNamespaces</c>, so every latency incident this repo
+    /// could ever raise was un-actionable by construction.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_span_metrics_aggregation_groups_by_namespace_as_well_as_service()
+    {
+        // `sum by (<labels>) (` immediately preceding, or wrapping, a spanmetrics selector.
+        var aggregation = new Regex(
+            @"sum\s+by\s*\(([^)]*)\)\s*\(\s*(?:rate|increase|irate)?\(?\s*traces_spanmetrics_",
+            RegexOptions.Compiled);
+
+        string[] understood = ["namespace", "exported_namespace", "k8s_namespace_name"];
+
+        var offenders = new List<string>();
+        var checkedCount = 0;
+
+        foreach (var file in Directory.EnumerateFiles(AlertsDirectory(), "*.yaml"))
+        {
+            var text = File.ReadAllText(file);
+
+            foreach (var match in aggregation.Matches(text).Cast<Match>())
+            {
+                checkedCount++;
+
+                var labels = match.Groups[1].Value
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+                if (!labels.Any(l => understood.Contains(l, StringComparer.Ordinal)))
+                {
+                    offenders.Add($"{Path.GetFileName(file)}: sum by ({match.Groups[1].Value})");
+                }
+            }
+        }
+
+        // Guards the guard: a regex that matches nothing is a test that asserts nothing, and
+        // this one is matching against a file it does not own.
+        checkedCount.Should().BeGreaterThan(10,
+            "the aggregation pattern no longer matches the shipped span-metrics rules, so this "
+            + "test has silently stopped checking them");
+
+        offenders.Should().BeEmpty(
+            "a span-metrics rule that aggregates the namespace away produces an incident with "
+            + "an empty namespace, which fails Policy:AllowedNamespaces, matches no "
+            + "notification route, and gives every tool call an argument it cannot use");
     }
 }

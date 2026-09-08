@@ -1,3 +1,5 @@
+using System.ClientModel;
+using System.ClientModel.Primitives;
 using System.Net;
 using Hephaisto.Agent.Llm;
 using Hephaisto.Core.Domain;
@@ -178,5 +180,88 @@ public class TransientRetryTests
     public void An_ordinary_bug_is_not_retried()
     {
         TransientRetryChatClient.Classify(new NullReferenceException()).Should().BeNull();
+    }
+
+    // -------------------------------------------------------------------------------------
+    // The openai-compatible providers, which do not throw HttpRequestException at all.
+    // -------------------------------------------------------------------------------------
+    //
+    // Every provider reached through Microsoft.Extensions.AI.OpenAI - DeepSeek, OpenRouter,
+    // Ollama, LM Studio - surfaces a failed call as ClientResultException, whose status is
+    // `Status` (an int) and not `StatusCode`. The status branch above therefore never saw them,
+    // and "HTTP 500 (api_error: )" matches no message marker either, so an ordinary server
+    // error was classified as PERMANENT and the investigation discarded.
+    //
+    // Measured on the v0.7.0 c14 gate: gpt-oss-120b intermittently emits a tool call Ollama
+    // cannot parse, Ollama answers 500, and two of five investigations in a single run were
+    // thrown away with no retry logged - because none was attempted.
+
+    [Theory]
+    [InlineData(500)]
+    [InlineData(502)]
+    [InlineData(503)]
+    [InlineData(429)]
+    [InlineData(408)]
+    public void A_retryable_status_from_an_openai_compatible_provider_is_retried(int status)
+    {
+        TransientRetryChatClient.Classify(new ClientResultException($"HTTP {status} (api_error: )", Response(status)))
+            .Should().NotBeNull();
+    }
+
+    [Theory]
+    [InlineData(400)]
+    [InlineData(401)]
+    [InlineData(404)]
+    public void A_client_error_from_an_openai_compatible_provider_is_not_retried(int status)
+    {
+        // Asking again for a malformed request or a bad key produces the same answer and spends
+        // the budget doing it.
+        TransientRetryChatClient.Classify(new ClientResultException($"HTTP {status}", Response(status)))
+            .Should().BeNull();
+    }
+
+    [Fact]
+    public void A_call_that_never_got_a_response_is_treated_as_transport()
+    {
+        TransientRetryChatClient.Classify(new ClientResultException("no response", Response(0)))
+            .Should().Be("transport");
+    }
+
+    [Fact]
+    public void The_exact_failure_that_cost_the_v070_c14_gate_run_is_retried()
+    {
+        // Verbatim from the recorded Investigation.Error of a Faulted run.
+        var ex = new ClientResultException(
+            "HTTP 500 (api_error: )\n\nerror parsing tool call: "
+            + "raw='{\"name\":\"c14-bpod...\",\"?\":??}', "
+            + "err=invalid character '?' looking for beginning of value",
+            Response(500));
+
+        TransientRetryChatClient.Classify(ex).Should().NotBeNull(
+            "a provider that could not parse the model's own tool call is the definition of a "
+            + "call worth making again; discarding the investigation instead threw away two of "
+            + "five runs in one gate");
+    }
+
+    private static PipelineResponse Response(int status) => new StubResponse(status);
+
+    private sealed class StubResponse(int status) : PipelineResponse
+    {
+        public override int Status { get; } = status;
+
+        public override string ReasonPhrase => "stub";
+
+        public override Stream? ContentStream { get; set; }
+
+        public override BinaryData Content => BinaryData.FromString(string.Empty);
+
+        protected override PipelineResponseHeaders HeadersCore => throw new NotSupportedException();
+
+        public override BinaryData BufferContent(CancellationToken cancellationToken = default) => Content;
+
+        public override ValueTask<BinaryData> BufferContentAsync(CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(Content);
+
+        public override void Dispose() { }
     }
 }

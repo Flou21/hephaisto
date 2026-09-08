@@ -241,7 +241,10 @@ public static class SignalMapper
         var reason = kubeEvent.Reason ?? string.Empty;
         var message = kubeEvent.Message ?? string.Empty;
 
-        if (EventKind(reason, message) is not { } kind)
+        // Count, not just reason: see EventKind's Unhealthy arm. Kubernetes aggregates
+        // repeated identical events, so Count IS the evidence of repetition, and a null
+        // Count is treated as one occurrence rather than assumed to be many.
+        if (EventKind(reason, message, kubeEvent.Count ?? 1) is not { } kind)
         {
             return null;
         }
@@ -551,7 +554,37 @@ public static class SignalMapper
     // Event and alert vocabularies
     // ------------------------------------------------------------------
 
-    private static SignalKind? EventKind(string reason, string message) => reason switch
+    /// <summary>
+    /// How many times a readiness probe must have failed before it is called <b>flapping</b>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deliberately the same number as <see cref="SignalThresholds.ReadinessFlapCount"/>, which
+    /// governs the other detector for this same kind three hundred lines above. That one counts
+    /// ready-transitions in a window and refuses to call anything flapping below four. This one
+    /// used to claim it from <b>one</b> warning event, so the same file held two detectors for
+    /// one <see cref="SignalKind"/> with thresholds of four and of one.
+    /// </para>
+    /// <para>
+    /// What that cost, measured on the v0.7.0 gate: a readiness probe fails once on every pod
+    /// that takes longer to start than its <c>initialDelaySeconds</c>, which is every ordinary
+    /// rollout. c14's incident was opened 21 seconds after its deliberate bad deploy by an
+    /// <c>Unhealthy</c> event, classified <c>ReadinessFlapping</c>, and every later signal -
+    /// including the error-rate alert the fixture exists to raise - correlated into an incident
+    /// already labelled as a flap. The investigation was then handed the flap runbook, whose
+    /// entire argument is that the fault is intermittent and that restarting will not help,
+    /// against a fixture whose correct answer is a rollback.
+    /// </para>
+    /// <para>
+    /// A pod that is genuinely stuck not-ready still reports: the event repeats, Count climbs,
+    /// and the shipped <c>KubePodNotReady</c> rule covers it at two minutes as
+    /// <see cref="SignalKind.PodNotReady"/>. Nothing is lost by declining to call one failure a
+    /// flap; a claim of oscillation needs evidence of oscillation.
+    /// </para>
+    /// </remarks>
+    private const int ReadinessFlapEventCount = 4;
+
+    private static SignalKind? EventKind(string reason, string message, int count) => reason switch
     {
         "FailedScheduling" => SignalKind.Unschedulable,
         "OOMKilling" or OomKilledReason => SignalKind.OomKilled,
@@ -573,7 +606,10 @@ public static class SignalMapper
         "Failed" when message.Contains("CreateContainerConfigError", StringComparison.OrdinalIgnoreCase)
             => SignalKind.ConfigError,
 
+        // Flapping means INTERMITTENT, and one probe failure is not intermittent - it is a
+        // pod starting up. See ReadinessFlapEventCount.
         "Unhealthy" when message.Contains("Readiness probe", StringComparison.OrdinalIgnoreCase)
+            && count >= ReadinessFlapEventCount
             => SignalKind.ReadinessFlapping,
 
         // Everything else is a warning about something Hephaisto has no runbook for.

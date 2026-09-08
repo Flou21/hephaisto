@@ -743,6 +743,62 @@ else
                                                 }
                                             </div>
 
+                                            @if (action.Verifications.Count > 0)
+                                            {
+                                                @* Backlog #96. These rows have been written
+                                                   since v0.2.0 and read by nothing on the way
+                                                   out, while "everything it does is verified,
+                                                   then reverted if it did not work" is the
+                                                   safety claim on the landing page. This is
+                                                   the evidence for that sentence. *@
+                                                <div class="hp-verifications" data-testid="verifications">
+                                                    <div class="hp-muted hp-ver-head">verification</div>
+                                                    @foreach (var v in action.Verifications)
+                                                    {
+                                                        <div class="hp-ver-row @Display.VerificationClass(v.Outcome)"
+                                                             @key="v.Id"
+                                                             data-testid="verification">
+                                                            <span class="glyph">@Display.VerificationGlyph(v.Outcome)</span>
+                                                            <span class="mono hp-ver-when">@Display.VerificationWhen(v.Attempt)</span>
+                                                            <span class="hp-ver-outcome">@v.Outcome.ToString().ToLowerInvariant()</span>
+                                                            @if (v.RanAt is { } ran)
+                                                            {
+                                                                <span class="hp-muted mono">@Display.Timestamp(ran)</span>
+                                                            }
+                                                            else
+                                                            {
+                                                                @* Not "not run": a check whose time has
+                                                                   not come is a different thing from one
+                                                                   that was skipped. *@
+                                                                <span class="hp-muted mono"
+                                                                      title="Scheduled, not yet due">due @Display.Timestamp(v.DueAt)</span>
+                                                            }
+                                                            @if (v.Detail is { Length: > 0 } detail)
+                                                            {
+                                                                <span class="hp-ver-detail">@detail</span>
+                                                            }
+                                                            @if (v.Checks is { Length: > 0 } checks)
+                                                            {
+                                                                <details class="hp-ver-checks">
+                                                                    <summary>checks</summary>
+                                                                    <pre class="hp-code">@checks</pre>
+                                                                </details>
+                                                            }
+                                                        </div>
+                                                    }
+                                                </div>
+                                            }
+                                            else if (action.ExecutedAt is not null && !action.DryRun)
+                                            {
+                                                @* An executed action with no verification rows is
+                                                   not a cosmetic gap - it means nothing will ever
+                                                   check whether it worked, and nothing will roll it
+                                                   back. Silence here would hide that. *@
+                                                <div class="hp-muted hp-ver-none" data-testid="verifications-missing">
+                                                    No verification was scheduled for this action.
+                                                </div>
+                                            }
+
                                             @if (action.State == ActionState.AwaitingApproval)
                                             {
                                                 @* Goes through IncidentQueries, which goes through

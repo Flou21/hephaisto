@@ -488,6 +488,93 @@ public class SignalMapperTests
         signal.Kind.Should().Be(SignalKind.PvcNearlyFull);
     }
 
+    // ---------------------------------------------------------------------------------
+    // A readiness probe failing once is a pod starting, not a pod flapping.
+    // ---------------------------------------------------------------------------------
+    //
+    // Found on the v0.7.0 gate. This file already had a detector for ReadinessFlapping that
+    // refuses to claim it below SignalThresholds.ReadinessFlapCount ready-transitions - and
+    // three hundred lines below it, a second detector for the same kind that claimed it from a
+    // single Unhealthy event. Two thresholds for one word: four, and one.
+    //
+    // The consequence was not subtle. Every pod that takes longer to start than its
+    // initialDelaySeconds emits one of these, so every ordinary rollout opened an incident
+    // asserting the workload was flapping - and because it opened FIRST, every later signal
+    // correlated into an incident already carrying the wrong kind and therefore the wrong
+    // runbook.
+
+    [Fact]
+    public void One_readiness_probe_failure_is_not_a_flap()
+    {
+        var signal = SignalMapper.FromEvent(
+            EventWithCount("Warning", "Unhealthy", "Readiness probe failed: HTTP probe failed with statuscode: 503", count: 1),
+            K8sFixtures.Cluster);
+
+        signal.Should().BeNull(
+            "a probe that has failed once is a pod that has not finished starting; claiming it "
+            + "is flapping opens an incident on every ordinary rollout and hands the "
+            + "investigation a runbook written for an intermittent fault");
+    }
+
+    [Fact]
+    public void A_readiness_probe_failing_repeatedly_is_a_flap()
+    {
+        var signal = SignalMapper.FromEvent(
+            EventWithCount("Warning", "Unhealthy", "Readiness probe failed: HTTP probe failed with statuscode: 503", count: 9),
+            K8sFixtures.Cluster);
+
+        signal.Should().NotBeNull();
+        signal!.Kind.Should().Be(SignalKind.ReadinessFlapping);
+    }
+
+    [Fact]
+    public void The_two_detectors_of_this_one_kind_agree_on_what_flapping_requires()
+    {
+        // The actual defect was that they disagreed, so the threshold is asserted rather than
+        // just its effect. If somebody tunes one, this fails until they consider the other.
+        var justBelow = SignalMapper.FromEvent(
+            EventWithCount("Warning", "Unhealthy", "Readiness probe failed", count: new SignalThresholds().ReadinessFlapCount - 1),
+            K8sFixtures.Cluster);
+
+        var atThreshold = SignalMapper.FromEvent(
+            EventWithCount("Warning", "Unhealthy", "Readiness probe failed", count: new SignalThresholds().ReadinessFlapCount),
+            K8sFixtures.Cluster);
+
+        justBelow.Should().BeNull();
+        atThreshold.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void An_event_with_no_count_at_all_is_treated_as_one_occurrence()
+    {
+        // Count is nullable, and the newer Events API does not always populate it. Absent
+        // evidence of repetition must not be read as evidence of repetition - the whole point
+        // of the claim is that it happened more than once.
+        var signal = SignalMapper.FromEvent(
+            EventWithCount("Warning", "Unhealthy", "Readiness probe failed", count: null),
+            K8sFixtures.Cluster);
+
+        signal.Should().BeNull();
+    }
+
+    [Fact]
+    public void A_liveness_probe_failure_is_still_not_this_signal()
+    {
+        // Guards the message match, not the count: liveness failures lead to restarts, which
+        // CrashLoopBackOff and RestartStorm own.
+        SignalMapper.FromEvent(
+            EventWithCount("Warning", "Unhealthy", "Liveness probe failed: connection refused", count: 20),
+            K8sFixtures.Cluster)
+            .Should().BeNull();
+    }
+
+    private static Corev1Event EventWithCount(string type, string reason, string message, int? count)
+    {
+        var e = Event(type, reason, message);
+        e.Count = count;
+        return e;
+    }
+
     private static Corev1Event Event(string type, string reason, string message) =>
         new()
         {

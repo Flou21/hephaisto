@@ -232,6 +232,35 @@ public sealed record FindingView
     public IReadOnlyList<EvidenceView> Evidence { get; init; } = [];
 }
 
+/// <summary>
+/// One scheduled check on an action, and what it found.
+/// </summary>
+/// <remarks>
+/// Backlog #96. These rows have been written since v0.2.0 and read by nothing on the way out,
+/// while "everything it does is verified, then reverted if it did not work" is the safety claim
+/// on the public landing page. The one screen a human looks at an action on was the one place
+/// the check on that action was not shown.
+/// </remarks>
+public sealed record VerificationView
+{
+    public Guid Id { get; init; }
+
+    /// <summary>1, 2, 3 - the T+60s, T+5m and T+15m checks.</summary>
+    public int Attempt { get; init; }
+
+    public DateTimeOffset DueAt { get; init; }
+
+    /// <summary>Null while the check is still in the future.</summary>
+    public DateTimeOffset? RanAt { get; init; }
+
+    public VerificationOutcome Outcome { get; init; }
+
+    /// <summary>The observations behind the verdict, as JSON.</summary>
+    public string? Checks { get; init; }
+
+    public string? Detail { get; init; }
+}
+
 public sealed record ActionView
 {
     public Guid Id { get; init; }
@@ -263,6 +292,9 @@ public sealed record ActionView
     public ApprovalSource ApprovalSource { get; init; }
 
     public DateTimeOffset? ExecutedAt { get; init; }
+
+    /// <summary>The scheduled checks on this action, earliest first.</summary>
+    public IReadOnlyList<VerificationView> Verifications { get; init; } = [];
 
     public string? Outcome { get; init; }
 

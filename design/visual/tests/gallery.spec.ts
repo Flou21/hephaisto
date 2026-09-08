@@ -48,6 +48,7 @@ test.describe('the design language', () => {
     ['code-block', 'Hard component 4'],
     ['form-controls', 'Form controls'],
     ['callouts', 'Callouts'],
+    ['verification', 'Verification rows'],
   ] as const;
 
   /**

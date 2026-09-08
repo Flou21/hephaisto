@@ -227,12 +227,205 @@ public sealed class ClusterFactsGatherer(
             }
 
             default:
+            {
+                // A SERVICE-SHAPED TARGET IS NOT A DEAD END. A span-metrics alert identifies a
+                // workload only by its `service` label, so the incident it opens carries
+                // kind=Service with no ownerKind and no ownerName - and those are precisely the
+                // incidents where the rollout gates matter most, because Kubernetes reports the
+                // pods perfectly healthy while the requests fail.
+                //
+                // Returning (null, null) here does not merely lose a fact. WorkloadFacts being
+                // null makes the rollback gate's freshness and previous-healthy checks both
+                // false, so rollback_deployment is DENIED - with a reason that reads like the
+                // policy engine working correctly. On the v0.7.0 gate that would have made c14,
+                // the fixture built to prove the rollback path, fail in exactly the ambiguous
+                // way c13 was created to escape: unable to tell "would not act" from "was not
+                // allowed to".
+                //
+                // So a name that might be a Deployment gets one read before giving up. By OTel
+                // convention here the service name and the Deployment name are the same string.
+                var resolved = await TryReadDeploymentAsync(name, ns, ct).ConfigureAwait(false);
+
+                if (resolved is not null)
+                {
+                    var (current, previous) = await RevisionAgesAsync(resolved, now, ct).ConfigureAwait(false);
+
+                    logger.LogDebug(
+                        "Target {Kind}/{Name} resolved to Deployment/{Name} for workload facts.", kind, name, name);
+
+                    return (new WorkloadFacts
+                    {
+                        Key = target.WorkloadKey,
+                        Kind = "Deployment",
+                        DesiredReplicas = resolved.Spec?.Replicas ?? 0,
+                        ReadyReplicas = resolved.Status?.ReadyReplicas ?? 0,
+                        UpdatedReplicas = resolved.Status?.UpdatedReplicas ?? 0,
+                        Generation = resolved.Metadata?.Generation ?? 0,
+                        ObservedGeneration = resolved.Status?.ObservedGeneration ?? 0,
+                        YoungestPodAge = await YoungestPodAgeAsync(ns, resolved.Spec?.Selector, now, ct).ConfigureAwait(false),
+                        CurrentRevisionAge = current,
+                        PreviousRevisionHealthyFor = previous,
+                    }, resolved.Metadata?.Labels);
+                }
+
                 // A bare Pod, a Job, or something with no controller. There is no replica set
                 // to reason about, so the blast-radius and rollout gates have nothing to say -
                 // which is honest here, unlike a workload read that failed.
                 logger.LogDebug(
                     "No workload facts for kind {Kind}; blast-radius and rollout gates will not apply.", kind);
                 return (null, null);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A rollout close enough to this incident to be worth stating in the prompt, or null.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deliberately narrow, and deliberately separate from <see cref="GatherAsync"/>. The full
+    /// fact-gathering runs immediately before the policy engine judges a plan, which is after
+    /// the investigation has finished - far too late to save the investigation a step. This is
+    /// two API reads against one Deployment, run before the investigation prompt is composed.
+    /// </para>
+    /// <para>
+    /// <b>Never throws.</b> Its caller is composing a prompt, not judging an action, so the
+    /// asymmetry that governs <c>GatherAsync</c> is inverted here: an unread fact there means
+    /// default-deny, because acting on an unknown cluster is unsafe. Here it means one fewer
+    /// hint in a prompt, and failing an investigation because a convenience read failed would
+    /// be a bad trade. Anything unexpected returns null and is logged.
+    /// </para>
+    /// </remarks>
+    public async Task<RolloutCorrelation?> RecentRolloutAsync(Incident incident, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(incident);
+
+        var target = incident.Target;
+        var kind = target.OwnerKind is { Length: > 0 } ok ? ok : target.Kind;
+        var name = target.OwnerName is { Length: > 0 } on ? on : target.Name;
+
+        // Deployments only. StatefulSet and DaemonSet history is in ControllerRevisions, which
+        // carry no images and no useful "what changed" - and rollback_deployment, the action
+        // this fact exists to inform, is Deployment-only anyway.
+        //
+        // BUT NOT "the target must already SAY Deployment", which is what this used to require
+        // and which made the whole feature miss the incidents it was built for. A span-metrics
+        // alert identifies a workload only by its `service` label, so the incident it opens has
+        // kind=Service, no ownerKind and no ownerName - and those are exactly the incidents
+        // where "what changed?" is the entire question, because Kubernetes reports the pods
+        // perfectly healthy throughout.
+        //
+        // Measured on the v0.7.0 gate: c14's incident opened as
+        // `kind=[Service] name=[c14-bad-deploy] ownerKind=[]`, so this returned null and the
+        // fixture built to exercise change correlation ran without it.
+        //
+        // So a non-workload kind is a reason to go LOOKING for the Deployment, not to give up.
+        // The OTel service name and the Deployment name are the same string by convention here
+        // (c14 sets OTEL_SERVICE_NAME to its own name for exactly this kind of reason), and a
+        // name that resolves to no Deployment simply 404s into the catch below.
+        if (kind is "StatefulSet" or "DaemonSet")
+        {
+            return null;
+        }
+
+        try
+        {
+            var deployment = await api.Apps
+                .ReadNamespacedDeploymentAsync(name, target.Namespace, cancellationToken: ct)
+                .ConfigureAwait(false);
+
+            var uid = deployment.Metadata?.Uid;
+
+            if (uid is null)
+            {
+                return null;
+            }
+
+            var replicaSets = await api.Apps
+                .ListNamespacedReplicaSetAsync(target.Namespace, cancellationToken: ct)
+                .ConfigureAwait(false);
+
+            var owned = replicaSets.Items
+                .Where(rs => rs.Metadata?.OwnerReferences?.Any(o => o.Uid == uid) == true)
+                .OrderByDescending(ClusterFactsRules.RevisionOf)
+                .ToList();
+
+            if (owned.Count == 0 || owned[0].Metadata?.CreationTimestamp is not { } rolledOutAt)
+            {
+                return null;
+            }
+
+            var rolledOut = new DateTimeOffset(DateTime.SpecifyKind(rolledOutAt, DateTimeKind.Utc));
+            var openedAfter = incident.OpenedAt - rolledOut;
+
+            // Negative means the rollout happened AFTER the incident opened - which is a real
+            // case, because the agent may be looking at a workload somebody is mid-deploy on.
+            // That is not a cause, and offering it as one would invite a rollback of the fix.
+            if (openedAfter < TimeSpan.Zero || openedAfter > RolloutCorrelation.RelevanceWindow)
+            {
+                return null;
+            }
+
+            TimeSpan? previousLasted = owned.Count >= 2
+                && owned[1].Metadata?.CreationTimestamp is { } previousCreated
+                    ? rolledOutAt - previousCreated
+                    : null;
+
+            return new RolloutCorrelation
+            {
+                Revision = ClusterFactsRules.RevisionOf(owned[0]),
+                IncidentOpenedAfter = openedAfter,
+                PreviousRevisionLastedFor = previousLasted,
+                Images = Images(owned[0]),
+            };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogDebug(
+                ex, "Could not read rollout history for {Workload}; the incident card goes without it.",
+                target.WorkloadKey);
+
+            return null;
+        }
+    }
+
+    private static string? Images(k8s.Models.V1ReplicaSet replicaSet)
+    {
+        var containers = replicaSet.Spec?.Template?.Spec?.Containers;
+
+        if (containers is null || containers.Count == 0)
+        {
+            return null;
+        }
+
+        return string.Join(", ", containers.Select(c => c.Image).Where(i => !string.IsNullOrWhiteSpace(i)));
+    }
+
+    /// <summary>
+    /// Reads a Deployment by name, returning null when there is not one.
+    /// </summary>
+    /// <remarks>
+    /// A 404 is an ordinary answer here, not a failure: the caller is asking "is this name a
+    /// Deployment?" about a target that may well be a bare Pod or a Job. Anything else is
+    /// swallowed for the same reason the callers swallow it - these are facts that improve a
+    /// decision, and none of them is worth failing an incident over.
+    /// </remarks>
+    private async Task<V1Deployment?> TryReadDeploymentAsync(string name, string ns, CancellationToken ct)
+    {
+        try
+        {
+            return await api.Apps
+                .ReadNamespacedDeploymentAsync(name, ns, cancellationToken: ct)
+                .ConfigureAwait(false);
+        }
+        catch (HttpOperationException ex) when (ex.Response?.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogDebug(ex, "Could not read Deployment {Namespace}/{Name}.", ns, name);
+            return null;
         }
     }
 

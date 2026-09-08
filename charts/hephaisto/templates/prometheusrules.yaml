@@ -17,6 +17,7 @@ without those labels every rule is created successfully and never selected.
 {{- $files := dict
       "kubernetes-rules.yaml"        $.Values.alerts.kubernetes
       "slo-rules.yaml"               $.Values.alerts.slo
+      "no-traffic.yaml"              $.Values.alerts.noTraffic
       "watchdog.yaml"                $.Values.alerts.watchdog
       "observability-selfcheck.yaml" $.Values.alerts.observabilitySelfcheck -}}
 {{- range $file, $enabled := $files }}

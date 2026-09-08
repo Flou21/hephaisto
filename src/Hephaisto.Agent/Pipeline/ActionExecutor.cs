@@ -260,6 +260,9 @@ public sealed class ActionExecutor(
                 await DeleteFailedJobPodsAsync(target, dr, ct).ConfigureAwait(false);
                 break;
 
+            case ActionType.RollbackDeployment:
+                return await RollbackDeploymentAsync(action, dr, ct).ConfigureAwait(false);
+
             case ActionType.SilenceAlert:
                 return await SilenceAsync(action, dryRun, ct).ConfigureAwait(false);
 
@@ -357,6 +360,130 @@ public sealed class ActionExecutor(
         {
             return (string.Empty, TimeSpan.Zero);
         }
+    }
+
+    /// <summary>
+    /// Rolls a Deployment back to its previous revision, and returns that revision number as
+    /// the action's after-state.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>There is no rollback subresource.</b> Kubernetes removed the <c>rollback</c> API in
+    /// 1.16, and <c>kubectl rollout undo</c> has since been a client-side operation: read the
+    /// ReplicaSet that carries the previous revision, and patch its pod template back onto the
+    /// Deployment. That is why the existing <c>patch</c> grant on deployments plus <c>list</c>
+    /// on replicasets is already sufficient and this action needed no RBAC change - a fact
+    /// worth stating, because "add a subresource to the Role" is the obvious wrong first move.
+    /// </para>
+    /// <para>
+    /// <b>The pod-template-hash label must be stripped.</b> The controller computes that label
+    /// from the template and owns it; copying a ReplicaSet's template back verbatim carries the
+    /// old hash into the Deployment's template, and the controller then reconciles a template
+    /// whose declared hash disagrees with its own computation. <c>kubectl</c> strips it for the
+    /// same reason.
+    /// </para>
+    /// <para>
+    /// <b>Deployments only.</b> StatefulSets and DaemonSets keep history in ControllerRevisions
+    /// rather than ReplicaSets, which is a different read and a different patch. Refusing
+    /// loudly beats half-supporting them.
+    /// </para>
+    /// <para>
+    /// The revision rolled to becomes <c>PostState</c>, because it is what
+    /// <c>VerificationChecks</c> asserts against. A rollback that silently no-ops must not
+    /// verify green, and "the workload is Ready" would - the old pods were Ready all along.
+    /// </para>
+    /// </remarks>
+    private async Task<string?> RollbackDeploymentAsync(AgentAction action, string? dryRun, CancellationToken ct)
+    {
+        var target = action.Target;
+        var kind = target.OwnerKind is { Length: > 0 } ok ? ok : target.Kind;
+        var name = target.OwnerName is { Length: > 0 } on ? on : target.Name;
+
+        // StatefulSet and DaemonSet are refused because their history lives in
+        // ControllerRevisions rather than ReplicaSets - a different read and a different patch.
+        //
+        // Anything ELSE falls through to the read below rather than being refused here, and the
+        // distinction matters. A span-metrics alert identifies a workload only by its `service`
+        // label, so the incident it opens carries kind=Service with no owner - and that is
+        // exactly the incident an error-rate spike after a bad deploy produces. Refusing on the
+        // kind string would have made this action unreachable on the one class of incident it
+        // was built for. By convention the service name and the Deployment name are the same
+        // string; if they are not, the read below 404s and says so.
+        if (kind is "StatefulSet" or "DaemonSet")
+        {
+            throw new InvalidOperationException(
+                $"cannot roll back a {kind}; rollback_deployment supports Deployment only, because "
+                + "StatefulSet and DaemonSet history lives in ControllerRevisions rather than "
+                + "ReplicaSets");
+        }
+
+        var deployment = await api.Apps
+            .ReadNamespacedDeploymentAsync(name, target.Namespace, cancellationToken: ct)
+            .ConfigureAwait(false);
+
+        var uid = deployment.Metadata?.Uid;
+
+        var replicaSets = await api.Apps
+            .ListNamespacedReplicaSetAsync(target.Namespace, cancellationToken: ct)
+            .ConfigureAwait(false);
+
+        // A Deployment's history IS its ReplicaSets, ordered by an annotation. Same read as
+        // get_rollout_history, which is the tool the model used to decide to propose this.
+        var owned = replicaSets.Items
+            .Where(rs => rs.Metadata?.OwnerReferences?.Any(o => o.Uid == uid) == true)
+            .OrderByDescending(ClusterFactsRules.RevisionOf)
+            .ToList();
+
+        if (owned.Count < 2)
+        {
+            throw new InvalidOperationException(
+                $"Deployment {target.Namespace}/{name} has {owned.Count} ReplicaSet(s), so there is "
+                + "no previous revision to roll back to. The policy engine admitted this on "
+                + "revision ages, which are gathered separately - if this fires, the two disagree.");
+        }
+
+        var current = owned[0];
+        var previous = owned[1];
+
+        var previousRevision = ClusterFactsRules.RevisionOf(previous);
+
+        var template = previous.Spec?.Template
+            ?? throw new InvalidOperationException(
+                $"ReplicaSet {previous.Metadata?.Name} carries revision {previousRevision} but has no "
+                + "pod template, so there is nothing to roll back to");
+
+        // The controller owns pod-template-hash and derives it from the template. Carrying the
+        // old one across makes the Deployment declare a hash the controller did not compute.
+        if (template.Metadata?.Labels is { } labels)
+        {
+            labels.Remove("pod-template-hash");
+        }
+
+        var patch = new V1Patch(
+            JsonSerializer.Serialize(new { spec = new { template } }, Json),
+            V1Patch.PatchType.MergePatch);
+
+        await api.Apps
+            .PatchNamespacedDeploymentAsync(patch, name, target.Namespace, dryRun: dryRun, cancellationToken: ct)
+            .ConfigureAwait(false);
+
+        logger.LogInformation(
+            "Rolled {Namespace}/{Name} back from revision {From} to {To} ({FromRs} -> {ToRs}){DryRun}",
+            target.Namespace, name, ClusterFactsRules.RevisionOf(current), previousRevision,
+            current.Metadata?.Name, previous.Metadata?.Name,
+            dryRun is null ? string.Empty : " [dry run]");
+
+        // Deliberately the revision and not a snapshot. Verification needs to assert which
+        // revision is live, and a snapshot of a Deployment taken moments after a patch shows
+        // the rollout still in progress either way.
+        return JsonSerializer.Serialize(
+            new
+            {
+                rolledBackTo = previousRevision,
+                rolledBackFrom = ClusterFactsRules.RevisionOf(current),
+                replicaSet = previous.Metadata?.Name,
+            },
+            Json);
     }
 
     /// <summary>

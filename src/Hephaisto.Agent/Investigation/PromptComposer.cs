@@ -61,7 +61,10 @@ public sealed class PromptComposer
     }
 
     /// <summary>The phase 1 system prompt.</summary>
-    public string ComposeInvestigationPrompt(Incident incident, IReadOnlyList<Signal>? signals = null)
+    public string ComposeInvestigationPrompt(
+        Incident incident,
+        IReadOnlyList<Signal>? signals = null,
+        RolloutCorrelation? rollout = null)
     {
         ArgumentNullException.ThrowIfNull(incident);
 
@@ -69,7 +72,7 @@ public sealed class PromptComposer
 
         Append(sb, ReadFragment(RoleFragment));
         Append(sb, ComposeEnvironmentCard());
-        Append(sb, ComposeIncidentCard(incident, signals ?? incident.Signals));
+        Append(sb, ComposeIncidentCard(incident, signals ?? incident.Signals, rollout));
         Append(sb, ReadFragment(ToolContractFragment));
         Append(sb, ReadFragment(OutputContractFragment));
         Append(sb, ReadRunbook(incident.Kind));
@@ -202,7 +205,10 @@ public sealed class PromptComposer
         return sb.ToString();
     }
 
-    public static string ComposeIncidentCard(Incident incident, IReadOnlyList<Signal> signals)
+    public static string ComposeIncidentCard(
+        Incident incident,
+        IReadOnlyList<Signal> signals,
+        RolloutCorrelation? rollout = null)
     {
         ArgumentNullException.ThrowIfNull(incident);
 
@@ -240,6 +246,24 @@ public sealed class PromptComposer
         {
             sb.Append("- **Quarantined until ").Append(quarantine.ToString("O"))
                 .Append("** for oscillating. Diagnose it; do not propose acting on it.\n");
+        }
+
+        if (rollout is not null)
+        {
+            // The roadmap's "change correlation", given for free rather than left for the model
+            // to spend a step discovering. Present only when a rollout actually preceded the
+            // incident inside RolloutCorrelation.RelevanceWindow - see that type for why a fact
+            // on every incident would be worse than none.
+            //
+            // Phrased as evidence with its own caveat rather than as a conclusion. "Something
+            // changed just before this broke" is the single most useful thing to know at the
+            // start of an incident and one of the easiest to over-read: plenty of alerts fire
+            // shortly after an unrelated deploy.
+            sb.Append("- **A rollout preceded this incident:** ").Append(rollout.Describe())
+                .Append(" This is a correlation in time, not a proven cause - confirm the onset ")
+                .Append("is a sharp edge rather than a ramp, and that the failure is in the new ")
+                .Append("revision's pods, before treating the deploy as the cause. ")
+                .Append("`get_rollout_history` has the full history if you need more of it.\n");
         }
 
         if (signals.Count > 0)
