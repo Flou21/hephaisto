@@ -1260,9 +1260,11 @@ anyone, and exposing the console currently needs an external identity proxy.
 Cheap on the first production cluster specifically: Keycloak is already operator-managed on
 `cait-eu-cluster`, so this is client configuration rather than new infrastructure.
 
-One thing needs a decided answer rather than a default: **what happens when the IdP is
-unreachable.** Failing closed locks an operator out during the outage they are being paged for;
-failing open makes the control decorative.
+**Decided, 2026-09-11: it fails closed.** If Keycloak is unreachable, Hephaisto is unavailable.
+The alternative — dropping to an unauthenticated console whenever the IdP is down — makes the
+control decorative and hands an attacker the timing of it. The cost is accepted rather than
+overlooked: reading the console during an outage now depends on Keycloak, so Keycloak is inside the
+blast radius of one, and the mitigation is its availability rather than a bypass here.
 
 ### F3 — mostly surfacing what is already computed
 

@@ -1450,9 +1450,11 @@ runs for a week and is *read by a person* is the first thing that does, and ther
 
 **Fix.** Give the existing transitions producers and a way in:
 
-- `POST /api/incidents/{id}/close` with an actor and a reason, routing through `Expire()` or a new
-  `Closed` state — decide which, because `Expired` currently means "we gave up waiting", not
-  "a human dealt with it", and conflating them loses the distinction the metrics want.
+- **DECIDED 2026-09-11: a new `Closed` state, numbered after `Expired`.** `Expired` keeps its
+  existing meaning — "we gave up waiting" — and `Closed` means "a human dealt with it". Conflating
+  them would lose the distinction the `hephaisto.incidents.closed` outcome label exists to carry,
+  and the enum is persisted by value, so `Closed = 10` appends rather than renumbering anything.
+  `POST /api/incidents/{id}/close` takes an actor and a reason.
 - `POST /api/incidents/{id}/acknowledge` — "I have seen this", distinct from closing it, which is
   what an on-call engineer actually needs first.
 - Wire `Reopen()` to an endpoint, and decide whether a recurrence reopens automatically or opens
@@ -1500,9 +1502,12 @@ rather than new infrastructure.
   rows, replacing the typed string.
 - At least two roles: read the console, versus approve an action. "Anyone who can log in may
   approve a cluster mutation" is not a default worth shipping.
-- Decide what happens when the IdP is unreachable. Failing closed locks an operator out during
-  the outage they are being paged for; failing open makes the control decorative. This needs a
-  stated answer, not a default.
+- **DECIDED 2026-09-11: fail closed.** If the IdP is unreachable the app is unavailable. The
+  alternative — serving the console to an unauthenticated caller whenever Keycloak is down — makes
+  the control decorative, and an attacker who can reach Keycloak can then also choose when the
+  control switches off. The cost is understood and accepted: Keycloak is a dependency of being
+  able to read the console during an outage, so it is now part of the blast radius of one.
+  Mitigation is Keycloak's own availability, not a bypass in this app.
 
 **Size.** M.
 
