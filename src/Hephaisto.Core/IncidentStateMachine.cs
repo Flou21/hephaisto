@@ -177,11 +177,118 @@ public sealed class IncidentStateMachine(IClock clock)
     {
         ArgumentNullException.ThrowIfNull(incident);
 
-        var evt = Transition(incident, [IncidentState.Resolved], IncidentState.Investigating, reason);
+        var evt = Transition(
+            incident,
+            [IncidentState.Resolved, IncidentState.Closed],
+            IncidentState.Investigating,
+            reason);
 
         incident.ResolvedAt = null;
         incident.Resolution = null;
+        incident.ClosedAt = null;
+        incident.ClosedBy = null;
         return evt;
+    }
+
+    /// <summary>
+    /// Any open state, including <see cref="IncidentState.Escalated"/> -&gt;
+    /// <see cref="IncidentState.Closed"/>. A human is done with it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This edge is why the state exists.</b> Before it, the only terminal exits were
+    /// <see cref="Resolve"/> - which only verification may grant, after an action the agent took
+    /// worked - and <see cref="Expire"/>, which had no caller at all. On an Observe install the
+    /// agent never acts, so no incident could reach Resolved, every incident escalated, and
+    /// <see cref="Incident.IsOpen"/> stayed true for all of them permanently. The open count on
+    /// the status page climbed for as long as the process ran and nothing could bring it down.
+    /// </para>
+    /// <para>
+    /// <b>Escalated is deliberately a legal predecessor</b>, and it is not in
+    /// <see cref="OpenStates"/>, so this edge lists its predecessors itself rather than reusing
+    /// that array. Escalated is the state almost every closure will start from: the agent gave
+    /// up, a person picked it up, and the person is now finished.
+    /// </para>
+    /// <para>
+    /// <b>Not reachable from Resolved, Expired or Suppressed.</b> Those are already terminal and
+    /// already mean something specific; letting a human close them would overwrite a fact the
+    /// agent established with a weaker one, and re-closing a closed incident is a no-op worth
+    /// rejecting loudly rather than recording twice.
+    /// </para>
+    /// <para>
+    /// <b>Never the model</b>, for the same reason <see cref="Resolve"/> refuses it: an incident
+    /// closed on the model's own say-so is indistinguishable in the database from one a person
+    /// dealt with, and closing is now the cheapest way to make an incident disappear.
+    /// </para>
+    /// </remarks>
+    public IncidentEvent Close(Incident incident, string reason, string closedBy)
+    {
+        ArgumentNullException.ThrowIfNull(incident);
+        ArgumentException.ThrowIfNullOrWhiteSpace(closedBy);
+
+        if (ForbiddenGranters.Contains(closedBy.Trim(), StringComparer.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                $"'{closedBy}' may not close an incident: closing is a human judgement that "
+                + "this no longer needs attention.",
+                nameof(closedBy));
+        }
+
+        var evt = Transition(
+            incident,
+            [.. OpenStates, IncidentState.Escalated],
+            IncidentState.Closed,
+            $"{reason} (closed by {closedBy})");
+
+        incident.ClosedAt = clock.UtcNow;
+        incident.ClosedBy = closedBy;
+        return evt;
+    }
+
+    /// <summary>
+    /// Records that a person has picked an incident up. <b>Not a transition</b> - it returns no
+    /// <see cref="IncidentEvent"/> and leaves <see cref="Incident.State"/> alone.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Acknowledging and closing are different acts and an on-call engineer needs the first one
+    /// first: "I have seen this, stop paging the others" long before "this is dealt with".
+    /// Modelling it as a state would force a choice between where the incident is in its
+    /// lifecycle and whether somebody is on it, and lose whichever one lost.
+    /// </para>
+    /// <para>
+    /// It lives here anyway, rather than being a bare property set by a controller, because this
+    /// class is the only thing permitted to write an incident's lifecycle fields and the
+    /// model-actor refusal has to apply identically. The audit trail for it is an
+    /// <c>incident.acknowledged</c> audit event written by the caller - not an
+    /// <see cref="IncidentEvent"/>, whose From/To shape would have to lie.
+    /// </para>
+    /// <para>
+    /// Idempotent in effect but not silent: acknowledging an already-acknowledged incident
+    /// overwrites the holder, which is what handover looks like.
+    /// </para>
+    /// </remarks>
+    public void Acknowledge(Incident incident, string actor)
+    {
+        ArgumentNullException.ThrowIfNull(incident);
+        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+
+        if (ForbiddenGranters.Contains(actor.Trim(), StringComparer.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                $"'{actor}' may not acknowledge an incident: the point of an acknowledgement is "
+                + "that a person is looking at it.",
+                nameof(actor));
+        }
+
+        if (!incident.IsOpen)
+        {
+            throw new InvalidOperationException(
+                $"incident {incident.Id} is {incident.State} and needs nobody to pick it up.");
+        }
+
+        incident.AcknowledgedBy = actor;
+        incident.AcknowledgedAt = clock.UtcNow;
     }
 
     /// <summary>
@@ -234,9 +341,19 @@ public sealed class IncidentStateMachine(IClock clock)
     }
 
     /// <summary>
-    /// Mirrors <see cref="Incident.IsOpen"/>. Kept as an explicit array rather than computed
-    /// from the property so that the legal-predecessor set of every edge reads the same way.
+    /// The legal-predecessor set for the edges that leave the live part of the lifecycle.
     /// </summary>
+    /// <remarks>
+    /// <b>It does not mirror <see cref="Incident.IsOpen"/>, and the comment here used to claim
+    /// it did.</b> <c>IsOpen</c> counts <see cref="IncidentState.Escalated"/> as open - the
+    /// agent gave up but the problem did not go away - whereas this array excludes it, because
+    /// an escalated incident cannot escalate again, cannot be resolved by a verifier that never
+    /// acted, and cannot expire from a state a human is already looking at. The edges that DO
+    /// accept Escalated say so themselves: <see cref="Close"/> and <see cref="Reinvestigate"/>.
+    /// <c>HephaistoDbContext.OpenStates</c> is a third list, matching <c>IsOpen</c> rather than
+    /// this one, because a computed property cannot be translated into SQL.
+    /// Three lists, two meanings, all three pinned by <c>IncidentStateDefinitionsAgreeTests</c>.
+    /// </remarks>
     private static readonly IncidentState[] OpenStates =
     [
         IncidentState.Detected,

@@ -35,6 +35,9 @@ public static class Display
         IncidentState.Resolved => "+",
         IncidentState.Escalated => "^",
         IncidentState.Expired => ".",
+        // A human dealt with it. Distinct from Expired's "." - that one means nobody ever
+        // answered and the signal stopped, which is not the same outcome at all.
+        IncidentState.Closed => "x",
         _ => "?",
     };
 
@@ -52,6 +55,7 @@ public static class Display
         IncidentState.Resolved => "st-resolved",
         IncidentState.Escalated => "st-escalated",
         IncidentState.Expired => "st-expired",
+        IncidentState.Closed => "st-closed",
         _ => "st-detected",
     };
 

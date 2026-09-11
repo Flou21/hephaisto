@@ -366,6 +366,9 @@ h4 {
 .st-resolved { color: var(--green); }
 .st-escalated { color: var(--red); font-weight: 600; }
 .st-expired { color: var(--fg-faint); }
+/* Dim rather than faint, and the difference carries meaning: faint is for the states nobody
+   acted on (suppressed, expired), dim is for one a person deliberately finished. */
+.st-closed { color: var(--fg-dim); }
 
 .sev-critical { color: var(--red); font-weight: 600; }
 .sev-warning { color: var(--yellow); }

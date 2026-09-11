@@ -49,6 +49,30 @@ public sealed class Incident
     /// <summary>Free-text resolution note, written by the verifier or a human.</summary>
     public string? Resolution { get; set; }
 
+    /// <summary>Who closed it, and when. Set only on the way into <see cref="IncidentState.Closed"/>.</summary>
+    /// <remarks>
+    /// Separate from <see cref="Resolution"/> on purpose: that field describes a fix the agent
+    /// verified, and a closure is frequently the opposite - "this was never our problem". The
+    /// closer's REASON lives on the <see cref="IncidentEvent"/> for the transition, where every
+    /// other transition reason already lives, rather than in a second free-text column here.
+    /// </remarks>
+    public string? ClosedBy { get; set; }
+
+    public DateTimeOffset? ClosedAt { get; set; }
+
+    /// <summary>
+    /// Who has picked this up, and when. Deliberately NOT a state.
+    /// </summary>
+    /// <remarks>
+    /// Acknowledging is "I have seen this and I am on it", which is orthogonal to where the
+    /// incident is in its lifecycle - an acknowledged incident is still Investigating, or still
+    /// Escalated. Modelling it as a state would force a choice between the two facts and lose
+    /// one. It is the first thing an on-call engineer needs and the cheapest thing to offer.
+    /// </remarks>
+    public string? AcknowledgedBy { get; set; }
+
+    public DateTimeOffset? AcknowledgedAt { get; set; }
+
     public List<Signal> Signals { get; set; } = [];
 
     public List<Investigation> Investigations { get; set; } = [];
@@ -57,7 +81,23 @@ public sealed class Incident
 
     public List<IncidentEvent> Events { get; set; } = [];
 
-    public bool IsOpen => State is not (IncidentState.Resolved or IncidentState.Expired or IncidentState.Suppressed);
+    /// <summary>
+    /// Is this still live? <see cref="IncidentState.Escalated"/> counts as open, deliberately:
+    /// the agent has given up but the cluster problem has not gone away, so it still belongs on
+    /// somebody's list.
+    /// </summary>
+    /// <remarks>
+    /// That is exactly why <see cref="IncidentState.Closed"/> had to exist. Before it, an
+    /// escalated incident had no terminal exit that meant "handled" - only
+    /// <c>Reinvestigate</c>, which spends tokens on another attempt - so on an Observe install,
+    /// where every incident escalates, this property was true forever and the open count only
+    /// ever climbed.
+    /// </remarks>
+    public bool IsOpen => State is not (
+        IncidentState.Resolved
+        or IncidentState.Expired
+        or IncidentState.Suppressed
+        or IncidentState.Closed);
 }
 
 /// <summary>

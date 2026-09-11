@@ -91,6 +91,31 @@ public enum IncidentState
     Resolved = 7,
     Escalated = 8,
     Expired = 9,
+
+    /// <summary>
+    /// A human dealt with it. Terminal, and deliberately NOT <see cref="Expired"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="Expired"/> means "the signal stopped arriving and nobody answered"; this means
+    /// "a person looked at it and is done with it". Reusing Expired for both would collapse the
+    /// distinction the <c>hephaisto.incidents.closed</c> outcome label exists to carry, and would
+    /// make "we ignored it until it went away" indistinguishable from "we handled it".
+    /// </para>
+    /// <para>
+    /// Appended rather than inserted: the enum is persisted by VALUE, so renumbering would
+    /// silently relabel every historical row.
+    /// </para>
+    /// <para>
+    /// <b>Adding a member here means auditing three places</b>, which do not agree and are not
+    /// meant to: <see cref="Incident.IsOpen"/> (is it still live), <c>HephaistoDbContext.OpenStates</c>
+    /// (the same question, as data, because the property cannot be translated into SQL), and
+    /// <c>IncidentStateMachine.OpenStates</c> (the legal-predecessor set, which excludes
+    /// <see cref="Escalated"/> because an escalated incident cannot escalate again).
+    /// <c>IncidentStateDefinitionsAgreeTests</c> pins the relationship between them.
+    /// </para>
+    /// </remarks>
+    Closed = 10,
 }
 
 /// <summary>Why an incident was suppressed rather than investigated.</summary>
