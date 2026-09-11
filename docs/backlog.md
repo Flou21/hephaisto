@@ -767,7 +767,7 @@ graded on `HighErrorRate`, whose rules carry the label; `HighLatency` is one of 
 The workload *name* stays unrecoverable — a spanmetrics series identifies the workload only as
 `service` — which is [#33](#33)'s permanent half and is why `fixture_target()` maps c10 by hand.
 
-**Size.** S.
+**Size.** S. **Fixed 2026-09-11.**
 
 ### 105. Four `SignalKind`s ship alert rules and no runbook
 
@@ -793,7 +793,7 @@ runbook."* These four predate the rule rather than defying it.
 **Fix.** Author the four. Consider a test asserting that every kind emitted by a shipped alert rule
 has a runbook file, which is the same shape as `ShippedAlertRulesTests` and would have caught this.
 
-**Size.** S.
+**Size.** S. **Fixed 2026-09-11.**
 
 ---
 
@@ -1173,7 +1173,7 @@ that one file states the contract for all of them.
 **Fix.** A table row, a listing entry, and the header count. Worth doing in the same pass as
 [#107](#107).
 
-**Size.** S.
+**Size.** S. **Fixed 2026-09-11.**
 
 ### 107. Four documentation surfaces describe a harness and limitations that no longer exist
 
@@ -1202,7 +1202,7 @@ but nothing checks a sentence that is merely false.
 changed `ACT_FIXTURE`, closed #82 and closed #66 within about thirty hours of each other, and the
 prose that referred to all three lives in four files none of those changes touched.
 
-**Size.** S.
+**Size.** S. **Fixed 2026-09-11.**
 
 ---
 
@@ -1299,7 +1299,7 @@ and keep the reasoning in the chart README as the pattern to copy. **The verific
 cluster**: render the chart with default values against a stack that has never run c10, and
 confirm nothing fires.
 
-**Size.** S.
+**Size.** S. **Fixed 2026-09-11.**
 
 ### 108. Installing the chart is a research project, and a wrong values file renders a plausible install
 
@@ -1416,6 +1416,158 @@ is a thing the AGPL guarantees you *may* do, not a thing a deployment should *re
 
 **Size.** M for the install ergonomics; the schema change is S and should not wait for the guide.
 The webhook port split is S and is the highest-leverage line in this entry.
+
+### 109. An escalated incident is terminal, so the open list only grows
+
+**Symptom.** On the first production install — Observe mode, `cait-eu-cluster`, 2026-09-11 — every
+incident the agent investigates ends in `Escalated` and stays there. There is no way for anyone to
+close it, and no way for the agent to.
+
+**Cause.** Three findings in the same place, and the third is the one that makes this urgent:
+
+- **`IncidentStateMachine.Expire()` has zero callers.** `IncidentState.Expired` is therefore
+  unreachable: the enum member exists, the transition is implemented, nothing produces it.
+- **`IncidentStateMachine.Reopen()` has zero callers.** Nothing can be reopened, ever.
+- **`Resolve()` has exactly one caller**, `VerificationScheduler` — so only the agent, and only
+  after an action it took was verified to have worked, can move an incident out of the open set.
+
+In Observe mode the agent takes no action, so that one path is unreachable too. And both escalation
+paths in `InvestigationCoordinator` are unconditional — the class comment says so: *"Both escalation
+paths in this class are unconditional, so in Observe mode this is where MTTR actually comes from."*
+The policy engine denies on `ObserveMode`, the plan is refused, the incident escalates. Every time.
+
+**So the terminal state of every incident on an Observe install is `Escalated`, and `Escalated` has
+no exit.** `openIncidents` and `escalatedIncidents` on the status page climb monotonically for as
+long as the agent runs. There is no sweeper, no retention, and no button.
+
+**The API confirms it.** The whole incident surface is `GET /api/incidents`, `GET /{id}`,
+`GET /search`, `POST /{id}/feedback`, `POST /{id}/reinvestigate`, and approve/deny on an action.
+Nothing closes, nothing acknowledges, nothing assigns.
+
+**Why it was not noticed.** Every previous evaluation was an e2e run against a throwaway cluster
+that was torn down at the end, or a demo corpus exported once. Neither accumulates. An install that
+runs for a week and is *read by a person* is the first thing that does, and there had not been one.
+
+**Fix.** Give the existing transitions producers and a way in:
+
+- `POST /api/incidents/{id}/close` with an actor and a reason, routing through `Expire()` or a new
+  `Closed` state — decide which, because `Expired` currently means "we gave up waiting", not
+  "a human dealt with it", and conflating them loses the distinction the metrics want.
+- `POST /api/incidents/{id}/acknowledge` — "I have seen this", distinct from closing it, which is
+  what an on-call engineer actually needs first.
+- Wire `Reopen()` to an endpoint, and decide whether a recurrence reopens automatically or opens
+  a fresh incident (today dedup opens a fresh row once the old one closes — that interacts).
+- Console buttons for all three, and the gallery components to go with them.
+- A retention or sweep policy, so an install nobody prunes does not grow without bound.
+
+**Note the overlap with [#44](#44).** That entry is the same defect class one state over — nothing
+sweeps `AwaitingApproval`, so `ApprovalTimedOut` has no producer either. Three of the ten
+`IncidentState` members have no producer. Do them together.
+
+**Size.** M.
+
+### 110. There is no authentication, so every actor in the audit trail is a typed-in string
+
+**Symptom.** The console and the entire JSON API are unauthenticated. Anyone who can reach port
+8080 can read every incident — which includes pod logs and ConfigMap contents the agent gathered
+from every namespace in the cluster — and can call
+`POST /api/incidents/{id}/actions/{actionId}/approve`.
+
+**Cause.** There is no `AddAuthentication`, no `AddAuthorization` and no `RequireAuthorization`
+anywhere in `Hephaisto.Agent`. The single `AllowAnonymous()` in the codebase is on the Alertmanager
+webhook group, where it is documentary rather than load-bearing: nothing is authenticated, so
+nothing needed exempting.
+
+**What it costs beyond the obvious.** Attribution is free text. `AgentAction.ApprovedBy`,
+`HumanFeedback.SubmittedBy` and `AuditEvent.Actor` are all `string`, filled in by whoever typed
+into the form. The audit trail's integrity story is otherwise unusually careful — the app serves as
+a non-owner Postgres role holding INSERT but not UPDATE or DELETE on `audit_events`, enforced in
+the migration — and then the `actor` column records a name somebody chose. The immutability is
+real; the identity is not.
+
+It also blocks three other things: assignment ([#112](#112)) means nothing without accounts; an
+acknowledgement ([#109](#109)) means nothing if anyone can claim to be anyone; and exposing the
+console at all currently requires an external identity proxy plus a NetworkPolicy hole, because
+the console shares a port with the unauthenticated webhook ([#108](#108)).
+
+**Fix.** OIDC, with a real IdP. On the first production cluster this is cheap rather than a
+project: Keycloak is already operator-managed on `cait-eu-cluster`, so it is client configuration
+rather than new infrastructure.
+
+- Authentication on the console and the API; the webhook routes keep `AllowAnonymous` and get
+  their own port ([#108](#108)).
+- The authenticated subject becomes the actor on approvals, feedback, acknowledgements and audit
+  rows, replacing the typed string.
+- At least two roles: read the console, versus approve an action. "Anyone who can log in may
+  approve a cluster mutation" is not a default worth shipping.
+- Decide what happens when the IdP is unreachable. Failing closed locks an operator out during
+  the outage they are being paged for; failing open makes the control decorative. This needs a
+  stated answer, not a default.
+
+**Size.** M.
+
+### 111. Every dependency is probed once at startup and the result is thrown into a log line
+
+**Symptom.** "Is it actually working?" is answerable only by reading pod logs. On the first
+production install this cost real time: `grafanaMcp.url` was missing the required `/mcp` path and
+the grafana-mcp caller token was the wrong credential, and both presented as *nothing happening*.
+
+**Cause.** The probing exists and is discarded. `OutboundStartupReport` is an `IHostedService`
+that asks every outbound dependency to describe itself and logs the answers **once, at
+`Information`, at startup**. Its own remarks state the problem exactly:
+
+> Everything outbound in this codebase degrades silently when it is not configured, which is the
+> right behaviour per delivery and a bad one overall: the failure mode of the whole feature is
+> that nothing happens, and "nothing happened" looks identical whether it was never switched on
+> or is broken.
+
+`Describe()` already exists on `AlertSilencer`, `GrafanaAnnotator`, `TeamsNotificationChannel`,
+`HttpNotificationChannel` and `ModeArm`. `RbacSelfCheck` fires around forty
+`SelfSubjectAccessReview` calls at startup and only logs. The grafana-mcp missing-tool warning
+added in v0.7.0 only logs.
+
+**The pattern is already on the page for two dependencies.** `Status.razor` renders the mode arms
+and watchdog staleness, and the doc comment on `AgentStatusView.ModeArms` says why: *"Every arm,
+rendered, so the status page can show why without a debugger."* That is this entry, applied to
+everything else.
+
+**Fix.** A connections panel on the existing status page — not a new page: the page already answers
+"is it working", and splitting one question across two URLs means checking both.
+
+- Rows for OIDC ([#110](#110)), Teams, the generic webhook, Grafana annotations, grafana-mcp
+  (including **how many allowlisted tools resolved**, since a connected server missing the Tempo
+  tools is [#31](#31) and would otherwise show green), Alertmanager, Kubernetes RBAC, Postgres.
+- **Three states, not two.** *Not configured* is a legitimate, deliberate choice and must not
+  render as a fault — a panel that shows red for a switched-off channel trains people to ignore
+  it. *Configured but unreachable* is red. *Reachable but degraded* is amber.
+- **Live, with a last-checked timestamp.** Startup-only is the defect; "it worked at 09:00" is
+  not "it works".
+- Add the components to `design/gallery.html`, per CLAUDE.md.
+
+**What this cannot show, and should not claim to:** there is no Prometheus connection. The agent
+never talks to Prometheus directly — it queries through grafana-mcp — so the honest row is
+"the Prometheus/Mimir datasource is reachable *via* grafana-mcp". The inbound Alertmanager path is
+the watchdog, which is already on the page.
+
+**Size.** S/M. Most of it is wiring `Describe()` output that already exists into `AgentStatusView`;
+the new engineering is re-probing and the three-state distinction.
+
+### 112. An incident cannot be assigned to anyone
+
+**Symptom.** With more than one person on call there is no way to say who is dealing with an
+incident, so two people open the same one or nobody does.
+
+**Cause.** `Incident` carries no assignee. The only `Owner*` fields on it are
+`TargetRef.OwnerKind`/`OwnerName`, which are the Kubernetes controller of the affected workload —
+a different meaning of the word entirely, and worth not overloading.
+
+**Fix, and the reason it is sequenced behind [#110](#110).** An assignee field, a "mine" filter on
+the incident list, and notification routed to the assignee rather than only to a channel. All of
+that is small. But assignment against free-text names is a sticky note: it cannot be enforced,
+cannot be filtered reliably, and the "mine" filter has nothing to compare against. Build it on
+authenticated subjects.
+
+**Size.** S, once [#110](#110) has landed.
 
 ---
 
@@ -3147,7 +3299,7 @@ change, it is not what this milestone is for, and the harness records these as `
 rule should carry a distinct kind (`Unschedulable`, or a new `PodNotReady`) and whether
 classification should prefer the most specific matching rule rather than the first.
 
-**Size.** M — S for the label, M for the first-rule-wins question behind it.
+**Size.** M — S for the label, M for the first-rule-wins question behind it. **Narrowed in v0.7.0, not closed:** `SignalKindSpecificity` makes classification prefer the most specific matching rule instead of the first, and `KubePodNotReady` now declares `hephaisto_kind: PodNotReady` — but c4 still flipped between runs of the release gate, so the race is smaller and still there. Stays open, and gates Auto.
 
 ### 71. An auto-executed action leaves `ApprovedBy` null, against its own documented invariant
 
@@ -3490,7 +3642,7 @@ honest options are a token cap derived from the cost cap and the resolved price,
 per-model pair recorded beside the price entry — which is what [#59](#59) already asks for on
 `MaxSteps`, for the same underlying reason: **the limits are per-model and the defaults are not.**
 
-**Size.** S for the harness, M for the product default.
+**Size.** S for the harness, M for the product default. **Fixed 2026-09-11.**
 
 ### 75. The outbox test reported a durability failure when its own precondition had failed
 
@@ -4553,7 +4705,7 @@ artifact should not ship fields with no consumer. That reasoning is sound and th
 at is real, so it is written down instead of being quietly worked around. Fixing the console is
 the prerequisite; the exporter follows.
 
-**Size.** S for the console, S to add them to the export afterwards. **Open.**
+**Size.** S for the console, S to add them to the export afterwards. **Fixed 2026-09-11.**
 
 ### 97. `--full` and `--mode Auto` defeat each other, and the release gate cannot confirm acting
 
@@ -4819,7 +4971,7 @@ termination reason beside the verdict landed in [#88](#88); reporting the *fault
 **Not reproduced.** The focused run had one fixture and one investigation, so it could not have
 shown this either way.
 
-**Size.** S to surface the exception; unknown for the fault itself. **Open.**
+**Size.** S to surface the exception; unknown for the fault itself. **The surfacing shipped 2026-09-11**; the malformed-response fault class behind it did not and is carried into v0.8.0 — it is a response SHAPE the SDK cannot parse, so the status-based retry v0.7.0 added does not cover it.
 
 ### 101. c13 is measured by one instrument and one model
 

@@ -1200,59 +1200,125 @@ ceiling.**
 
 ---
 
-## v0.8.0 — Someone else can install it
+## v0.8.0 — An on-call engineer can actually use it
 
-Provisional, and it has one confirmed item.
+v0.6.0's goal was *"someone else can run it"*. On **2026-09-11** Hephaisto was deployed to a real
+production cluster for the first time — `0.7.0-rc1`, Observe mode, through Rancher Fleet onto
+`cait-eu-cluster` — and then promoted to `v0.7.0` the same day with `src/` and `charts/`
+byte-identical to the candidate. That deployment is the first evidence this project has ever had
+about what the product is like to *operate*, as opposed to what it scores on a gate.
 
-v0.6.0's goal was *"Someone else can run it"*. On **2026-09-11** Hephaisto was deployed to a real
-production cluster for the first time — `0.7.0-rc1`, Observe mode, through Fleet — and that is the
-first evidence about whether the claim is true. It mostly is not. Installing it took a day of
-reading the chart's source to answer questions the documentation does not, and the guide that came
-out of it contained three mistakes made by someone who had just read the entire repository.
+It found two classes of thing, and the second is the release.
 
-**[#108](backlog.md#108) is the release's anchor**, and the sharpest part of it is that **a values
-file can be entirely wrong and still render a plausible install.** A Fleet bundle still carrying a
-placeholder `values.yaml` from a different chart templates with `exit=0` and produces three
-`PrometheusRule` objects on a cluster that already has its own, a NetworkPolicy pointed at a
-namespace that does not exist — so no alert can ever arrive and the agent reports itself healthy —
-and a Postgres host that is not there. `values.schema.json` has a `required` list that looks like
-it would catch this and cannot, because Helm validates values **after** merging the chart's own
-defaults: the schema validates the chart against itself.
+**Install ergonomics** ([#108](backlog.md#108)) — installing it took a day of reading the chart's
+source to answer questions the documentation does not, and the guide that came out of it contained
+three mistakes made by someone who had just read the whole repository. Most of that is a writing
+job and is deferred to v0.9.0. Two pieces are not, and are in scope here because other work depends
+on them.
 
-Three parts, and the first should not wait for the other two:
+**Operability** — and this is the theme. The agent diagnoses well and says so nowhere a person can
+act on. An incident cannot be closed, acknowledged or assigned; there is no identity, so every
+actor in the audit trail is a string somebody typed; and every dependency is probed once at startup
+and the result thrown into a log line. Installing it is a thing you do once. Working the incidents
+is daily, and it is the part nobody has done until now.
 
-1. **`additionalProperties: false` on the root of `values.schema.json`.** S. Turns a wrong values
-   file into a template error.
-2. **A getting-started guide**, answering the questions this deployment actually asked rather than
-   the ones the chart comments answer: what to switch off when Prometheus, Alertmanager and Grafana
-   already exist (the `alerts.*` group defaults **on**); how to reach the console (port-forward —
-   it shares 8080 with the unauthenticated webhook and there is deliberately no Ingress); which of
-   the **two** Grafana tokens goes where; what `observabilityNamespace` does when Grafana and
-   Alertmanager are in different namespaces; and copy-pasteable `kubectl create secret` commands,
-   which today exist only inside `scripts/bootstrap-secrets.sh` behind a dev-cluster context guard.
-3. **Two wrong comments in `values.yaml`** — `secrets.grafanaMcp` is described as a Grafana
-   service-account token and is actually the caller bearer, and `grafanaMcp.url` needs a `/mcp`
-   path that is stated only in an XML doc comment.
-4. **Serve `/webhooks` on its own port.** S, and the highest-leverage line in [#108](backlog.md#108).
-   The console, the API and the unauthenticated webhook share 8080, so there is no safe way to
-   expose the console: an Ingress behind the cluster's `hostNetwork` ingress controller needs an
-   `ipBlock` for node addresses, and that same hole admits forged alerts. Measured on 2026-09-11 as
-   a **504** with nothing in any log naming the NetworkPolicy that caused it. A second Kestrel
-   endpoint dissolves the problem; authenticating the console is the larger piece, wanted anyway
-   before `mode` is ever non-Observe.
+### What ships
 
-**Why this is a release and not a chore.** Every install before this one was performed by this
-repository, against a cluster this repository configured, from `values-dev.yaml` and
-`bootstrap-secrets.sh` — two files that encode all of the above correctly and neither of which a
-consumer uses. It is [#103](backlog.md#103)'s lesson one level up: the configuration that exposes
-the defect is the one nobody here has.
+| | Item | Backlog | Size | After |
+|---|---|---|---|---|
+| **F1** | Incident lifecycle: **close, acknowledge, reopen** | [#109](backlog.md#109) | M | — |
+| **F2** | **OIDC** against a real IdP, and identity on every actor | [#110](backlog.md#110) | M | — |
+| **F3** | **Connections panel** on the status page | [#111](backlog.md#111) | S/M | — |
+| **F4** | **Assignment**, with a "mine" filter and routed notification | [#112](backlog.md#112) | S | F2 |
+| **F5** | Serve **`/webhooks` on its own port** | [#108](backlog.md#108) | S | — |
+| **F6** | **`additionalProperties: false`** on the values schema root | [#108](backlog.md#108) | S | — |
 
-**Carried in from the v0.7.0 work, unchanged:** failure mode B (Kafka consumer throughput after an
-update), which needs a broker, a `SignalKind`, an alert, a runbook, a fixture and a
-Prometheus-backed verification predicate — `WorkloadIsHealthyAsync` reports **Passed** for a
-scaled consumer whose lag is still climbing. Also [#101](backlog.md#101) (c13 has no cassette) and
-the malformed-response fault class, which discards an investigation on a response shape the SDK
-cannot parse and is not covered by the status-based retry v0.7.0 added.
+Order: **F1 and F3 first.** F1 because the production install is accumulating escalated incidents
+right now and nothing can clear them; F3 because it is cheap and pays back on the next install.
+Then F2, with F4 behind it. F5 and F6 are small and can land whenever.
+
+### F1 — the one that is already hurting
+
+Three of the ten `IncidentState` members have no producer. `Expire()` and `Reopen()` have **zero
+callers**, and `Resolve()` has exactly one — `VerificationScheduler`, after an action it took was
+verified to have worked. In Observe the agent takes no action, and both escalation paths in
+`InvestigationCoordinator` are unconditional, so **every incident ends `Escalated` and `Escalated`
+has no exit.** `openIncidents` climbs for as long as the agent runs.
+
+Pull [#44](backlog.md#44) in with it — nothing sweeps `AwaitingApproval`, so `ApprovalTimedOut` has
+no producer either. Same defect class, one state over, and the roadmap has said "#44 first — a
+sweeper is an afternoon" for two releases.
+
+### F2 — why OIDC is the keystone rather than a feature
+
+The audit trail's integrity story is careful: the app serves as a non-owner Postgres role holding
+INSERT but not UPDATE or DELETE on `audit_events`, enforced in the migration. And then the `actor`
+column records whatever name somebody typed into a form. The immutability is real; the identity is
+not. F4 is a sticky note without it, F1's acknowledgement means nothing if anyone can claim to be
+anyone, and exposing the console currently needs an external identity proxy.
+
+Cheap on the first production cluster specifically: Keycloak is already operator-managed on
+`cait-eu-cluster`, so this is client configuration rather than new infrastructure.
+
+One thing needs a decided answer rather than a default: **what happens when the IdP is
+unreachable.** Failing closed locks an operator out during the outage they are being paged for;
+failing open makes the control decorative.
+
+### F3 — mostly surfacing what is already computed
+
+`OutboundStartupReport` already asks every outbound dependency to describe itself and logs the
+answers once, at startup. `Describe()` exists on `AlertSilencer`, `GrafanaAnnotator`,
+`TeamsNotificationChannel`, `HttpNotificationChannel` and `ModeArm`. `RbacSelfCheck` fires forty
+access reviews and only logs. The v0.7.0 missing-tool warning only logs. Meanwhile the status page
+already renders the mode arms *for exactly this reason* — *"so the status page can show why without
+a debugger."*
+
+Extend that page rather than adding one, and get two things right that the wiring does not give
+for free:
+
+- **Three states.** *Not configured* is a deliberate choice and must not render as a fault, or the
+  panel trains people to ignore it. *Configured but unreachable* is red. *Reachable but degraded*
+  is amber — a grafana-mcp that is connected but missing the Tempo tools is
+  [#31](backlog.md#31) and would otherwise show green.
+- **Live, with a last-checked time.** Startup-only is the defect being fixed.
+
+It does not get a Prometheus row: the agent never talks to Prometheus directly, only through
+grafana-mcp, and claiming otherwise would be the kind of status display this entry exists to stop.
+
+### Notifications
+
+Teams already works and needs no code — a channel and a route in the values file, and its iOS app
+pushes. That is available today and is not a release item. **Squadcast enrichment was considered
+and dropped.**
+
+### What is explicitly not in v0.8.0
+
+- **The getting-started guide** (M, [#108](backlog.md#108)) — deferred to v0.9.0 with the rest of
+  the install-ergonomics work.
+- **Failure mode B**, Kafka consumer throughput after an update: a broker, a `SignalKind`, an
+  alert, a runbook, a fixture, and a Prometheus-backed verification predicate, because
+  `WorkloadIsHealthyAsync` reports **Passed** for a scaled consumer whose lag is still climbing.
+- **Multi-cluster.** Five clusters exist; only `cait-eu-cluster` has Alertmanager and Grafana, and
+  everything remote-writes to Mimir with a `cluster` label — so one agent could *diagnose* all five
+  today and can only *act* where it holds RBAC. Whether Hephaisto is one-per-cluster or
+  one-observer-many-clusters is a product question, not a fix, and it deserves its own release.
+- **[#101](backlog.md#101)** (c13 has no cassette) and the **malformed-response fault class** —
+  carried, not scheduled. The latter is a response *shape* the SDK cannot parse, so the
+  status-based retry v0.7.0 added does not cover it.
+
+### Done when
+
+An on-call engineer signs in with their own account, sees at a glance which of the agent's
+dependencies are healthy, picks up an incident, acknowledges it, and closes it — and the audit
+trail names *them* rather than a string they typed.
+
+### The gate before Auto is ever considered
+
+Not v0.8.0's theme, but worth keeping written down in one place, because three of these are now
+scheduled above: [#70](backlog.md#70) (narrowed in v0.7.0, still open — a race can still decide an
+incident's kind), [#44](backlog.md#44), [#110](backlog.md#110) (an identity proxy is currently the
+only thing in front of `POST …/approve`), and re-establishing the acting path on the exact artifact
+being deployed rather than on the one before it.
 
 ---
 
