@@ -177,16 +177,10 @@ public sealed class IncidentStateMachine(IClock clock)
     {
         ArgumentNullException.ThrowIfNull(incident);
 
-        var evt = Transition(
-            incident,
-            [IncidentState.Resolved, IncidentState.Closed],
-            IncidentState.Investigating,
-            reason);
+        var evt = Transition(incident, [IncidentState.Resolved], IncidentState.Investigating, reason);
 
         incident.ResolvedAt = null;
         incident.Resolution = null;
-        incident.ClosedAt = null;
-        incident.ClosedBy = null;
         return evt;
     }
 
@@ -292,12 +286,20 @@ public sealed class IncidentStateMachine(IClock clock)
     }
 
     /// <summary>
-    /// Escalated | Expired -&gt; Investigating. A human asking for another attempt.
+    /// Escalated | Expired | Closed -&gt; Investigating. A human asking for another attempt.
     /// </summary>
     /// <remarks>
     /// <para>
+    /// <b>This is the single human door back into the lifecycle</b>, which is why
+    /// <see cref="IncidentState.Closed"/> is on it rather than on <see cref="Reopen"/>: a person
+    /// who closed an incident and then wants another look is asking for exactly what this method
+    /// already does - a named requester, the kill switch consulted, the work queued, the token
+    /// spend attributed. A second door would duplicate all four and be the one that drifts.
+    /// </para>
+    /// <para>
     /// Distinct from <see cref="Reopen"/>, which is for an incident that was genuinely fixed
-    /// and came back. This one is for an incident that was never diagnosed: the provider
+    /// and came back - a recurrence the agent notices, not a human changing their mind. That
+    /// edge still has no producer; see backlog #109 for the dedup question behind it. This one is for an incident that was never diagnosed: the provider
     /// returned an overload, the step budget ran out mid-thought, the model stalled. The
     /// cluster problem is unchanged and untouched - only our attempt to explain it failed -
     /// so there is nothing to un-resolve and no oscillation to record. Collapsing the two
@@ -332,11 +334,16 @@ public sealed class IncidentStateMachine(IClock clock)
 
         var evt = Transition(
             incident,
-            [IncidentState.Escalated, IncidentState.Expired],
+            [IncidentState.Escalated, IncidentState.Expired, IncidentState.Closed],
             IncidentState.Investigating,
             $"{reason} (requested by {requestedBy})");
 
         incident.EscalationReason = EscalationReason.None;
+
+        // A reopened incident is not closed any more, and leaving the closer's name on it would
+        // credit them with a decision that has since been undone.
+        incident.ClosedAt = null;
+        incident.ClosedBy = null;
         return evt;
     }
 

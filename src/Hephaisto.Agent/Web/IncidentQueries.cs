@@ -1012,6 +1012,207 @@ public sealed class IncidentQueries(
         SubmittedBy = f.SubmittedBy,
         At = f.At,
     };
+    /// <summary>
+    /// Closes an incident: a human is done with it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The gap this fills (backlog #109): before <see cref="IncidentState.Closed"/> existed, the
+    /// only terminal exits were <c>Resolved</c> - which only verification may grant, after an
+    /// action the agent took worked - and <c>Expired</c>, which had no caller. On an Observe
+    /// install the agent never acts, so every incident escalated and <c>Escalated</c> counts as
+    /// open. The open count climbed for as long as the process ran and nothing could bring it
+    /// down.
+    /// </para>
+    /// <para>
+    /// No kill-switch check, unlike <see cref="RequestReinvestigationAsync"/>. That one starts
+    /// work and spends tokens, so <c>AgentMode.Off</c> must be able to stop it; this one stops
+    /// work. Refusing to let an operator tidy their own incident list because the agent is
+    /// switched off would be the switch working against the person holding it.
+    /// </para>
+    /// </remarks>
+    public async Task<LifecycleResult> CloseIncidentAsync(
+        Guid incidentId,
+        string closedBy,
+        string reason,
+        CancellationToken ct)
+    {
+        var actor = closedBy?.Trim() ?? string.Empty;
+        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+
+        if (IncidentStateMachine.IsForbiddenGranter(actor))
+        {
+            return new LifecycleResult
+            {
+                Outcome = LifecycleOutcome.ForbiddenActor,
+                Detail = $"'{actor}' may not close an incident: closing is a human judgement.",
+            };
+        }
+
+        await using var scope = scopes.CreateAsyncScope();
+        var sp = scope.ServiceProvider;
+
+        var db = sp.GetRequiredService<HephaistoDbContext>();
+        var audit = sp.GetRequiredService<IAuditRepository>();
+        var stateMachine = sp.GetRequiredService<IncidentStateMachine>();
+
+        var incident = await db.Incidents
+            .Include(i => i.Events)
+            .FirstOrDefaultAsync(i => i.Id == incidentId, ct);
+
+        if (incident is null)
+        {
+            return new LifecycleResult { Outcome = LifecycleOutcome.NotFound };
+        }
+
+        var from = incident.State;
+        var eventsBefore = incident.Events.Count;
+        var note = string.IsNullOrWhiteSpace(reason) ? "Closed by an operator" : reason.Trim();
+
+        try
+        {
+            stateMachine.Close(incident, note, actor);
+        }
+        catch (InvalidStateTransitionException ex)
+        {
+            return new LifecycleResult { Outcome = LifecycleOutcome.IllegalState, Detail = ex.Message };
+        }
+
+        // Before any save touches the graph - the appended event carries a client-assigned
+        // Guid.CreateVersion7 key, so EF would otherwise emit an UPDATE matching nothing.
+        db.TrackNewIncidentChildren(incident, eventsBefore);
+
+        audit.Enlist(new AuditEvent
+        {
+            At = clock.UtcNow,
+            Type = "incident.closed",
+            IncidentId = incidentId,
+            Actor = actor,
+            Summary = $"closed from {from}",
+            Detail = JsonSerializer.Serialize(new { from = from.ToString(), reason = note }, AuditJson),
+        });
+
+        await db.SaveChangesAsync(ct);
+
+        notifier.Publish(new IncidentLiveEvent
+        {
+            IncidentId = incidentId,
+            Kind = IncidentLiveEventKind.StateChanged,
+            State = IncidentState.Closed,
+            Detail = $"closed by {actor}",
+            At = clock.UtcNow,
+        });
+
+        return new LifecycleResult { Outcome = LifecycleOutcome.Applied, Detail = note };
+    }
+
+    /// <summary>
+    /// Records that a person has picked an incident up. Changes no state.
+    /// </summary>
+    /// <remarks>
+    /// The first thing an on-call engineer needs and the cheapest thing to offer: "I have seen
+    /// this" long before "this is dealt with". Overwriting an existing acknowledgement is
+    /// allowed and is what a handover looks like, so the audit event records the previous holder
+    /// rather than the write being rejected.
+    /// </remarks>
+    public async Task<LifecycleResult> AcknowledgeIncidentAsync(
+        Guid incidentId,
+        string actorName,
+        CancellationToken ct)
+    {
+        var actor = actorName?.Trim() ?? string.Empty;
+        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+
+        if (IncidentStateMachine.IsForbiddenGranter(actor))
+        {
+            return new LifecycleResult
+            {
+                Outcome = LifecycleOutcome.ForbiddenActor,
+                Detail = $"'{actor}' may not acknowledge an incident: the point is that a person is looking at it.",
+            };
+        }
+
+        await using var scope = scopes.CreateAsyncScope();
+        var sp = scope.ServiceProvider;
+
+        var db = sp.GetRequiredService<HephaistoDbContext>();
+        var audit = sp.GetRequiredService<IAuditRepository>();
+        var stateMachine = sp.GetRequiredService<IncidentStateMachine>();
+
+        var incident = await db.Incidents.FirstOrDefaultAsync(i => i.Id == incidentId, ct);
+
+        if (incident is null)
+        {
+            return new LifecycleResult { Outcome = LifecycleOutcome.NotFound };
+        }
+
+        var previous = incident.AcknowledgedBy;
+
+        try
+        {
+            stateMachine.Acknowledge(incident, actor);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Terminal incidents need nobody to pick them up.
+            return new LifecycleResult { Outcome = LifecycleOutcome.IllegalState, Detail = ex.Message };
+        }
+
+        audit.Enlist(new AuditEvent
+        {
+            At = clock.UtcNow,
+            Type = "incident.acknowledged",
+            IncidentId = incidentId,
+            Actor = actor,
+            Summary = previous is null ? "acknowledged" : $"taken over from {previous}",
+            Detail = JsonSerializer.Serialize(
+                new { state = incident.State.ToString(), previousHolder = previous }, AuditJson),
+        });
+
+        await db.SaveChangesAsync(ct);
+
+        notifier.Publish(new IncidentLiveEvent
+        {
+            IncidentId = incidentId,
+            Kind = IncidentLiveEventKind.Acknowledged,
+            State = incident.State,
+            Detail = $"acknowledged by {actor}",
+            At = clock.UtcNow,
+        });
+
+        return new LifecycleResult { Outcome = LifecycleOutcome.Applied, Detail = actor };
+    }
+
+}
+
+/// <summary>What happened to a close or acknowledge request.</summary>
+/// <remarks>
+/// Shared by both because the answers are the same four and the console renders them the same
+/// way. Deliberately NOT shared with <see cref="ReinvestigateOutcome"/>, which has two outcomes
+/// these cannot have - a saturated queue and an Off kill switch - because neither of these starts
+/// any work.
+/// </remarks>
+public enum LifecycleOutcome
+{
+    /// <summary>It took.</summary>
+    Applied = 0,
+
+    NotFound = 1,
+
+    /// <summary>Not a state this can be done from. Already closed, or already terminal.</summary>
+    IllegalState = 2,
+
+    /// <summary>A model identity tried to pass itself off as a person.</summary>
+    ForbiddenActor = 3,
+}
+
+public sealed record LifecycleResult
+{
+    public required LifecycleOutcome Outcome { get; init; }
+
+    public string? Detail { get; init; }
+
+    public bool Accepted => Outcome == LifecycleOutcome.Applied;
 }
 
 /// <summary>Why a re-investigation request did or did not take.</summary>

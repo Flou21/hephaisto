@@ -24,6 +24,15 @@ public static class IncidentEndpoints
         group.MapPost("/{id:guid}/feedback", SubmitFeedbackAsync).WithName("SubmitIncidentFeedback");
         group.MapPost("/{id:guid}/reinvestigate", ReinvestigateAsync).WithName("ReinvestigateIncident");
 
+        // Lifecycle. Separate routes rather than one with a verb in the body, for the reason the
+        // approval pair gives below: the act is visible in an access log and cannot be defaulted.
+        //
+        // There is no un-acknowledge and no un-close. Reopening is Reinvestigate, which already
+        // owns the named-requester rule, the kill-switch check and the queueing that starting
+        // work needs - a second door would duplicate all four and be the one that drifts.
+        group.MapPost("/{id:guid}/close", CloseAsync).WithName("CloseIncident");
+        group.MapPost("/{id:guid}/acknowledge", AcknowledgeAsync).WithName("AcknowledgeIncident");
+
         // Approval. Two routes rather than one with a boolean, so a truncated or mistyped body
         // cannot turn a denial into an approval - the verb is in the path, where it is visible
         // in an access log and cannot be defaulted.
@@ -242,6 +251,71 @@ public static class IncidentEndpoints
         };
     }
 
+    /// <summary>
+    /// Closes an incident. The only terminal exit a human has.
+    /// </summary>
+    /// <remarks>
+    /// 409 rather than 400 for an illegal state: closing an already-closed incident is a
+    /// conflict with where it currently is, not a malformed request, and the console needs to
+    /// tell those apart to say anything useful.
+    /// </remarks>
+    private static async Task<IResult> CloseAsync(
+        Guid id,
+        [FromBody] CloseIncidentRequest request,
+        IncidentQueries queries,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (string.IsNullOrWhiteSpace(request.ClosedBy))
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["closedBy"] =
+                [
+                    "Say who is closing this. It is written to closed_by verbatim and is the only "
+                    + "record that a person, rather than the agent, decided this needed no more "
+                    + "attention.",
+                ],
+            });
+        }
+
+        var result = await queries.CloseIncidentAsync(id, request.ClosedBy, request.Reason ?? string.Empty, ct);
+
+        return Render(result);
+    }
+
+    /// <summary>Records that somebody has picked this up. Changes no state.</summary>
+    private static async Task<IResult> AcknowledgeAsync(
+        Guid id,
+        [FromBody] AcknowledgeIncidentRequest request,
+        IncidentQueries queries,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (string.IsNullOrWhiteSpace(request.Actor))
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["actor"] = ["Say who is picking this up - attribution, not authentication."],
+            });
+        }
+
+        var result = await queries.AcknowledgeIncidentAsync(id, request.Actor, ct);
+
+        return Render(result);
+    }
+
+    private static IResult Render(LifecycleResult result) => result.Outcome switch
+    {
+        LifecycleOutcome.Applied => TypedResults.Ok(result),
+        LifecycleOutcome.NotFound => TypedResults.NotFound(),
+        LifecycleOutcome.IllegalState => TypedResults.Conflict(result),
+        LifecycleOutcome.ForbiddenActor => TypedResults.Conflict(result),
+        _ => TypedResults.Json(result, statusCode: 500),
+    };
+
     private static Task<Results<Ok<ApprovalResult>, NotFound, Conflict<ApprovalResult>, ValidationProblem>>
         ApproveAsync(Guid id, Guid actionId, ApprovalRequest request, IncidentQueries queries, CancellationToken ct) =>
         DecideAsync(id, actionId, approve: true, request, queries, ct);
@@ -328,6 +402,24 @@ public sealed record FeedbackRequest
 }
 
 /// <summary>A human asking for another investigation attempt.</summary>
+/// <summary>Who is closing it, and why.</summary>
+/// <remarks>
+/// The reason is optional and the closer is not. A closure with no name is indistinguishable
+/// from the agent having done it, which is the one thing this endpoint must never look like;
+/// a closure with no reason is merely terse.
+/// </remarks>
+public sealed record CloseIncidentRequest
+{
+    public string? ClosedBy { get; init; }
+
+    public string? Reason { get; init; }
+}
+
+public sealed record AcknowledgeIncidentRequest
+{
+    public string? Actor { get; init; }
+}
+
 public sealed record ReinvestigateRequest
 {
     /// <summary>Required and non-empty. See the handler for why.</summary>

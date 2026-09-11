@@ -532,4 +532,179 @@ public sealed class IncidentStateMachineTests
         IncidentStateMachine.IsForbiddenGranter(IncidentStateMachine.ModelActor).Should().BeTrue();
         IncidentStateMachine.IsForbiddenGranter("gemini").Should().BeTrue();
     }
+
+    // --- Closed: the terminal exit a human has (backlog #109) --------------------------------
+
+    /// <summary>
+    /// Escalated is the state almost every closure starts from, and it is deliberately NOT in
+    /// the state machine's OpenStates array, so Close lists it separately.
+    /// </summary>
+    [Theory]
+    [InlineData(IncidentState.Detected)]
+    [InlineData(IncidentState.Triaging)]
+    [InlineData(IncidentState.Investigating)]
+    [InlineData(IncidentState.AwaitingApproval)]
+    [InlineData(IncidentState.Acting)]
+    [InlineData(IncidentState.Verifying)]
+    [InlineData(IncidentState.Escalated)]
+    public void Close_IsReachableFromEveryOpenStateIncludingEscalated(IncidentState from)
+    {
+        var incident = Given.Incident(from);
+
+        Machine().Close(incident, "not our problem", "flo");
+
+        incident.State.Should().Be(IncidentState.Closed);
+        incident.IsOpen.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// The reason Closed exists at all: on an Observe install every incident escalates, and
+    /// before this edge an escalated incident had no terminal exit that meant "handled".
+    /// </summary>
+    [Fact]
+    public void Close_TakesAnEscalatedIncidentOutOfTheOpenSet()
+    {
+        var incident = Given.Incident(IncidentState.Investigating);
+        Machine().Escalate(incident, EscalationReason.PolicyDenied);
+
+        incident.IsOpen.Should().BeTrue("an escalated incident is still somebody's problem");
+
+        Machine().Close(incident, "dealt with by hand", "flo");
+
+        incident.IsOpen.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Close_RecordsWhoClosedItAndWhen()
+    {
+        var incident = Given.Incident(IncidentState.Escalated);
+
+        var evt = Machine().Close(incident, "rolled back manually", "flo");
+
+        incident.ClosedBy.Should().Be("flo");
+        incident.ClosedAt.Should().NotBeNull();
+        evt.Reason.Should().Contain("rolled back manually").And.Contain("flo");
+        evt.From.Should().Be(IncidentState.Escalated);
+        evt.To.Should().Be(IncidentState.Closed);
+    }
+
+    /// <summary>
+    /// Closing is now the cheapest way to make an incident disappear, so the model may not do it
+    /// for the same reason it may not grant a resolution.
+    /// </summary>
+    [Theory]
+    [InlineData("hephaisto/model")]
+    [InlineData("model")]
+    [InlineData("llm")]
+    [InlineData("GEMINI")]
+    public void Close_RefusesTheModelAsCloser(string actor)
+    {
+        var incident = Given.Incident(IncidentState.Escalated);
+
+        var act = () => Machine().Close(incident, "done", actor);
+
+        act.Should().Throw<ArgumentException>();
+        incident.State.Should().Be(IncidentState.Escalated, "the refusal must not half-apply");
+    }
+
+    [Fact]
+    public void Close_RequiresACloser()
+    {
+        var incident = Given.Incident(IncidentState.Escalated);
+
+        var act = () => Machine().Close(incident, "done", "   ");
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    /// <summary>
+    /// A settled state may not be re-settled: closing a Resolved incident would overwrite a fact
+    /// verification established with a weaker one, and closing a Closed one records it twice.
+    /// </summary>
+    [Theory]
+    [InlineData(IncidentState.Resolved)]
+    [InlineData(IncidentState.Expired)]
+    [InlineData(IncidentState.Suppressed)]
+    [InlineData(IncidentState.Closed)]
+    public void Close_RefusesEveryTerminalState(IncidentState from)
+    {
+        var incident = Given.Incident(from);
+
+        var act = () => Machine().Close(incident, "done", "flo");
+
+        act.Should().Throw<InvalidStateTransitionException>();
+    }
+
+    /// <summary>A closed incident can be picked back up, through the one human door.</summary>
+    [Fact]
+    public void Reinvestigate_ReopensAClosedIncidentAndClearsTheClosure()
+    {
+        var incident = Given.Incident(IncidentState.Escalated);
+        Machine().Close(incident, "thought it was fine", "flo");
+
+        Machine().Reinvestigate(incident, "it came back", "flo");
+
+        incident.State.Should().Be(IncidentState.Investigating);
+        incident.ClosedBy.Should().BeNull("leaving the closer on it would credit an undone decision");
+        incident.ClosedAt.Should().BeNull();
+    }
+
+    // --- acknowledgement: not a transition ---------------------------------------------------
+
+    /// <summary>
+    /// The whole point: acknowledging is orthogonal to the lifecycle. An acknowledged incident is
+    /// still Escalated, and modelling it as a state would have forced a choice between the two.
+    /// </summary>
+    [Theory]
+    [InlineData(IncidentState.Investigating)]
+    [InlineData(IncidentState.AwaitingApproval)]
+    [InlineData(IncidentState.Escalated)]
+    public void Acknowledge_RecordsTheHolderAndLeavesTheStateAlone(IncidentState from)
+    {
+        var incident = Given.Incident(from);
+
+        Machine().Acknowledge(incident, "flo");
+
+        incident.State.Should().Be(from);
+        incident.AcknowledgedBy.Should().Be("flo");
+        incident.AcknowledgedAt.Should().NotBeNull();
+        incident.Events.Should().BeEmpty("it is not a transition, so it appends no state event");
+    }
+
+    /// <summary>Overwriting is allowed: that is what a handover looks like.</summary>
+    [Fact]
+    public void Acknowledge_OverwritesThePreviousHolder()
+    {
+        var incident = Given.Incident(IncidentState.Escalated);
+
+        Machine().Acknowledge(incident, "flo");
+        Machine().Acknowledge(incident, "someone-else");
+
+        incident.AcknowledgedBy.Should().Be("someone-else");
+    }
+
+    [Theory]
+    [InlineData(IncidentState.Resolved)]
+    [InlineData(IncidentState.Expired)]
+    [InlineData(IncidentState.Suppressed)]
+    [InlineData(IncidentState.Closed)]
+    public void Acknowledge_RefusesASettledIncident(IncidentState from)
+    {
+        var incident = Given.Incident(from);
+
+        var act = () => Machine().Acknowledge(incident, "flo");
+
+        act.Should().Throw<InvalidOperationException>();
+    }
+
+    [Fact]
+    public void Acknowledge_RefusesTheModel()
+    {
+        var incident = Given.Incident(IncidentState.Escalated);
+
+        var act = () => Machine().Acknowledge(incident, "hephaisto/model");
+
+        act.Should().Throw<ArgumentException>();
+        incident.AcknowledgedBy.Should().BeNull();
+    }
 }

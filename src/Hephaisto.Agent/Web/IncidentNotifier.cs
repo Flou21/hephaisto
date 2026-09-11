@@ -23,6 +23,12 @@ public enum IncidentLiveEventKind
     InvestigationCompleted = 5,
     PlanReady = 6,
     FeedbackSubmitted = 7,
+
+    /// <summary>
+    /// Somebody picked it up. Its own kind rather than a StateChanged, because acknowledging
+    /// changes no state - the console updates the holder, not the state cell.
+    /// </summary>
+    Acknowledged = 8,
 }
 
 public sealed record IncidentLiveEvent
