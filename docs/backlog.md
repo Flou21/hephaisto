@@ -1301,6 +1301,88 @@ confirm nothing fires.
 
 **Size.** S.
 
+### 108. Installing the chart is a research project, and a wrong values file renders a plausible install
+
+**Symptom.** Deploying Hephaisto to its first real cluster took a day of reading the chart's own
+source to answer questions the documentation does not, and produced **three separate mistakes in a
+guide written by someone who had just read the whole repository**. A consumer has no such
+advantage.
+
+**The one that matters most: a values file can be entirely wrong and still render.** A Fleet bundle
+whose `values.yaml` was still the placeholder from a different chart —
+
+```yaml
+controller:
+  metrics:
+    enabled: true
+```
+
+— renders with `exit=0`, no warning, and produces a **complete, plausible, all-defaults install**:
+three `PrometheusRule` objects on a cluster that already has its own rules, a NetworkPolicy
+admitting `hephaisto-obs` on a cluster whose Alertmanager is in `prometheus` (so no alert can ever
+arrive, and the agent reports itself healthy — see [#103](#103)'s failure shape), a `PodMonitor`
+labelled `release: kube-prometheus-stack`, and a Postgres host of `postgres.hephaisto` that does
+not exist.
+
+**Cause.** `values.schema.json` declares `required: [image, mode, observabilityNamespace,
+prometheusOperator, policy, secrets, networkPolicy]`, which looks like it would catch this and
+cannot: Helm validates the values **after** merging the chart's own defaults, so every `required`
+key is always satisfied. And the root schema has no `additionalProperties: false`, so the
+operator's stray keys are accepted in silence. The schema therefore validates the chart against
+itself. It cannot fail.
+
+**The other two mistakes, both from documentation that is wrong or absent rather than merely thin:**
+
+1. **`grafanaMcp.url` needs the `/mcp` path and nothing says so where anyone would look.** The
+   value is used verbatim as the streamable-http endpoint. `values.yaml` documents this key at
+   length — what it costs to omit, how to find the datasource uids — and never shows a URL with a
+   path. The only statement of the requirement is an XML doc comment on `GrafanaOptions.McpUrl`.
+   Omit it and every tool is lost, which `values.yaml` itself warns is "much worse at diagnosis".
+
+2. **`secrets.grafanaMcp` is described as something it usually is not.** `values.yaml` says *"The
+   grafana-mcp bearer token: key `token`. Cannot exist before install - only Grafana can mint
+   it"*, which reads unambiguously as a Grafana service-account token. On mcp-grafana ≥ 1.1.0 —
+   which is what `--server-auth-token` exists for — there are **two** tokens: a caller bearer the
+   MCP server validates (`MCP_GRAFANA_SERVER_TOKEN`), and grafana-mcp's own Grafana credential,
+   which Hephaisto never sees. `secrets.grafanaMcp` is the **former**. This repo's own
+   `scripts/bootstrap-secrets.sh` gets it right — it generates `grafana-mcp-caller-token` with
+   `openssl rand -hex 32` and mints `grafana-mcp-grafana-token` separately — so the code and the
+   script disagree with the chart comment, and the chart comment is the one an operator reads.
+
+   The consequence is not a 401 that names itself. It is worse: guidance to scope that token
+   "Viewer" to bound what `grafana_api_request` can do, which does nothing at all, because the
+   scope that actually bounds it belongs to a token on the MCP server.
+
+**Why none of this was caught.** Every install before this one was performed by this repository,
+against a cluster this repository configured, from `values-dev.yaml` and
+`scripts/bootstrap-secrets.sh`. Those two files encode all of the above correctly and neither is
+what a consumer uses. It is [#103](#103)'s lesson one level up: the configuration that exposes the
+defect is the one nobody here has, and v0.6.0 was the release that first invited a stranger to
+have it.
+
+**Fix.** Three parts, and the first is the cheap one.
+
+- **Make a wrong values file fail.** `additionalProperties: false` on the root of
+  `values.schema.json`, so a key the chart does not know is a `helm template` error rather than a
+  silent default. Worth extending to the nested objects for the same reason.
+- **Write a getting-started guide**, and have it answer the questions this deployment actually
+  asked, in order: *I already run Prometheus, Alertmanager and Grafana — what do I turn off?* (the
+  `alerts.*` group, which defaults **on** and therefore duplicates rules a real cluster already
+  has); *how do I reach the console?* (port-forward, because the console shares port 8080 with the
+  unauthenticated webhook and there is deliberately no Ingress); *what are the two Grafana tokens
+  and which one goes where?*; *what does `observabilityNamespace` do if my Grafana and my
+  Alertmanager are in different namespaces?* (it takes one value, and the answer is to forward
+  Grafana's alerts to Alertmanager rather than to widen the policy); and a copy-pasteable set of
+  `kubectl create secret` commands, which currently exist only as shell inside
+  `bootstrap-secrets.sh` behind a dev-cluster context guard.
+- **Correct the two comments above**, and add an example URL with `/mcp` to `values.yaml`.
+
+**Not a nice-to-have.** v0.6.0's stated goal was *"Someone else can run it"*, and this is the first
+evidence about whether that is true. Installing it is currently gated on reading the source — which
+is a thing the AGPL guarantees you *may* do, not a thing a deployment should *require*.
+
+**Size.** M. The schema change is S and should not wait for the guide.
+
 ---
 
 ## Dead or unreachable code

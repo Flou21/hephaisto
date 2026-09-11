@@ -1200,6 +1200,55 @@ ceiling.**
 
 ---
 
+## v0.8.0 — Someone else can install it
+
+Provisional, and it has one confirmed item.
+
+v0.6.0's goal was *"Someone else can run it"*. On **2026-09-11** Hephaisto was deployed to a real
+production cluster for the first time — `0.7.0-rc1`, Observe mode, through Fleet — and that is the
+first evidence about whether the claim is true. It mostly is not. Installing it took a day of
+reading the chart's source to answer questions the documentation does not, and the guide that came
+out of it contained three mistakes made by someone who had just read the entire repository.
+
+**[#108](backlog.md#108) is the release's anchor**, and the sharpest part of it is that **a values
+file can be entirely wrong and still render a plausible install.** A Fleet bundle still carrying a
+placeholder `values.yaml` from a different chart templates with `exit=0` and produces three
+`PrometheusRule` objects on a cluster that already has its own, a NetworkPolicy pointed at a
+namespace that does not exist — so no alert can ever arrive and the agent reports itself healthy —
+and a Postgres host that is not there. `values.schema.json` has a `required` list that looks like
+it would catch this and cannot, because Helm validates values **after** merging the chart's own
+defaults: the schema validates the chart against itself.
+
+Three parts, and the first should not wait for the other two:
+
+1. **`additionalProperties: false` on the root of `values.schema.json`.** S. Turns a wrong values
+   file into a template error.
+2. **A getting-started guide**, answering the questions this deployment actually asked rather than
+   the ones the chart comments answer: what to switch off when Prometheus, Alertmanager and Grafana
+   already exist (the `alerts.*` group defaults **on**); how to reach the console (port-forward —
+   it shares 8080 with the unauthenticated webhook and there is deliberately no Ingress); which of
+   the **two** Grafana tokens goes where; what `observabilityNamespace` does when Grafana and
+   Alertmanager are in different namespaces; and copy-pasteable `kubectl create secret` commands,
+   which today exist only inside `scripts/bootstrap-secrets.sh` behind a dev-cluster context guard.
+3. **Two wrong comments in `values.yaml`** — `secrets.grafanaMcp` is described as a Grafana
+   service-account token and is actually the caller bearer, and `grafanaMcp.url` needs a `/mcp`
+   path that is stated only in an XML doc comment.
+
+**Why this is a release and not a chore.** Every install before this one was performed by this
+repository, against a cluster this repository configured, from `values-dev.yaml` and
+`bootstrap-secrets.sh` — two files that encode all of the above correctly and neither of which a
+consumer uses. It is [#103](backlog.md#103)'s lesson one level up: the configuration that exposes
+the defect is the one nobody here has.
+
+**Carried in from the v0.7.0 work, unchanged:** failure mode B (Kafka consumer throughput after an
+update), which needs a broker, a `SignalKind`, an alert, a runbook, a fixture and a
+Prometheus-backed verification predicate — `WorkloadIsHealthyAsync` reports **Passed** for a
+scaled consumer whose lag is still climbing. Also [#101](backlog.md#101) (c13 has no cassette) and
+the malformed-response fault class, which discards an investigation on a response shape the SDK
+cannot parse and is not covered by the status-based retry v0.7.0 added.
+
+---
+
 ## The project track — landing page, docs, and the rest
 
 **Scheduled into v0.6.0 above**; this section is retained as the reference material for it, because
