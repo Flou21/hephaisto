@@ -1233,6 +1233,13 @@ Three parts, and the first should not wait for the other two:
 3. **Two wrong comments in `values.yaml`** — `secrets.grafanaMcp` is described as a Grafana
    service-account token and is actually the caller bearer, and `grafanaMcp.url` needs a `/mcp`
    path that is stated only in an XML doc comment.
+4. **Serve `/webhooks` on its own port.** S, and the highest-leverage line in [#108](backlog.md#108).
+   The console, the API and the unauthenticated webhook share 8080, so there is no safe way to
+   expose the console: an Ingress behind the cluster's `hostNetwork` ingress controller needs an
+   `ipBlock` for node addresses, and that same hole admits forged alerts. Measured on 2026-09-11 as
+   a **504** with nothing in any log naming the NetworkPolicy that caused it. A second Kestrel
+   endpoint dissolves the problem; authenticating the console is the larger piece, wanted anyway
+   before `mode` is ever non-Observe.
 
 **Why this is a release and not a chore.** Every install before this one was performed by this
 repository, against a cluster this repository configured, from `values-dev.yaml` and

@@ -10,7 +10,7 @@ broken, with the evidence for each.
 Versions are set by the git tag through MinVer; the chart version and the app version are always
 the same number.
 
-## v0.7.0 — unreleased
+## v0.7.0 — 2026-09-11
 
 **It survives a bad deploy.** The agent can now roll a Deployment back, there is finally a
 fixture whose fault has a *cause* rather than merely a presence, and the incident card says when

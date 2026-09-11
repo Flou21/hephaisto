@@ -1377,11 +1377,45 @@ have it.
   `bootstrap-secrets.sh` behind a dev-cluster context guard.
 - **Correct the two comments above**, and add an example URL with `/mcp` to `values.yaml`.
 
+**A fourth finding, from the same deployment: there is no safe way to expose the console.**
+
+The console, the JSON API and `/webhooks/alertmanager` all answer on port **8080**, and the agent
+has no authentication of its own — there is no `AddAuthentication` or `RequireAuthorization`
+anywhere in `Hephaisto.Agent`. The NetworkPolicy is therefore the webhook's entire authentication,
+and the chart is right to ship no Ingress template.
+
+But an operator still has to look at the console, and "port-forward, forever" is not an answer for
+a team. Every route out is a bad trade **because the two things share a port**:
+
+| Route | What it costs |
+|---|---|
+| Ingress + identity proxy in front | The proxy must cover the whole host with no path exception, because `/webhooks` is on it |
+| Ingress behind a `hostNetwork` controller | Needs an `ipBlock` for node addresses, because a hostNetwork pod carries the node's address and no `namespaceSelector` can match it. That hole also admits forged alerts from any hostNetwork pod on those nodes |
+| A tunnel (cloudflared et al.) | Works cleanly — an ordinary pod, so `namespaceSelector` matches — but is a whole extra component to run |
+
+The middle row was measured on 2026-09-11: with the chart's NetworkPolicy in place and
+`ingress-nginx` running `hostNetwork: true` as a DaemonSet, the Ingress returned **504 Gateway
+Timeout** — Calico drops rather than rejects, so the TCP connect hangs rather than failing fast,
+and nothing in any log names the policy. It is the kubelet-probe trap in the chart's own
+`extraIngressCIDRs` comment, one consumer over.
+
+**Fix.** Separate the two concerns so the network layer is not asked to serve both:
+
+- **Serve `/webhooks` on its own port** (a second Kestrel endpoint), so a NetworkPolicy can protect
+  the webhook while the console is exposed by any ordinary means. This is the small change and it
+  dissolves the whole table above.
+- Or **authenticate the console and API**, which is the larger piece of work and is wanted anyway
+  before `mode` is ever non-Observe — right now an identity proxy is the only thing in front of
+  `POST /api/incidents/{id}/actions/{actionId}/approve`.
+
+Either way the getting-started guide gains the section it currently cannot have.
+
 **Not a nice-to-have.** v0.6.0's stated goal was *"Someone else can run it"*, and this is the first
 evidence about whether that is true. Installing it is currently gated on reading the source — which
 is a thing the AGPL guarantees you *may* do, not a thing a deployment should *require*.
 
-**Size.** M. The schema change is S and should not wait for the guide.
+**Size.** M for the install ergonomics; the schema change is S and should not wait for the guide.
+The webhook port split is S and is the highest-leverage line in this entry.
 
 ---
 
