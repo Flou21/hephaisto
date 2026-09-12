@@ -205,8 +205,17 @@ secrets:
   # only one is a normal install, and one carrying neither is a valid self-hosted install
   # that points both Llm__Endpoint and Llm__EmbeddingEndpoint at local servers.
   llm: hephaisto-llm
-  # The grafana-mcp bearer token: key `token`. Cannot exist before install - only Grafana can
-  # mint it - so this is necessarily a reference to something you create first.
+  # The bearer token Hephaisto PRESENTS TO grafana-mcp: key `token`.
+  #
+  # NOT a Grafana credential, and the distinction cost a day on the first production install.
+  # mcp-grafana >= 1.1.0 has two separate tokens: one it validates callers against
+  # (MCP_GRAFANA_SERVER_TOKEN, which is this one) and its OWN Grafana service-account token,
+  # which Hephaisto never sees. So this must match whatever your grafana-mcp was started with -
+  # generate a fresh one and every tool call comes back 401, and the agent silently degrades to
+  # Kubernetes-only investigation.
+  #
+  # It follows that scoping THIS token cannot limit what the model reaches in Grafana. That is
+  # decided by grafana-mcp's own credential, on the MCP server, out of this chart's reach.
   grafanaMcp: grafana-mcp-caller-token
   # A Grafana service-account token that may WRITE annotations: key `token`. Editor is enough,
   # and is deliberately less than grafana-mcp's Admin. Only read when grafana.url is set.
@@ -344,6 +353,13 @@ otel:
 # Kubernetes reads only - which works, and is much worse at diagnosis. Empty url disables it,
 # and the agent logs a warning saying so rather than starting silently toolless.
 grafanaMcp:
+  # INCLUDE THE PATH. The value is used verbatim as the streamable-http endpoint, so
+  # `http://grafana-mcp:8000` connects to nothing and every Grafana tool is lost - which
+  # presents as the agent simply being worse at diagnosis, with no error anywhere.
+  #
+  #   url: http://grafana-mcp:8000/mcp
+  #
+  # Empty disables it, and the agent says so at startup rather than starting silently toolless.
   url: ""
 
   # Datasource name -> uid, put straight into the agent's environment card so it does not have

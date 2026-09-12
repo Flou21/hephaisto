@@ -1417,6 +1417,23 @@ is a thing the AGPL guarantees you *may* do, not a thing a deployment should *re
 **Size.** M for the install ergonomics; the schema change is S and should not wait for the guide.
 The webhook port split is S and is the highest-leverage line in this entry.
 
+**Three of the four parts shipped in v0.8.0.** `additionalProperties: false` on the schema root
+and on the thirteen nested objects whose key set is closed - a values file belonging to another
+chart is now a template error rather than a plausible all-defaults install, and locking it first
+required declaring `grafana`, `grafanaMcp.datasourceUids` and `postgres.appUser`, which the schema
+had never declared and nothing had ever compared. `/webhooks` on its own port, so
+`networkPolicy.extraIngressCIDRs` now reaches the console and not the receiver - letting a node
+address read a dashboard no longer lets it inject a forged alert. And both wrong comments
+corrected: `secrets.grafanaMcp` is the caller bearer rather than a Grafana credential, and
+`grafanaMcp.url` needs its `/mcp` path.
+
+**The getting-started guide is what remains, and it carries to v0.9.0** with the rest of the
+install-ergonomics work. Writing one was deferred deliberately rather than forgotten: v0.8.0's
+theme became operating the agent rather than installing it, on the grounds that installing is
+something you do once and had just been done.
+
+**Size of what is left.** M, and it is a writing job.
+
 ### 109. An escalated incident is terminal, so the open list only grows
 
 **Symptom.** On the first production install — Observe mode, `cait-eu-cluster`, 2026-09-11 — every
