@@ -140,6 +140,110 @@ else
                 </div>
             </div>
         }
+
+        @* The lifecycle controls (#109). Until these existed an escalated incident was somebody's
+           problem forever: Resolved is granted only by verification after an action worked, and on
+           an Observe install the agent never acts - so nothing could leave the open set and the
+           count on the status page only ever climbed. *@
+        @if (incident.IsOpen)
+        {
+            <div class="hp-callout callout-lifecycle" data-testid="lifecycle">
+                <span class="glyph">x</span>
+                <div class="hp-retry">
+                    <div>
+                        @if (incident.AcknowledgedBy is { Length: > 0 } holder)
+                        {
+                            <strong data-testid="acknowledged-by">@holder is on this.</strong>
+                            <span class="hp-muted">
+                                Acknowledged @(incident.AcknowledgedAt is { } at ? Display.Timestamp(at) : "—"). Closing it says
+                                it needs no more attention; it stays out of the open count until somebody
+                                reopens it.
+                            </span>
+                        }
+                        else
+                        {
+                            <strong>nobody has picked this up.</strong>
+                            <span class="hp-muted">
+                                Acknowledging says you are on it and stops it being swept away on a timer.
+                                Closing says it needs no more attention.
+                            </span>
+                        }
+                    </div>
+
+                    <div class="hp-retry-controls">
+                        <input class="hp-retry-name" placeholder="your name" aria-label="your name"
+                               data-testid="lifecycle-actor"
+                               @bind="_submittedBy" @bind:event="oninput" />
+                        <input class="hp-retry-name" placeholder="reason (optional)" aria-label="closing reason"
+                               data-testid="close-reason"
+                               @bind="_closeReason" @bind:event="oninput" />
+                        <button type="button" class="hp-submit"
+                                data-testid="acknowledge"
+                                disabled="@(_lifecycleBusy || string.IsNullOrWhiteSpace(_submittedBy))"
+                                @onclick="AcknowledgeAsync">
+                            @(_lifecycleBusy ? "…" : "acknowledge")
+                        </button>
+                        <button type="button" class="hp-submit"
+                                data-testid="close"
+                                disabled="@(_lifecycleBusy || string.IsNullOrWhiteSpace(_submittedBy))"
+                                @onclick="CloseAsync">
+                            @(_lifecycleBusy ? "…" : "close")
+                        </button>
+                    </div>
+
+                    @if (_lifecycleError is { Length: > 0 })
+                    {
+                        <span class="hp-error" data-testid="lifecycle-error">
+                            <span class="glyph">!!</span> @_lifecycleError
+                        </span>
+                    }
+                    else if (_lifecycleMessage is { Length: > 0 })
+                    {
+                        <span class="hp-yes" data-testid="lifecycle-ok">
+                            <span class="glyph">+</span> @_lifecycleMessage
+                        </span>
+                    }
+                </div>
+            </div>
+        }
+        else if (incident.State == IncidentState.Closed)
+        {
+            @* Reopening goes through re-investigation, which is the single human door back in:
+               it owns the named-requester rule, the kill-switch check and the queueing.
+
+               Deliberately a separate control rather than folded into the CanReinvestigate
+               banner above. That banner means "no diagnosis was produced", and its
+               all-findings-null clause is the fix for the bug where it printed exactly that on
+               top of a 0.92-confidence finding. A closed incident usually HAS a diagnosis. *@
+            <div class="hp-callout callout-lifecycle" data-testid="closed-banner">
+                <span class="glyph">x</span>
+                <div class="hp-retry">
+                    <div>
+                        <strong data-testid="closed-by">closed by @incident.ClosedBy.</strong>
+                        <span class="hp-muted">
+                            Reopening starts a fresh investigation and spends the budget again.
+                        </span>
+                    </div>
+
+                    <div class="hp-retry-controls">
+                        <input class="hp-retry-name" placeholder="your name" aria-label="your name"
+                               data-testid="reopen-actor"
+                               @bind="_submittedBy" @bind:event="oninput" />
+                        <button type="button" class="hp-submit"
+                                data-testid="reopen"
+                                disabled="@(_retrying || string.IsNullOrWhiteSpace(_submittedBy))"
+                                @onclick="ReinvestigateAsync">
+                            @(_retrying ? "queueing…" : "reopen")
+                        </button>
+                    </div>
+
+                    @if (_retryError is { Length: > 0 })
+                    {
+                        <span class="hp-error"><span class="glyph">!!</span> @_retryError</span>
+                    }
+                </div>
+            </div>
+        }
     </header>
 
     @* ---------------------------------------------------------------
@@ -976,6 +1080,14 @@ else
 
     private bool _retrying;
 
+    // Lifecycle (#109). One busy flag for both buttons: they are mutually exclusive acts on the
+    // same incident and letting a second land while the first is in flight is how an incident
+    // gets closed by one person and acknowledged by another in the same second.
+    private bool _lifecycleBusy;
+    private string _closeReason = string.Empty;
+    private string? _lifecycleError;
+    private string? _lifecycleMessage;
+
     private string? _approvalActor;
     private Guid? _deciding;
     private readonly Dictionary<Guid, (bool Ok, string Text)> _decisionMessages = [];
@@ -1247,6 +1359,78 @@ else
         _incident is { InProgress: null } incident
         && incident.State is IncidentState.Escalated or IncidentState.Expired
         && incident.Investigations.All(v => v.PrimaryFinding is null);
+
+
+    /// <summary>
+    /// Acknowledging. Changes no state, so the page reloads to pick up the holder rather than
+    /// waiting for a state-change event that will never arrive.
+    /// </summary>
+    private async Task AcknowledgeAsync() =>
+        await RunLifecycleAsync(
+            () => Queries.AcknowledgeIncidentAsync(Id, _submittedBy, _cts?.Token ?? CancellationToken.None),
+            "acknowledged — it will not be swept away while your name is on it.");
+
+    /// <summary>Closing: the terminal exit a human has.</summary>
+    private async Task CloseAsync() =>
+        await RunLifecycleAsync(
+            () => Queries.CloseIncidentAsync(Id, _submittedBy, _closeReason, _cts?.Token ?? CancellationToken.None),
+            "closed — it is out of the open count.");
+
+    /// <remarks>
+    /// Shared because the two differ only in which call they make and what they say afterwards.
+    /// The name is remembered on success for the same reason the retry control remembers it, and
+    /// a failure to remember never fails the operation - it has already happened.
+    /// </remarks>
+    private async Task RunLifecycleAsync(Func<Task<LifecycleResult>> act, string success)
+    {
+        if (_incident is null || string.IsNullOrWhiteSpace(_submittedBy))
+        {
+            return;
+        }
+
+        _lifecycleBusy = true;
+        _lifecycleError = null;
+        _lifecycleMessage = null;
+
+        try
+        {
+            var result = await act();
+
+            if (result.Accepted)
+            {
+                _lifecycleMessage = success;
+
+                try
+                {
+                    await Js.InvokeVoidAsync("hephaisto.storageSet", NameStorageKey, _submittedBy.Trim());
+                }
+                catch (JSException)
+                {
+                    // A convenience; the incident has already moved.
+                }
+
+                await LoadAsync();
+            }
+            else
+            {
+                // Detail names the specific refusal - an illegal transition, or a model identity
+                // trying to pass itself off as a person. The bare outcome still beats silence.
+                _lifecycleError = result.Detail ?? result.Outcome.ToString();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Navigated away mid-request.
+        }
+        catch (Exception ex)
+        {
+            _lifecycleError = ex.Message;
+        }
+        finally
+        {
+            _lifecycleBusy = false;
+        }
+    }
 
     private async Task ReinvestigateAsync()
     {

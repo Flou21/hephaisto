@@ -49,6 +49,11 @@ test.describe('the design language', () => {
     ['form-controls', 'Form controls'],
     ['callouts', 'Callouts'],
     ['verification', 'Verification rows'],
+    // #109's controls. Registered here as well as appearing in the full-page shot, because the
+    // full-page baseline is the fragile one - every section below an insertion shifts it - and a
+    // component covered only by that shot is a component the net will stop covering the first
+    // time somebody re-baselines past a diff.
+    ['lifecycle', 'Incident lifecycle'],
   ] as const;
 
   /**

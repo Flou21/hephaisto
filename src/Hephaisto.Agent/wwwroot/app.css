@@ -589,6 +589,10 @@ button:disabled {
 .callout-resolved { border-left-color: var(--green); }
 .callout-error { border-left-color: var(--red); color: var(--red); }
 .callout-retry { border-left-color: var(--blue, var(--fg-faint)); }
+/* The lifecycle controls (#109). Dim rather than a status colour: acknowledging and closing are
+   things a person DOES, not a state the cluster is in, so the callout should not compete with the
+   resolved/escalated colours immediately above it. */
+.callout-lifecycle { border-left-color: var(--fg-dim); }
 
 /* The retry control. Deliberately quiet - it is an escape hatch on a page whose
    subject is usually the investigation itself, and it spends money when pressed. */

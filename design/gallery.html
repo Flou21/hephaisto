@@ -376,6 +376,111 @@ Events:
       </div>
     </section>
 
+    <!-- =====================================================================================
+         Appended rather than inserted. Inserting a section shifts every shot below it by a
+         pixel or two and re-baselines eighteen files for no reason - learned the hard way in
+         v0.7.0.
+         ===================================================================================== -->
+    <section class="g-sec">
+      <h2>Incident lifecycle</h2>
+      <p class="g-note">
+        The controls from backlog #109. Until these existed an escalated incident was terminal in
+        practice: <code>Resolved</code> is granted only by verification after an action worked, and
+        on an Observe install the agent never acts &mdash; so nothing left the open set and the
+        count only climbed.
+      </p>
+
+      <p class="g-note">
+        Unclaimed. Acknowledging is a separate act from closing, and the cheaper one: an on-call
+        engineer needs &ldquo;I have seen this&rdquo; long before &ldquo;this is dealt with&rdquo;.
+      </p>
+      <div class="hp-callout callout-lifecycle" data-testid="lifecycle">
+        <span class="glyph">x</span>
+        <div class="hp-retry">
+          <div>
+            <strong>nobody has picked this up.</strong>
+            <span class="hp-muted">
+              Acknowledging says you are on it and stops it being swept away on a timer. Closing
+              says it needs no more attention.
+            </span>
+          </div>
+          <div class="hp-retry-controls">
+            <input class="hp-retry-name" placeholder="your name" aria-label="your name" />
+            <input class="hp-retry-name" placeholder="reason (optional)" aria-label="closing reason" />
+            <button type="button" class="hp-submit">acknowledge</button>
+            <button type="button" class="hp-submit">close</button>
+          </div>
+        </div>
+      </div>
+
+      <p class="g-note" style="margin-top:.8rem">
+        Claimed. The holder is named, because the whole value of acknowledging is that the next
+        person can see it is taken.
+      </p>
+      <div class="hp-callout callout-lifecycle">
+        <span class="glyph">x</span>
+        <div class="hp-retry">
+          <div>
+            <strong>flo is on this.</strong>
+            <span class="hp-muted">
+              Acknowledged 2026-09-12 09:14:02Z. Closing it says it needs no more attention; it
+              stays out of the open count until somebody reopens it.
+            </span>
+          </div>
+          <div class="hp-retry-controls">
+            <input class="hp-retry-name" placeholder="your name" aria-label="your name" />
+            <input class="hp-retry-name" placeholder="reason (optional)" aria-label="closing reason" />
+            <button type="button" class="hp-submit">acknowledge</button>
+            <button type="button" class="hp-submit">close</button>
+          </div>
+          <span class="hp-yes"><span class="glyph">+</span> closed &mdash; it is out of the open count.</span>
+        </div>
+      </div>
+
+      <p class="g-note" style="margin-top:.8rem">
+        Closed, and reopenable. Its own control rather than the re-investigate banner: that banner
+        means &ldquo;no diagnosis was produced&rdquo;, and a closed incident usually has one.
+      </p>
+      <div class="hp-callout callout-lifecycle" data-testid="closed-banner">
+        <span class="glyph">x</span>
+        <div class="hp-retry">
+          <div>
+            <strong>closed by flo.</strong>
+            <span class="hp-muted">Reopening starts a fresh investigation and spends the budget again.</span>
+          </div>
+          <div class="hp-retry-controls">
+            <input class="hp-retry-name" placeholder="your name" aria-label="your name" />
+            <button type="button" class="hp-submit">reopen</button>
+          </div>
+        </div>
+      </div>
+
+      <p class="g-note" style="margin-top:.8rem">
+        A refusal. The model may not close an incident, for the same reason it may not grant a
+        resolution: one closed on its own say-so is indistinguishable in the database from one a
+        person dealt with.
+      </p>
+      <div class="hp-callout callout-lifecycle">
+        <span class="glyph">x</span>
+        <div class="hp-retry">
+          <div><strong>nobody has picked this up.</strong></div>
+          <span class="hp-error" data-testid="lifecycle-error">
+            <span class="glyph">!!</span>
+            'hephaisto/model' may not close an incident: closing is a human judgement.
+          </span>
+        </div>
+      </div>
+
+      <p class="g-note" style="margin-top:.8rem">
+        And the state cell itself. <code>x</code> is dim rather than faint: faint is for the states
+        nobody acted on &mdash; suppressed, expired &mdash; and this one a person finished.
+      </p>
+      <div>
+        <span class="hp-state st-closed"><span class="glyph">x</span> closed</span>
+        <span class="hp-state st-expired" style="margin-left:1.2rem"><span class="glyph">.</span> expired</span>
+        <span class="hp-state st-escalated" style="margin-left:1.2rem"><span class="glyph">^</span> escalated</span>
+      </div>
+    </section>
 
   </main>
 </div>

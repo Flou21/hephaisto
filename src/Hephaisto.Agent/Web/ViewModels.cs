@@ -440,6 +440,35 @@ public sealed record IncidentDetailView
 
     public string? Resolution { get; init; }
 
+    /// <summary>Who closed it, and when. Null unless <see cref="State"/> is Closed.</summary>
+    public string? ClosedBy { get; init; }
+
+    public DateTimeOffset? ClosedAt { get; init; }
+
+    /// <summary>Who has picked it up. Independent of <see cref="State"/>.</summary>
+    /// <remarks>
+    /// Acknowledging changes no state, so this can be set on an incident in any open state -
+    /// including Escalated, which is where an Observe install leaves all of them.
+    /// </remarks>
+    public string? AcknowledgedBy { get; init; }
+
+    public DateTimeOffset? AcknowledgedAt { get; init; }
+
+    /// <summary>
+    /// Mirrors <c>Incident.IsOpen</c>, projected because the view model is not the entity and the
+    /// console needs the same answer.
+    /// </summary>
+    /// <remarks>
+    /// A fifth place that answers "is this open" - see <c>IncidentStateDefinitionsAgreeTests</c>
+    /// for the other four and why they do not all agree. This one is computed from
+    /// <see cref="State"/> rather than carried, so it cannot drift from the enum it reads.
+    /// </remarks>
+    public bool IsOpen => State is not (
+        IncidentState.Resolved
+        or IncidentState.Expired
+        or IncidentState.Suppressed
+        or IncidentState.Closed);
+
     public IReadOnlyList<SignalView> Signals { get; init; } = [];
 
     public IReadOnlyList<TransitionView> Transitions { get; init; } = [];
