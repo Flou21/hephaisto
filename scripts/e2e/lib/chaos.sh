@@ -314,6 +314,96 @@ chaos_apply() {
     pass "applied $(applied_count) chaos fixtures simultaneously"
 }
 
+# ---------------------------------------------------------------------------------------
+# Recovery, so one run can cover BOTH halves of the release gate (#97)
+# ---------------------------------------------------------------------------------------
+# THE PROBLEM THIS SOLVES. `--full --mode Auto` defeated itself. Twelve simultaneous fixtures put
+# more than `policy.clusterUnhealthyCeiling` (0.3) of the cluster's pods in a bad state, gate 7
+# reads that as a cluster-wide event and CORRECTLY denies every action, and the act phase then
+# reported "the agent did not act" - which measured the harness, not the agent. So the release
+# gate needed three separate runs, and #97 says plainly that widening the ceiling to make the
+# test pass would be breaking a working safety gate.
+#
+# So: diagnose against everything, then put the cluster BACK, then act. The denial is a property
+# of how much is broken at once, so the fix is to stop having everything broken at once.
+#
+# TWO THINGS THIS GETS RIGHT AND AN EARLIER DRAFT DID NOT.
+#
+# It keeps the act fixture. Deleting and re-applying it would throw away the incident under test
+# and the investigation already attached to it, and the act phase would then race a fresh
+# investigation and report "no action" for a third reason that is still not about the agent.
+# So the act fixture stays broken - that is the point of it - and only its eleven neighbours go.
+#
+# It counts what the agent counts. The fraction is over pods in ALL namespaces, excluding
+# Succeeded (ClusterFactsRules.UnhealthyFraction), where unhealthy means Pending, Failed, or any
+# container not Ready. Measuring only the chaos namespace would read ~100% and never settle;
+# waiting for zero cluster-wide would never settle either, because the act fixture is meant to
+# stay unhealthy. The wait is on the real number crossing the real ceiling, with margin.
+#
+# And it waits on the cluster rather than on a clock. A fixed sleep would be too short on a slow
+# node - denying for the right reason again, and looking identical to the bug - or wastefully
+# long on a fast one.
+chaos_reset_for_acting() {
+    local keep="${1:-$ACT_FIXTURE}"
+
+    # Margin below the ceiling, not the ceiling itself. The fraction is sampled here and again by
+    # the agent seconds later, and a terminating pod can tip a borderline reading back over.
+    local ceiling="${CHAOS_UNHEALTHY_TARGET:-0.20}"
+
+    say "clearing the other fixtures so gate 7 can allow an action on $keep"
+
+    local f file cleared=""
+    for f in $APPLIED; do
+        [ "$f" = "$keep" ] && continue
+
+        file=$(ls "$REPO/infra/chaos/${f}-"*.yaml 2>/dev/null | head -1)
+        if [ -n "$file" ]; then
+            kc delete -f "$file" --ignore-not-found --wait=false >/dev/null 2>&1
+            cleared="${cleared:+$cleared }$f"
+        fi
+    done
+
+    if [ -z "$cleared" ]; then
+        say "nothing to clear besides $keep"
+        return 0
+    fi
+
+    say "deleted: $cleared - waiting for the cluster-wide unhealthy fraction to fall below $ceiling"
+
+    local deadline=$((SECONDS + 600)) fraction="1.0"
+    while [ $SECONDS -lt $deadline ]; do
+        fraction=$(chaos_unhealthy_fraction)
+
+        if awk "BEGIN { exit !($fraction < $ceiling) }"; then
+            pass "cluster recovered for acting" \
+                "unhealthy fraction $fraction is below $ceiling with $keep still faulted"
+            return 0
+        fi
+
+        sleep 15
+    done
+
+    # A warning, not a die. The act assertions are the thing that decides the gate; if the
+    # cluster did not settle they will deny and say so, and that denial is then a real finding
+    # about this node rather than a harness artefact hidden behind an early exit.
+    warn "unhealthy fraction is still $fraction after 10m; gate 7 may still deny the action"
+}
+
+# The same arithmetic the agent does, from kubectl. Pending/Failed, or any container not Ready,
+# over every pod that is not Succeeded, across all namespaces.
+chaos_unhealthy_fraction() {
+    kc get pods --all-namespaces \
+        -o jsonpath='{range .items[*]}{.status.phase}{"|"}{range .status.containerStatuses[*]}{.ready}{","}{end}{"\n"}{end}' \
+        2>/dev/null | awk -F'|' '
+            $1 == "Succeeded" { next }
+            {
+                total++
+                if ($1 == "Pending" || $1 == "Failed") { bad++; next }
+                if ($2 ~ /false/) { bad++ }
+            }
+            END { if (total == 0) print "0.0"; else printf "%.3f", bad / total }'
+}
+
 chaos_await_incidents() {
     local want; want=$(applied_count)
 

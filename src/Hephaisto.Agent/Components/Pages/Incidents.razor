@@ -291,6 +291,8 @@ else
             OpenOnly = _state == "open",
             Kind = Enum.TryParse<SignalKind>(_kind, ignoreCase: true, out var k) ? k : null,
             Namespace = string.IsNullOrEmpty(_namespace) ? null : _namespace,
+            // Kept in step with PAGE_LIMIT in scripts/e2e/ui/tests/console.spec.ts, which compares
+            // this table's row count against the same API call - #49 was the two drifting apart.
             Limit = 200,
         };
 

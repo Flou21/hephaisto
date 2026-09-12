@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { open, status, parsePercent } from './helpers';
+import { incidents, open, parsePercent, settle, status } from './helpers';
 
 // These run at the end of scripts/e2e/run.sh, against a live agent that has just investigated
 // four real faults. They assert that the console SHOWS what the API reports - the API is
@@ -9,30 +9,46 @@ import { open, status, parsePercent } from './helpers';
 
 test.describe('the console', () => {
   test('the incident list shows one row per fault, and each links to its detail', async ({ page }) => {
-    await open(page, '/');
-    await expect(page.locator('h1')).toHaveText('incidents');
-
-    const rows = page.getByTestId('incident-row');
-    await expect(rows.first()).toBeVisible();
-
     // Compared against the API rather than a hardcoded number, so the spec needs no edit when
     // --fixtures changes. Note the endpoint: the page's default filter is `open`, and
     // `/api/incidents` with no state parameter is open-only too. Asking for `state=all` here
     // would compare a filtered table against an unfiltered list and fail for the wrong reason.
-    const res = await page.request.get('/api/incidents?limit=100');
-    const open_incidents = await res.json();
-    expect(open_incidents.length).toBeGreaterThan(0);
-    await expect(rows).toHaveCount(open_incidents.length);
+    //
+    // #49: the cap must MATCH the page's own, not be any convenient number - `incidents()` uses
+    // INCIDENT_LIMIT and refuses a truncated list. This asked for 100 while the page asked for
+    // 200, so on a nightly run with 103 open incidents the table honestly showed 103 and the
+    // spec compared it against a truncated 100: `Expected: 100, Received: 103`, a red gate
+    // reporting a defect in itself.
+    //
+    // RETRIED AS A UNIT, and for the same reason the cap is shared: the agent keeps opening
+    // incidents while this suite runs, so a table read at T compared against a list read at
+    // T+e differs by whatever opened in between - which is a second way for this assertion to
+    // go red while both halves are telling the truth. Re-reading both together converges as
+    // soon as one pair is consistent, and a persistent disagreement still fails.
+    let open_incidents: { id: string; targetName: string }[] = [];
 
-    // And every rendered row must name a real incident. Count agreement alone would pass on a
-    // table of the right size showing the wrong workloads.
-    const targets = await rows.evaluateAll(els =>
-      els.map(e => (e as HTMLElement).dataset.target).filter(Boolean));
-    const known = new Set(open_incidents.map((i: { targetName: string }) => i.targetName));
-    expect(targets.length).toBe(open_incidents.length);
-    for (const t of targets) {
-      expect(known, `the table shows ${t}, which /api/incidents does not list`).toContain(t);
-    }
+    await settle(async () => {
+      await open(page, '/');
+      await expect(page.locator('h1')).toHaveText('incidents');
+
+      const rows = page.getByTestId('incident-row');
+      await expect(rows.first()).toBeVisible();
+
+      open_incidents = await incidents(page);
+      expect(open_incidents.length).toBeGreaterThan(0);
+
+      await expect(rows).toHaveCount(open_incidents.length, { timeout: 5_000 });
+
+      // And every rendered row must name a real incident. Count agreement alone would pass on a
+      // table of the right size showing the wrong workloads.
+      const targets = await rows.evaluateAll(els =>
+        els.map(e => (e as HTMLElement).dataset.target).filter(Boolean));
+      const known = new Set(open_incidents.map(i => i.targetName));
+      expect(targets.length).toBe(open_incidents.length);
+      for (const t of targets) {
+        expect(known, `the table shows ${t}, which /api/incidents does not list`).toContain(t);
+      }
+    });
   });
 
   test('a diagnosis is reachable from the list and cites its evidence', async ({ page }) => {
@@ -55,9 +71,7 @@ test.describe('the console', () => {
     // the storage provisioner) usually carry a diagnosis too and kept the list non-empty. On
     // the run that exposed it, the one such investigation had faulted, so there was nothing
     // left to find.
-    const openRes = await page.request.get('/api/incidents?limit=100');
-    const resolvedRes = await page.request.get('/api/incidents?state=Resolved&limit=100');
-    const withDiagnosis = [...(await openRes.json()), ...(await resolvedRes.json())]
+    const withDiagnosis = [...await incidents(page), ...await incidents(page, 'state=Resolved')]
       .filter((i: { hasDiagnosis: boolean }) => i.hasDiagnosis);
     // Not a skip. `ui/run.sh` fails the phase on any skip at all - that is #1's fix and it is
     // load-bearing - so a spec that opts out on a missing precondition takes the whole phase

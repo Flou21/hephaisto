@@ -35,7 +35,12 @@ once and it had just been done; working the incidents is daily.
 - **A connections panel on the status page** ([#111](docs/backlog.md#111)). Four states, not two:
   *not configured* is a choice and must not render as a fault, and *degraded* is separate from
   *healthy* because a grafana-mcp connected without its Tempo tools is [#31](docs/backlog.md#31)
-  and would otherwise show green.
+  and would otherwise show green. Six rows: postgres, kubernetes, grafana-mcp,
+  grafana-annotations, notifications, and the IdP. The IdP row matters most when it is red -
+  authentication fails closed, so an unreachable Keycloak presents as "Hephaisto is down", and
+  this is the only thing that says which of the two actually broke. It fetches the discovery
+  document rather than a health endpoint, because that is the resource sign-in actually needs,
+  and a 200 carrying no `jwks_uri` reports *degraded* rather than green.
 - **Assignment** ([#112](docs/backlog.md#112)), distinct from acknowledgement — assigning is
   second person, acknowledging is first, and the gap between them is the signal.
 - **`/webhooks` on its own port**, so a NetworkPolicy can protect the unauthenticated receiver

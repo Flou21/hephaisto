@@ -1,5 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { open, settle, status } from './helpers';
+import { incidents, open, settle, status } from './helpers';
+
+/** Just enough of the action shape for this suite; the API sends more. */
+interface Action { id: string; state: string; approvedBy?: string }
+interface Investigation { plan?: { actions?: Action[] } }
 
 /**
  * The console's half of the acting story.
@@ -35,17 +39,13 @@ test.describe('acting', () => {
   });
 
   test('an action awaiting approval offers approve and deny, and nothing else does', async ({ page }) => {
-    const res = await page.request.get('/api/incidents?limit=100');
-    expect(res.ok()).toBeTruthy();
-
-    const incidents = await res.json();
-    expect(Array.isArray(incidents)).toBeTruthy();
+    const found = await incidents(page);
 
     // Find one with a plan, via the API, so the page is checked against the database rather
     // than against whatever it happens to render.
     let withPlan: { id: string; awaiting: boolean } | null = null;
 
-    for (const summary of incidents) {
+    for (const summary of found) {
       const detail = await page.request.get(`/api/incidents/${summary.id}`);
       if (!detail.ok()) continue;
 
@@ -109,15 +109,12 @@ test.describe('acting', () => {
    * authorise something the agent is not permitted to do.
    */
   test('approval is offered only where policy asked for it, and it requires a name', async ({ page }) => {
-    const res = await page.request.get('/api/incidents?limit=100');
-    expect(res.ok()).toBeTruthy();
-
-    const incidents = await res.json();
+    const found = await incidents(page);
 
     let awaiting: string | null = null;
     let anyPlan: string | null = null;
 
-    for (const summary of incidents) {
+    for (const summary of found) {
       const detail = await page.request.get(`/api/incidents/${summary.id}`);
       if (!detail.ok()) continue;
 
@@ -168,4 +165,93 @@ test.describe('acting', () => {
       await expect(page.getByTestId('approve')).toBeEnabled({ timeout: 2_000 });
     });
   });
+
+  /**
+   * And then CLICK it.
+   *
+   * This is the gap the v0.7.0 plan recorded as known-uncovered: the spec above fills the actor
+   * box and asserts the button enables, and stops there - so `AwaitingApproval -> Approved` had
+   * no cluster coverage at all, on the one control in the product that authorises a change to a
+   * real cluster. Everything after the click was unit-tested only.
+   *
+   * It runs in the `ui` phase, after `act` has finished asserting, so approving something here
+   * cannot perturb the acting result.
+   *
+   * THE ASSERTION IS MODE-DEPENDENT, and that is the point rather than a weakness:
+   *
+   *   - in Auto, approval is the last gate, so the action must leave AwaitingApproval
+   *   - in anything less, approval must be RECORDED and the action must still not execute
+   *
+   * The second branch is the more valuable of the two and is new coverage for the promise the
+   * deployment guide makes out loud: in Observe, nothing executes ever - including something a
+   * human explicitly approved. A click that executed anyway would be the worst defect this
+   * project could ship, and until now nothing clicked.
+   */
+  test('approving an action records the approver, and the mode still decides whether it runs',
+    async ({ page }) => {
+      const s = await status(page);
+      const found = await incidents(page);
+
+      let awaiting: { incident: string; actionId: string } | null = null;
+
+      for (const summary of found) {
+        const detail = await page.request.get(`/api/incidents/${summary.id}`);
+        if (!detail.ok()) continue;
+
+        const body = await detail.json();
+        const actions: Action[] = (body.investigations ?? [])
+          .flatMap((i: Investigation) => i.plan?.actions ?? []);
+
+        const pending = actions.find(a => a.state === 'AwaitingApproval');
+        if (pending) {
+          awaiting = { incident: summary.id, actionId: pending.id };
+          break;
+        }
+      }
+
+      // Stated, not silent. In Observe the kill-switch gate denies long before risk routing can
+      // produce an approval, so there is legitimately nothing to click - and `ui/run.sh` fails
+      // the phase on any skip (#1), so this has to be an early return rather than a test.skip.
+      if (awaiting === null) {
+        expect(String(s.effectiveMode).toLowerCase(),
+          'an Auto run produced no action awaiting approval, so the approve path went untested')
+          .not.toBe('auto');
+        return;
+      }
+
+      await open(page, `/incidents/${awaiting.incident}`);
+
+      await settle(async () => {
+        await page.getByTestId('approval-actor').fill('e2e-approver');
+        await expect(page.getByTestId('approve')).toBeEnabled({ timeout: 2_000 });
+        await page.getByTestId('approve').click();
+
+        // Read back from the API, never from the page's own next render - the rule this suite
+        // follows everywhere. A console that agrees with itself proves nothing about the row
+        // that was actually written.
+        const after = await page.request.get(`/api/incidents/${awaiting!.incident}`)
+          .then(r => r.json());
+
+        const actions: Action[] = (after.investigations ?? [])
+          .flatMap((i: Investigation) => i.plan?.actions ?? []);
+
+        const action = actions.find(a => a.id === awaiting!.actionId);
+
+        expect(action, 'the approved action vanished from the incident').toBeTruthy();
+        expect(action!.state,
+          'the click did not reach the circuit: the action is still AwaitingApproval')
+          .not.toBe('AwaitingApproval');
+
+        // approved_by is the only record of who authorised a change to a cluster. An approved
+        // action with an empty one is an audit row that cannot answer the question it exists for.
+        expect(action!.approvedBy).toBe('e2e-approver');
+
+        if (String(s.effectiveMode).toLowerCase() !== 'auto') {
+          expect(action!.state,
+            `effective mode is ${s.effectiveMode} and the action executed anyway - a human ` +
+            `approval must not be able to lift the deployment's ceiling`)
+            .not.toBe('Executed');
+        }
+      });
+    });
 });

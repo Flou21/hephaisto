@@ -6,6 +6,7 @@ using k8s;
 using Hephaisto.Agent.Kubernetes;
 using Hephaisto.Agent.Llm;
 using Hephaisto.Agent.Notifications;
+using Hephaisto.Agent.Options;
 using Hephaisto.Agent.Persistence;
 using Hephaisto.Core.Abstractions;
 
@@ -204,6 +205,91 @@ public sealed class GrafanaAnnotationProbe(
                 ? new ConnectionReport(Name, ConnectionState.Healthy, $"{o.Url} answered.", at)
                 : new ConnectionReport(
                     Name, ConnectionState.Unreachable, $"{o.Url} answered HTTP {(int)response.StatusCode}.", at);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new ConnectionReport(Name, ConnectionState.Unreachable, PostgresProbe.Trim(ex.Message), at);
+        }
+    }
+}
+
+/// <summary>
+/// The identity provider, probed by fetching the discovery document.
+/// </summary>
+/// <remarks>
+/// <b>Why this row is worth a panel entry of its own.</b> Authentication fails CLOSED - if the IdP
+/// is unreachable the console is unreachable, which is the behaviour that was explicitly asked for
+/// and is the right one. But it means the failure presents as "Hephaisto is down", and the first
+/// question an operator then has is whether Hephaisto or Keycloak is the thing that broke. Without
+/// this row that question is answered by reading pod logs.
+///
+/// The discovery document, specifically, rather than a liveness endpoint on the IdP: it is the
+/// exact resource the OIDC handler fetches, over the same network path, so a row that says Healthy
+/// here means sign-in can actually resolve its signing keys. An IdP that is up but serving a realm
+/// this deployment is not configured for would answer a health check and fail discovery.
+///
+/// <c>NotConfigured</c> when <c>Auth:Enabled</c> is false, which is the default and the state every
+/// e2e run and every pre-v0.8.0 install is in. That is not a warning - it is the honest answer to
+/// "is an IdP wired up", and the panel's four states exist so it does not have to be dressed up as
+/// a failure.
+/// </remarks>
+public sealed class OidcProbe(
+    HttpClient http,
+    IOptionsMonitor<AuthOptions> options,
+    IClock clock) : IConnectionProbe
+{
+    public string Name => "oidc";
+
+    public async Task<ConnectionReport> ProbeAsync(CancellationToken ct)
+    {
+        var at = clock.UtcNow;
+        var o = options.CurrentValue;
+
+        if (!o.Enabled)
+        {
+            return ConnectionReport.NotConfigured(
+                Name, "Auth:Enabled is false; the console is open and actors are self-declared.", at);
+        }
+
+        // Enabled with no authority cannot start at all - AddHephaistoAuth throws on it - so
+        // reaching this branch would mean the options changed under a running host.
+        if (string.IsNullOrWhiteSpace(o.Authority))
+        {
+            return new ConnectionReport(
+                Name, ConnectionState.Unreachable, "Auth:Enabled is true but Auth:Authority is empty.", at);
+        }
+
+        try
+        {
+            // Built the way the handler builds it. `new Uri(base, relative)` would drop a realm
+            // path segment when the authority has no trailing slash, and point at the host root.
+            var discovery = new Uri($"{o.Authority.TrimEnd('/')}/.well-known/openid-configuration");
+
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(5));
+
+            using var response = await http.GetAsync(discovery, timeout.Token);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return new ConnectionReport(
+                    Name,
+                    ConnectionState.Unreachable,
+                    $"{discovery} answered HTTP {(int)response.StatusCode}.",
+                    at);
+            }
+
+            // A 200 that is not a discovery document is the reverse-proxy-error-page case, and it
+            // would otherwise read as Healthy while sign-in fails on a parse error.
+            var body = await response.Content.ReadAsStringAsync(timeout.Token);
+
+            return body.Contains("\"jwks_uri\"", StringComparison.Ordinal)
+                ? new ConnectionReport(Name, ConnectionState.Healthy, $"{o.Authority} published its keys.", at)
+                : new ConnectionReport(
+                    Name,
+                    ConnectionState.Degraded,
+                    $"{discovery} answered 200 but published no jwks_uri.",
+                    at);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

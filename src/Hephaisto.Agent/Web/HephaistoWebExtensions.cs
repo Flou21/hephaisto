@@ -53,6 +53,11 @@ public static class HephaistoWebExtensions
         services.AddSingleton<IConnectionProbe, NotificationChannelProbe>();
         services.AddHttpClient<IConnectionProbe, GrafanaAnnotationProbe>();
 
+        // Its own HttpClient rather than a shared one: the discovery fetch must not inherit the
+        // Grafana probe's bearer token, and an IdP that 401s a request carrying someone else's
+        // credential would report Unreachable for a reason that is not about the IdP.
+        services.AddHttpClient<IConnectionProbe, OidcProbe>();
+
         services.TryAddSingleton<ConnectionHealthCache>();
         services.AddHostedService(sp => sp.GetRequiredService<ConnectionHealthCache>());
 

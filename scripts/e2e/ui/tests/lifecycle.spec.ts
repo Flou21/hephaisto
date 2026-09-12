@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { open, settle, status } from './helpers';
+import { incidents, open, settle, status } from './helpers';
 
 // Incident lifecycle (backlog #109, #112): acknowledge, assign, close.
 //
@@ -15,8 +15,7 @@ import { open, settle, status } from './helpers';
 test.describe('the incident lifecycle', () => {
   /** The first open incident on the list, which in an Observe run is always Escalated. */
   async function firstOpenIncident(page: import('@playwright/test').Page) {
-    const res = await page.request.get('/api/incidents?limit=100');
-    const list = await res.json();
+    const list = await incidents(page);
     expect(list.length).toBeGreaterThan(0);
     return list[0];
   }
@@ -67,14 +66,13 @@ test.describe('the incident lifecycle', () => {
   });
 
   test('the mine filter returns only that persons incidents', async ({ page }) => {
-    const res = await page.request.get('/api/incidents?assignedTo=e2e-owner&limit=100');
-    const mine = await res.json();
+    const mine = await incidents(page, 'assignedTo=e2e-owner');
 
     expect(mine.length).toBeGreaterThan(0);
 
     // And nobody else's. A filter that silently widens is one people stop trusting, which is
     // worse than one that is missing.
-    const all = await page.request.get('/api/incidents?limit=100').then(r => r.json());
+    const all = await incidents(page);
     expect(mine.length).toBeLessThanOrEqual(all.length);
   });
 

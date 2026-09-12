@@ -368,6 +368,16 @@ if should_run act; then
         skip "acting" "no reachable model, so nothing investigated and nothing could be proposed"
     else
         phase "7a. acting"
+
+        # #97: diagnose against everything, then put the cluster back, then act against one
+        # fixture. Twelve simultaneous faults read as a cluster-wide event and the policy engine
+        # refuses everything - correctly - so the gate used to need three separate runs. Only
+        # worth doing when more than the act fixture is broken; a single-fixture run is already
+        # in the right state and clearing it would throw away the incident under test.
+        if [ "$(applied_count)" -gt 1 ]; then
+            chaos_reset_for_acting "$ACT_FIXTURE"
+        fi
+
         chaos_assert_action_executed
         chaos_assert_verification
     fi

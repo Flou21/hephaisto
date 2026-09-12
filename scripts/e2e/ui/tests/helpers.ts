@@ -73,3 +73,38 @@ export function parsePercent(text: string | null): number {
   const m = text.match(/-?[\d.]+/);
   return m ? parseFloat(m[0]) : NaN;
 }
+
+/**
+ * The page's own row cap, and therefore this suite's (#49).
+ *
+ * Must match `Limit` in `Components/Pages/Incidents.razor`. It used to be that every spec picked
+ * a convenient number: the specs asked for 100 while the page asked for 200, so on a nightly run
+ * that opened 103 incidents the table honestly showed 103 and the console spec compared it
+ * against a truncated 100 - `Expected: 100, Received: 103`, a red gate reporting a defect in
+ * itself. The other call sites failed more quietly: a spec that scans for an incident with some
+ * property would find nothing and SKIP, and a skip is treated as a failure here (#1), so the
+ * gate went red naming the wrong thing.
+ */
+export const INCIDENT_LIMIT = 200;
+
+/**
+ * Incidents from the API, with the same cap the page uses, refusing to return a truncated list.
+ *
+ * The cap check is the point. At the cap the list is silently short, and a comparison against a
+ * silently short list either passes while meaning nothing or fails while naming the wrong cause.
+ * Failing here instead says exactly what to change and where.
+ */
+export async function incidents(page: Page, query = '') {
+  const sep = query ? (query.startsWith('&') ? '' : '&') : '';
+  const res = await page.request.get(`/api/incidents?limit=${INCIDENT_LIMIT}${sep}${query}`);
+  expect(res.ok()).toBeTruthy();
+
+  const body = await res.json();
+
+  expect(body.length,
+    `${INCIDENT_LIMIT} incidents came back, so the list is truncated and any count compared ` +
+    `against it is meaningless; raise INCIDENT_LIMIT here and Limit in Incidents.razor together`)
+    .toBeLessThan(INCIDENT_LIMIT);
+
+  return body;
+}
