@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 using Hephaisto.Core.Abstractions;
+using Hephaisto.Agent.Observability;
 
 namespace Hephaisto.Agent.Web;
 
@@ -29,6 +30,23 @@ public static class HephaistoWebExtensions
         services.TryAddSingleton<IIncidentNotifier, IncidentNotifier>();
         services.TryAddSingleton<WatchdogMonitor>();
         services.TryAddSingleton<IncidentQueries>();
+
+        // The connections panel (#111). Every one of these dependencies already describes itself
+        // at startup and the description is thrown into a log line, so "is it actually working?"
+        // was answerable only by reading pod logs. The probes re-ask on a timer and the cache
+        // serves the last answer with its timestamp.
+        //
+        // Registered unconditionally, including the probes for things that may be unconfigured:
+        // NotConfigured is an answer the panel needs to give, and a missing row would read as
+        // "fine". Each resolves what it needs and reports rather than throwing.
+        services.TryAddSingleton<IConnectionProbe, PostgresProbe>();
+        services.AddSingleton<IConnectionProbe, KubernetesProbe>();
+        services.AddSingleton<IConnectionProbe, GrafanaMcpProbe>();
+        services.AddSingleton<IConnectionProbe, NotificationChannelProbe>();
+        services.AddHttpClient<IConnectionProbe, GrafanaAnnotationProbe>();
+
+        services.TryAddSingleton<ConnectionHealthCache>();
+        services.AddHostedService(sp => sp.GetRequiredService<ConnectionHealthCache>());
 
         // TryAdd, so the ingest stream can register the real sink before this runs and this
         // will not overwrite it. The no-op logs and drops - see ISignalSink for why that is

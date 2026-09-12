@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Hephaisto.Agent.Components;
 using Hephaisto.Core.Domain;
+using Hephaisto.Agent.Observability;
 
 namespace Hephaisto.Tests.Design;
 
@@ -53,6 +54,32 @@ public class DisplayVocabularyTests
         {
             arms.Should().ContainKey(state.ToString());
             arms[state.ToString()].Should().Be(Display.StateClass(state));
+        }
+    }
+
+    /// <summary>
+    /// The connections panel's four states (#111), pinned for the reason the others are: an
+    /// unnamed arm falls through to "?" and reads as a deliberate unknown rather than a gap.
+    /// </summary>
+    /// <remarks>
+    /// The fourth state is why this matters more than it looks. <c>NotConfigured</c> must keep a
+    /// muted glyph and the suppressed colour: a deliberately switched-off channel painted red
+    /// makes a correct install look broken, and a panel that is wrong on a correct install is one
+    /// people stop reading - which would cost the whole feature.
+    /// </remarks>
+    [Fact]
+    public void The_connection_vocabulary_covers_every_state()
+    {
+        var glyphs = Parse("ConnectionGlyph");
+        var classes = Parse("ConnectionClass");
+
+        foreach (var state in Enum.GetValues<ConnectionState>())
+        {
+            glyphs.Should().ContainKey(state.ToString());
+            glyphs[state.ToString()].Should().Be(Display.ConnectionGlyph(state));
+
+            classes.Should().ContainKey(state.ToString());
+            classes[state.ToString()].Should().Be(Display.ConnectionClass(state));
         }
     }
 

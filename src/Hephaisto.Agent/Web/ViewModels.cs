@@ -1,4 +1,5 @@
 using Hephaisto.Core.Domain;
+using Hephaisto.Agent.Observability;
 
 namespace Hephaisto.Agent.Web;
 
@@ -587,6 +588,16 @@ public sealed record AgentStatusView
     public bool WatchdogStale { get; init; }
 
     public long WatchdogReceipts { get; init; }
+
+    /// <summary>
+    /// Every dependency, with how it is doing and when that was last checked (#111).
+    /// </summary>
+    /// <remarks>
+    /// Carried on the status payload rather than given its own endpoint, because it answers the
+    /// same question the rest of this record does - "is it working" - one layer down, and
+    /// splitting it across two URLs means checking both.
+    /// </remarks>
+    public IReadOnlyList<ConnectionReport> Connections { get; init; } = [];
 
     public DateTimeOffset Now { get; init; }
 

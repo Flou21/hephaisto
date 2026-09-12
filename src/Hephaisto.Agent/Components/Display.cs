@@ -1,6 +1,7 @@
 using System.Globalization;
 
 using Hephaisto.Core.Domain;
+using Hephaisto.Agent.Observability;
 
 namespace Hephaisto.Agent.Components;
 
@@ -57,6 +58,32 @@ public static class Display
         IncidentState.Expired => "st-expired",
         IncidentState.Closed => "st-closed",
         _ => "st-detected",
+    };
+
+    /// <summary>
+    /// A connection's state (#111). Four glyphs, because four states is the point: a panel that
+    /// cannot distinguish "deliberately off" from "broken" is one people stop reading.
+    /// </summary>
+    public static string ConnectionGlyph(ConnectionState state) => state switch
+    {
+        ConnectionState.Healthy => "+",
+        ConnectionState.Degraded => "~",
+        ConnectionState.Unreachable => "!!",
+        ConnectionState.NotConfigured => "-",
+        _ => "?",
+    };
+
+    /// <remarks>
+    /// NotConfigured borrows the suppressed colour rather than a warning one: it is a choice
+    /// somebody made, not a fault, and painting it amber would make a correct install look wrong.
+    /// </remarks>
+    public static string ConnectionClass(ConnectionState state) => state switch
+    {
+        ConnectionState.Healthy => "conn-healthy",
+        ConnectionState.Degraded => "conn-degraded",
+        ConnectionState.Unreachable => "conn-unreachable",
+        ConnectionState.NotConfigured => "conn-unset",
+        _ => "conn-unset",
     };
 
     public static string SeverityGlyph(Severity severity) => severity switch

@@ -1,4 +1,5 @@
 @page "/status"
+@using Hephaisto.Agent.Observability
 @inject IncidentQueries Queries
 @implements IDisposable
 
@@ -172,6 +173,53 @@ else
         @BudgetMeter("tokens · this hour", s.HourlyTokenUtilization, s.WarnAtUtilization)
         @BudgetMeter("cost · this hour", s.HourlyCostUtilization, s.WarnAtUtilization)
         @BudgetMeter("cost · today", s.DailyCostUtilization, s.WarnAtUtilization)
+    </section>
+
+    @* The connections panel (#111). Every dependency below already described itself at startup
+       and the description went into a log line, so "is it actually working?" was answerable only
+       by reading pod logs - which is how a missing /mcp path and a wrong grafana-mcp token both
+       presented as nothing happening during the first production install. *@
+    <section class="hp-section">
+        <h2>connections</h2>
+
+        <p class="hp-muted">
+            Re-checked every @Display.Duration(ConnectionHealthCache.Interval). Each row carries
+            when it was last asked, because &ldquo;it worked at startup&rdquo; is not
+            &ldquo;it works&rdquo;. <span class="mono">not configured</span> is a choice, not a
+            fault.
+        </p>
+
+        @if (s.Connections.Count == 0)
+        {
+            <p class="hp-empty" data-testid="connections-empty">
+                No probe has reported yet. The first sweep runs at startup.
+            </p>
+        }
+        else
+        {
+            <div class="hp-conn" data-testid="connections">
+                @foreach (var c in s.Connections)
+                {
+                    <span class="@Display.ConnectionClass(c.State)" data-testid="connection-state">
+                        <span class="glyph">@Display.ConnectionGlyph(c.State)</span>
+                    </span>
+                    <span class="hp-conn-name mono" data-testid="connection-name">@c.Name</span>
+                    <span>
+                        <span class="hp-conn-detail">@c.Detail</span>
+                        <span class="hp-conn-when mono">
+                            &middot; checked @Display.Duration(s.Now - c.CheckedAt) ago
+                        </span>
+                    </span>
+                }
+            </div>
+        }
+
+        <p class="hp-muted">
+            <span class="mono">notifications</span> is reported from configuration and never
+            probed: the only way to test a webhook is to post to it, and a health check that pages
+            somebody is not a health check. There is no Prometheus row either — the agent never
+            queries Prometheus directly, only through grafana-mcp.
+        </p>
     </section>
 
     <section class="hp-section">

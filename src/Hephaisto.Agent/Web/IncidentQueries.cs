@@ -14,6 +14,7 @@ using Hephaisto.Core.Abstractions;
 using Hephaisto.Core.Domain;
 using Hephaisto.Core.Notifications;
 using Hephaisto.ServiceDefaults;
+using Hephaisto.Agent.Observability;
 
 namespace Hephaisto.Agent.Web;
 
@@ -62,6 +63,7 @@ public sealed class IncidentQueries(
     Pipeline.InvestigationTracker tracker,
     Pipeline.InvestigationQueue queue,
     IOptionsMonitor<LlmBudgetOptions> budgetOptions,
+    ConnectionHealthCache connections,
     IClock clock,
     ILogger<IncidentQueries> logger)
 {
@@ -388,6 +390,7 @@ public sealed class IncidentQueries(
             WatchdogLastSeenAt = watchdog.LastSeenAt,
             WatchdogStale = watchdog.IsStale,
             WatchdogReceipts = watchdog.ReceiptCount,
+            Connections = connections.Current,
             Now = clock.UtcNow,
             Version = BuildInfo.Version,
             Commit = BuildInfo.ShortCommit,

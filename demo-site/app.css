@@ -594,6 +594,19 @@ button:disabled {
    resolved/escalated colours immediately above it. */
 .callout-lifecycle { border-left-color: var(--fg-dim); }
 
+/* Connections panel (#111). Four states, and the fourth is the one that matters: "not
+   configured" is a deliberate choice, so it takes the same muted treatment as suppressed rather
+   than a warning colour - a panel that paints a switched-off channel red is one people learn to
+   ignore, which defeats the whole thing. */
+.conn-healthy { color: var(--green); }
+.conn-degraded { color: var(--orange); }
+.conn-unreachable { color: var(--red); font-weight: 600; }
+.conn-unset { color: var(--fg-faint); }
+.hp-conn { display: grid; grid-template-columns: auto 10rem 1fr; gap: .35rem .8rem; align-items: baseline; }
+.hp-conn-name { font-weight: 600; }
+.hp-conn-detail { color: var(--fg-dim); }
+.hp-conn-when { color: var(--fg-faint); }
+
 /* The retry control. Deliberately quiet - it is an escape hatch on a page whose
    subject is usually the investigation itself, and it spends money when pressed. */
 .hp-retry {

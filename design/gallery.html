@@ -482,6 +482,63 @@ Events:
       </div>
     </section>
 
+    <section class="g-sec">
+      <h2>Connections panel</h2>
+      <p class="g-note">
+        Backlog #111. Every dependency below already described itself at startup and the
+        description went into a log line, so &ldquo;is it actually working?&rdquo; was answerable
+        only by reading pod logs.
+      </p>
+      <p class="g-note">
+        <strong>Four states, and the fourth is the point.</strong> <code>not configured</code> is a
+        deliberate choice &mdash; every outbound integration here degrades silently when unset, and
+        that is correct per delivery. Painting it red would make a correct install look broken, and
+        a panel that is wrong on a correct install is one people stop reading.
+      </p>
+      <div class="hp-conn">
+        <span class="conn-healthy"><span class="glyph">+</span></span>
+        <span class="hp-conn-name mono">postgres</span>
+        <span>
+          <span class="hp-conn-detail">Connected.</span>
+          <span class="hp-conn-when mono">&middot; checked 12s ago</span>
+        </span>
+
+        <span class="conn-healthy"><span class="glyph">+</span></span>
+        <span class="hp-conn-name mono">kubernetes</span>
+        <span>
+          <span class="hp-conn-detail">Reachable; list namespaces returned 1.</span>
+          <span class="hp-conn-when mono">&middot; checked 12s ago</span>
+        </span>
+
+        <span class="conn-degraded"><span class="glyph">~</span></span>
+        <span class="hp-conn-name mono">grafana-mcp</span>
+        <span>
+          <span class="hp-conn-detail">13 of 17 tools; missing query_tempo_traces, query_tempo_traceql, list_tempo_tag_names, list_tempo_tag_values.</span>
+          <span class="hp-conn-when mono">&middot; checked 12s ago</span>
+        </span>
+
+        <span class="conn-unreachable"><span class="glyph">!!</span></span>
+        <span class="hp-conn-name mono">grafana-annotations</span>
+        <span>
+          <span class="hp-conn-detail">http://grafana.grafana answered HTTP 401.</span>
+          <span class="hp-conn-when mono">&middot; checked 12s ago</span>
+        </span>
+
+        <span class="conn-unset"><span class="glyph">-</span></span>
+        <span class="hp-conn-name mono">notifications</span>
+        <span>
+          <span class="hp-conn-detail">No channel is configured, so nothing is delivered anywhere.</span>
+          <span class="hp-conn-when mono">&middot; checked 12s ago</span>
+        </span>
+      </div>
+      <p class="g-note" style="margin-top:.8rem">
+        The degraded row is the one that earns the state: a grafana-mcp that is connected but
+        started without Tempo registers none of the four trace tools, so the agent cannot follow an
+        exemplar into a trace. That is backlog #31, and the measured reason c10 spent thirteen
+        steps and produced no finding. A binary up/down row would have been green throughout.
+      </p>
+    </section>
+
   </main>
 </div>
 </body>
