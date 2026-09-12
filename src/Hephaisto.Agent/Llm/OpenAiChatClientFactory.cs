@@ -1,4 +1,5 @@
 using System.ClientModel;
+using System.ClientModel.Primitives;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -100,6 +101,17 @@ public sealed class OpenAiChatClientFactory : IChatClientFactory
             // gateway behind a path prefix breaks.
             clientOptions.Endpoint = new Uri(endpoint);
         }
+
+        // A transport that repairs one known malformation on the way in: a completion choice
+        // with an empty `role`, which the SDK refuses to deserialise and which faults the whole
+        // investigation. See MalformedRoleRepairHandler for why this is a repair and not a
+        // retry. It sits below the SDK because the SDK owns the deserialisation that throws.
+        clientOptions.Transport = new HttpClientPipelineTransport(
+            new HttpClient(new MalformedRoleRepairHandler(
+                loggerFactory.CreateLogger<MalformedRoleRepairHandler>())
+            {
+                InnerHandler = new HttpClientHandler(),
+            }));
 
         // Deliberately not the SDK's retry. Chat retry is TransientRetryChatClient, innermost
         // and beneath the budget guard, for the reasons in LlmOptions.Retry - a retry above

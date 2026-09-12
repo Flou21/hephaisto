@@ -5016,7 +5016,34 @@ the only half that needs a cluster.
 denominator, and a replay arm would add a second denominator rather than change the first. This is
 the guard against the *next* correction, not a defect in the current numbers.
 
-**Size.** S. **Open.**
+**Recorded 2026-09-12**, against a live c13 incident on the dev cluster, with grafana-mcp wired so
+the cassette carries the same 31-tool surface as c11 and c2 rather than the thin Kubernetes-only
+shape c12 has. Replayed with gpt-oss:120b:
+
+    c13   1/1 correct, 5 steps, $0.0019   3 calls: 1 exact, 1 fuzzy, 1 missed (33 %)  UNSOUND
+
+**And the second instrument earned its keep immediately.** 33 % looks alarming alone. Replaying
+three existing cassettes for comparison put it in context:
+
+    c11   3 exact, 0 missed (0 %)
+    c12   8 exact, 0 missed (0 %)
+    c2    2 exact, 1 missed (33 %)  UNSOUND
+
+c2 is a long-standing cassette and is equally unsound with this model, so c13's divergence is
+model nondeterminism on a short investigation rather than a defect in the new recording. Reading
+c13's number alone would have produced exactly the kind of correction this entry was opened to
+prevent - which is the whole argument for a second instrument, demonstrated on its first use.
+
+**It also surfaced a live defect.** The first recording attempt FAULTED at step 10 with
+`Unknown ChatMessageRole value` - the malformed-response class carried unfixed through v0.7.0 and
+v0.8.0 - and the investigation's work was discarded. Fixed by
+`MalformedRoleRepairHandler`; the re-recording concluded in 4 steps with a correct finding.
+
+**Note for whoever records the next one:** `cassettes/` is gitignored and must stay so. A cassette
+holds raw tool RESULTS, and redaction covers arguments only - so a `describe_pod` or
+`get_pod_logs` body carries cluster env vars, hostnames and log contents verbatim.
+
+**Size.** S. **Fixed 2026-09-12.**
 
 ---
 
