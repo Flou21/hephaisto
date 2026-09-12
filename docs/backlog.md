@@ -1591,6 +1591,44 @@ authenticated subjects.
 
 **Size.** S, once [#110](#110) has landed.
 
+### 113. c14 has no cassette, so the corpus cannot replay a rollback
+
+**Symptom.** `cassettes/` holds c1, c2, c3, c4, c5, c7, c8, c10, c11, c12 and c13. c14 is absent,
+so `hephaisto-eval run` cannot replay it and the only measurement of it is whatever the last cluster
+run happened to do.
+
+**Evidence.** `ls cassettes/` — eleven files, and c14 is the twelfth fixture.
+
+**Why this is not just [#101](#101) again.** #101 was about c13 having one instrument; that mattered
+because #66's whole history is two corrections found by *comparing* instruments. c14 is worse in one
+specific way: it is the only fixture in the corpus whose correct answer is **not** a restart
+(`AcceptableActions = [RollbackDeployment]`, `AnswerKey.cs:291`). So it is the only measurement of
+whether a model reaches for the right tool rather than the tool it has most practice with — and that
+is precisely the measurement that needs to be repeatable across models, because it is the one most
+likely to differ between them.
+
+**Why it is still open, and it is not a timing problem.** Recording needs a live c14 incident, and
+**c14 cannot open on the dev cluster at all.** Checked on 2026-09-12: revision 2 had been running
+with `ERROR_RATE=0.9` for 36 minutes with no incident, while 89 others were open. The reason is one
+query:
+
+```
+count by (service) (traces_spanmetrics_calls_total)   ->   no series, for any service
+```
+
+No Tempo pod is running in that cluster, so nothing generates span metrics, so the burn-rate rules
+c10 and c14 both depend on can never be true. That is the `tracing` toggle, not a defect — but it
+means **the two fixtures that carry the trace story cannot be exercised by hand on the machine where
+everything else can**, and that is worth knowing before someone spends an afternoon on it. The e2e
+kind cluster installs Tempo in its `deps` phase, so both work there.
+
+**Fix.** Record it off a `--full` run's own c14 incident rather than trying to reproduce one by hand,
+which is also how c13's was finally captured. That means the run needs `--keep-cluster`, or the
+recording step needs to happen inside the harness before teardown. Doing it on the dev cluster
+instead means turning `tracing` on there first.
+
+**Size.** S for the recording.
+
 ---
 
 ## Dead or unreachable code
