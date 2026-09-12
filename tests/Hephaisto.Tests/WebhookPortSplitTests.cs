@@ -50,7 +50,45 @@ public sealed class WebhookPortSplitTests
         new WebOptions { WebhookPort = 8080, MainPort = 8080 }.WebhookPortIsSeparate.Should().BeFalse();
 
     /// <summary>The default is the safe one: no split unless asked.</summary>
+    /// <remarks>
+    /// <b>And the chart must agree.</b> The split was briefly defaulted ON, which is a breaking
+    /// change to every existing Alertmanager receiver: /webhooks stops answering where the
+    /// receiver posts, and the symptom is silence - no alert arrives and nothing says so. The
+    /// e2e gate caught it as "no watchdog receipt within 5 minutes", which is exactly the signal
+    /// the watchdog exists to give.
+    /// </remarks>
     [Fact]
     public void The_default_does_not_split() =>
         new WebOptions().WebhookPortIsSeparate.Should().BeFalse();
+
+    /// <summary>
+    /// The chart ships the split OFF, because turning it on is a breaking change an operator has
+    /// to make in the same commit as their Alertmanager receiver URL.
+    /// </summary>
+    [Fact]
+    public void The_chart_ships_the_split_off()
+    {
+        var values = File.ReadAllLines(Path.Combine(ChartDirectory(), "values.yaml"))
+            .FirstOrDefault(line => line.StartsWith("webhookPort:", StringComparison.Ordinal));
+
+        values.Should().NotBeNull("the value should exist and be documented");
+        values.Should().Be(
+            "webhookPort: 0",
+            "defaulting it on silently moves the webhook away from where every existing "
+            + "Alertmanager receiver posts");
+    }
+
+    private static string ChartDirectory()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Hephaisto.slnx")))
+        {
+            dir = dir.Parent;
+        }
+
+        Assert.NotNull(dir);
+
+        return Path.Combine(dir!.FullName, "charts", "hephaisto");
+    }
 }

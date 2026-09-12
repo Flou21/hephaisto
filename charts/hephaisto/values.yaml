@@ -152,8 +152,17 @@ policy:
 # With this set, /webhooks answers ONLY here and the console and API answer ONLY on 8080. Point
 # your NetworkPolicy at this port and expose 8080 however you like.
 #
-# 0 keeps everything on 8080, which is the previous behaviour.
-webhookPort: 8081
+# 0 KEEPS EVERYTHING ON 8080, AND IS THE DEFAULT. Turning this on is a BREAKING change to your
+# Alertmanager configuration: the receiver URL must move to this port in the same change, or
+# /webhooks stops answering where Alertmanager posts and every alert vanishes silently. The
+# watchdog is what tells you - its absence is the signal - and the e2e gate caught exactly this
+# when the split was briefly defaulted on.
+#
+#   receivers:
+#     - name: hephaisto
+#       webhook_configs:
+#         - url: http://hephaisto.hephaisto:8081/webhooks/alertmanager   # <- the webhook port
+webhookPort: 0
 
 # -----------------------------------------------------------------------------------------
 # Authentication - OFF by default, and it fails CLOSED when on

@@ -67,6 +67,21 @@ public static class HephaistoWebExtensions
     /// <summary>
     /// Every HTTP route this stream owns. Call once from Program.cs.
     /// </summary>
+    /// <summary>
+    /// Refuses a request that arrived on the wrong listener.
+    /// </summary>
+    /// <remarks>
+    /// 404 rather than 403: from the caller's side the endpoint genuinely does not exist on that
+    /// port, and saying "forbidden" would confirm it exists somewhere - which is the one thing
+    /// the split is trying not to advertise about the webhook.
+    /// </remarks>
+    private static Func<EndpointFilterInvocationContext, EndpointFilterDelegate, ValueTask<object?>>
+        OnPort(int port) =>
+        async (context, next) =>
+            context.HttpContext.Connection.LocalPort == port
+                ? await next(context)
+                : Results.NotFound();
+
     public static WebApplication MapHephaistoEndpoints(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -96,15 +111,23 @@ public static class HephaistoWebExtensions
 
         if (web.WebhookPortIsSeparate)
         {
-            // Port-only host matching: the agent does not know what hostname it is reached on,
-            // and pinning one would break every install that fronts it differently.
-            webhooks.RequireHost($"*:{web.WebhookPort}");
+            // The LISTENING port, not RequireHost.
+            //
+            // RequireHost matches the HOST HEADER, which is a different thing that happens to
+            // look the same in a curl against 127.0.0.1:8080. Through a port-forward the header
+            // carries the LOCAL port - `localhost:18100` - and behind an ingress it carries
+            // whatever the ingress was reached on, so the constraint never matches and the whole
+            // API 404s. The e2e gate found exactly that: `/api/version reports ''`.
+            //
+            // Connection.LocalPort is the socket the request actually arrived on. Nothing
+            // upstream can rewrite it.
+            webhooks.AddEndpointFilter(OnPort(web.WebhookPort));
 
             // And the reverse, which is the half that is easy to forget. If the API still
             // answered on the webhook port, the tight policy in front of that port would be
             // guarding one door with the wall missing beside it - anything allowed to deliver an
             // alert could also read every incident and approve an action.
-            console.RequireHost($"*:{web.MainPort}");
+            console.AddEndpointFilter(OnPort(web.MainPort));
         }
 
         return app;
