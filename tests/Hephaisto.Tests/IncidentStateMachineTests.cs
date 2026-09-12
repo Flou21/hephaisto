@@ -746,4 +746,110 @@ public sealed class IncidentStateMachineTests
         act.Should().Throw<ArgumentException>();
         incident.AcknowledgedBy.Should().BeNull();
     }
+
+    // --- assignment: second person, and not a transition (#112) ------------------------------
+
+    /// <summary>
+    /// The distinction the feature rests on: assigning says "you are on this", acknowledging
+    /// says "I am", and one must not imply the other.
+    /// </summary>
+    /// <remarks>
+    /// Acknowledging on the assignee's behalf would make an incident look handled the moment a
+    /// third party pointed at somebody - and would hand it the sweeper protection that
+    /// acknowledgement carries, without the assignee ever having read it.
+    /// </remarks>
+    [Fact]
+    public void Assign_DoesNotAcknowledgeOnTheAssigneesBehalf()
+    {
+        var incident = Given.Incident(IncidentState.Escalated);
+
+        Machine().Assign(incident, "someone-else", "flo");
+
+        incident.AssignedTo.Should().Be("someone-else");
+        incident.AssignedBy.Should().Be("flo");
+        incident.AssignedAt.Should().NotBeNull();
+        incident.AcknowledgedBy.Should().BeNull("being handed something is not the same as having seen it");
+    }
+
+    [Theory]
+    [InlineData(IncidentState.Investigating)]
+    [InlineData(IncidentState.AwaitingApproval)]
+    [InlineData(IncidentState.Escalated)]
+    public void Assign_LeavesTheStateAlone(IncidentState from)
+    {
+        var incident = Given.Incident(from);
+
+        Machine().Assign(incident, "someone-else", "flo");
+
+        incident.State.Should().Be(from);
+        incident.Events.Should().BeEmpty("it is not a transition");
+    }
+
+    /// <summary>Assigning to nobody is how an incident goes back to the pool.</summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Assign_ToNobody_ClearsIt(string? assignee)
+    {
+        var incident = Given.Incident(IncidentState.Escalated);
+        Machine().Assign(incident, "someone-else", "flo");
+
+        Machine().Assign(incident, assignee, "flo");
+
+        incident.AssignedTo.Should().BeNull();
+        incident.AssignedBy.Should().Be("flo", "who handed it back is still worth recording");
+    }
+
+    [Fact]
+    public void Assign_Reassigning_Overwrites()
+    {
+        var incident = Given.Incident(IncidentState.Escalated);
+
+        Machine().Assign(incident, "first", "flo");
+        Machine().Assign(incident, "second", "flo");
+
+        incident.AssignedTo.Should().Be("second");
+    }
+
+    [Theory]
+    [InlineData(IncidentState.Resolved)]
+    [InlineData(IncidentState.Expired)]
+    [InlineData(IncidentState.Suppressed)]
+    [InlineData(IncidentState.Closed)]
+    public void Assign_RefusesASettledIncident(IncidentState from)
+    {
+        var act = () => Machine().Assign(Given.Incident(from), "someone", "flo");
+
+        act.Should().Throw<InvalidOperationException>();
+    }
+
+    [Fact]
+    public void Assign_RefusesTheModelAsAssigner()
+    {
+        var incident = Given.Incident(IncidentState.Escalated);
+
+        var act = () => Machine().Assign(incident, "someone", "hephaisto/model");
+
+        act.Should().Throw<ArgumentException>();
+        incident.AssignedTo.Should().BeNull();
+    }
+
+    /// <summary>
+    /// The model may be assigned TO, even though it may not assign.
+    /// </summary>
+    /// <remarks>
+    /// Asymmetric on purpose. The refusal exists so a model decision cannot be laundered into a
+    /// human one; naming the agent as the owner of something is a statement a human is making,
+    /// and forbidding it would block a legitimate way to say "this one is the agent's".
+    /// </remarks>
+    [Fact]
+    public void Assign_AllowsAssigningToTheAgentItself()
+    {
+        var incident = Given.Incident(IncidentState.Escalated);
+
+        Machine().Assign(incident, "hephaisto/model", "flo");
+
+        incident.AssignedTo.Should().Be("hephaisto/model");
+    }
 }

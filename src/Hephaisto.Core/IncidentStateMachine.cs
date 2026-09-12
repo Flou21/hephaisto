@@ -357,6 +357,54 @@ public sealed class IncidentStateMachine(IClock clock)
     }
 
     /// <summary>
+    /// Makes an incident somebody's job. <b>Not a transition</b>, for the same reason
+    /// <see cref="Acknowledge"/> is not.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Assigning is second person and acknowledging is first: "you are on this" against "I am".
+    /// The normal sequence is assign then acknowledge, and the gap between them is the useful
+    /// signal - an incident assigned an hour ago and still unacknowledged is one nobody picked
+    /// up. Collapsing them into one field would lose exactly that.
+    /// </para>
+    /// <para>
+    /// <b>Assigning does not acknowledge on the assignee's behalf.</b> Marking somebody as having
+    /// seen something because a third party pointed at them is how an incident ends up looking
+    /// handled while nobody has read it - and it would also make the assignee's acknowledgement,
+    /// which is the thing that stops the sweeper expiring it, arrive without their involvement.
+    /// </para>
+    /// <para>
+    /// Reassignment overwrites, which is what handing over looks like, and assigning to nobody
+    /// clears it - how an incident returns to the pool.
+    /// </para>
+    /// </remarks>
+    public void Assign(Incident incident, string? assignee, string assignedBy)
+    {
+        ArgumentNullException.ThrowIfNull(incident);
+        ArgumentException.ThrowIfNullOrWhiteSpace(assignedBy);
+
+        // The shared predicate, so this and every other human door agree about what counts as a
+        // model identity.
+        if (IsForbiddenGranter(assignedBy))
+        {
+            throw new ArgumentException(
+                $"'{assignedBy}' may not assign an incident: deciding whose job something is "
+                + "is a human act.",
+                nameof(assignedBy));
+        }
+
+        if (!incident.IsOpen)
+        {
+            throw new InvalidOperationException(
+                $"incident {incident.Id} is {incident.State}; there is nothing left to assign.");
+        }
+
+        incident.AssignedTo = string.IsNullOrWhiteSpace(assignee) ? null : assignee.Trim();
+        incident.AssignedBy = assignedBy.Trim();
+        incident.AssignedAt = clock.UtcNow;
+    }
+
+    /// <summary>
     /// The legal-predecessor set for the edges that leave the live part of the lifecycle.
     /// </summary>
     /// <remarks>

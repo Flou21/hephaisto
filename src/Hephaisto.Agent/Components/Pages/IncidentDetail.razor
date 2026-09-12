@@ -151,6 +151,18 @@ else
                 <span class="glyph">x</span>
                 <div class="hp-retry">
                     <div>
+                        @if (incident.AssignedTo is { Length: > 0 } assignee)
+                        {
+                            <strong data-testid="assigned-to">@assignee owns this.</strong>
+                            <span class="hp-muted">
+                                Assigned by @incident.AssignedBy.
+                                @if (incident.AcknowledgedBy is null)
+                                {
+                                    <text>Not picked up yet.</text>
+                                }
+                            </span>
+                            <br />
+                        }
                         @if (incident.AcknowledgedBy is { Length: > 0 } holder)
                         {
                             <strong data-testid="acknowledged-by">@holder is on this.</strong>
@@ -182,6 +194,15 @@ else
                                 disabled="@(_lifecycleBusy || string.IsNullOrWhiteSpace(_submittedBy))"
                                 @onclick="AcknowledgeAsync">
                             @(_lifecycleBusy ? "…" : "acknowledge")
+                        </button>
+                        <input class="hp-retry-name" placeholder="assign to" aria-label="assign to"
+                               data-testid="assignee"
+                               @bind="_assignee" @bind:event="oninput" />
+                        <button type="button" class="hp-submit"
+                                data-testid="assign"
+                                disabled="@(_lifecycleBusy || string.IsNullOrWhiteSpace(_submittedBy))"
+                                @onclick="AssignAsync">
+                            @(_lifecycleBusy ? "…" : "assign")
                         </button>
                         <button type="button" class="hp-submit"
                                 data-testid="close"
@@ -1085,6 +1106,7 @@ else
     // gets closed by one person and acknowledged by another in the same second.
     private bool _lifecycleBusy;
     private string _closeReason = string.Empty;
+    private string _assignee = string.Empty;
     private string? _lifecycleError;
     private string? _lifecycleMessage;
 
@@ -1369,6 +1391,20 @@ else
         await RunLifecycleAsync(
             () => Queries.AcknowledgeIncidentAsync(Id, _submittedBy, _cts?.Token ?? CancellationToken.None),
             "acknowledged — it will not be swept away while your name is on it.");
+
+    /// <summary>
+    /// Assigning, or handing it back to the pool by leaving the field empty.
+    /// </summary>
+    /// <remarks>
+    /// An empty assignee is a clear rather than a validation error - the same shape as the API -
+    /// so "give this back" needs no separate button.
+    /// </remarks>
+    private async Task AssignAsync() =>
+        await RunLifecycleAsync(
+            () => Queries.AssignIncidentAsync(Id, _assignee, _submittedBy, _cts?.Token ?? CancellationToken.None),
+            string.IsNullOrWhiteSpace(_assignee)
+                ? "unassigned — it is back in the pool."
+                : $"assigned to {_assignee.Trim()}.");
 
     /// <summary>Closing: the terminal exit a human has.</summary>
     private async Task CloseAsync() =>

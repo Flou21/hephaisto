@@ -73,6 +73,32 @@ public sealed class Incident
 
     public DateTimeOffset? AcknowledgedAt { get; set; }
 
+    /// <summary>
+    /// Who this is somebody's job, who said so, and when.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Distinct from <see cref="AcknowledgedBy"/>, and the distinction is the feature.</b>
+    /// Acknowledging is first person - "I am on this" - and assigning is second person - "you
+    /// are". A team of one needs only the former; the moment there are two people the question
+    /// "whose is this" is different from "has anyone looked".
+    /// </para>
+    /// <para>
+    /// The normal sequence is assign then acknowledge, and the gap between them is the useful
+    /// signal: an incident assigned an hour ago and still unacknowledged is one nobody has
+    /// picked up, which a single field cannot express.
+    /// </para>
+    /// <para>
+    /// Free text, like every other actor column, and worth exactly as much as the identity
+    /// behind it - which is why this arrived after OIDC rather than before.
+    /// </para>
+    /// </remarks>
+    public string? AssignedTo { get; set; }
+
+    public string? AssignedBy { get; set; }
+
+    public DateTimeOffset? AssignedAt { get; set; }
+
     public List<Signal> Signals { get; set; } = [];
 
     public List<Investigation> Investigations { get; set; } = [];

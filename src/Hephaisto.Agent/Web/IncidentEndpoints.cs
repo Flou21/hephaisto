@@ -38,6 +38,11 @@ public static class IncidentEndpoints
 
         group.MapPost("/{id:guid}/acknowledge", AcknowledgeAsync).WithName("AcknowledgeIncident");
 
+        // Assigning is read-level: saying whose job something is does not change the cluster,
+        // and a team where only approvers may hand work out is a team where work does not get
+        // handed out.
+        group.MapPost("/{id:guid}/assign", AssignAsync).WithName("AssignIncident");
+
         // Approval. Two routes rather than one with a boolean, so a truncated or mistyped body
         // cannot turn a denial into an approval - the verb is in the path, where it is visible
         // in an access log and cannot be defaulted.
@@ -86,10 +91,14 @@ public static class IncidentEndpoints
     /// </remarks>
     private static async Task<Results<Ok<IReadOnlyList<IncidentListItem>>, ValidationProblem>> ListAsync(
         IncidentQueries queries,
+        HttpContext http,
         CancellationToken ct,
         [FromQuery] string? state = null,
         [FromQuery] string? kind = null,
         [FromQuery(Name = "namespace")] string? ns = null,
+        // "me" resolves to the signed-in user, so the console's filter needs no knowledge of who
+        // that is and a bookmarked URL keeps working for whoever opens it.
+        [FromQuery] string? assignedTo = null,
         [FromQuery] int? limit = null)
     {
         var errors = new Dictionary<string, string[]>();
@@ -134,6 +143,7 @@ public static class IncidentEndpoints
                 OpenOnly = parsedState is null,
                 Kind = parsedKind,
                 Namespace = ns,
+                AssignedTo = ResolveAssignee(assignedTo, http),
                 Limit = limit ?? 100,
             },
             ct);
@@ -331,6 +341,57 @@ public static class IncidentEndpoints
         return Render(result);
     }
 
+    /// <summary>
+    /// Assigns an incident, or hands it back to the pool by assigning it to nobody.
+    /// </summary>
+    /// <remarks>
+    /// The assignee is in the body because it is somebody else; the ASSIGNER comes from the
+    /// token, like every other actor. An empty assignee is a deliberate clear rather than a
+    /// validation error - that is how an incident returns to the pool.
+    /// </remarks>
+    private static async Task<IResult> AssignAsync(
+        Guid id,
+        [FromBody] AssignIncidentRequest request,
+        HttpContext http,
+        IncidentQueries queries,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(http);
+
+        var actor = ActorResolution.Resolve(http.User, request.AssignedBy);
+
+        if (string.IsNullOrWhiteSpace(actor))
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["assignedBy"] = ["Say who is assigning this - attribution, not authentication."],
+            });
+        }
+
+        var result = await queries.AssignIncidentAsync(id, request.Assignee, actor, ct);
+
+        return Render(result);
+    }
+
+    /// <summary>
+    /// Turns the literal <c>me</c> into the signed-in user; anything else is taken as written.
+    /// </summary>
+    /// <remarks>
+    /// Unauthenticated, <c>me</c> matches nobody rather than everybody. Returning every incident
+    /// for an unresolvable "mine" would be the wrong direction to fail: a filter that silently
+    /// shows more than asked is one people stop trusting.
+    /// </remarks>
+    private static string? ResolveAssignee(string? assignedTo, HttpContext http)
+    {
+        if (!string.Equals(assignedTo, "me", StringComparison.OrdinalIgnoreCase))
+        {
+            return assignedTo;
+        }
+
+        return ActorResolution.Resolve(http.User, supplied: null) ?? "\u0000no-such-assignee";
+    }
+
     private static IResult Render(LifecycleResult result) => result.Outcome switch
     {
         LifecycleOutcome.Applied => TypedResults.Ok(result),
@@ -446,6 +507,19 @@ public sealed record CloseIncidentRequest
 public sealed record AcknowledgeIncidentRequest
 {
     public string? Actor { get; init; }
+}
+
+/// <summary>Who is taking this on, and who says so.</summary>
+/// <remarks>
+/// A null or empty <see cref="Assignee"/> clears the assignment, which is how an incident goes
+/// back to the pool. <see cref="AssignedBy"/> is ignored entirely when the request is
+/// authenticated.
+/// </remarks>
+public sealed record AssignIncidentRequest
+{
+    public string? Assignee { get; init; }
+
+    public string? AssignedBy { get; init; }
 }
 
 public sealed record ReinvestigateRequest

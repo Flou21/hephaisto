@@ -54,6 +54,7 @@ test.describe('the design language', () => {
     // component covered only by that shot is a component the net will stop covering the first
     // time somebody re-baselines past a diff.
     ['lifecycle', 'Incident lifecycle'],
+    ['assignment', 'Assignment'],
     ['connections', 'Connections panel'],
   ] as const;
 

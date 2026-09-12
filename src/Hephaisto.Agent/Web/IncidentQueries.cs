@@ -31,6 +31,16 @@ public sealed record IncidentListQuery
 
     public string? Namespace { get; init; }
 
+    /// <summary>
+    /// Only incidents assigned to this person (#112).
+    /// </summary>
+    /// <remarks>
+    /// The console's "mine" filter. Backed by a filtered index on <c>assigned_to</c>, because
+    /// this runs on every page load - unlike <c>acknowledged_by</c>, which is only ever read
+    /// back on a single incident and is therefore unindexed.
+    /// </remarks>
+    public string? AssignedTo { get; init; }
+
     public int Limit { get; init; } = 100;
 }
 
@@ -92,6 +102,12 @@ public sealed class IncidentQueries(
         if (query.Kind is { } kind)
         {
             incidents = incidents.Where(i => i.Kind == kind);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.AssignedTo))
+        {
+            var assignee = query.AssignedTo.Trim();
+            incidents = incidents.Where(i => i.AssignedTo == assignee);
         }
 
         if (!string.IsNullOrWhiteSpace(query.Namespace))
@@ -242,6 +258,9 @@ public sealed class IncidentQueries(
             ClosedAt = incident.ClosedAt,
             AcknowledgedBy = incident.AcknowledgedBy,
             AcknowledgedAt = incident.AcknowledgedAt,
+            AssignedTo = incident.AssignedTo,
+            AssignedBy = incident.AssignedBy,
+            AssignedAt = incident.AssignedAt,
             Signals = [.. incident.Signals.OrderBy(s => s.FirstSeen).Select(MapSignal)],
             Transitions = [.. incident.Events.OrderBy(e => e.At).Select(MapTransition)],
             Investigations = [.. investigations.Select(MapInvestigation)],
@@ -1111,6 +1130,87 @@ public sealed class IncidentQueries(
         });
 
         return new LifecycleResult { Outcome = LifecycleOutcome.Applied, Detail = note };
+    }
+
+    /// <summary>
+    /// Makes an incident somebody's job, or hands it back to the pool.
+    /// </summary>
+    /// <remarks>
+    /// Two actors: the assignee, who is named in the request, and the assigner, who comes from
+    /// the token. Assigning does not acknowledge on the assignee's behalf - see
+    /// <c>IncidentStateMachine.Assign</c> for why that separation is the feature rather than an
+    /// omission.
+    /// </remarks>
+    public async Task<LifecycleResult> AssignIncidentAsync(
+        Guid incidentId,
+        string? assignee,
+        string assignedBy,
+        CancellationToken ct)
+    {
+        var actor = assignedBy?.Trim() ?? string.Empty;
+        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+
+        if (IncidentStateMachine.IsForbiddenGranter(actor))
+        {
+            return new LifecycleResult
+            {
+                Outcome = LifecycleOutcome.ForbiddenActor,
+                Detail = $"'{actor}' may not assign an incident: whose job something is, is a human call.",
+            };
+        }
+
+        await using var scope = scopes.CreateAsyncScope();
+        var sp = scope.ServiceProvider;
+
+        var db = sp.GetRequiredService<HephaistoDbContext>();
+        var audit = sp.GetRequiredService<IAuditRepository>();
+        var stateMachine = sp.GetRequiredService<IncidentStateMachine>();
+
+        var incident = await db.Incidents.FirstOrDefaultAsync(i => i.Id == incidentId, ct);
+
+        if (incident is null)
+        {
+            return new LifecycleResult { Outcome = LifecycleOutcome.NotFound };
+        }
+
+        var previous = incident.AssignedTo;
+
+        try
+        {
+            stateMachine.Assign(incident, assignee, actor);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return new LifecycleResult { Outcome = LifecycleOutcome.IllegalState, Detail = ex.Message };
+        }
+
+        audit.Enlist(new AuditEvent
+        {
+            At = clock.UtcNow,
+            Type = "incident.assigned",
+            IncidentId = incidentId,
+            Actor = actor,
+            Summary = incident.AssignedTo is null
+                ? $"unassigned (was {previous ?? "nobody"})"
+                : $"assigned to {incident.AssignedTo}",
+            Detail = JsonSerializer.Serialize(
+                new { assignedTo = incident.AssignedTo, previous }, AuditJson),
+        });
+
+        await db.SaveChangesAsync(ct);
+
+        notifier.Publish(new IncidentLiveEvent
+        {
+            IncidentId = incidentId,
+            Kind = IncidentLiveEventKind.Assigned,
+            State = incident.State,
+            Detail = incident.AssignedTo is null
+                ? $"unassigned by {actor}"
+                : $"assigned to {incident.AssignedTo} by {actor}",
+            At = clock.UtcNow,
+        });
+
+        return new LifecycleResult { Outcome = LifecycleOutcome.Applied, Detail = incident.AssignedTo };
     }
 
     /// <summary>

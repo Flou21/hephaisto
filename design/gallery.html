@@ -483,6 +483,55 @@ Events:
     </section>
 
     <section class="g-sec">
+      <h2>Assignment</h2>
+      <p class="g-note">
+        Backlog #112. <strong>Assigning and acknowledging are different acts</strong> and the
+        console shows both: assigning is second person &mdash; &ldquo;you are on this&rdquo; &mdash;
+        and acknowledging is first. The gap between them is the signal a single field cannot
+        carry: assigned an hour ago and still not picked up.
+      </p>
+      <div class="hp-callout callout-lifecycle">
+        <span class="glyph">x</span>
+        <div class="hp-retry">
+          <div>
+            <strong>someone-else owns this.</strong>
+            <span class="hp-muted">Assigned by flo. Not picked up yet.</span>
+            <br />
+            <strong>nobody has picked this up.</strong>
+            <span class="hp-muted">
+              Acknowledging says you are on it and stops it being swept away on a timer.
+            </span>
+          </div>
+          <div class="hp-retry-controls">
+            <input class="hp-retry-name" placeholder="your name" aria-label="your name" />
+            <input class="hp-retry-name" placeholder="reason (optional)" aria-label="closing reason" />
+            <input class="hp-retry-name" placeholder="assign to" aria-label="assign to" />
+            <button type="button" class="hp-submit">acknowledge</button>
+            <button type="button" class="hp-submit">assign</button>
+            <button type="button" class="hp-submit">close</button>
+          </div>
+          <span class="hp-yes"><span class="glyph">+</span> assigned to someone-else.</span>
+        </div>
+      </div>
+      <p class="g-note" style="margin-top:.8rem">
+        Both filled in: owned and picked up. Leaving the assign field empty and pressing assign
+        hands it back to the pool, so &ldquo;give this back&rdquo; needs no separate control.
+      </p>
+      <div class="hp-callout callout-lifecycle">
+        <span class="glyph">x</span>
+        <div class="hp-retry">
+          <div>
+            <strong>flo owns this.</strong>
+            <span class="hp-muted">Assigned by someone-else.</span>
+            <br />
+            <strong>flo is on this.</strong>
+            <span class="hp-muted">Acknowledged 2026-09-12 09:14:02Z.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="g-sec">
       <h2>Connections panel</h2>
       <p class="g-note">
         Backlog #111. Every dependency below already described itself at startup and the

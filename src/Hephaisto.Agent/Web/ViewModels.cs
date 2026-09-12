@@ -455,6 +455,18 @@ public sealed record IncidentDetailView
 
     public DateTimeOffset? AcknowledgedAt { get; init; }
 
+    /// <summary>Whose job this is, who said so, and when (#112).</summary>
+    /// <remarks>
+    /// Separate from <see cref="AcknowledgedBy"/> on purpose: assigning is second person and
+    /// acknowledging is first, and the gap between them - assigned an hour ago, still not picked
+    /// up - is the signal a single field cannot carry.
+    /// </remarks>
+    public string? AssignedTo { get; init; }
+
+    public string? AssignedBy { get; init; }
+
+    public DateTimeOffset? AssignedAt { get; init; }
+
     /// <summary>
     /// Mirrors <c>Incident.IsOpen</c>, projected because the view model is not the entity and the
     /// console needs the same answer.

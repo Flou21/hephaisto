@@ -29,6 +29,12 @@ public enum IncidentLiveEventKind
     /// changes no state - the console updates the holder, not the state cell.
     /// </summary>
     Acknowledged = 8,
+
+    /// <summary>
+    /// Whose job it is changed. Its own kind rather than StateChanged, for the same reason
+    /// <see cref="Acknowledged"/> is: assigning changes no state.
+    /// </summary>
+    Assigned = 9,
 }
 
 public sealed record IncidentLiveEvent
