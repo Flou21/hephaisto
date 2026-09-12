@@ -140,6 +140,21 @@ policy:
 # Off | Observe | DryRun | Auto. The env arm; the ConfigMap and the database row are the other
 # two, and THE MOST RESTRICTIVE OF THE THREE WINS. Observe is the only defensible default:
 # it detects, investigates and reports, and mutates nothing.
+# -----------------------------------------------------------------------------------------
+# The webhook's own port - what makes exposing the console safe
+# -----------------------------------------------------------------------------------------
+# The console, the JSON API and /webhooks/alertmanager used to answer on one port, and the agent
+# has no authentication of its own. The receiver cannot be authenticated either, because
+# Alertmanager has no field for a credential - so the NetworkPolicy is its entire protection, and
+# one port forced a choice on every install: reach the console only by port-forward, or widen the
+# policy for the console and admit forged alerts with it.
+#
+# With this set, /webhooks answers ONLY here and the console and API answer ONLY on 8080. Point
+# your NetworkPolicy at this port and expose 8080 however you like.
+#
+# 0 keeps everything on 8080, which is the previous behaviour.
+webhookPort: 8081
+
 mode: Observe
 
 # -----------------------------------------------------------------------------------------

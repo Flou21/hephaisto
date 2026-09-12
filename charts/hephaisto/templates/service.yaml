@@ -17,3 +17,9 @@ spec:
       port: 8080
       targetPort: http
       protocol: TCP
+    {{- if .Values.webhookPort }}
+    - name: webhook
+      port: {{ .Values.webhookPort }}
+      targetPort: webhook
+      protocol: TCP
+    {{- end }}

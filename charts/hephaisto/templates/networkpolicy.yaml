@@ -10,7 +10,12 @@ make the agent believe a workload is broken and, in Auto mode, act on it.
 
 So the mitigation is at the network layer, and this policy is not a hardening extra - it is
 the control. Remember that NetworkPolicy `from:` rules are OR'd: every entry below widens the
-set of things that can forge an alert.
+set of things that can reach the agent.
+
+With `webhookPort` set, only the FIRST rule below reaches the receiver - and it reaches the console
+too, because Prometheus scrapes /metrics from that same namespace. Every OTHER rule opens the
+console and API alone: a read of the whole cluster, since incident cards carry pod logs and
+ConfigMap contents from every namespace, but with no way to inject a signal.
 
 ALSO: your cluster must actually enforce NetworkPolicy. Many CNIs (kind's default among them)
 accept these objects and ignore them, in which case this file is documentation rather than a
@@ -38,13 +43,27 @@ spec:
     # specific pods is deliberate: Alertmanager and Prometheus pod labels are chart-managed
     # and change across upgrades, and a policy that breaks on a `helm upgrade` would cut the
     # agent off from its alert feed silently.
+    #
+    # NOTE what this rule does NOT buy you. With webhookPort set it admits both ports, because
+    # Prometheus scrapes /metrics on the main one and lives in the same namespace as
+    # Alertmanager - so a namespaceSelector cannot tell the scraper and the alert source apart.
+    # The observability namespace therefore still reaches the console.
+    #
+    # The split's benefit is for every OTHER source: see extraIngressCIDRs below, which used to
+    # mean "these addresses may also forge alerts" and now means "these addresses may read the
+    # console". That was the one that bit on the first production install.
     - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ .Values.observabilityNamespace }}
       ports:
         - protocol: TCP
+          port: {{ .Values.webhookPort | default 8080 }}
+        {{- if .Values.webhookPort }}
+        # Prometheus scrapes /metrics, which is on the main port.
+        - protocol: TCP
           port: 8080
+        {{- end }}
 
     # Within the namespace: the agent to its own Postgres, and any future sidecar.
     - from:
@@ -52,6 +71,10 @@ spec:
       ports:
         - protocol: TCP
           port: 8080
+        {{- if .Values.webhookPort }}
+        - protocol: TCP
+          port: {{ .Values.webhookPort }}
+        {{- end }}
         - protocol: TCP
           port: 5432
 
@@ -59,9 +82,14 @@ spec:
     # Kubelet probes arrive from the NODE's address, which no namespaceSelector can match, so
     # on some clusters the liveness probe fails without an entry here and the pod is killed in
     # a loop by its own protection. This is the single most common way a first NetworkPolicy
-    # breaks a working service.
+    # breaks a working service. It is also how an ingress controller running `hostNetwork`
+    # reaches the pod - its packets carry the node's address and no namespaceSelector will ever
+    # match them.
     #
-    # Every CIDR here can forge an alert. Prefer the node CIDR over 0.0.0.0/0.
+    # WITH webhookPort SET THIS IS THE CONSOLE PORT ONLY, and that is the whole reason the split
+    # exists. On a single port, admitting the node address to reach a dashboard also admitted
+    # forged alerts from anything running with host networking. Now it does not: this opens the
+    # console and cannot reach the receiver.
     - from:
         {{- range .Values.networkPolicy.extraIngressCIDRs }}
         - ipBlock:

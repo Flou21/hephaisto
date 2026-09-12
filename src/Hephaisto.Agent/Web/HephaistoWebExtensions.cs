@@ -4,6 +4,8 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 
 using Hephaisto.Core.Abstractions;
 using Hephaisto.Agent.Observability;
+using Microsoft.Extensions.Options;
+using Hephaisto.Agent.Options;
 
 namespace Hephaisto.Agent.Web;
 
@@ -26,6 +28,12 @@ public static class HephaistoWebExtensions
         // Registered here as well as in AddHephaistoPersistence so the two are order-
         // independent; TryAdd means whichever runs first wins and there is still exactly one.
         services.TryAddSingleton<IClock>(SystemClock.Instance);
+
+        // Which port the webhook answers on. Bound here rather than in Program.cs so the whole
+        // web surface is configured in one place.
+        services.AddOptions<WebOptions>()
+            .BindConfiguration(WebOptions.SectionName)
+            .ValidateOnStart();
 
         services.TryAddSingleton<IIncidentNotifier, IncidentNotifier>();
         services.TryAddSingleton<WatchdogMonitor>();
@@ -63,11 +71,35 @@ public static class HephaistoWebExtensions
     {
         ArgumentNullException.ThrowIfNull(app);
 
-        app.MapAlertmanagerEndpoints();
-        app.MapIncidentEndpoints();
-        app.MapStatusEndpoints();
-        app.MapModeEndpoints();
-        app.MapVersionEndpoints();
+        // The webhook is the one unauthenticated surface, and with WebhookPort set it answers on
+        // its own port so a NetworkPolicy can protect it without also deciding who may read the
+        // console. See WebOptions for why they shared a port and what that cost.
+        var web = app.Services.GetRequiredService<IOptions<WebOptions>>().Value;
+
+        // MapGroup("") adds no prefix and is both a route builder and a convention builder, so it
+        // is the seam that lets a host constraint be applied to a set of endpoints without every
+        // Map* method having to return one.
+        var webhooks = app.MapGroup(string.Empty);
+        webhooks.MapAlertmanagerEndpoints();
+
+        var console = app.MapGroup(string.Empty);
+        console.MapIncidentEndpoints();
+        console.MapStatusEndpoints();
+        console.MapModeEndpoints();
+        console.MapVersionEndpoints();
+
+        if (web.WebhookPortIsSeparate)
+        {
+            // Port-only host matching: the agent does not know what hostname it is reached on,
+            // and pinning one would break every install that fronts it differently.
+            webhooks.RequireHost($"*:{web.WebhookPort}");
+
+            // And the reverse, which is the half that is easy to forget. If the API still
+            // answered on the webhook port, the tight policy in front of that port would be
+            // guarding one door with the wall missing beside it - anything allowed to deliver an
+            // alert could also read every incident and approve an action.
+            console.RequireHost($"*:{web.MainPort}");
+        }
 
         return app;
     }

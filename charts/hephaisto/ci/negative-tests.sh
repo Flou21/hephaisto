@@ -295,5 +295,35 @@ else
 fi
 
 echo
+echo "The webhook port split keeps the console hole out of the receiver:"
+
+# The property, stated plainly: with webhookPort set, an address admitted by extraIngressCIDRs
+# may read the console and may NOT post an alert. On a single port those were the same grant,
+# and that is what forced the first production install to disable the NetworkPolicy outright to
+# get a dashboard - its ingress controller runs hostNetwork, so its packets carry the node
+# address and no namespaceSelector can ever match them.
+SPLIT=$(helm template t "$CHART" --namespace hephaisto \
+    --set webhookPort=8081 \
+    --set 'networkPolicy.extraIngressCIDRs[0]=10.10.0.0/24' 2>/dev/null)
+
+CIDR_PORTS=$(printf '%s' "$SPLIT" | python3 "$CHART/ci/netpol-ports.py")
+
+if [ "$CIDR_PORTS" = "8080" ]; then
+    pass "extraIngressCIDRs reaches the console and not the webhook"
+else
+    fail "extraIngressCIDRs reaches ports [$CIDR_PORTS]; must be 8080 only, or admitting a node address to read a dashboard also admits forged alerts"
+fi
+
+# The other half. Kestrel listening on both ports is not the split - without these the app
+# serves every endpoint on both, and the policy guards a door with no wall beside it.
+if grep -q 'name: Web__WebhookPort' <<<"$SPLIT" && grep -q 'name: Web__MainPort' <<<"$SPLIT"; then
+    pass "the split is routed in the app, not only bound in Kestrel"
+else
+    fail "webhookPort is set but Web__WebhookPort/Web__MainPort are not, so every endpoint answers on both ports"
+fi
+
+renders "webhookPort=0 keeps the previous single-port behaviour" --set webhookPort=0
+
+echo
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -134,6 +134,13 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+            {{- if .Values.webhookPort }}
+            # The unauthenticated Alertmanager receiver, on its own port so a NetworkPolicy can
+            # protect it without also deciding who may read the console. See values.yaml.
+            - name: webhook
+              containerPort: {{ .Values.webhookPort }}
+              protocol: TCP
+            {{- end }}
           env:
             # ---------------------------------------------------------------------------
             # Mode - the env arm of the kill switch
@@ -391,7 +398,18 @@ spec:
               value: /etc/hephaisto
 
             - name: ASPNETCORE_URLS
-              value: "http://0.0.0.0:8080"
+              value: "http://0.0.0.0:8080{{ if .Values.webhookPort }};http://0.0.0.0:{{ .Values.webhookPort }}{{ end }}"
+
+            {{- if .Values.webhookPort }}
+            # Routing, not binding. Kestrel listens on both addresses above; these tell the app
+            # which endpoints answer on which - /webhooks only on the webhook port, and the
+            # console and API only on the main one. Both halves matter: without the second, the
+            # API would still answer on the port the NetworkPolicy is guarding.
+            - name: Web__WebhookPort
+              value: {{ .Values.webhookPort | quote }}
+            - name: Web__MainPort
+              value: "8080"
+            {{- end }}
             - name: DOTNET_gcServer
               value: "1"
 

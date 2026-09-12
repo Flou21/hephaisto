@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 
 using k8s;
 
+using Hephaisto.Agent.Kubernetes;
 using Hephaisto.Agent.Llm;
 using Hephaisto.Agent.Notifications;
 using Hephaisto.Agent.Persistence;
@@ -48,11 +49,24 @@ public sealed class PostgresProbe(IServiceScopeFactory scopes, IClock clock) : I
 /// The Kubernetes API. A read, because reads are all the agent is granted in Observe.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Listing one namespace rather than calling <c>/version</c>: the version endpoint answers for an
 /// unauthenticated caller too, so it would report healthy on a cluster where the ServiceAccount's
 /// RBAC had been removed - which is a failure this panel exists to show.
+/// </para>
+/// <para>
+/// <b>It takes the options and a provider rather than <c>IKubernetes</c> itself, and that is not
+/// style.</b> When <c>Kubernetes:Enabled</c> is false the client is still registered - as a
+/// factory that THROWS a sentence naming the setting, deliberately, so every call site fails the
+/// same explanatory way. Injecting it here would resolve that factory while the container is
+/// building the probe list and take the whole host down on startup in the demo and UI-only
+/// configuration. Which it did, and only running the process found it: every unit test passed.
+/// </para>
 /// </remarks>
-public sealed class KubernetesProbe(IKubernetes? api, IClock clock) : IConnectionProbe
+public sealed class KubernetesProbe(
+    IServiceProvider services,
+    IOptionsMonitor<KubernetesOptions> options,
+    IClock clock) : IConnectionProbe
 {
     public string Name => "kubernetes";
 
@@ -60,14 +74,19 @@ public sealed class KubernetesProbe(IKubernetes? api, IClock clock) : IConnectio
     {
         var at = clock.UtcNow;
 
-        if (api is null)
+        if (!options.CurrentValue.Enabled)
         {
             return ConnectionReport.NotConfigured(
-                Name, "No cluster client: the agent is running outside Kubernetes.", at);
+                Name,
+                "Kubernetes:Enabled is false: this process has no cluster client, which is the "
+                + "demo and UI-only configuration.",
+                at);
         }
 
         try
         {
+            var api = services.GetRequiredService<IKubernetes>();
+
             var namespaces = await api.CoreV1.ListNamespaceAsync(limit: 1, cancellationToken: ct);
 
             return new ConnectionReport(
