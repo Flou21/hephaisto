@@ -10,6 +10,50 @@ broken, with the evidence for each.
 Versions are set by the git tag through MinVer; the chart version and the app version are always
 the same number.
 
+## v0.8.0 — unreleased
+
+**An on-call engineer can actually use it.** The agent diagnosed well and said so nowhere a
+person could act on. An incident could not be closed, acknowledged or assigned; there was no
+authentication, so every actor in the audit trail was a string somebody typed; and every
+dependency was probed once at startup and the result thrown into a log line.
+
+Shaped by the first production deployment, on 2026-09-11. Installing it is something you do
+once and it had just been done; working the incidents is daily.
+
+### Added
+- **Close, acknowledge and reopen an incident** ([#109](docs/backlog.md#109)). Three of the ten
+  `IncidentState` members had no producer: `Expire()` had zero callers so `Expired` was
+  unreachable, nothing swept `AwaitingApproval` so `ApprovalTimedOut` had none either, and
+  `Escalated` counts as open — which on an Observe install is where every incident ends up. The
+  open count could only ever rise. `IncidentSweeper` gives the first two producers, which also
+  closes [#44](docs/backlog.md#44).
+- **OIDC on the console and API** ([#110](docs/backlog.md#110)), with the authenticated subject
+  replacing the typed actor on every approval, closure, acknowledgement and audit row. Two
+  schemes against one authority — authorization-code for the browser, bearer tokens for scripts —
+  and two roles, because "anyone who can log in may authorise a change to the cluster" is not a
+  default worth shipping. Fails closed, deliberately.
+- **A connections panel on the status page** ([#111](docs/backlog.md#111)). Four states, not two:
+  *not configured* is a choice and must not render as a fault, and *degraded* is separate from
+  *healthy* because a grafana-mcp connected without its Tempo tools is [#31](docs/backlog.md#31)
+  and would otherwise show green.
+- **Assignment** ([#112](docs/backlog.md#112)), distinct from acknowledgement — assigning is
+  second person, acknowledging is first, and the gap between them is the signal.
+- **`/webhooks` on its own port**, so a NetworkPolicy can protect the unauthenticated receiver
+  while the console is exposed by ordinary means.
+
+### Fixed
+- **A values file belonging to a different chart rendered a plausible install.** The schema's
+  `required` list could never fail, because Helm validates values *after* merging the chart's own
+  defaults. `additionalProperties: false` now makes it a template error. Locking it first required
+  declaring `grafana`, `grafanaMcp.datasourceUids` and `postgres.appUser`, which the schema had
+  never declared and nothing had ever compared.
+- **Two `values.yaml` comments that sent the first production install wrong**: `secrets.grafanaMcp`
+  is the caller bearer rather than a Grafana credential, and `grafanaMcp.url` needs its `/mcp` path.
+
+### Known
+- [#70](docs/backlog.md#70) is narrowed, not closed. c1 and c3 are still classified by a different
+  rule than the README expects. It gates Auto rather than this release.
+
 ## v0.7.0 — 2026-09-11
 
 **It survives a bad deploy.** The agent can now roll a Deployment back, there is finally a
