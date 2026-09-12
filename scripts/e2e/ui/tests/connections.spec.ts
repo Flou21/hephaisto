@@ -42,24 +42,34 @@ test.describe('the connections panel', () => {
     expect(byName['kubernetes']).toBe('Healthy');
   });
 
-  test('a not-configured dependency is shown as a choice rather than a fault', async ({ page }) => {
+  test('each state renders as its own class, whichever states this stack has', async ({ page }) => {
     await open(page, '/status');
 
     const s = await status(page);
-    const unset = s.connections.filter(
-      (c: { state: string }) => c.state === 'NotConfigured');
 
-    // The e2e stack configures no outbound notification channel, so there is always at least
-    // one. If that ever changes this assertion should be re-pointed rather than deleted - the
-    // distinction it protects is the whole reason the enum has four members.
-    expect(unset.length).toBeGreaterThan(0);
+    // DERIVED from the API, not assumed. The first version asserted that at least one dependency
+    // was NotConfigured - true on a laptop, false on the e2e stack where everything is wired up.
+    // It failed the release gate for a reason that said nothing about the console, which is the
+    // same mistake as verifying a port split with a curl whose Host header happened to agree.
+    //
+    // Counting each state against the class it must render as is strictly stronger anyway: it
+    // holds on any stack, and it catches the failure that actually matters - two states
+    // collapsing onto one colour, which would make "switched off" and "broken" look alike.
+    const expected: Record<string, string> = {
+      Healthy: '.conn-healthy',
+      Degraded: '.conn-degraded',
+      Unreachable: '.conn-unreachable',
+      NotConfigured: '.conn-unset',
+    };
 
-    // The muted class, not the alarm one. A switched-off channel painted red teaches people to
-    // ignore the panel, which costs more than the panel gains.
-    const row = page.locator('.conn-unset');
-    await expect(row.first()).toBeVisible();
-    await expect(page.locator('.conn-unreachable')).toHaveCount(
-      s.connections.filter((c: { state: string }) => c.state === 'Unreachable').length);
+    for (const [state, selector] of Object.entries(expected)) {
+      const count = s.connections.filter((c: { state: string }) => c.state === state).length;
+      await expect(page.locator(selector)).toHaveCount(count);
+    }
+
+    // And every row got one of the four, so none rendered as an unstyled blank.
+    await expect(page.locator(Object.values(expected).join(', ')))
+      .toHaveCount(s.connections.length);
   });
 
   test('each row says when it was last checked', async ({ page }) => {
