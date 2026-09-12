@@ -103,8 +103,10 @@ public enum IncidentState
     /// make "we ignored it until it went away" indistinguishable from "we handled it".
     /// </para>
     /// <para>
-    /// Appended rather than inserted: the enum is persisted by VALUE, so renumbering would
-    /// silently relabel every historical row.
+    /// Appended rather than inserted, though not for the reason it first looks: enums here are
+    /// persisted by NAME (<c>HephaistoDbContext</c> applies an <c>EnumToStringConverter</c> to
+    /// every one), so renumbering is harmless and RENAMING is the breaking change. Appending is
+    /// simply the tidy way to add a member; the numbers carry nothing.
     /// </para>
     /// <para>
     /// <b>Adding a member here means auditing three places</b>, which do not agree and are not

@@ -124,29 +124,44 @@ public sealed class IncidentStateDefinitionsAgreeTests
     }
 
     /// <summary>
-    /// The enum is persisted by value, so the numbers are data and may not be rearranged.
+    /// The NAMES are the data, not the numbers.
     /// </summary>
     /// <remarks>
-    /// Pinned because the tempting way to add <see cref="IncidentState.Closed"/> is next to the
-    /// other terminal states, which would renumber Escalated and Expired and silently relabel
-    /// every historical row in the database.
+    /// <para>
+    /// <b>This test used to assert the numbers, with a justification that was exactly
+    /// backwards.</b> It said the enum was "persisted by value, so the numbers may not be
+    /// rearranged". It is not: <c>HephaistoDbContext</c> applies an
+    /// <c>EnumToStringConverter</c> to every enum property, and its own comment gives the
+    /// reason - "renumbering an enum silently rewrites the meaning of history". The column is
+    /// <c>text</c> and holds <c>'Escalated'</c>, not <c>8</c>.
+    /// </para>
+    /// <para>
+    /// So renumbering is harmless and RENAMING is the breaking change - it orphans every row
+    /// already written, and the failure is a read that throws long after the commit that caused
+    /// it. That is what this pins. The JSON API serialises names too, for the same reason, so a
+    /// rename breaks stored rows and published responses together.
+    /// </para>
+    /// <para>
+    /// Found while seeding a test database by hand: rows written with <c>state = 8</c> were
+    /// invisible to every query, because the column expects a name.
+    /// </para>
     /// </remarks>
     [Theory]
-    [InlineData(IncidentState.Detected, 0)]
-    [InlineData(IncidentState.Triaging, 1)]
-    [InlineData(IncidentState.Suppressed, 2)]
-    [InlineData(IncidentState.Investigating, 3)]
-    [InlineData(IncidentState.AwaitingApproval, 4)]
-    [InlineData(IncidentState.Acting, 5)]
-    [InlineData(IncidentState.Verifying, 6)]
-    [InlineData(IncidentState.Resolved, 7)]
-    [InlineData(IncidentState.Escalated, 8)]
-    [InlineData(IncidentState.Expired, 9)]
-    [InlineData(IncidentState.Closed, 10)]
-    public void The_persisted_numbers_are_fixed(IncidentState state, int value) =>
-        ((int)state).Should().Be(value);
+    [InlineData(IncidentState.Detected, "Detected")]
+    [InlineData(IncidentState.Triaging, "Triaging")]
+    [InlineData(IncidentState.Suppressed, "Suppressed")]
+    [InlineData(IncidentState.Investigating, "Investigating")]
+    [InlineData(IncidentState.AwaitingApproval, "AwaitingApproval")]
+    [InlineData(IncidentState.Acting, "Acting")]
+    [InlineData(IncidentState.Verifying, "Verifying")]
+    [InlineData(IncidentState.Resolved, "Resolved")]
+    [InlineData(IncidentState.Escalated, "Escalated")]
+    [InlineData(IncidentState.Expired, "Expired")]
+    [InlineData(IncidentState.Closed, "Closed")]
+    public void The_persisted_names_are_fixed(IncidentState state, string name) =>
+        state.ToString().Should().Be(name);
 
-    /// <summary>Nothing was added without being given a number here.</summary>
+    /// <summary>Nothing was added without being pinned here.</summary>
     [Fact]
     public void Every_state_is_pinned_by_the_theory_above()
     {
@@ -154,7 +169,7 @@ public sealed class IncidentStateDefinitionsAgreeTests
         // that method requires a DisposalTracker the test has no way to supply, and the
         // constructor arguments are the thing being asserted on anyway.
         var pinned = typeof(IncidentStateDefinitionsAgreeTests)
-            .GetMethod(nameof(The_persisted_numbers_are_fixed))!
+            .GetMethod(nameof(The_persisted_names_are_fixed))!
             .GetCustomAttributesData()
             .Where(a => a.AttributeType == typeof(InlineDataAttribute))
             .Select(a => (IReadOnlyCollection<CustomAttributeTypedArgument>)a.ConstructorArguments[0].Value!)
