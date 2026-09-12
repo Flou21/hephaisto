@@ -28,7 +28,8 @@ It also established that **the release gate is two runs, not one**. `--full` app
 simultaneously, which on a single node crosses `policy.clusterUnhealthyCeiling` — so the policy
 engine correctly refuses every action as a cluster-wide event, and the acting path cannot be
 tested in the same run that tests diagnosis ([#97](backlog.md#97)). Diagnosis scored **8/8** over
-85 assertions.
+85 assertions. *(Superseded in v0.8.0: the act phase now clears the other fixtures and waits for the
+cluster to fall back below the ceiling, so one run covers both. The ceiling was not changed.)*
 
 `v0.5.0` shipped on 2026-09-01. **The list got shorter, and the gate went green.** The release
 whose feature was that it shipped no feature: eighteen fixes, most of them in the instrument that
@@ -1197,6 +1198,12 @@ Per #97 the acting assertion cannot pass inside a `--full` run: simultaneous fix
 `policy.clusterUnhealthyCeiling`, so the policy engine correctly refuses every action as a
 cluster-wide event. **That is a working safety gate and must not be "fixed" by widening the
 ceiling.**
+
+> **Down to two in v0.8.0, and the ceiling still was not touched.** The act phase clears the act
+> fixture's neighbours and waits for the cluster-wide unhealthy fraction to fall back below the
+> ceiling before it asserts, so `--full --mode Auto` covers diagnosis and one action type in a
+> single run. The second action type still needs its own run, because `ACT_FIXTURE` names one
+> fixture and the action types promoted to unattended follow it.
 
 ---
 

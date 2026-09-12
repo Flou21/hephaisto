@@ -2169,7 +2169,27 @@ hand and least likely to trust the result afterwards.
 **Fix.** Either cap both sides or compare the page against an uncapped count. Capping both is
 the smaller change and keeps the assertion meaningful.
 
-**Size.** S.
+**Fixed 2026-09-12, and for the whole suite rather than this one spec.** `helpers.ts` grew
+`INCIDENT_LIMIT` - the page's own cap, 200 - and an `incidents()` wrapper that every spec now calls.
+The wrapper does one thing this entry did not ask for and needs: **it refuses a list that came back
+at the cap**. Capping both sides alone would have made the assertion pass at 200 open incidents
+while comparing two equally truncated numbers, so the spec would go quietly green exactly where it
+used to go loudly red. Failing there instead, with a message naming both places to raise, keeps the
+assertion meaning something at every size.
+
+**Five other call sites had the same bug, more quietly.** `acting.spec.ts` (twice),
+`lifecycle.spec.ts` (three times) and the diagnosis half of `console.spec.ts` all asked for 100 -
+not to compare a count, but to *scan* for an incident with some property. Above 100 open incidents
+the matching incident can fall outside the window, the scan finds nothing, and the spec skips - and
+a skip fails the phase ([#1](#1)), so the gate goes red naming the wrong thing entirely. That is
+strictly harder to debug than the count mismatch this entry describes.
+
+**One thing found while fixing it.** The count comparison had a second way to fail on a truthful
+page: the agent keeps opening incidents while the suite runs, so a table read at T compared against
+a list read at T+e differs by whatever opened in between. It is now retried as a unit, which
+converges as soon as one pair is consistent and still fails on a persistent disagreement.
+
+**Size.** S. **Status: fixed 2026-09-12.**
 
 ### 50. Both themes are first-class, and neither can be chosen
 
@@ -4835,7 +4855,37 @@ planner reliably proposed something - which is exactly what c13 was added to mak
 configuration", and the run looked green throughout. Two bugs in a queue, the first hiding the
 second.
 
-**Size.** S for the skip, S for the docs. **Status: fixed 2026-09-03.**
+**And the real fix landed 2026-09-12, which is the one that closes this.** The skip was honest but
+it was a mitigation: it stopped the gate lying about *why*, and left the acting path unconfirmed by
+the command documented to confirm it. Two runs instead of three was better arithmetic, not coverage.
+
+`chaos_reset_for_acting` inverts the sequencing instead. Diagnose against every fixture, then
+**delete the act fixture's neighbours**, wait for the cluster-wide unhealthy fraction to fall back
+below the ceiling with margin, and only then assert acting. The ceiling is a property of how much is
+broken *at once*, so the fix is to stop having everything broken at once - which leaves the gate, the
+fixture and the assertion all untouched, and is the one move this entry's "what must not be done"
+paragraph does not forbid.
+
+Two details it depends on, both of which an earlier draft got wrong:
+
+- **It keeps the act fixture.** Deleting and re-applying it would discard the incident under test
+  and the investigation already attached to it, and the act phase would then race a fresh
+  investigation and report "no action" for a *third* reason that is still not about the agent.
+- **It counts what the agent counts.** `ClusterFactsRules.UnhealthyFraction` is over pods in **all**
+  namespaces excluding `Succeeded`, where unhealthy means Pending, Failed, or any container not
+  Ready. Measuring the chaos namespace alone reads ~100% and never settles; waiting for zero
+  cluster-wide never settles either, because the act fixture is *meant* to stay unhealthy. The wait
+  is on the real number crossing the real ceiling, and it is a wait on the cluster rather than a
+  sleep - a fixed delay would be too short on a slow node, denying for the right reason again and
+  looking identical to this bug.
+
+If it does not settle inside ten minutes it warns rather than dies, so a node that genuinely cannot
+recover produces a real finding about the node instead of an early exit that hides one.
+
+**The release gate is therefore one run again**, and `docs/verification.md` and
+`scripts/e2e/README.md` say so.
+
+**Size.** S for the skip, S for the docs, S for the sequencing. **Status: fixed 2026-09-12.**
 
 ### 98. The redactor's lookbehind lost to `\u0022`, which is [#84](#84) for the second time
 

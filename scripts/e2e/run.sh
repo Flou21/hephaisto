@@ -82,7 +82,9 @@ Options:
                        c1,c2,c3,c4,c5,c7,c8,c10,c11,c12,c13,c14. The release gate. About two
                        hours - c8 alone needs a 30-minute window, and c10 and c14 sit behind
                        5-minute rate windows. c6 and c9 are excluded and no flag overrides
-                       that.
+                       that. Combines with --mode Auto since v0.8.0: the act phase clears the
+                       other fixtures and waits for the cluster to fall back below
+                       policy.clusterUnhealthyCeiling before asserting. See backlog #97.
   --k8s <version>      Kubernetes version for the kind node (default: 1.36.4)
   --from <phase>       start at this phase, reusing an existing cluster
   --only <phase>       run just this phase against an existing cluster

@@ -296,8 +296,8 @@ kind cluster and prints a verdict:
 scripts/e2e/run.sh                    # dispatch a nightly build and test it
 scripts/e2e/run.sh --rc               # cut a real release candidate and test it
 scripts/e2e/run.sh --tag 0.0.1-rc2    # test something already published
-scripts/e2e/run.sh --nightly --full   # diagnosis gate: eleven fixtures, two hours or more
-scripts/e2e/run.sh --tag <v> --fixtures c13 --mode Auto   # acting gate: about 25 minutes
+scripts/e2e/run.sh --nightly --full --mode Auto   # the release gate: diagnosis AND acting
+scripts/e2e/run.sh --tag <v> --fixtures c14 --mode Auto   # a second action type, ~25 minutes
 ```
 
 It covers steps 1, 2, 5, 6, 9, 11, 12, 14 and 16 above, plus the parts CI cannot reach: that the
@@ -342,10 +342,10 @@ would change the denominator and the difficulty at once.
 `--mode Auto` and `--mode DryRun` both add the acting fixture, whether or not fixtures were
 named explicitly; `ACT_FIXTURE` names it, **c13 by default**, with c11, c12 and c14 selectable.
 
-**The acting gate is two runs, and since v0.7.0 they test two different action types.**
-`--fixtures c13 --mode Auto` measures a `RestartPod`; `--fixtures c14 --mode Auto` measures a
-`RollbackDeployment`, which is the first fixture in the corpus where a restart is the wrong
-answer. The action types promoted to unattended follow `ACT_FIXTURE` rather than being fixed at
+**Since v0.8.0 one run covers diagnosis and acting**, and a second is needed only to measure a
+second action type. `ACT_FIXTURE` (c13) measures a `RestartPod`; `--fixtures c14 --mode Auto`
+measures a `RollbackDeployment`, which is the first fixture in the corpus where a restart is the
+wrong answer. The action types promoted to unattended follow `ACT_FIXTURE` rather than being fixed at
 `RestartPod`, because enabling a restart alongside a rollback would let a model score by reaching
 for the tool it has rather than by reasoning about the change.
 
@@ -357,14 +357,19 @@ HEPHAISTO_LLM_PROVIDER=openai HEPHAISTO_LLM_ENDPOINT=http://100.91.41.104:11434/
 HEPHAISTO_LLM_MODEL=gpt-oss:120b scripts/e2e/run.sh --nightly --full
 ```
 
-**`--full` and `--mode Auto` do not combine.** Eleven simultaneous fixtures put the cluster over
-`policy.clusterUnhealthyCeiling`, so every action is correctly denied as a cluster-wide event and
-the acting path goes untested. Run it separately, which is also far cheaper:
+**`--full` and `--mode Auto` used not to combine, and now do.** Eleven simultaneous fixtures put
+the cluster over `policy.clusterUnhealthyCeiling`, so every action was correctly denied as a
+cluster-wide event and the acting path went untested — for three releases the gate was therefore two
+commands. The act phase now clears the act fixture's neighbours and waits for the cluster-wide
+unhealthy fraction to fall back below the ceiling before it asserts anything, so the run is wide for
+diagnosis and narrow for acting. The ceiling itself was not touched; see backlog #97.
+
+A focused run is still the cheap way to measure the *other* action type:
 
 ```sh
 HEPHAISTO_LLM_PROVIDER=openai HEPHAISTO_LLM_ENDPOINT=http://100.91.41.104:11434/v1 \
 HEPHAISTO_LLM_MODEL=gpt-oss:120b \
-  scripts/e2e/run.sh --tag <version> --fixtures c13 --mode Auto
+  scripts/e2e/run.sh --tag <version> --fixtures c14 --mode Auto
 ```
 
 The endpoint has to be an address the **cluster** can reach — `localhost` from a pod is the pod,

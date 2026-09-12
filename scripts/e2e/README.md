@@ -73,19 +73,27 @@ can run on this hardware, which is eleven of the thirteen and the denominator th
 always written against. c6 and c9 stay out and no flag overrides that; neither is a scheduling
 choice.
 
-**It is not the acting gate, and it cannot be.** `--full` applies its fixtures *simultaneously*,
-and on a single node that many broken workloads is over `policy.clusterUnhealthyCeiling` — so the
-policy engine correctly refuses every action as a cluster-wide event, and the act assertion can
-never pass in a `--full` run. The harness now says so rather than failing, but the consequence for
-the procedure is that **a release needs two runs**:
+**It is the acting gate too, as of v0.8.0 — but only because the run puts the cluster back first.**
+`--full` applies its fixtures *simultaneously*, and on a single node that many broken workloads is
+over `policy.clusterUnhealthyCeiling`, so the policy engine correctly refuses every action as a
+cluster-wide event. For three releases that meant the act assertion could never pass in a `--full`
+run and a release needed two commands.
+
+The act phase now calls `chaos_reset_for_acting` first: it **deletes the act fixture's neighbours**,
+waits for the cluster-wide unhealthy fraction to fall back below the ceiling, and leaves the act
+fixture — and its incident, and the investigation already attached to it — alone. The ceiling is a
+property of how much is broken *at once*, so one run can be wide and then narrow.
 
 ```sh
-scripts/e2e/run.sh --tag <version> --full                       # diagnosis, ~2-4 h
-scripts/e2e/run.sh --tag <version> --fixtures c13 --mode Auto   # acting, ~25 min
+scripts/e2e/run.sh --tag <version> --full --mode Auto           # diagnosis AND acting, ~2-4 h
 ```
 
-See backlog #97. Measured on v0.6.0: the wide run scored 8/8 correct and could not act; the
-focused run passed 70 assertions in 24m37s, executing a `RestartPod` and closing the incident.
+Nothing was weakened to get there: not the ceiling, not the fixture, not the assertion. See
+backlog #97, which spells out why raising the ceiling would have been the wrong move.
+
+Two runs are still the right thing when measuring a **second** action type — `--fixtures c14 --mode
+Auto` for a `RollbackDeployment` — because `ACT_FIXTURE` names one fixture per run and the action
+types promoted to unattended follow it.
 
 Budget **about two hours**. c8 alone cannot open an incident sooner than thirty minutes, because
 its rule needs `changes(...)[30m] >= 4` — thirty minutes of evidence before the expression can
@@ -184,11 +192,12 @@ before every release. No key is involved:
 HEPHAISTO_LLM_PROVIDER=openai \
 HEPHAISTO_LLM_ENDPOINT=http://100.91.41.104:11434/v1 \
 HEPHAISTO_LLM_MODEL=gpt-oss:120b \
-    scripts/e2e/run.sh --nightly --full
+    scripts/e2e/run.sh --nightly --full --mode Auto
 ```
 
-Note `--full` without `--mode Auto`: the two do not combine, for the reason above. Run the acting
-half separately with `--fixtures c13 --mode Auto`.
+Note `--full --mode Auto`: since v0.8.0 the two combine, because the act phase clears the other
+fixtures and waits for the cluster to recover before asserting. Run `--fixtures c14 --mode Auto`
+separately to measure the second action type.
 
 Two things have to be true, and both were false on a fresh install:
 
