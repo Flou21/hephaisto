@@ -88,6 +88,12 @@ public static class HephaistoWebExtensions
         console.MapModeEndpoints();
         console.MapVersionEndpoints();
 
+        // Authentication (#110). The webhook group is the ONE surface that stays anonymous, and
+        // it has to: Alertmanager has no field for a credential, which is why it needs its own
+        // port and a NetworkPolicy in front of it. Everything else requires a signed-in user.
+        webhooks.AllowAnonymous();
+        console.RequireAuthorization(AuthenticationExtensions.ReadPolicy);
+
         if (web.WebhookPortIsSeparate)
         {
             // Port-only host matching: the agent does not know what hostname it is reached on,

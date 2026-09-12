@@ -30,14 +30,24 @@ public static class IncidentEndpoints
         // There is no un-acknowledge and no un-close. Reopening is Reinvestigate, which already
         // owns the named-requester rule, the kill-switch check and the queueing that starting
         // work needs - a second door would duplicate all four and be the one that drifts.
-        group.MapPost("/{id:guid}/close", CloseAsync).WithName("CloseIncident");
+        // Acknowledging is a read-level act - saying you have seen something. Closing takes an
+        // incident out of the open set on a human's judgement, so it sits with approval.
+        group.MapPost("/{id:guid}/close", CloseAsync)
+            .WithName("CloseIncident")
+            .RequireAuthorization(AuthenticationExtensions.ApprovePolicy);
+
         group.MapPost("/{id:guid}/acknowledge", AcknowledgeAsync).WithName("AcknowledgeIncident");
 
         // Approval. Two routes rather than one with a boolean, so a truncated or mistyped body
         // cannot turn a denial into an approval - the verb is in the path, where it is visible
         // in an access log and cannot be defaulted.
-        group.MapPost("/{id:guid}/actions/{actionId:guid}/approve", ApproveAsync).WithName("ApproveAction");
-        group.MapPost("/{id:guid}/actions/{actionId:guid}/deny", DenyAsync).WithName("DenyAction");
+        group.MapPost("/{id:guid}/actions/{actionId:guid}/approve", ApproveAsync)
+            .WithName("ApproveAction")
+            .RequireAuthorization(AuthenticationExtensions.ApprovePolicy);
+
+        group.MapPost("/{id:guid}/actions/{actionId:guid}/deny", DenyAsync)
+            .WithName("DenyAction")
+            .RequireAuthorization(AuthenticationExtensions.ApprovePolicy);
 
         // Outside the incident group: a blob is addressed by its own id, and the step that
         // points at it may well have outlived it.
@@ -224,12 +234,17 @@ public static class IncidentEndpoints
     private static async Task<IResult> ReinvestigateAsync(
         Guid id,
         [FromBody] ReinvestigateRequest request,
+        HttpContext http,
         IncidentQueries queries,
         CancellationToken ct)
     {
-        // Attribution, not authentication - the same contract as feedback. A retry spends real
-        // tokens, so an anonymous one is an anonymous line on the invoice.
-        if (string.IsNullOrWhiteSpace(request.RequestedBy))
+        ArgumentNullException.ThrowIfNull(http);
+
+        // Attribution, and now authentication too where an IdP is configured. A retry spends
+        // real tokens, so an anonymous one is an anonymous line on the invoice.
+        var actor = ActorResolution.Resolve(http.User, request.RequestedBy);
+
+        if (string.IsNullOrWhiteSpace(actor))
         {
             return TypedResults.ValidationProblem(new Dictionary<string, string[]>
             {
@@ -237,7 +252,7 @@ public static class IncidentEndpoints
             });
         }
 
-        var result = await queries.RequestReinvestigationAsync(id, request.RequestedBy, ct);
+        var result = await queries.RequestReinvestigationAsync(id, actor, ct);
 
         return result.Outcome switch
         {
@@ -262,12 +277,17 @@ public static class IncidentEndpoints
     private static async Task<IResult> CloseAsync(
         Guid id,
         [FromBody] CloseIncidentRequest request,
+        HttpContext http,
         IncidentQueries queries,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(http);
 
-        if (string.IsNullOrWhiteSpace(request.ClosedBy))
+        // The token wins outright when there is one - see ActorResolution.
+        var actor = ActorResolution.Resolve(http.User, request.ClosedBy);
+
+        if (string.IsNullOrWhiteSpace(actor))
         {
             return TypedResults.ValidationProblem(new Dictionary<string, string[]>
             {
@@ -280,7 +300,7 @@ public static class IncidentEndpoints
             });
         }
 
-        var result = await queries.CloseIncidentAsync(id, request.ClosedBy, request.Reason ?? string.Empty, ct);
+        var result = await queries.CloseIncidentAsync(id, actor, request.Reason ?? string.Empty, ct);
 
         return Render(result);
     }
@@ -289,12 +309,16 @@ public static class IncidentEndpoints
     private static async Task<IResult> AcknowledgeAsync(
         Guid id,
         [FromBody] AcknowledgeIncidentRequest request,
+        HttpContext http,
         IncidentQueries queries,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(http);
 
-        if (string.IsNullOrWhiteSpace(request.Actor))
+        var actor = ActorResolution.Resolve(http.User, request.Actor);
+
+        if (string.IsNullOrWhiteSpace(actor))
         {
             return TypedResults.ValidationProblem(new Dictionary<string, string[]>
             {
@@ -302,7 +326,7 @@ public static class IncidentEndpoints
             });
         }
 
-        var result = await queries.AcknowledgeIncidentAsync(id, request.Actor, ct);
+        var result = await queries.AcknowledgeIncidentAsync(id, actor, ct);
 
         return Render(result);
     }
@@ -317,12 +341,12 @@ public static class IncidentEndpoints
     };
 
     private static Task<Results<Ok<ApprovalResult>, NotFound, Conflict<ApprovalResult>, ValidationProblem>>
-        ApproveAsync(Guid id, Guid actionId, ApprovalRequest request, IncidentQueries queries, CancellationToken ct) =>
-        DecideAsync(id, actionId, approve: true, request, queries, ct);
+        ApproveAsync(Guid id, Guid actionId, ApprovalRequest request, HttpContext http, IncidentQueries queries, CancellationToken ct) =>
+        DecideAsync(id, actionId, approve: true, request, http, queries, ct);
 
     private static Task<Results<Ok<ApprovalResult>, NotFound, Conflict<ApprovalResult>, ValidationProblem>>
-        DenyAsync(Guid id, Guid actionId, ApprovalRequest request, IncidentQueries queries, CancellationToken ct) =>
-        DecideAsync(id, actionId, approve: false, request, queries, ct);
+        DenyAsync(Guid id, Guid actionId, ApprovalRequest request, HttpContext http, IncidentQueries queries, CancellationToken ct) =>
+        DecideAsync(id, actionId, approve: false, request, http, queries, ct);
 
     private static async Task<Results<Ok<ApprovalResult>, NotFound, Conflict<ApprovalResult>, ValidationProblem>>
         DecideAsync(
@@ -330,12 +354,16 @@ public static class IncidentEndpoints
             Guid actionId,
             bool approve,
             ApprovalRequest request,
+            HttpContext http,
             IncidentQueries queries,
             CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(http);
 
-        if (string.IsNullOrWhiteSpace(request.DecidedBy))
+        var actor = ActorResolution.Resolve(http.User, request.DecidedBy);
+
+        if (string.IsNullOrWhiteSpace(actor))
         {
             return TypedResults.ValidationProblem(new Dictionary<string, string[]>
             {
@@ -350,7 +378,7 @@ public static class IncidentEndpoints
         // Api, not Ui, and set here rather than taken from the body: a caller must not be able
         // to describe its own approval as having come from somewhere else.
         var result = await queries.DecideActionAsync(
-            id, actionId, approve, request.DecidedBy, ApprovalSource.Api, ct);
+            id, actionId, approve, actor, ApprovalSource.Api, ct);
 
         return result.Outcome switch
         {

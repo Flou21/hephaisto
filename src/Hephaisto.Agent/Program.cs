@@ -41,6 +41,10 @@ builder.Services.AddHephaistoPipeline(builder.Configuration);
 builder.Services.AddHephaistoNotifications(builder.Configuration);
 builder.Services.AddHephaistoWeb();
 
+// OIDC (#110). Off unless Auth:Enabled, because the eval harness, a developer running
+// `dotnet run` and every install predating this have no IdP to point at.
+builder.Services.AddHephaistoAuth(builder.Configuration);
+
 // The demo seed. Inert unless Demo:Seed is set, and refuses on a database that already holds
 // an incident - so it ships in the image without being a thing a real install can trip over.
 builder.Services.AddHephaistoDemo(builder.Configuration);
@@ -75,6 +79,11 @@ app.MapStaticAssets();
 app.UseAntiforgery();
 
 app.MapDefaultEndpoints();
+// Order is load-bearing: authentication before authorization, and both before the endpoints
+// that carry the policies.
+app.UseAuthentication();
+app.UseAuthorization();
+
 app.MapHephaistoEndpoints();
 
 app.MapRazorComponents<App>()

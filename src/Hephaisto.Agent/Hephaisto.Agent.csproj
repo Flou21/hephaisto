@@ -12,6 +12,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <ProjectReference Include="../Hephaisto.Core/Hephaisto.Core.csproj" />
     <ProjectReference Include="../Hephaisto.ServiceDefaults/Hephaisto.ServiceDefaults.csproj" />
   </ItemGroup>

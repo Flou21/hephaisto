@@ -400,6 +400,37 @@ spec:
             - name: ASPNETCORE_URLS
               value: "http://0.0.0.0:8080{{ if .Values.webhookPort }};http://0.0.0.0:{{ .Values.webhookPort }}{{ end }}"
 
+            {{- if .Values.auth.enabled }}
+            # ---------------------------------------------------------------------------
+            # OIDC. Fails closed: no IdP, no console.
+            # ---------------------------------------------------------------------------
+            - name: Auth__Enabled
+              value: "true"
+            - name: Auth__Authority
+              value: {{ required "auth.authority is required when auth.enabled is true: there is nothing to authenticate against." .Values.auth.authority | quote }}
+            - name: Auth__ClientId
+              value: {{ .Values.auth.clientId | quote }}
+            - name: Auth__RolesClaim
+              value: {{ .Values.auth.rolesClaim | quote }}
+            {{- with .Values.auth.readerRole }}
+            - name: Auth__ReaderRole
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.auth.approverRole }}
+            - name: Auth__ApproverRole
+              value: {{ . | quote }}
+            {{- end }}
+            - name: Auth__ClientSecret
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secrets.auth is required when auth.enabled is true. The chart never creates a Secret, it only references one." .Values.secrets.auth }}
+                  key: clientSecret
+                  # Optional: a PUBLIC client has no secret, and Keycloak's default for a
+                  # browser-facing client is public + PKCE, which this agent uses. Requiring one
+                  # would make the common configuration impossible.
+                  optional: true
+            {{- end }}
+
             {{- if .Values.webhookPort }}
             # Routing, not binding. Kestrel listens on both addresses above; these tell the app
             # which endpoints answer on which - /webhooks only on the webhook port, and the

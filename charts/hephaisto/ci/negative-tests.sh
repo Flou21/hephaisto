@@ -295,6 +295,14 @@ else
 fi
 
 echo
+echo "Authentication refuses to be half-configured:"
+refuses "auth enabled with no authority" --set auth.enabled=true
+refuses "auth enabled with no secret name" \
+    --set auth.enabled=true --set auth.authority=https://kc/realms/h --set secrets.auth=""
+renders "auth enabled with an authority" \
+    --set auth.enabled=true --set auth.authority=https://kc/realms/h
+
+echo
 echo "The webhook port split keeps the console hole out of the receiver:"
 
 # The property, stated plainly: with webhookPort set, an address admitted by extraIngressCIDRs

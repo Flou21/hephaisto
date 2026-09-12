@@ -155,6 +155,33 @@ policy:
 # 0 keeps everything on 8080, which is the previous behaviour.
 webhookPort: 8081
 
+# -----------------------------------------------------------------------------------------
+# Authentication - OFF by default, and it fails CLOSED when on
+# -----------------------------------------------------------------------------------------
+# With this off there is no authentication of any kind: anyone who can reach the console port
+# can read every incident - which carries pod logs and ConfigMap contents the agent gathered
+# from every namespace - and can approve an action. An identity proxy in front is then the only
+# control.
+#
+# FAILS CLOSED, deliberately: if the IdP is unreachable, Hephaisto is unavailable. Dropping to
+# an unauthenticated console whenever the IdP is down would make the control decorative and hand
+# an attacker its timing. The cost is accepted rather than overlooked - reading the console
+# during an outage now depends on the IdP being up.
+#
+# The two roles are separate on purpose. "Anyone who can log in may authorise a change to the
+# cluster" is not a default worth shipping, and the set of people who should watch an incident is
+# much larger than the set who should approve a `kubectl delete`. Leaving either empty means any
+# authenticated user, which is logged at startup.
+auth:
+  enabled: false
+  # e.g. https://keycloak.example.com/realms/hephaisto
+  authority: ""
+  clientId: hephaisto
+  # Keycloak nests realm roles under realm_access.roles; the agent flattens them onto this claim.
+  rolesClaim: roles
+  readerRole: ""
+  approverRole: ""
+
 mode: Observe
 
 # -----------------------------------------------------------------------------------------
@@ -187,6 +214,10 @@ secrets:
   # The HMAC key the outbound webhook signs with: key `signingSecret`. Only read when
   # notifications.webhook.signed is true.
   notificationWebhook: hephaisto-notification-webhook
+  # The OIDC client secret: key `clientSecret`. Only read when auth.enabled is true. A client
+  # secret in a values file is a client secret in `helm get values` and in whatever git repo
+  # holds your Application, forever.
+  auth: hephaisto-auth
   # The Teams Power Automate Workflows trigger URL: key `url`. It is a SECRET rather than a
   # value because the URL *is* the credential - its `sig` query parameter is the entire
   # authentication - so it must never reach `helm get values` or a git repo.

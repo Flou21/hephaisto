@@ -19,6 +19,15 @@
     <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.5.3" />
   </ItemGroup>
 
+  <ItemGroup Label="Authentication">
+    <!-- Two schemes against one authority, because the console and the API are used by
+         different things. The browser gets the authorization-code flow and a cookie; a script
+         or the e2e harness gets a bearer token, which is the only way to call the API without
+         a browser. One IdP, one set of roles, two front doors. -->
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.0" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
+  </ItemGroup>
+
   <ItemGroup Label="LLM">
     <!-- Google.GenAI ships AsIChatClient(model) in-box, so no adapter layer. -->
     <PackageVersion Include="Google.GenAI" Version="1.21.0" />

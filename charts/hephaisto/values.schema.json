@@ -178,6 +178,10 @@
         },
         "notificationTeams": {
           "type": "string"
+        },
+        "auth": {
+          "type": "string",
+          "description": "Secret holding the OIDC client secret under key `clientSecret`. Required when auth.enabled is true."
         }
       },
       "additionalProperties": false
@@ -534,6 +538,34 @@
       "minimum": 0,
       "maximum": 65535,
       "description": "Port for /webhooks. 0 keeps everything on 8080. When set, the console and API answer only on 8080 and the webhook only here, so a NetworkPolicy can protect the receiver without deciding who may read the console."
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "OIDC for the console and API. Fails closed: if the IdP is unreachable the agent is unavailable.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "authority": {
+          "type": "string",
+          "description": "The OIDC issuer. Required when enabled."
+        },
+        "clientId": {
+          "type": "string"
+        },
+        "rolesClaim": {
+          "type": "string"
+        },
+        "readerRole": {
+          "type": "string",
+          "description": "Empty means any authenticated user."
+        },
+        "approverRole": {
+          "type": "string",
+          "description": "Empty means any authenticated user may approve a cluster change."
+        }
+      }
     }
   },
   "additionalProperties": false
