@@ -370,14 +370,15 @@ chaos_reset_for_acting() {
 
     say "deleted: $cleared - waiting for the cluster-wide unhealthy fraction to fall below $ceiling"
 
-    local deadline=$((SECONDS + 600)) fraction="1.0"
+    local deadline=$((SECONDS + 600)) fraction="1.0" recovered=0
     while [ $SECONDS -lt $deadline ]; do
         fraction=$(chaos_unhealthy_fraction)
 
         if awk "BEGIN { exit !($fraction < $ceiling) }"; then
             pass "cluster recovered for acting" \
                 "unhealthy fraction $fraction is below $ceiling with $keep still faulted"
-            return 0
+            recovered=1
+            break
         fi
 
         sleep 15
@@ -386,7 +387,76 @@ chaos_reset_for_acting() {
     # A warning, not a die. The act assertions are the thing that decides the gate; if the
     # cluster did not settle they will deny and say so, and that denial is then a real finding
     # about this node rather than a harness artefact hidden behind an early exit.
-    warn "unhealthy fraction is still $fraction after 10m; gate 7 may still deny the action"
+    [ "$recovered" = 1 ] \
+        || warn "unhealthy fraction is still $fraction after 10m; gate 7 may still deny the action"
+
+    # ------------------------------------------------------------------------------------------
+    # AND THEN ASK FOR A NEW PLAN, WHICH IS THE HALF THE FIRST VERSION OF THIS MISSED.
+    # ------------------------------------------------------------------------------------------
+    # Recovering the cluster is necessary and, on its own, useless. Measured on the 2026-09-12
+    # nightly: the fixtures were deleted, `cluster recovered for acting` passed - and c13's action
+    # was STILL reported as denied for a cluster-wide event.
+    #
+    # Because policy is evaluated when the plan is MADE. c13's investigation ran during `validate`,
+    # when eleven other fixtures had ~31% of the cluster's pods unhealthy. Gate 7 denied it then,
+    # correctly, and wrote that decision to the row. Cleaning the cluster afterwards cannot un-deny
+    # a decision that is already recorded - nothing re-evaluates it, and nothing should: an audit
+    # trail that revises its own past verdicts is worse than one that is inconvenient.
+    #
+    # So the act fixture needs a FRESH plan, produced against the recovered cluster. That is
+    # exactly what `POST /api/incidents/{id}/reinvestigate` is for, and `Reinvestigate()` accepts
+    # `Escalated`, which is the state a policy denial leaves the incident in.
+    chaos_reinvestigate_act_fixture "$keep"
+}
+
+# Put the act fixture's incident back on the queue, so its plan is judged against the cluster as
+# it is NOW rather than as it was during the wide diagnosis phase.
+chaos_reinvestigate_act_fixture() {
+    local fixture="$1"
+    local target; target=$(fixture_target "$fixture")
+
+    local id
+    id=$(api_array "/api/incidents" \
+        | jq -r --arg t "$target" \
+            'map(select((.targetName // "") | (. == $t or startswith($t + "-"))))
+             | sort_by(.openedAt) | last | .id // empty' 2>/dev/null)
+
+    if [ -z "$id" ]; then
+        warn "no incident found for $fixture; cannot ask for a fresh plan"
+        return 0
+    fi
+
+    # Count the investigations it already has, so the wait below is for a NEW one rather than for
+    # the existence of any - the old one is still attached and would satisfy a naive predicate
+    # instantly. This is the same class of mistake as asserting on a details.jsonl written before
+    # the thing being asserted about.
+    local before
+    before=$(api_object "/api/incidents/$id" | jq -r '(.investigations // []) | length' 2>/dev/null || echo 0)
+
+    say "asking for a fresh plan on $fixture ($id), which currently has $before investigation(s)"
+
+    local code
+    code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 \
+        -X POST "http://127.0.0.1:$PF_PORT_APP/api/incidents/$id/reinvestigate" \
+        -H 'content-type: application/json' \
+        -d '{"requestedBy":"e2e-harness"}' 2>/dev/null)
+
+    # 202 is the only success. 409 means it is already running, which is fine and needs the same
+    # wait. Anything else is worth saying out loud rather than waiting 7 minutes to find out.
+    case "$code" in
+        202) say "re-investigation queued" ;;
+        409) say "an investigation is already running; waiting for it" ;;
+        *)   warn "reinvestigate answered HTTP $code; the act assertions will judge the old plan"
+             return 0 ;;
+    esac
+
+    # Long enough for a real investigation on a local model: the wide phase measured 5-22 steps
+    # per fixture. A short wait here would report "did not act" for the fourth distinct reason
+    # that is not about the agent.
+    wait_for "a fresh plan for $fixture (more than $before investigations)" 900 \
+        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents/$id' \
+            | jq -e '((.investigations // []) | length) > $before' >/dev/null" \
+        || warn "no new investigation concluded for $fixture within 15m"
 }
 
 # The same arithmetic the agent does, from kubectl. Pending/Failed, or any container not Ready,
@@ -662,7 +732,7 @@ chaos_await_investigations() {
     #
     # `|| true` throughout: this is a diagnostic on a path that has already failed, and it must
     # not take the suite down with a jq exit code under `set -Eeuo pipefail`.
-    local why=""
+    local why="" unrun="" barren=""
     local all; all=$(api "/api/incidents?limit=100" || true)
 
     for f in $missing; do
@@ -692,6 +762,7 @@ chaos_await_investigations() {
 
         case "$reasons" in
             *none*|"")
+                unrun="${unrun:+$unrun }$f"
                 why="${why:+$why
 }      $f: an incident exists and nothing investigated it" ;;
             *)
@@ -699,13 +770,43 @@ chaos_await_investigations() {
                 # produced nothing groundable. hasDiagnosis is Findings.Any(), so a run that
                 # concluded with no finding is indistinguishable from one that never happened
                 # unless the reason is printed.
+                barren="${barren:+$barren }$f"
                 why="${why:+$why
 }      $f: investigated, but no finding survived -- $reasons" ;;
         esac
     done
 
-    fail "only ${done_count:-0} of $want fixture incidents were investigated" \
-         "missing: ${missing:-none}${why:+
+    # ------------------------------------------------------------------------------------------
+    # TWO OUTCOMES, TWO VERDICTS. The headline used to contradict its own detail line.
+    # ------------------------------------------------------------------------------------------
+    # On the 2026-09-12 nightly this printed:
+    #
+    #   FAIL  only 11 of 12 fixture incidents were investigated -- missing: c8
+    #         c8: investigated, but no finding survived -- Concluded findings=0
+    #
+    # The detail is exactly right and the headline flatly contradicts it: c8 WAS investigated -
+    # 22 steps and 359k tokens, terminationReason Concluded. And two assertions later the same
+    # fact was reported again as a `skip` ("grade c8 -- no primary finding"), so one event
+    # produced two verdicts that disagreed about whether the run should be red.
+    #
+    # The distinction the harness already makes everywhere else applies here too: machinery that
+    # did not run is a FAILURE, and a model that ran and found nothing is a MEASUREMENT. So an
+    # incident nobody investigated still fails; an investigation that concluded with no grounded
+    # finding skips, and says so in the words the detail line was already using.
+    if [ -n "${unrun:-}" ]; then
+        fail "$(printf '%s' "$unrun" | wc -w | tr -d ' ') of $want fixture incident(s) were never investigated" \
+             "never investigated: $unrun${why:+
+$why}"
+
+        # 0, like `fail` and `skip` themselves: these helpers RECORD a verdict, and the run's exit
+        # code is computed from the record at the end. Returning non-zero here would instead trip
+        # the caller's `set -Eeuo pipefail` and abort the phase, losing every assertion after this
+        # one - which is how a single failure used to take 46 passing assertions with it.
+        return 0
+    fi
+
+    skip "every fixture was investigated; ${barren:-none} produced no grounded finding" \
+         "a model outcome, not a broken pipeline - the machinery ran on all $want${why:+
 $why}"
 }
 

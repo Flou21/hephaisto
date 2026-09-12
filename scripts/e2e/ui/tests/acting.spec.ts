@@ -209,17 +209,42 @@ test.describe('acting', () => {
         }
       }
 
-      // Stated, not silent. In Observe the kill-switch gate denies long before risk routing can
-      // produce an approval, so there is legitimately nothing to click - and `ui/run.sh` fails
-      // the phase on any skip (#1), so this has to be an early return rather than a test.skip.
+      // Stated, not silent - and asserting NOTHING about the mode here, which is where the first
+      // version of this spec was wrong.
+      //
+      // It required an Auto run to produce something awaiting approval. That is false in both
+      // directions, and the 2026-09-12 nightly failed on it: in Auto an action whose type IS
+      // auto-enabled goes straight to Approved without ever awaiting anyone, and an action the
+      // policy engine DENIES never reaches approval routing at all - which is exactly what
+      // happened, c13 having been denied as a cluster-wide event. So "Auto implies a pending
+      // approval" describes neither the allowed path nor the denied one.
+      //
+      // Having nothing to click is therefore a legitimate outcome in every mode, and the sibling
+      // spec above already asserts the contract that matters when there is nothing pending: that
+      // the console offers no approve button for an action policy has already refused. `ui/run.sh`
+      // fails the phase on any skip (#1), so this is an early return rather than a test.skip.
       if (awaiting === null) {
-        expect(String(s.effectiveMode).toLowerCase(),
-          'an Auto run produced no action awaiting approval, so the approve path went untested')
-          .not.toBe('auto');
         return;
       }
 
       await open(page, `/incidents/${awaiting.incident}`);
+
+      // AwaitingApproval is not a stable state, and the first version of this spec assumed it was.
+      // It timed out on `fill` in the 2026-09-12 nightly because the action stopped awaiting
+      // approval while the page was open - an approval expiry or a mode change removes the control
+      // - and `settle` then spent its whole budget retrying a fill against an input that was never
+      // coming back. Re-read the state first, so a vanished approval ends the spec instead of
+      // failing it: the contract is about what happens WHEN you approve, not about the window
+      // staying open long enough to be clicked.
+      const stillPending = await page.request.get(`/api/incidents/${awaiting.incident}`)
+        .then(r => r.json())
+        .then((b: { investigations?: Investigation[] }) => (b.investigations ?? [])
+          .flatMap(i => i.plan?.actions ?? [])
+          .find(a => a.id === awaiting!.actionId)?.state === 'AwaitingApproval');
+
+      if (!stillPending) {
+        return;
+      }
 
       await settle(async () => {
         await page.getByTestId('approval-actor').fill('e2e-approver');

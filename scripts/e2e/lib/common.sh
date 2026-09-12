@@ -164,6 +164,29 @@ api_array() {
     printf '%s' "$body"
 }
 
+# The same guard for a single resource. `/api/incidents/{id}` answers a 404 as a ProblemDetails
+# OBJECT, so `jq` reading a field off it yields null rather than failing - and a caller counting
+# `.investigations | length` over a 404 gets 0 and waits forever for a number to exceed it. Which
+# is api_array's lesson one resource down.
+api_object() {
+    local path="$1" timeout="${2:-10}" body kind
+    body=$(api "$path" "$timeout")
+
+    kind=$(jq -r 'type' <<<"$body" 2>/dev/null || echo "not-json")
+    if [ "$kind" != "object" ]; then
+        printf '%s' "$body" >&2
+        die "GET $path returned $kind, not an object -- see the body above"
+    fi
+
+    # A ProblemDetails body IS an object, so the type check alone is not enough.
+    if jq -e 'has("status") and has("title") and (has("id") | not)' <<<"$body" >/dev/null 2>&1; then
+        printf '%s' "$body" >&2
+        die "GET $path returned a problem document, not the resource -- see the body above"
+    fi
+
+    printf '%s' "$body"
+}
+
 # Waits for a condition, polling, with a bounded total. Prints a dot per attempt so a long
 # wait looks like progress rather than a hang.
 wait_for() {
