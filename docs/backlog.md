@@ -1629,6 +1629,39 @@ instead means turning `tracing` on there first.
 
 **Size.** S for the recording.
 
+### 114. `DecideActionAsync` has no deterministic coverage, and the e2e spec that touches it cannot fail
+
+**Symptom.** Approving an action - the one control in the product that authorises a change to a real
+cluster - is exercised only by a Playwright spec that asserts nothing when it finds nothing to click.
+So the approve path can regress without turning any gate red.
+
+**Evidence.** `IncidentQueries.DecideActionAsync` (`IncidentQueries.cs:652`) appears in no test.
+`grep -rln WebApplicationFactory tests/` returns nothing, and `tests/Hephaisto.Tests/Web/` holds
+three files, none of them about approval.
+
+**Why the e2e spec cannot carry it.** The control renders under
+`@if (action.State == ActionState.AwaitingApproval)`, and in an Auto run the executor moves actions
+out of that state in seconds. Two full release gates failed on
+`locator.fill: Timeout ... waiting for getByTestId('approval-actor')` before this was understood:
+version one read the state from the API and navigated; version two re-read it immediately before
+filling. Both raced, because **any** API-then-render sequence has a window. The spec now asks the
+page whether a live control exists and returns when none does - which is correct, and means it is
+opportunistic coverage rather than a gate.
+
+**Why it is still open.** `IncidentQueries` takes ten collaborators - `IServiceScopeFactory`,
+`IKillSwitch`, `IIncidentNotifier`, `WatchdogMonitor`, `InvestigationTracker`, `InvestigationQueue`,
+two options monitors, `ConnectionHealthCache`, `IClock` - so a direct test wants a host fixture the
+suite does not have. That fixture is the actual work, and it would pay for itself immediately:
+nothing else in `Web/` can be tested end to end either.
+
+**What to pin once it exists**, all reachable without a cluster and all currently unasserted:
+`ApprovedBy` is recorded; a forbidden granter (`IsForbiddenGranter`) is refused; approval routes
+through `TryAdmitActionAsync` rather than writing `State` directly; and - the one that matters most -
+an approved action in Observe is still **not executed**, which is the promise
+`docs/hephaisto.md` makes out loud and which only a live mode-resolution test can demonstrate.
+
+**Size.** M - S for the tests, M for the host fixture they need.
+
 ---
 
 ## Dead or unreachable code

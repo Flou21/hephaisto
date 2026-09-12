@@ -632,9 +632,29 @@ chaos_await_investigations() {
 
     local want; want=$(applied_count)
 
-    # Waiting on hasDiagnosis rather than on state, because an incident reaches a terminal
-    # state on several paths that are not "it was investigated" - suppressed as a flap,
-    # escalated on budget - and this phase is about the model actually running.
+    # WAITING ON THE INVESTIGATION HAVING FINISHED, NOT ON IT HAVING FOUND SOMETHING.
+    #
+    # This used to wait on hasDiagnosis, for a stated and correct reason: an incident reaches a
+    # terminal STATE on several paths that are not "it was investigated" - suppressed as a flap,
+    # escalated on budget - and this phase is about the model actually running. State is the
+    # wrong predicate.
+    #
+    # But so is hasDiagnosis, which is `Investigations.Any(v => v.Findings.Any())`. It demands
+    # the model SUCCEED, and c10 reliably does not: #31 records it spending its whole budget
+    # without a primary finding, and the 2026-09-12 gate confirmed it three incidents over,
+    # every one `Escalated` with investigationCount=1 and hasDiagnosis=false. So the predicate
+    # was unsatisfiable from the moment c10 concluded, and the phase sat out the remaining
+    # ~70 minutes of its deadline waiting for something that was never coming. Both --full runs
+    # that day burned their entire 171-minute window for that reason and nothing else.
+    #
+    # `investigationCount >= 1 and inProgress == null` says exactly what this phase needs: a
+    # row exists (it is written only when an investigation ENDS - see InvestigationProgressView)
+    # and nothing is running now. That keeps the original objection - a flap-suppressed incident
+    # has no investigation row at all and still does not satisfy it - while letting a model that
+    # ran and found nothing finish the phase instead of hanging it.
+    #
+    # Whether a finding was produced is still asserted, immediately below, where it belongs: as
+    # a per-fixture verdict that distinguishes machinery from model quality.
     #
     # The deadline scales with the QUEUE, not with the fixtures being waited for. Investigations
     # are serialised, so a diagnosis for the ten fixture incidents means working through every
@@ -691,7 +711,7 @@ chaos_await_investigations() {
     # The per-fixture check below then reports precisely which fixture is missing, which is the
     # useful output.
     wait_for "every fixture's investigation to conclude (expecting $want)" "$deadline" \
-        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents' | jq -e --argjson want '$diag_want' 'type == \"array\" and (. as \$inc | \$want | all(. as \$t | \$inc | any((.targetName // \"\" | (. == \$t or startswith(\$t + \"-\"))) and .hasDiagnosis)))' >/dev/null" \
+        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents' | jq -e --argjson want '$diag_want' 'type == \"array\" and (. as \$inc | \$want | all(. as \$t | \$inc | any((.targetName // \"\" | (. == \$t or startswith(\$t + \"-\"))) and ((.investigationCount // 0) >= 1) and (.inProgress == null))))' >/dev/null" \
         || warn "not every fixture concluded within the deadline; the per-fixture result below says which"
 
     # How many of the applied fixtures have an incident carrying a diagnosis. Plainly, one

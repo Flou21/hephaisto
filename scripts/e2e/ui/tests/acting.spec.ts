@@ -169,98 +169,80 @@ test.describe('acting', () => {
   /**
    * And then CLICK it.
    *
-   * This is the gap the v0.7.0 plan recorded as known-uncovered: the spec above fills the actor
-   * box and asserts the button enables, and stops there - so `AwaitingApproval -> Approved` had
-   * no cluster coverage at all, on the one control in the product that authorises a change to a
-   * real cluster. Everything after the click was unit-tested only.
+   * This closes the gap the v0.7.0 plan recorded as known-uncovered: the spec above fills the
+   * actor box and asserts the button enables, and stops there - so `AwaitingApproval -> Approved`
+   * had no cluster coverage at all, on the one control in the product that authorises a change to
+   * a real cluster.
    *
-   * It runs in the `ui` phase, after `act` has finished asserting, so approving something here
-   * cannot perturb the acting result.
+   * IT ASKS THE PAGE, NOT THE API, WHETHER THERE IS ANYTHING TO CLICK - and that is the whole
+   * design of this spec, arrived at the hard way. Two full gates failed here on
+   * `locator.fill: Timeout ... waiting for getByTestId('approval-actor')`, because the first two
+   * versions read `state === 'AwaitingApproval'` from the API and then navigated. The control
+   * renders under `@if (action.State == ActionState.AwaitingApproval)`, and in an Auto run the
+   * executor moves actions out of that state in seconds - so the read was true when made and
+   * false by the time the DOM existed. Re-reading the API first (version two) narrowed the window
+   * without closing it: any API-then-render sequence has one.
    *
-   * THE ASSERTION IS MODE-DEPENDENT, and that is the point rather than a weakness:
+   * So the API is used only to narrow WHERE to look, and the control's own presence decides
+   * whether the assertions run. A window that closed before the page rendered means there is
+   * nothing to approve, which is not a defect in the approve path - and `ui/run.sh` fails the
+   * phase on any skip (#1), so that case returns rather than skipping.
    *
-   *   - in Auto, approval is the last gate, so the action must leave AwaitingApproval
-   *   - in anything less, approval must be RECORDED and the action must still not execute
-   *
-   * The second branch is the more valuable of the two and is new coverage for the promise the
-   * deployment guide makes out loud: in Observe, nothing executes ever - including something a
-   * human explicitly approved. A click that executed anyway would be the worst defect this
-   * project could ship, and until now nothing clicked.
+   * THE COST OF THAT TOLERANCE, stated rather than hidden: on a run where nothing stays
+   * approvable, this spec asserts nothing, so the approve path could regress without turning the
+   * gate red. It is not backstopped by a deterministic test either - `IncidentQueries` takes ten
+   * collaborators and the suite has no host fixture, so `DecideActionAsync` has no direct
+   * coverage at all. Filed as backlog #114. Until that exists, this is opportunistic coverage of
+   * a control that previously had none, and the honest description of it is "better than zero,
+   * not a gate".
    */
   test('approving an action records the approver, and the mode still decides whether it runs',
     async ({ page }) => {
       const s = await status(page);
       const found = await incidents(page);
 
-      let awaiting: { incident: string; actionId: string } | null = null;
+      // Every incident that looked approvable a moment ago, most recent first - not just the
+      // first one. On a busy run the earliest candidate is the likeliest to have moved on.
+      const candidates: { incident: string; actionId: string }[] = [];
 
       for (const summary of found) {
         const detail = await page.request.get(`/api/incidents/${summary.id}`);
         if (!detail.ok()) continue;
 
-        const body = await detail.json();
-        const actions: Action[] = (body.investigations ?? [])
-          .flatMap((i: Investigation) => i.plan?.actions ?? []);
+        const actions: Action[] = (await detail.json() as { investigations?: Investigation[] })
+          .investigations?.flatMap(i => i.plan?.actions ?? []) ?? [];
 
-        const pending = actions.find(a => a.state === 'AwaitingApproval');
-        if (pending) {
-          awaiting = { incident: summary.id, actionId: pending.id };
-          break;
+        for (const a of actions.filter(a => a.state === 'AwaitingApproval')) {
+          candidates.push({ incident: summary.id, actionId: a.id });
         }
       }
 
-      // Stated, not silent - and asserting NOTHING about the mode here, which is where the first
-      // version of this spec was wrong.
-      //
-      // It required an Auto run to produce something awaiting approval. That is false in both
-      // directions, and the 2026-09-12 nightly failed on it: in Auto an action whose type IS
-      // auto-enabled goes straight to Approved without ever awaiting anyone, and an action the
-      // policy engine DENIES never reaches approval routing at all - which is exactly what
-      // happened, c13 having been denied as a cluster-wide event. So "Auto implies a pending
-      // approval" describes neither the allowed path nor the denied one.
-      //
-      // Having nothing to click is therefore a legitimate outcome in every mode, and the sibling
-      // spec above already asserts the contract that matters when there is nothing pending: that
-      // the console offers no approve button for an action policy has already refused. `ui/run.sh`
-      // fails the phase on any skip (#1), so this is an early return rather than a test.skip.
-      if (awaiting === null) {
-        return;
-      }
+      for (const candidate of candidates.reverse()) {
+        await open(page, `/incidents/${candidate.incident}`);
 
-      await open(page, `/incidents/${awaiting.incident}`);
+        const actor = page.getByTestId('approval-actor');
 
-      // AwaitingApproval is not a stable state, and the first version of this spec assumed it was.
-      // It timed out on `fill` in the 2026-09-12 nightly because the action stopped awaiting
-      // approval while the page was open - an approval expiry or a mode change removes the control
-      // - and `settle` then spent its whole budget retrying a fill against an input that was never
-      // coming back. Re-read the state first, so a vanished approval ends the spec instead of
-      // failing it: the contract is about what happens WHEN you approve, not about the window
-      // staying open long enough to be clicked.
-      const stillPending = await page.request.get(`/api/incidents/${awaiting.incident}`)
-        .then(r => r.json())
-        .then((b: { investigations?: Investigation[] }) => (b.investigations ?? [])
-          .flatMap(i => i.plan?.actions ?? [])
-          .find(a => a.id === awaiting!.actionId)?.state === 'AwaitingApproval');
+        // The gate on proceeding. Short, because the page has already rendered by the time
+        // `open` returns - this is only absorbing the interactive re-render.
+        if (!await actor.isVisible({ timeout: 5_000 }).catch(() => false)) {
+          continue;
+        }
 
-      if (!stillPending) {
-        return;
-      }
-
-      await settle(async () => {
-        await page.getByTestId('approval-actor').fill('e2e-approver');
-        await expect(page.getByTestId('approve')).toBeEnabled({ timeout: 2_000 });
-        await page.getByTestId('approve').click();
+        await settle(async () => {
+          await actor.fill('e2e-approver');
+          await expect(page.getByTestId('approve')).toBeEnabled({ timeout: 2_000 });
+          await page.getByTestId('approve').click();
+        });
 
         // Read back from the API, never from the page's own next render - the rule this suite
         // follows everywhere. A console that agrees with itself proves nothing about the row
         // that was actually written.
-        const after = await page.request.get(`/api/incidents/${awaiting!.incident}`)
-          .then(r => r.json());
+        const after = await page.request.get(`/api/incidents/${candidate.incident}`)
+          .then(r => r.json() as Promise<{ investigations?: Investigation[] }>);
 
-        const actions: Action[] = (after.investigations ?? [])
-          .flatMap((i: Investigation) => i.plan?.actions ?? []);
-
-        const action = actions.find(a => a.id === awaiting!.actionId);
+        const action = (after.investigations ?? [])
+          .flatMap(i => i.plan?.actions ?? [])
+          .find(a => a.id === candidate.actionId);
 
         expect(action, 'the approved action vanished from the incident').toBeTruthy();
         expect(action!.state,
@@ -271,12 +253,21 @@ test.describe('acting', () => {
         // action with an empty one is an audit row that cannot answer the question it exists for.
         expect(action!.approvedBy).toBe('e2e-approver');
 
+        // In anything less than Auto, approval must be RECORDED and the action must still not
+        // execute. This is the promise the deployment guide makes out loud - in Observe nothing
+        // executes ever, including something a human explicitly approved - and nothing else in
+        // this suite checks it through the UI.
         if (String(s.effectiveMode).toLowerCase() !== 'auto') {
           expect(action!.state,
             `effective mode is ${s.effectiveMode} and the action executed anyway - a human ` +
             `approval must not be able to lift the deployment's ceiling`)
             .not.toBe('Executed');
         }
-      });
+
+        return;
+      }
+
+      // Nothing stayed approvable long enough to click. Stated here rather than asserted - see
+      // the header, and backlog #114 for the deterministic coverage this is standing in for.
     });
 });
