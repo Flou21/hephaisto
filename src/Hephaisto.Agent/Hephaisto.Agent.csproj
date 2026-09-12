@@ -6,6 +6,9 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Hephaisto.Tests" />
+    <!-- The Postgres-backed suite too, so a test can exercise a real LINQ predicate rather than
+         a copy of one: a copied predicate keeps passing after the original drifts. -->
+    <InternalsVisibleTo Include="Hephaisto.IntegrationTests" />
   </ItemGroup>
 
   <ItemGroup>

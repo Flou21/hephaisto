@@ -330,12 +330,21 @@ public sealed class IncidentStateMachineTests
         act.Should().Throw<InvalidStateTransitionException>();
     }
 
+    /// <summary>
+    /// A settled incident stays settled: nothing may re-decide it.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="IncidentState.Escalated"/> used to be in this list and has been split out
+    /// below, because it is the one member here that <see cref="Incident.IsOpen"/> calls OPEN.
+    /// Grouping it with the terminal states was harmless while <c>Expire</c> refused all four; it
+    /// stopped being harmless when the sweeper needed to expire exactly those incidents.
+    /// </remarks>
     [Theory]
     [InlineData(IncidentState.Resolved)]
     [InlineData(IncidentState.Suppressed)]
     [InlineData(IncidentState.Expired)]
-    [InlineData(IncidentState.Escalated)]
-    public void ClosedIncidents_CannotBeResolvedEscalatedOrExpired(IncidentState from)
+    [InlineData(IncidentState.Closed)]
+    public void SettledIncidents_CannotBeResolvedEscalatedOrExpired(IncidentState from)
     {
         var machine = Machine();
 
@@ -347,11 +356,41 @@ public sealed class IncidentStateMachineTests
             .Should().Throw<InvalidStateTransitionException>();
     }
 
+    /// <summary>
+    /// Escalated is open, and the three edges leaving it are not interchangeable.
+    /// </summary>
+    /// <remarks>
+    /// <b>Resolve</b> is refused because verification grants resolution and nothing was verified -
+    /// the agent gave up. <b>Escalate</b> is refused because escalating twice says nothing new.
+    /// <b>Expire</b> is ALLOWED, and has to be: "the agent asked for a human and none came, and
+    /// the signal stopped" is precisely what Expired means, and Escalated is the state an Observe
+    /// install leaves every incident in - so a sweeper that could not expire it could drain
+    /// nothing. Distinct from <c>Close</c>, which asserts a person DID deal with it.
+    /// </remarks>
+    [Fact]
+    public void AnEscalatedIncident_RefusesResolveAndEscalate_ButMayExpire()
+    {
+        var machine = Machine();
+
+        FluentActions.Invoking(() => machine.Resolve(Given.Incident(IncidentState.Escalated), "x", "flo"))
+            .Should().Throw<InvalidStateTransitionException>();
+        FluentActions.Invoking(() => machine.Escalate(Given.Incident(IncidentState.Escalated), EscalationReason.LowConfidence))
+            .Should().Throw<InvalidStateTransitionException>();
+
+        var expiring = Given.Incident(IncidentState.Escalated);
+        machine.Expire(expiring, "nobody came");
+
+        expiring.State.Should().Be(IncidentState.Expired);
+    }
+
     [Theory]
     [InlineData(IncidentState.Detected)]
     [InlineData(IncidentState.Investigating)]
     [InlineData(IncidentState.Escalated)]
     [InlineData(IncidentState.Expired)]
+    // Closed belongs to Reinvestigate, which is the single human door back in - it owns the
+    // named-requester rule, the kill-switch check and the queueing that starting work needs.
+    [InlineData(IncidentState.Closed)]
     public void Reopen_FromAnythingButResolved_Throws(IncidentState from)
     {
         var act = () => Machine().Reopen(Given.Incident(from), "nope");

@@ -161,12 +161,21 @@ public sealed class IncidentStateMachine(IClock clock)
     }
 
     /// <summary>
-    /// Any open state -&gt; Expired. For incidents nobody ever answered: the signal stopped
-    /// arriving and no human touched it. Distinct from Resolved on purpose - "it went away"
-    /// is not "it was fixed", and conflating them inflates the agent's own success metric.
+    /// Any open state, including <see cref="IncidentState.Escalated"/> -&gt; Expired. For
+    /// incidents nobody ever answered: the signal stopped arriving and no human touched it.
+    /// Distinct from Resolved on purpose - "it went away" is not "it was fixed", and conflating
+    /// them inflates the agent's own success metric.
     /// </summary>
+    /// <remarks>
+    /// <b>Escalated is a legal predecessor, and it has to be.</b> Escalated is precisely the
+    /// state "nobody answered" describes: the agent gave up and asked for a human, and the
+    /// question is whether one came. It is also the state an Observe install leaves every
+    /// incident in, so a sweeper that could not expire it could not drain anything. Distinct from
+    /// <see cref="Close"/>, which asserts a person DID deal with it - this edge asserts the
+    /// opposite, and the two must not be the same row.
+    /// </remarks>
     public IncidentEvent Expire(Incident incident, string reason) =>
-        Transition(incident, OpenStates, IncidentState.Expired, reason);
+        Transition(incident, [.. OpenStates, IncidentState.Escalated], IncidentState.Expired, reason);
 
     /// <summary>
     /// Resolved -&gt; Investigating. The signal came back, so the fix did not hold. Reopening

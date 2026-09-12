@@ -39,6 +39,13 @@ public static class PipelineServiceCollectionExtensions
         // process last stopped stays Investigating in Postgres forever.
         services.AddHostedService<StrandedIncidentRequeue>();
 
+        // Gives Expire() and ApprovalTimedOut the producers they never had (#109, #44). Off by
+        // default; see IncidentSweepOptions for why the windows are generous.
+        services.AddOptions<IncidentSweepOptions>()
+            .BindConfiguration(IncidentSweepOptions.SectionName)
+            .ValidateOnStart();
+        services.AddHostedService<IncidentSweeper>();
+
         // Scoped: it reads the action budget through the scoped repository, and those counts
         // must come from the same DbContext as the decision they inform.
         services.AddScoped<ClusterFactsGatherer>();
