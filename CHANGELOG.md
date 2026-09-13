@@ -10,7 +10,7 @@ broken, with the evidence for each.
 Versions are set by the git tag through MinVer; the chart version and the app version are always
 the same number.
 
-## v0.8.0 — unreleased
+## v0.8.0 — 2026-09-13
 
 **An on-call engineer can actually use it.** The agent diagnosed well and said so nowhere a
 person could act on. An incident could not be closed, acknowledged or assigned; there was no

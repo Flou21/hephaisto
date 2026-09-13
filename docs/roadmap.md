@@ -17,6 +17,37 @@ against the code rather than believed — see [backlog #9](backlog.md#9-semantic
 
 ## Where it stands
 
+`v0.8.0` shipped on 2026-09-13. **An on-call engineer can actually use it.** The agent diagnosed
+well and said so nowhere a person could act on: an incident could not be closed, acknowledged or
+assigned, every actor in the audit trail was a string somebody typed, and every dependency was
+probed once at startup and the result thrown into a log line. All four are addressed, shaped by
+the first production deployment on 2026-09-11 — installing it is something you do once and it had
+just been done; working the incidents is daily.
+
+**The release gate also became one run that confirms acting**, which it had never done.
+`--full --mode Auto` had defeated itself since v0.5.0: twelve simultaneous fixtures put more than
+`clusterUnhealthyCeiling` of the cluster's pods in a bad state, so gate 7 correctly refused every
+action and the act phase reported "the agent did not act" — measuring the harness, not the agent.
+The act phase now clears the other fixtures, waits for the cluster-wide unhealthy fraction to fall
+back below the ceiling, and asks for a fresh plan, because policy is evaluated when a plan is
+*made* and a recorded denial cannot be un-made. Measured: `c13 was acted on`, `available after the
+restart`, `incident reached Resolved`, in the same run as the twelve-fixture diagnosis corpus, at
+83 assertions and 0 failures. **Nothing was weakened to get there** — not the ceiling, not the
+fixture, not the assertion ([#97](backlog.md#97)).
+
+**One thing this release did not get, and it is worth stating plainly.** v0.7.0 was promoted after
+`0.7.0-rc1` ran on `cait-eu-cluster` in Observe mode; `v0.8.0` was released directly from a green
+gate, on a deliberate decision, without that production soak. The upgrade was checked statically
+instead — the production values file renders clean against the chart despite the new
+`additionalProperties: false`, `/webhooks` did not move off 8080, `auth` stays off so the
+fail-closed IdP path is not engaged, and the mode is still `Observe` — but a static check is not a
+day of running, and this release carries more operator-facing surface than v0.7.0 did.
+
+`v0.7.0` shipped on 2026-09-11. **It survives a bad deploy.** The first release in three to add a
+capability: the `RollbackDeployment` executor arm, whose policy gate, facts, RBAC, prompt text and
+runbook guidance had all shipped a release early and never once fired — and `c14-bad-deploy`, the
+first fixture whose setup has a timeline rather than a steady-state fault.
+
 `v0.6.0` shipped on 2026-09-03. **Someone else can run it.** Three public sites, a demo that comes
 up on a laptop with one command and no API key, and — for the first time in the project's life —
 an incident the agent acted on reaching `Resolved`: `c13-wedged-lock`, 41 seconds after the
@@ -819,7 +850,7 @@ judgement measured at 0 of 4 on a cluster and 4 of 8 in replay; those two number
 
 ---
 
-## v0.6.0 — Someone else can run it
+## v0.6.0 — Someone else can run it — **done**
 
 **The first release aimed at a reader rather than at the author.** Every milestone so far made the
 agent better at its job. This one makes the project usable by somebody who did not write it — which
@@ -1104,7 +1135,7 @@ that never finds anything is a candidate nobody needed.
 
 ---
 
-## v0.7.0 — It survives a bad deploy
+## v0.7.0 — It survives a bad deploy — **done**
 
 **The first release in three to add a capability, and the one that gives the corpus a fault with a
 cause.** v0.5.0 was debt paydown and v0.6.0 was an audience release; both said "no new capability"
@@ -1207,7 +1238,7 @@ ceiling.**
 
 ---
 
-## v0.8.0 — An on-call engineer can actually use it
+## v0.8.0 — An on-call engineer can actually use it — **done**
 
 v0.6.0's goal was *"someone else can run it"*. On **2026-09-11** Hephaisto was deployed to a real
 production cluster for the first time — `0.7.0-rc1`, Observe mode, through Rancher Fleet onto
