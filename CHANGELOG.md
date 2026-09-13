@@ -54,10 +54,38 @@ once and it had just been done; working the incidents is daily.
   never declared and nothing had ever compared.
 - **Two `values.yaml` comments that sent the first production install wrong**: `secrets.grafanaMcp`
   is the caller bearer rather than a Grafana credential, and `grafanaMcp.url` needs its `/mcp` path.
+- **A completion whose `role` is empty no longer discards the investigation**
+  ([#101](docs/backlog.md#101)). The repair happens in the handler, so a provider that omits a
+  field the schema calls required costs a retry instead of a whole diagnosis.
+- **The release gate is one run again** ([#97](docs/backlog.md#97)), and it now *confirms acting*
+  rather than skipping it. `--full --mode Auto` had defeated itself for three releases: twelve
+  simultaneous fixtures put more than `clusterUnhealthyCeiling` of the cluster's pods in a bad
+  state, so gate 7 correctly refused every action and the act phase reported "the agent did not
+  act" — measuring the harness, not the agent. The act phase now clears the other fixtures, waits
+  for the cluster-wide unhealthy fraction to fall back below the ceiling, and asks for a fresh
+  plan. **Nothing was weakened to get there**: not the ceiling, not the fixture, not the
+  assertion. Measured on 2026-09-12: `c13 was acted on`, `available after the restart`,
+  `incident reached Resolved`, in the same run as the twelve-fixture diagnosis corpus.
+- **The gate stopped being wrong about why** in three places, all found by running it:
+  a headline reading `only 11 of 12 fixture incidents were investigated` directly above its own
+  detail line `c8: investigated, but no finding survived` — machinery that did not run now fails,
+  a model that ran and found nothing skips; the console spec comparing a capped API call against
+  an uncapped page ([#49](docs/backlog.md#49)), fixed for the whole suite via a helper that
+  *refuses* a truncated list; and the diagnosis wait demanding the model **succeed**, which c10
+  reliably does not, so both full runs that day sat out ~70 minutes of deadline each waiting for
+  something that was never coming.
 
 ### Known
 - [#70](docs/backlog.md#70) is narrowed, not closed. c1 and c3 are still classified by a different
   rule than the README expects. It gates Auto rather than this release.
+- [#114](docs/backlog.md#114) — approving an action has no deterministic coverage. The e2e spec
+  that clicks it asks the page whether a live control exists and returns when none does, because
+  the control renders only while the action is `AwaitingApproval` and in Auto the executor moves
+  it on in seconds. That makes it opportunistic rather than a gate. `DecideActionAsync` wants a
+  host fixture the test suite does not have.
+- [#113](docs/backlog.md#113) — c14 has no cassette, so the only fixture whose correct answer is
+  a rollback cannot be replayed. It also cannot be reproduced on the dev cluster, which runs no
+  Tempo and therefore generates no span metrics for either c10 or c14.
 
 ## v0.7.0 — 2026-09-11
 
