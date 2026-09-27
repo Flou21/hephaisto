@@ -484,11 +484,13 @@ jobs:
         run: |
           set -euo pipefail
           kubectl -n hephaisto-coder rollout status deploy/hephaisto-coder-egress --timeout=120s
-          # From inside the proxy's own namespace, but NOT from a coder pod: kind's CNI does not
-          # enforce NetworkPolicy, so this tests squid's rules, not the policy in front of it.
-          # Pod Security `restricted` is enforced there, so the probe pod has to comply too.
-          kubectl -n hephaisto-coder run proxy-probe --restart=Never --image=curlimages/curl:8.16.0 \
-            --overrides='{"spec":{"securityContext":{"runAsNonRoot":true,"runAsUser":100,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"proxy-probe","image":"curlimages/curl:8.16.0","command":["sh","-c","for u in https://example.com/ https://github.com:22/; do curl -s -o /dev/null -m 20 -w \"%{http_connect} $u\\n\" -x http://hephaisto-coder-egress:3128 $u || true; done"],"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}}]}}'
+          # From a pod labelled as a coder: current kindnet DOES enforce NetworkPolicy, and the
+          # proxy admits only coder pods, so an unlabelled probe never reaches squid at all (curl
+          # reports 000, which is the policy working, not squid). The sleep covers the moment in
+          # which a new pod's IP is not yet in the policy's allow set. Pod Security `restricted` is
+          # enforced there, so the probe pod has to comply too.
+          kubectl -n hephaisto-coder run proxy-probe --restart=Never --labels=app.kubernetes.io/name=hephaisto-coder --image=curlimages/curl:8.16.0 \
+            --overrides='{"spec":{"securityContext":{"runAsNonRoot":true,"runAsUser":100,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"proxy-probe","image":"curlimages/curl:8.16.0","command":["sh","-c","sleep 5; for u in https://example.com/ https://github.com:22/; do curl -s -o /dev/null -m 20 -w \"%{http_connect} $u\\n\" -x http://hephaisto-coder-egress:3128 $u || true; done"],"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}}]}}'
           kubectl -n hephaisto-coder wait --for=jsonpath='{.status.phase}'=Succeeded pod/proxy-probe --timeout=120s
           kubectl -n hephaisto-coder logs pod/proxy-probe | tee /tmp/probe.txt
           # Both must be refused at the CONNECT: a host not on the list, and an allowed host on a
