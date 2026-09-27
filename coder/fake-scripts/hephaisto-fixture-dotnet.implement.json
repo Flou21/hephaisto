@@ -1,15 +1,34 @@
 {
-  "description": "FAKE SDK implementation for hephaisto-fixture-dotnet: applies the reference null-guard fix (verified to turn the suite green on both fixture branches) and commits it. No model runs.",
+  "description": "FAKE SDK implementation for hephaisto-fixture-dotnet: applies the reference null-guard fix (verified to turn the suite green on both fixture branches) and commits it. No model runs. It then waits two minutes before reporting, so the e2e has a real window in which to pull the switch on a running implement Job.",
   "steps": [
-    { "tool": "Bash", "input": { "command": "git status --short" } },
-    { "tool": "Read", "input": { "file_path": "{{target}}/src/Shop.Api/Startup/Endpoints.cs" } },
-    { "patch_file": "hephaisto-fixture-dotnet.fix.patch" },
-    { "commit": "fix(startup): a missing Shop:Endpoints section is an empty list, not a crash" },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "git status --short"
+      }
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "{{target}}/src/Shop.Api/Startup/Endpoints.cs"
+      }
+    },
+    {
+      "patch_file": "hephaisto-fixture-dotnet.fix.patch"
+    },
+    {
+      "commit": "fix(startup): a missing Shop:Endpoints section is an empty list, not a crash"
+    },
+    {
+      "sleep_ms": 120000
+    },
     {
       "result": {
         "cost_usd": 0,
         "structured_output": {
-          "files": ["src/Shop.Api/Startup/Endpoints.cs"],
+          "files": [
+            "src/Shop.Api/Startup/Endpoints.cs"
+          ],
           "deviations": [],
           "summary": "FAKE SDK: applied the reference null-guard fix to Endpoints.Primary."
         }

@@ -1,3 +1,4 @@
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { APP_ROOT, GIT_IDENTITY, type RunnerEnv } from './config.js';
 import { CommandError, type ExecResult, run } from './exec.js';
@@ -106,8 +107,28 @@ export async function clone(
   if (opts.branch) args.push('--branch', opts.branch);
   args.push('--', url, dest);
   log.info(`git clone ${opts.filter === 'blob:none' ? '(blobless) ' : ''}${redactArgs([url])[0]} -> ${dest}`);
-  const r = await run('git', args, { env, timeoutMs: 15 * 60_000, signal: opts.signal });
-  if (r.code !== 0) throw new CommandError(`git clone ${redactArgs([url])[0]}`, r);
+
+  // The clone is the pod's first network call, and a NetworkPolicy controller admits a new pod's
+  // IP asynchronously: on k3s the first second of connections is REJECTed while every rule is
+  // correct. So a connection-level failure is retried with backoff - a bounded handful of times,
+  // and never for anything else (a missing branch or a refused credential fails at once).
+  const delays = [1_000, 2_000, 4_000, 8_000];
+  for (let attempt = 0; ; attempt++) {
+    const r = await run('git', args, { env, timeoutMs: 15 * 60_000, signal: opts.signal });
+    if (r.code === 0) return;
+    if (attempt >= delays.length || !isTransientNetworkFailure(r.stderr) || opts.signal?.aborted) {
+      throw new CommandError(`git clone ${redactArgs([url])[0]}`, r);
+    }
+    log.warn(`git clone ${redactArgs([url])[0]} could not connect (attempt ${attempt + 1}); retrying in ${delays[attempt]! / 1000}s`);
+    await rm(dest, { recursive: true, force: true });
+    await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+  }
+}
+
+/** A failure to reach the server at all, as opposed to the server refusing the request. */
+export function isTransientNetworkFailure(stderr: string): boolean {
+  return /Failed to connect|Couldn't connect|Could not connect|Connection refused|Connection timed out|Could not resolve host|Recv failure|Connection reset|Operation timed out|early EOF|RPC failed; curl (7|28|35|52|56)/i.test(stderr)
+    && !/Authentication failed|could not read Username|Repository not found|not found in upstream|Remote branch .* not found/i.test(stderr);
 }
 
 /** Trailers the agent is told to write, and the driver writes on its own final commit. */
