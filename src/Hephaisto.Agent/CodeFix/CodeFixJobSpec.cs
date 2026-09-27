@@ -77,9 +77,16 @@ public static class CodeFixJobSpec
 
         if (!string.IsNullOrWhiteSpace(o.EgressProxyUrl))
         {
-            env.Add(new V1EnvVar { Name = "HTTPS_PROXY", Value = o.EgressProxyUrl });
-            env.Add(new V1EnvVar { Name = "HTTP_PROXY", Value = o.EgressProxyUrl });
-            env.Add(new V1EnvVar { Name = "NO_PROXY", Value = "localhost,127.0.0.1" });
+            // Both cases. git and curl read only the lowercase http_proxy for an http:// URL, while
+            // node and .NET read the uppercase ones; setting one spelling leaves a tool going direct.
+            foreach (var (proxyVar, proxyValue) in new[]
+                     {
+                         ("HTTPS_PROXY", o.EgressProxyUrl), ("HTTP_PROXY", o.EgressProxyUrl), ("NO_PROXY", "localhost,127.0.0.1"),
+                         ("https_proxy", o.EgressProxyUrl), ("http_proxy", o.EgressProxyUrl), ("no_proxy", "localhost,127.0.0.1"),
+                     })
+            {
+                env.Add(new V1EnvVar { Name = proxyVar, Value = proxyValue });
+            }
         }
 
         foreach (var key in SecretKeys)

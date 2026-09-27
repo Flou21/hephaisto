@@ -1,0 +1,107 @@
+{{- if and .Values.codeFix.enabled .Values.codeFix.networkPolicy.enabled }}
+{{/*
+=========================================================================================
+The coder's network: DNS and the egress proxy. Nothing else.
+=========================================================================================
+Independent of the top-level networkPolicy.enabled. That flag protects the agent's webhook,
+and an install may reasonably leave it off (the first production install did). This one
+contains a model holding a shell that has just read attacker-influenceable evidence, and
+"the webhook is protected some other way" says nothing about that.
+
+  coder pods   ingress: none at all. The coder has no inbound surface - Hephaisto reads its
+                        result from the pod log through the API server, never over the network.
+               egress:  DNS to kube-dns, and the proxy on 3128. Every other destination - the
+                        API server, Postgres, the agent, the metadata service, the internet - is
+                        denied here, and reachable only by name through the proxy's allowlist.
+
+  the proxy    ingress: coder pods on 3128, nothing else.
+               egress:  80 and 443 anywhere (the allowlist is enforced by squid, by domain -
+                        a NetworkPolicy cannot express a domain), and DNS.
+
+Two honest limits:
+  - Your CNI must ENFORCE NetworkPolicy. kind's default and some others accept these objects
+    and ignore them; then the proxy is advisory, and the coder's egress is open.
+  - DNS is allowed to pods labelled k8s-app=kube-dns in ANY namespace. A cluster running
+    NodeLocal DNSCache answers from a link-local address instead and needs its own rule; the
+    symptom is a coder whose every request fails to resolve, including the proxy's name.
+=========================================================================================
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "hephaisto.fullname" . }}-coder
+  namespace: {{ include "hephaisto.codeFixNamespace" . }}
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "hephaisto.codeFixPodSelector" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  # An empty ingress list with Ingress in policyTypes denies all inbound traffic.
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "hephaisto.codeFixEgressSelector" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 3128
+{{- if .Values.codeFix.egressProxy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "hephaisto.codeFixEgressName" . }}
+  namespace: {{ include "hephaisto.codeFixNamespace" . }}
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "hephaisto.codeFixEgressSelector" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Only coder pods. Anything else in the cluster using this proxy would be borrowing an
+    # egress path that was sized, allowlisted and audited for coders alone.
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "hephaisto.codeFixPodSelector" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 3128
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # No `to`: any destination, on these ports only. The domain allowlist is squid's job.
+    - ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+{{- end }}
+{{- end }}

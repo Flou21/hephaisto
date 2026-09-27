@@ -1,6 +1,6 @@
 # Hephaisto namespaces.
 #
-# Three namespaces, deliberately separated so that RBAC can be scoped by namespace
+# Four namespaces, deliberately separated so that RBAC can be scoped by namespace
 # rather than by resource name:
 #
 #   hephaisto        the agent process and its Postgres. Nothing else runs here.
@@ -11,6 +11,11 @@
 #                     of a mis-reasoned remediation is therefore a namespace boundary --
 #                     enforced by the API server -- not a policy check in the agent's own
 #                     code that a confused agent could reason its way around.
+#   hephaisto-coder  code-fix Jobs (v0.9.0), their egress proxy, and on this cluster the
+#                     coder-git server. The ONLY namespace the agent may create Jobs in, and
+#                     therefore never one it may act in: it must NOT carry the
+#                     destructive-actions-allowed label, and the chart refuses to render if
+#                     it is listed in policy.actionableNamespaces.
 #
 # These are entirely new namespaces. The pre-existing hand-installed stack in the
 # `prometheus`, `loki` and `promtail` namespaces is unrelated and must not be touched.
@@ -47,3 +52,17 @@ metadata:
     # Marks this namespace as safe to break. Nothing anyone depends on may be deployed
     # here, because the agent holds delete/patch on workloads in it.
     hephaisto.dev/destructive-actions-allowed: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hephaisto-coder
+  labels:
+    app.kubernetes.io/part-of: hephaisto
+    hephaisto.dev/role: coder
+    kubernetes.io/metadata.name: hephaisto-coder
+    # A model runs a shell here. Every pod the stack puts in this namespace - coder Jobs, the
+    # squid egress proxy, coder-git - is written to the restricted profile, so enforce it: a pod
+    # that drifts from it is refused by the API server rather than quietly admitted.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest

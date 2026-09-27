@@ -3,6 +3,10 @@
   "tracing": true,
   "agent": true,
   "chaos": false,
+  "coder": false,
+  "coder-mode": "plan",
+  "coder-sdk": "fake",
+  "local-llm": false,
   "host": "localhost",
   "host-ip": "127.0.0.1"
 }

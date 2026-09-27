@@ -192,11 +192,17 @@ jobs:
       - name: Render and validate every values combination
         run: |
           set -euo pipefail
-          for values in ci/minimal-values.yaml ci/full-values.yaml values-dev.yaml; do
+          # Space-separated entries layer several files, the way the Tiltfile does: the dev
+          # overlays (coder, local model) are never installed alone.
+          for values in ci/minimal-values.yaml ci/full-values.yaml values-dev.yaml \
+                        "values-dev.yaml values-dev-coder.yaml values-dev-local-llm.yaml"; do
             echo "::group::$values"
+            args=()
+            for f in $values; do args+=(--values "charts/hephaisto/$f"); done
             helm template hephaisto charts/hephaisto \
               --namespace hephaisto \
-              --values "charts/hephaisto/$values" \
+              "${args[@]}" \
+              --set codeFix.mode=plan --set codeFix.sdk=fake \
             | kubeconform -strict -summary -verbose \
                 -kubernetes-version ${{ env.K8S_VERSION }} \
                 -schema-location default \
@@ -263,6 +269,42 @@ jobs:
             COMMIT=${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+
+  # The code-fix runner (coder/): a TypeScript program and its own image, run by a Kubernetes
+  # Job. Built without pushing, then its whole test suite runs INSIDE that image - read-only
+  # root, uid 64198, exactly as a Job runs it - because the image is what ships, and a suite
+  # that passes on a runner's Node but not in the image tested nothing. No model and no GitHub
+  # token: the fake SDK, a bare git remote, the gh shim, and the real SDK + pinned CLI against a
+  # localhost mock of the Messages API with a dummy key. scripts/test.sh enforces its own
+  # test-count floor.
+  coder:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build
+        uses: docker/build-push-action@v7
+        with:
+          context: coder
+          platforms: ${{ matrix.platform }}
+          push: false
+          load: true
+          tags: hephaisto/coder:ci
+          cache-from: type=gha,scope=coder-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=coder-${{ matrix.platform }}
+
+      - name: Test inside the image
+        run: coder/scripts/test.sh --in-image hephaisto/coder:ci
 
   e2e-kind:
     runs-on: ubuntu-latest
@@ -350,7 +392,18 @@ jobs:
             --set postgres.embedded.enabled=true \
             --set 'policy.actionableNamespaces[0]=hephaisto-chaos' \
             --set prometheusOperator.selectorLabels.release=kube-prometheus-stack \
+            --set codeFix.enabled=true \
+            --set codeFix.mode=plan \
+            --set codeFix.createNamespace=true \
+            --set codeFix.image.repository=example.invalid/hephaisto-coder-placeholder \
+            --set codeFix.image.tag=never-pulled \
+            --set secrets.codeFix=hephaisto-codefix-not-created \
             --wait --timeout 6m
+          # codeFix is ON here, in mode plan, so the one Role that grants `create jobs` is
+          # installed and the RBAC step below can prove it is exactly one namespace wide. The
+          # image is a placeholder nothing ever pulls: no repository is mapped, so no coder Job
+          # can start. The egress proxy IS real, and --wait holding for it is the only place CI
+          # proves the rendered squid config starts under the restricted Pod Security profile.
 
       # The most important prose in the repo, turned into an enforced test. Only a live API
       # server can answer these.
@@ -377,6 +430,43 @@ jobs:
           else
             echo "::error::the agent cannot act in its one allowed namespace"; fail=1
           fi
+
+          # Code fixes: `create jobs` in the coder namespace and NOWHERE else. Each "must" is the
+          # positive control for the refusals after it - without them, a chart that granted
+          # nothing at all would pass every must_not.
+          must() {
+            if kubectl auth can-i $1 --as="$SA" ${2:-} >/dev/null 2>&1; then
+              echo "ok: can $1 ${2:-}"
+            else
+              echo "::error::the agent cannot $1 ${2:-} and needs to"; fail=1
+            fi
+          }
+          for verb in create get list watch delete; do
+            must "$verb jobs" "-n hephaisto-coder"
+          done
+          must "create configmaps" "-n hephaisto-coder"
+          must "get pods/log" "-n hephaisto-coder"
+
+          must_not "create jobs" "-n hephaisto"
+          must_not "create jobs" "-n hephaisto-chaos"
+          must_not "create jobs" "-n kube-system"
+          must_not "create jobs" "-A"
+          must_not "create cronjobs" "-n hephaisto-coder"
+          must_not "create pods" "-A"
+          must_not "create pods" "-n hephaisto-coder"
+          must_not "get secrets" "-n hephaisto-coder"
+          must_not "create secrets" "-A"
+
+          # The coder's own identity can do nothing at all.
+          CODER=system:serviceaccount:hephaisto-coder:hephaisto-coder
+          for probe in "get pods -n hephaisto-coder" "get secrets -n hephaisto-coder" \
+                       "create jobs -n hephaisto-coder" "get pods -A" "list configmaps -A"; do
+            if kubectl auth can-i $probe --as="$CODER" >/dev/null 2>&1; then
+              echo "::error::the coder ServiceAccount CAN $probe and must be bound to nothing"; fail=1
+            else
+              echo "ok: the coder cannot $probe"
+            fi
+          done
           exit $fail
 
       - name: The published image runs read-only and non-root
@@ -389,6 +479,22 @@ jobs:
           kubectl -n hephaisto get "$POD" -o jsonpath='{.spec.containers[0].securityContext}' | tee /dev/stderr | grep -q '"readOnlyRootFilesystem":true'
           kubectl -n hephaisto get "$POD" -o jsonpath='{.spec.securityContext.runAsUser}' | grep -q '^64198$'
           kubectl -n hephaisto wait --for=condition=Ready "$POD" --timeout=120s
+
+      - name: The coder egress proxy starts and refuses what it must
+        run: |
+          set -euo pipefail
+          kubectl -n hephaisto-coder rollout status deploy/hephaisto-coder-egress --timeout=120s
+          # From inside the proxy's own namespace, but NOT from a coder pod: kind's CNI does not
+          # enforce NetworkPolicy, so this tests squid's rules, not the policy in front of it.
+          # Pod Security `restricted` is enforced there, so the probe pod has to comply too.
+          kubectl -n hephaisto-coder run proxy-probe --restart=Never --image=curlimages/curl:8.16.0 \
+            --overrides='{"spec":{"securityContext":{"runAsNonRoot":true,"runAsUser":100,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"proxy-probe","image":"curlimages/curl:8.16.0","command":["sh","-c","for u in https://example.com/ https://github.com:22/; do curl -s -o /dev/null -m 20 -w \"%{http_connect} $u\\n\" -x http://hephaisto-coder-egress:3128 $u || true; done"],"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}}]}}'
+          kubectl -n hephaisto-coder wait --for=jsonpath='{.status.phase}'=Succeeded pod/proxy-probe --timeout=120s
+          kubectl -n hephaisto-coder logs pod/proxy-probe | tee /tmp/probe.txt
+          # Both must be refused at the CONNECT: a host not on the list, and an allowed host on a
+          # port that is not 443.
+          [ "$(grep -c '^403 ' /tmp/probe.txt)" -eq 2 ] || { echo "::error::the egress proxy did not refuse both probes"; exit 1; }
+          kubectl -n hephaisto-coder logs deploy/hephaisto-coder-egress | grep -c TCP_DENIED
 
       # git tag -> MinVer -> MSBuild -> image -> chart appVersion -> /api/version, asserted end
       # to end. Every link in that chain has a way of quietly reporting something else.

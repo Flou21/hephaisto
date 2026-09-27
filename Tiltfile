@@ -68,6 +68,14 @@ config.define_bool('observability', args = False, usage = 'Prometheus, Grafana, 
 config.define_bool('tracing',       args = False, usage = 'Tempo + the Aspire dashboard')
 config.define_bool('agent',         args = False, usage = 'Postgres and the Hephaisto pod')
 config.define_bool('chaos',         args = False, usage = 'Register the chaos fixtures (still manual-trigger)')
+# The code-fix stage (v0.9.0). Off by default: it builds a ~1.3 GB image, and with coder-sdk=real
+# every eligible incident spends subscription quota.
+config.define_bool('coder',         args = False, usage = 'Code fixes: coder image, coder-git server, codeFix.enabled')
+config.define_string('coder-mode',  args = False, usage = 'codeFix.mode: off | plan | pr (default plan)')
+config.define_string('coder-sdk',   args = False, usage = 'codeFix.sdk: fake ($0 scripted plumbing, default) | real')
+# The agent's own model. Defaults to whatever `coder` is, because a code-fix run is an
+# investigation first, and this project's dev cluster does not investigate with Gemini.
+config.define_bool('local-llm',     args = False, usage = 'Investigate with the local Ollama (gpt-oss:120b) at host-ip:11434')
 cfg = config.parse()
 
 HOST    = cfg.get('host', 'localhost')
@@ -77,6 +85,15 @@ observability = cfg.get('observability', True)
 tracing       = cfg.get('tracing', True)
 agent         = cfg.get('agent', True)
 chaos         = cfg.get('chaos', False)
+coder         = cfg.get('coder', False)
+coder_mode    = cfg.get('coder-mode', 'plan')
+coder_sdk     = cfg.get('coder-sdk', 'fake')
+local_llm     = cfg.get('local-llm', coder)
+
+if coder_mode not in ['off', 'plan', 'pr']:
+    fail("coder-mode must be off, plan or pr - got '%s'" % coder_mode)
+if coder_sdk not in ['fake', 'real']:
+    fail("coder-sdk must be fake or real - got '%s'" % coder_sdk)
 
 # --- namespaces ---------------------------------------------------------------------------
 
@@ -262,6 +279,85 @@ if agent:
         'dashboard.enabled=false',
     ]
 
+    # --- the local model --------------------------------------------------------------------
+    #
+    # Ollama runs NATIVELY on this machine (GPU), not in the cluster, so the endpoint is the
+    # host's address - host-ip from tilt_config.json - and the pod reaches it through the VM.
+    # The values file carries placeholders for the two endpoints; they are overwritten here BY
+    # NAME, reading the file rather than assuming an index, because --set addresses a list by
+    # position and a hardcoded index silently overwrites the wrong entry the day somebody adds
+    # one above it (the same lesson as deploy_extra_env_count in scripts/e2e/lib/deploy.sh).
+    #
+    # This file's extraEnv is the WHOLE list: Helm replaces lists rather than merging them, so
+    # if values-dev.yaml ever grows an extraEnv of its own, move those entries in here too.
+    if local_llm:
+        if HOST_IP in ['127.0.0.1', 'localhost']:
+            fail('local-llm needs host-ip in tilt_config.json: from inside a pod, 127.0.0.1 is the pod.')
+        llm_values = 'charts/hephaisto/values-dev-local-llm.yaml'
+        chart_values.append(llm_values)
+        for i, entry in enumerate(read_yaml(llm_values)['extraEnv']):
+            if entry['name'] in ['Llm__Endpoint', 'Llm__EmbeddingEndpoint']:
+                chart_set.append('extraEnv[%d].value=http://%s:11434/v1' % (i, HOST_IP))
+
+    # --- the code-fix stage -----------------------------------------------------------------
+    #
+    # Two images, built two different ways, and the difference is the point:
+    #
+    #   hephaisto/coder      is NOT a workload anything here deploys - the AGENT creates Jobs from
+    #                        it, naming it in an env var (CodeFix__Image). custom_build could be
+    #                        made to follow it there (match_in_env_vars=True), but then every
+    #                        coder rebuild rewrites the agent Deployment's env and restarts the
+    #                        agent, and a broken coder Dockerfile blocks every agent deploy. So a
+    #                        plain local_resource builds a FIXED tag,
+    #                        hephaisto/coder:dev, straight into this node's docker daemon (Rancher
+    #                        Desktop's k3s runs on the same moby daemon, which is also why the
+    #                        agent's disable_push build works), and values-dev-coder.yaml asks for
+    #                        exactly that tag with pullPolicy Never. The next Job after a rebuild
+    #                        picks it up; the agent does not restart. Nothing is pushed anywhere.
+    #
+    #   hephaisto/coder-git  IS a workload, so it is a normal custom_build with disable_push.
+    if coder:
+        chart_values.append('charts/hephaisto/values-dev-coder.yaml')
+        chart_set.append('codeFix.mode=%s' % coder_mode)
+        chart_set.append('codeFix.sdk=%s' % coder_sdk)
+        if coder_sdk == 'fake':
+            chart_set.append('codeFix.gh=shim')
+
+        local_resource(
+            'coder-image',
+            cmd = 'docker build -q -t hephaisto/coder:dev coder',
+            deps = ['coder'],
+            ignore = ['coder/node_modules', 'coder/dist', 'coder/coverage'],
+            labels = ['coder'],
+        )
+
+        # Seeded at build time from local checkouts (FIXTURE_REPO, DEV_CONTEXT_REPO - see the
+        # script). The seed/ output is deliberately NOT a dep: the build writes it, and a dep on
+        # it would rebuild forever. Re-seed after committing to the fixture repo or dev-context
+        # with `tilt trigger coder-git`; that also resets every pushed branch.
+        custom_build(
+            'hephaisto/coder-git',
+            'scripts/coder-git-seed.sh && docker build -t $EXPECTED_REF infra/coder/git-server',
+            deps = [
+                'scripts/coder-git-seed.sh',
+                'infra/coder/git-server/Dockerfile',
+                'infra/coder/git-server/lighttpd.conf',
+                'infra/coder/git-server/entrypoint.sh',
+                'infra/coder/git-server/index.cgi',
+            ],
+            disable_push = True,
+        )
+        k8s_yaml('infra/coder/git-server/git-server.yaml')
+        k8s_resource(
+            'coder-git',
+            objects = [
+                'coder-git-ingress:networkpolicy',
+                'coder-git-dev-egress:networkpolicy',
+                'coder-git-dev-proxy-egress:networkpolicy',
+            ],
+            labels = ['coder'],
+        )
+
     k8s_yaml(helm(
         'charts/hephaisto',
         name = 'hephaisto',
@@ -302,6 +398,26 @@ if agent:
         labels = ['agent'],
     )
 
+    if coder:
+        # The chart's code-fix objects in the coder namespace. The squid Deployment is its own
+        # resource (hephaisto-coder-egress) because it is a workload; the rest - the one Role
+        # that grants `create jobs`, the coder's unbound ServiceAccount, the policies, the NuGet
+        # cache - are grouped here so the UI shows them as one thing.
+        k8s_resource(
+            objects = [
+                'hephaisto-codefix:role:hephaisto-coder',
+                'hephaisto-codefix:rolebinding:hephaisto-coder',
+                'hephaisto-coder:serviceaccount:hephaisto-coder',
+                'hephaisto-coder:networkpolicy:hephaisto-coder',
+                'hephaisto-coder-egress:networkpolicy:hephaisto-coder',
+                'hephaisto-coder-egress:configmap:hephaisto-coder',
+                'hephaisto-coder-nuget:persistentvolumeclaim:hephaisto-coder',
+            ],
+            new_name = 'coder-rbac',
+            labels = ['coder'],
+        )
+        k8s_resource('hephaisto-coder-egress', labels = ['coder'])
+
     if observability:
         # These need the Prometheus Operator's CRDs to exist before they can be applied at
         # all, and the Grafana sidecar to be running before the dashboard means anything -
@@ -327,21 +443,73 @@ if agent:
 # deliberately broken cluster by accident. You break things on purpose, one at a time, and
 # watch what the agent makes of it.
 
+# The fixtures with a SOURCE REPOSITORY behind them (v0.9.0) are the exception to "the resource
+# is the file's basename": their Deployment is named for the service it pretends to be (shop-api,
+# catalog-api), which is what the agent sees and what codeFix.repositories maps, so the resource
+# is renamed back to the fixture id. Their image is built from the pinned fixture commit rather
+# than pulled - see fixture_image_resource.
+FIXTURE_REPO = '../hephaisto-fixture-dotnet'
+CHAOS_WORKLOADS = {'c15-null-deref': 'shop-api', 'c19-injection': 'catalog-api'}
+
+def fixture_image_resource(name):
+    # Builds the EXACT pinned tag from the fixture branch's commit into the node's docker; no
+    # pull, no push. The tag and the sha both come from the fixture manifest, so the running
+    # image maps to exactly one commit - the property the coder's analysed_ref relies on.
+    path = 'infra/chaos/%s.yaml' % name
+    d = read_yaml(path)
+    sha = d['metadata']['annotations']['hephaisto.dev/source-sha']
+    image = d['spec']['template']['spec']['containers'][0]['image']
+    local_resource(
+        name + '-image',
+        cmd = ['bash', '-c', ('set -euo pipefail; docker image inspect %s >/dev/null 2>&1 || ' +
+               'git -C %s archive --format=tar %s | docker build -q -t %s -') % (image, FIXTURE_REPO, sha, image)],
+        deps = [path],
+        labels = ['chaos'],
+    )
+    return name + '-image'
+
 if chaos:
     for f in listdir('infra/chaos'):
         if not f.endswith('.yaml'):
             continue
 
         # The resource name is the workload name inside the manifest, which is the file's
-        # basename - c1-oomkill, not a 'chaos-' prefix. Deriving a different name here makes
-        # k8s_resource fail with "unknown resource" at load time.
+        # basename - c1-oomkill, not a 'chaos-' prefix - except for CHAOS_WORKLOADS above.
+        # Deriving a different name here makes k8s_resource fail with "unknown resource" at load
+        # time.
         name = os.path.basename(f).replace('.yaml', '')
         k8s_yaml(f)
+        workload = CHAOS_WORKLOADS.get(name, name)
+        extra = {'new_name': name} if workload != name else {}
         k8s_resource(
-            name,
+            workload,
+            resource_deps = [fixture_image_resource(name)] if name in CHAOS_WORKLOADS else [],
             auto_init = False,
             trigger_mode = TRIGGER_MODE_MANUAL,
             # c9-memhog drives the whole node into memory pressure and will evict unrelated
             # pods, including Hephaisto's own. Run it alone, deliberately, and clean up.
             labels = ['chaos'],
+            **extra
         )
+
+    # The c19 injection canary: a second notification-receiver that counts anything reaching
+    # it. The injected log lines tell the coder to `curl` it; a non-zero count means a command
+    # from a log line ran.
+    local_resource(
+        'notification-receiver-image',
+        cmd = 'docker build -q -f infra/e2e/notification-receiver/Dockerfile -t hephaisto/notification-receiver:dev .',
+        deps = [
+            'infra/e2e/notification-receiver/Program.cs',
+            'infra/e2e/notification-receiver/notification-receiver.csproj',
+            'infra/e2e/notification-receiver/Dockerfile',
+        ],
+        labels = ['chaos'],
+    )
+    k8s_yaml('infra/e2e/egress-canary.yaml')
+    k8s_resource(
+        'egress-canary',
+        resource_deps = ['notification-receiver-image'],
+        auto_init = False,
+        trigger_mode = TRIGGER_MODE_MANUAL,
+        labels = ['chaos'],
+    )

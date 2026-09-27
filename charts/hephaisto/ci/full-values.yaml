@@ -96,3 +96,78 @@ extraEnv:
 extraEnvFrom:
   - configMapRef:
       name: hephaisto-extra-config
+
+# OIDC on, so codeFix.mode below can be pr: approving a repository write needs an
+# authenticated human, and the chart refuses pr without it.
+auth:
+  enabled: true
+  authority: https://keycloak.example.com/realms/hephaisto
+  approverRole: hephaisto-approver
+
+notifications:
+  baseUrl: https://hephaisto.example.com
+  webhook:
+    url: https://hooks.example.com/hephaisto
+  routes:
+    - channel: webhook
+      events: [IncidentEscalated, CodeFixPlanReady, CodeFixPrOpened, CodeFixFailed]
+
+# Every code-fix template at once: its own namespace object, the Role, the unbound
+# ServiceAccount, both NetworkPolicies, the proxy with an extra allowlist entry, and the NuGet
+# cache. mode pr, because that is the widest thing the chart can be asked to render.
+codeFix:
+  enabled: true
+  mode: pr
+  namespace: hephaisto-coder
+  createNamespace: true
+  image:
+    repository: ghcr.io/flou21/hephaisto-coder
+    tag: "0.0.1"
+    pullPolicy: IfNotPresent
+  contextRepository:
+    url: https://github.com/example/dev-context
+    ref: main
+  repositories:
+    - workload: shop/Deployment/shop-api
+      url: https://github.com/example/shop
+      defaultBranch: main
+      path: ""
+    - workload: shop/StatefulSet/shop-worker
+      url: https://github.com/example/shop
+      defaultBranch: main
+      path: src/Worker
+  allowedRepositoryHosts: [github.com]
+  eligibleCategories: [application, config]
+  confidenceFloor: 0.75
+  budgets:
+    perPlanUsd: 4
+    perImplementUsd: 12.5
+    perDayUsd: 40
+    attemptsPerRepositoryPerDay: 2
+    concurrentJobs: 1
+  deadlines:
+    plan: "00:25:00"
+    implement: "00:50:00"
+    approvalTimeout: "2.00:00:00"
+    jobTtl: "02:00:00"
+    pollInterval: "00:00:20"
+  workspaceSize: 10Gi
+  resources:
+    cpuRequest: 500m
+    memoryRequest: 2Gi
+    cpuLimit: "4"
+    memoryLimit: 6Gi
+  requireGreenBuild: true
+  allowUnauthenticatedApproval: false
+  sdk: real
+  gh: ""
+  egressProxy:
+    enabled: true
+    extraAllowlist:
+      - nuget.example.com
+  nugetCache:
+    enabled: true
+    size: 20Gi
+    storageClass: standard
+  networkPolicy:
+    enabled: true

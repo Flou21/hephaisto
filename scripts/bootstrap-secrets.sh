@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Creates the four secrets the stack needs and that no chart creates.
+# Creates the secrets the stack needs and that no chart creates.
 #
 # Run once after `tilt up` has created the namespaces. Safe to re-run: every step is
 # idempotent and will not rotate a secret that already exists, because rotating the caller
@@ -18,6 +18,7 @@ set -euo pipefail
 CONTEXT_REQUIRED="${CONTEXT_REQUIRED:-studio-rancher-desktop}"
 OBS_NS="hephaisto-obs"
 APP_NS="hephaisto"
+CODER_NS="hephaisto-coder"
 
 # The guard is not ceremony. This script creates secrets and reads a Grafana admin password;
 # the same kubeconfig can reach production, and the release names here are the same ones used
@@ -224,6 +225,40 @@ else
   echo "hephaisto-grafana-annotation: created (service account id $ann_id)"
 fi
 
+# ---------------------------------------------------------------------------------------
+# 6. The code-fix coder's credentials - from a file, or not at all
+# ---------------------------------------------------------------------------------------
+# CLAUDE_CODE_OAUTH_TOKEN, GITHUB_TOKEN, NUGET_GITHUB_TOKEN: personal credentials that nothing
+# here can mint, so there is no generated fallback - and deliberately no placeholder either. A
+# Secret holding a dummy token looks configured, and a coder started with it fails on its first
+# request with an auth error that reads like a bug in the coder.
+#
+# With coder-sdk=fake (the Tilt default) none of this is needed: the fake SDK refuses to start
+# if a real token IS present, and the gh shim needs no GitHub token. Only a coder-sdk=real run
+# reads it.
+#
+# It lives in the CODER namespace, not in $APP_NS: coder Jobs receive it by secretKeyRef, and
+# the agent holds no RBAC that could read it. Applied (not created) whenever the file exists,
+# so editing the file and re-running this script is how a token is rotated.
+CODEFIX_SECRET_FILE="secrets/hephaisto-codefix.secret.yaml"
+if [ -f "$CODEFIX_SECRET_FILE" ]; then
+  if kubectl get namespace "$CODER_NS" >/dev/null 2>&1; then
+    # -n makes kubectl REFUSE a file whose metadata names another namespace, rather than
+    # putting the tokens somewhere the coder cannot see them.
+    kubectl -n "$CODER_NS" apply -f "$CODEFIX_SECRET_FILE" >/dev/null
+    echo "hephaisto-codefix: applied from $CODEFIX_SECRET_FILE into $CODER_NS"
+  else
+    echo "hephaisto-codefix: SKIPPED - namespace $CODER_NS does not exist yet (tilt up creates it)."
+  fi
+else
+  echo "hephaisto-codefix: SKIPPED - no $CODEFIX_SECRET_FILE. Not needed for coder-sdk=fake."
+  echo "  For a real coder run, write it (gitignored) with stringData keys CLAUDE_CODE_OAUTH_TOKEN,"
+  echo "  GITHUB_TOKEN and optionally NUGET_GITHUB_TOKEN, namespace $CODER_NS, and re-run."
+fi
+
 echo
 echo "secrets in $OBS_NS:"; kubectl -n "$OBS_NS" get secret --no-headers | awk '{print "  ", $1}'
 echo "secrets in $APP_NS:";  kubectl -n "$APP_NS"  get secret --no-headers | awk '{print "  ", $1}'
+if kubectl get namespace "$CODER_NS" >/dev/null 2>&1; then
+  echo "secrets in $CODER_NS:"; kubectl -n "$CODER_NS" get secret --no-headers 2>/dev/null | awk '{print "  ", $1}' || true
+fi

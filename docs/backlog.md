@@ -1715,6 +1715,43 @@ unconfirmed lifetime. `cost_usd` under it is nominal — the caps bound behaviou
 API key as the documented fallback (`ANTHROPIC_API_KEY` is an optional key of the same Secret); treat
 the first `RateLimited` failure as a data point. **Size.** S. Open.
 
+### 119. Three chart assertions matched a name no render produces, and passed for that reason
+
+**Symptom.** `ci/negative-tests.sh` asserted "the read ClusterRole has no write verbs", "egress is
+off by default" and "enabling egress does not restrict Postgres" by `awk`-ranging over
+`/name: t-hephaisto-read/`, `/name: t-hephaisto-ingress/` and `/name: t-hephaisto-postgres-ingress/`.
+The chart's `fullname` does not include the release name (`_helpers.tpl` says why), so the objects
+are `hephaisto-read` and so on, the range matched nothing, and all three reported `ok` against an
+empty string. A write verb in the cluster-wide ClusterRole would have passed the test written to
+catch it.
+
+**How it was found.** Adding the code-fix assertions, whose expected names had to be read from a
+real render rather than copied from the neighbouring lines.
+
+**Fix.** The ranges anchor on the real names (`^  name: hephaisto-read$`), and the Postgres one ends
+at its document's `---` instead of end-of-file - which it now has to, because the coder
+NetworkPolicies render after it and legitimately carry `- Egress`. Each was checked against real
+content (the read range spans ten `verbs:` lines). The new code-fix RBAC assertions parse the render
+(`ci/rbac-grants.py`) instead of ranging over text, and each carries a positive control.
+**Size.** S. **Fixed in v0.9.0.**
+
+### 120. The chart can widen `codeFix.eligibleCategories` and `allowedRepositoryHosts`, never narrow them
+
+**Symptom.** `appsettings.json` ships `CodeFix:EligibleCategories: ["application"]` and
+`CodeFix:AllowedRepositoryHosts: ["github.com"]`. The chart emits the same lists as
+`CodeFix__EligibleCategories__<i>`, and configuration merges by key path: the chart's index 0
+replaces the JSON's index 0 and anything beyond it is added. An operator who sets
+`eligibleCategories: []` to stop every code fix, or `allowedRepositoryHosts: [ghe.example.com]` to
+exclude github.com, still gets the JSON's entries - the values file says one thing and the agent
+does another, in the direction of doing more. `Ingest:SelfNamespaces` ([#115](#115)) has the same
+shape through a collection initialiser, harmlessly (more self namespaces only escalate more).
+
+**Fix.** In `src/`, not the chart: drop the two list defaults from `appsettings.json`. The options
+class already defaults both to empty, and the chart always emits them when the stage is enabled, so
+"empty permits nothing" would then be true for every install. Until then `values.yaml` says so
+beside both values. **Size.** S. **Fixed in v0.9.0**: both lists are gone from `appsettings.json`, so
+the chart's values are the whole list.
+
 
 ## Dead or unreachable code
 

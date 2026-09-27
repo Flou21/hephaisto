@@ -111,9 +111,21 @@ Every reserved name already has a value that sets it properly, so refusing costs
       "GEMINI_API_KEY" "LLM_API_KEY" "HEPHAISTO_MODE" "HEPHAISTO_SWITCHES_DIR"
       "ConnectionStrings__hephaisto" "ASPNETCORE_URLS"
       "Grafana__McpUrl" "Grafana__ServiceAccountToken" -}}
+{{- /* The indexed entries the chart itself emits. Index 0 of DeniedNamespaces is what keeps the
+       investigator's read tools out of the coder namespace; an extraEnv entry at the same index
+       would silently replace it. Higher indices are the operator's and still work. */ -}}
+{{- range $i, $ns := include "hephaisto.selfNamespaces" . | splitList " " -}}
+  {{- $reserved = append $reserved (printf "Ingest__SelfNamespaces__%d" $i) -}}
+{{- end -}}
+{{- if .Values.codeFix.enabled -}}
+  {{- $reserved = append $reserved "Kubernetes__DeniedNamespaces__0" -}}
+{{- end -}}
 {{- range .Values.extraEnv -}}
   {{- if has .name $reserved -}}
-    {{- fail (printf "extraEnv may not set %q: the chart manages it, and because extraEnv is appended last a duplicate would silently win rather than conflict. Use the corresponding value instead - mode, secrets.llm, secrets.grafanaMcp, grafanaMcp.url or postgres.*." .name) -}}
+    {{- fail (printf "extraEnv may not set %q: the chart manages it, and because extraEnv is appended last a duplicate would silently win rather than conflict. Use the corresponding value instead - mode, secrets.llm, secrets.grafanaMcp, grafanaMcp.url, postgres.* or codeFix.* - or, for an indexed list, the next free index." .name) -}}
+  {{- end -}}
+  {{- if hasPrefix "CodeFix__" .name -}}
+    {{- fail (printf "extraEnv may not set %q: every CodeFix setting is a codeFix.* value, and the chart validates them TOGETHER - the namespace against the RBAC it grants, mode pr against auth. A CodeFix__ entry here would win silently and skip every one of those checks." .name) -}}
   {{- end -}}
   {{- if hasPrefix "OTEL_" .name -}}
     {{- fail (printf "extraEnv may not set %q: the OTEL_* block is derived from otel.endpoint/protocol/environment, and a half-overridden set exports telemetry to two places or to none." .name) -}}
@@ -121,5 +133,139 @@ Every reserved name already has a value that sets it properly, so refusing costs
   {{- if hasPrefix "Policy__AllowedNamespaces" .name -}}
     {{- fail (printf "extraEnv may not set %q: the namespace allowlist is what the write Role is rendered from, so setting it here would let the agent believe it may act somewhere RBAC does not permit. Use policy.actionableNamespaces." .name) -}}
   {{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+=========================================================================================
+Code fixes
+=========================================================================================
+*/}}
+
+{{/* The coder namespace. One definition, because the Role, the Job env and the refusals must
+     never disagree about which namespace holds `create jobs`. */}}
+{{- define "hephaisto.codeFixNamespace" -}}
+{{- .Values.codeFix.namespace -}}
+{{- end -}}
+
+{{/* The coder's ServiceAccount: bound to nothing, token never mounted. */}}
+{{- define "hephaisto.codeFixServiceAccountName" -}}
+{{- printf "%s-coder" (include "hephaisto.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "hephaisto.codeFixImage" -}}
+{{- printf "%s:%s" .Values.codeFix.image.repository (.Values.codeFix.image.tag | default .Chart.AppVersion) -}}
+{{- end -}}
+
+{{- define "hephaisto.codeFixEgressName" -}}
+{{- printf "%s-coder-egress" (include "hephaisto.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "hephaisto.codeFixProxyUrl" -}}
+{{- printf "http://%s.%s.svc:3128" (include "hephaisto.codeFixEgressName" .) (include "hephaisto.codeFixNamespace" .) -}}
+{{- end -}}
+
+{{- define "hephaisto.codeFixNugetClaim" -}}
+{{- printf "%s-coder-nuget" (include "hephaisto.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{/* The pod label the coder Job carries - CodeFixJobSpec.AppLabel. Every coder policy selects
+     on it, so it is written once. */}}
+{{- define "hephaisto.codeFixPodSelector" -}}
+app.kubernetes.io/name: hephaisto-coder
+{{- end -}}
+
+{{- define "hephaisto.codeFixEgressSelector" -}}
+app.kubernetes.io/name: {{ include "hephaisto.codeFixEgressName" . }}
+app.kubernetes.io/component: egress-proxy
+{{- end -}}
+
+{{/* Namespaces whose signals are the agent's own - escalated, never auto-actionable. Space
+     separated, deduplicated, in a stable order. */}}
+{{- define "hephaisto.selfNamespaces" -}}
+{{- $l := list .Release.Namespace -}}
+{{- with .Values.observabilityNamespace -}}{{- $l = append $l . -}}{{- end -}}
+{{- if .Values.codeFix.enabled -}}{{- $l = append $l .Values.codeFix.namespace -}}{{- end -}}
+{{- join " " (uniq $l) -}}
+{{- end -}}
+
+{{/*
+The proxy allowlist as squid will accept it: allowlist + extraAllowlist, lower-cased,
+deduplicated, and with every entry that another entry already covers DROPPED.
+
+Squid 6 treats an overlap as FATAL - "'api.nuget.org' is a subdomain of '.nuget.org' ... You
+need to remove 'api.nuget.org'" - and the pod never starts. Overlaps are natural to write (the
+default list has two), so the chart resolves them rather than making every operator learn the
+rule from a crash loop. `.example.com` covers `example.com`, every `x.example.com` and every
+`.x.example.com`; a name without a leading dot covers only itself.
+*/}}
+{{- define "hephaisto.codeFixAllowlist" -}}
+{{- $all := list -}}
+{{- range concat .Values.codeFix.egressProxy.allowlist .Values.codeFix.egressProxy.extraAllowlist -}}
+  {{- $all = append $all (lower .) -}}
+{{- end -}}
+{{- $all = uniq $all -}}
+{{- range $d := $all -}}
+  {{- $covered := false -}}
+  {{- range $w := $all -}}
+    {{- if and (hasPrefix "." $w) (ne $d $w) (or (hasSuffix $w $d) (eq (printf ".%s" $d) $w)) -}}
+      {{- $covered = true -}}
+    {{- end -}}
+  {{- end -}}
+  {{- if not $covered }}
+{{ $d }}
+  {{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Guard for the code-fix stage. Rendered from the Deployment, so it runs on every install - but
+checks nothing unless codeFix.enabled, because a disabled stage renders nothing to protect.
+
+The namespace refusals are the same list as validateActionableNamespaces, for the mirror-image
+reason: that list is where the agent may DELETE, this one is where it may CREATE JOBS, and the
+two must never meet. A namespace that is both is a namespace where the agent can run arbitrary
+code next to the workloads it acts on. RbacSelfCheck refuses to boot on the same condition; this
+refuses to render, which is earlier and cheaper.
+*/}}
+{{- define "hephaisto.validateCodeFix" -}}
+{{- if .Values.codeFix.enabled -}}
+{{- $ns := .Values.codeFix.namespace -}}
+{{- if not $ns -}}
+  {{- fail "codeFix.namespace is required when codeFix.enabled is true: it is the one namespace Hephaisto may create Jobs in." -}}
+{{- end -}}
+{{- if eq $ns "default" -}}
+  {{- fail "codeFix.namespace may not be \"default\": it is where unlabelled workloads land, and the coder namespace must hold nothing but coders." -}}
+{{- end -}}
+{{- if hasPrefix "kube-" $ns -}}
+  {{- fail (printf "codeFix.namespace may not be %q: a Job in a kube-* namespace runs beside the control plane." $ns) -}}
+{{- end -}}
+{{- if eq $ns .Release.Namespace -}}
+  {{- fail (printf "codeFix.namespace may not be %q, the release namespace: a coder beside the agent could reach its database and its Service, and create jobs there would put arbitrary code next to the process that holds the kill switch." $ns) -}}
+{{- end -}}
+{{- if eq $ns .Values.observabilityNamespace -}}
+  {{- fail (printf "codeFix.namespace may not be %q, the observability namespace: a coder there could tamper with the telemetry the agent judges itself by." $ns) -}}
+{{- end -}}
+{{- if has $ns .Values.policy.actionableNamespaces -}}
+  {{- fail (printf "codeFix.namespace may not be %q: it is in policy.actionableNamespaces, and the namespace the agent may create Jobs in must never also be one it may act in." $ns) -}}
+{{- end -}}
+{{- if not .Values.codeFix.image.repository -}}
+  {{- fail "codeFix.image.repository is required when codeFix.enabled is true: the coder image is a reviewed chart value, never something the agent chooses." -}}
+{{- end -}}
+{{- if not .Values.secrets.codeFix -}}
+  {{- fail "secrets.codeFix is required when codeFix.enabled is true: the Secret in codeFix.namespace holding the coder's tokens. The chart never creates a Secret, it only references one." -}}
+{{- end -}}
+{{- if and (eq (lower (toString .Values.codeFix.mode)) "pr") (not .Values.auth.enabled) (not .Values.codeFix.allowUnauthenticatedApproval) -}}
+  {{- fail "codeFix.mode pr is refused: auth.enabled is required, because approving a repository write needs an authenticated human, not a typed-in name. (codeFix.allowUnauthenticatedApproval exists for throwaway e2e clusters only.)" -}}
+{{- end -}}
+{{- if and .Values.codeFix.networkPolicy.enabled (not .Values.codeFix.egressProxy.enabled) -}}
+  {{- fail "codeFix.egressProxy.enabled is required while codeFix.networkPolicy.enabled is true: the coder policy allows DNS and the proxy and nothing else, so without the proxy every attempt fails on its first request. Enable the proxy, or turn codeFix.networkPolicy off and control the coder's egress yourself." -}}
+{{- end -}}
+{{- range .Values.codeFix.repositories -}}
+  {{- $host := (urlParse .url).host -}}
+  {{- if not (has $host $.Values.codeFix.allowedRepositoryHosts) -}}
+    {{- fail (printf "codeFix.repositories entry %q may not map to %q: its host %q is not in codeFix.allowedRepositoryHosts, so the mapping could never pass the host gate and would only ever be declined." .workload .url $host) -}}
+  {{- end -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}

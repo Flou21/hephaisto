@@ -166,6 +166,31 @@ it should produce. That table is the agent's regression suite; keep it accurate.
 A `helm_resource` without an explicit `--version` resolves "latest", which will silently
 major-upgrade Prometheus on some future `tilt up`.
 
+### Code fixes on the dev cluster (v0.9.0)
+
+Four `tilt_config.json` toggles, all off in the sample:
+
+| Toggle | Default | Effect |
+|---|---|---|
+| `coder` | `false` | builds `hephaisto/coder:dev`, deploys `coder-git`, layers `values-dev-coder.yaml` |
+| `coder-mode` | `plan` | `codeFix.mode`: `off`, `plan` or `pr` |
+| `coder-sdk` | `fake` | `fake` is a $0 scripted run with the `gh` shim; `real` spends subscription quota |
+| `local-llm` | = `coder` | the agent investigates with Ollama at `host-ip:11434` (`gpt-oss:120b`) instead of Gemini |
+
+Three things that are not obvious:
+
+- **The coder image is a `local_resource`, not a `custom_build`.** Nothing Tilt applies runs it -
+  the agent names it in `CodeFix__Image` and creates Jobs from it - so it is built as the fixed tag
+  `hephaisto/coder:dev` into the node's docker with `pullPolicy: Never`. The next Job after a
+  rebuild uses it; the agent does not restart.
+- **`coder-git` stands in for GitHub** (`infra/coder/git-server`): bare repos over smart HTTP, push
+  enabled, seeded at build time from `~/hephaisto-fixture-dotnet` and `~/dev/dev-context` by
+  `scripts/coder-git-seed.sh`. Pushed branches live in an emptyDir; `tilt trigger coder-git`
+  re-seeds and resets them. `curl` its `/` through a port-forward to see every branch.
+- **git ignores `HTTP_PROXY` for `http://` URLs** - only lowercase `http_proxy` counts - so a
+  coder's clone of `coder-git` bypasses the egress proxy. `git-server.yaml` carries a dev-only
+  NetworkPolicy that allows exactly that. Do not "fix" it by widening the chart's coder policy.
+
 ## Alert rules must declare a `hephaisto_kind` that is a real `SignalKind`
 
 Every `PrometheusRule` carries a `hephaisto_kind` label whose value has to be a member name of

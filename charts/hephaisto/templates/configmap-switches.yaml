@@ -35,3 +35,13 @@ data:
   # database row, never push it forward. An unrecognised value reads as Observe rather than as
   # "no opinion", so a typo cannot widen autonomy; a deleted key reads as Observe too.
   mode: {{ .Values.mode | quote }}
+
+  # The code-fix stage's runtime arm, on its OWN axis: off | plan | pr. Same direction as `mode`
+  # above - it can only hold the stage further back than CodeFix__Mode, never push it forward -
+  # but the opposite default for silence: a deleted or unrecognised key reads as OFF, because on
+  # this axis off costs nothing and hides nothing (every escalation is still evaluated and the
+  # verdict recorded). Setting it to off cancels running coder Jobs on the watcher's next poll.
+  #
+  # Always present, "off" when codeFix.enabled is false, so the fast way down exists before the
+  # feature is ever turned on.
+  codeFixMode: {{ if .Values.codeFix.enabled }}{{ .Values.codeFix.mode | toString | quote }}{{ else }}"off"{{ end }}

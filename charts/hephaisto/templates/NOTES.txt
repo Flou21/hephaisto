@@ -99,6 +99,67 @@ Note: the outbound webhook is UNSIGNED. Your receiver cannot tell a delivery fro
 apart from anything else that can reach it. Set notifications.webhook.signed and create
 secrets.notificationWebhook to fix that.
 {{- end }}
+{{- if .Values.codeFix.enabled }}
+{{- $ns := .Values.codeFix.namespace }}
+{{- $sa := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "hephaisto.serviceAccountName" .) }}
+
+CODE FIXES ARE ENABLED - mode: {{ .Values.codeFix.mode }}{{ if eq (lower (toString .Values.codeFix.mode)) "off" }}  (evaluating only: no coder Job will start){{ end }}
+-------------------------------------------------------------------------------------------
+Hephaisto may now create Jobs in {{ $ns }}, and nowhere else. Before the first attempt:
+
+  1. The namespace exists.{{ if .Values.codeFix.createNamespace }} (This release created it.){{ else }}
+       kubectl create namespace {{ $ns }}{{ end }}
+
+  2. The Secret exists IN {{ $ns }} - not in {{ .Release.Namespace }}. Every key is optional;
+     create only the ones this install uses. Hephaisto never reads it.
+
+       kubectl -n {{ $ns }} create secret generic {{ .Values.secrets.codeFix }} \
+         --from-literal=CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-... \
+         --from-literal=GITHUB_TOKEN=github_pat_... \
+         --from-literal=NUGET_GITHUB_TOKEN=ghp_...        # only for a private NuGet feed
+
+     GITHUB_TOKEN: a FINE-GRAINED personal access token, repository access limited to the
+       mapped repositories below, permissions contents:write + pull_requests:write, nothing
+       else. Never a classic token.
+     NUGET_GITHUB_TOKEN: read:packages only.
+     CLAUDE_CODE_OAUTH_TOKEN: from `claude setup-token`; or ANTHROPIC_API_KEY instead.
+
+  3. BRANCH PROTECTION on the default branch of EVERY mapped repository - no direct push, no
+     force push, no deletion, for everyone including the token above. The coder only ever
+     pushes hephaisto/codefix-* and opens DRAFT PRs, but a token that can write can write
+     anywhere protection does not stop it, and this is the control the chart cannot check.
+{{- if .Values.codeFix.repositories }}
+{{ range .Values.codeFix.repositories }}
+       {{ .url }}  (base: {{ .defaultBranch | default "main" }})   <- {{ .workload }}
+{{- end }}
+{{- else }}
+
+     codeFix.repositories is EMPTY, so no workload maps to a repository and no attempt can
+     start. Every escalation is still evaluated, and declined with NoRepositoryMapping.
+{{- end }}
+
+  Verify the grant is exactly one namespace wide - the first must be "yes", the rest "no":
+
+    kubectl auth can-i create jobs -n {{ $ns }} --as={{ $sa }}
+    kubectl auth can-i create jobs -A --as={{ $sa }}
+    kubectl auth can-i create jobs -n {{ .Release.Namespace }} --as={{ $sa }}
+    kubectl auth can-i create pods -n {{ $ns }} --as={{ $sa }}
+{{- if not .Values.codeFix.networkPolicy.enabled }}
+
+!! codeFix.networkPolicy.enabled is FALSE. The coder - a model with a shell - can reach
+   anything this cluster can reach, and the egress proxy is advisory. Only turn this off if
+   something else constrains its egress.
+{{- end }}
+{{- if .Values.codeFix.allowUnauthenticatedApproval }}
+
+!! codeFix.allowUnauthenticatedApproval is TRUE. In mode pr, anyone who can reach the console
+   can approve a repository write. This exists for throwaway e2e clusters only.
+{{- end }}
+{{- if eq .Values.codeFix.sdk "fake" }}
+
+Note: codeFix.sdk is fake - coders run scripted, $0 plumbing and call no model.
+{{- end }}
+{{- end }}
 {{- if .Values.postgres.embedded.enabled }}
 
 Note: postgres.embedded is on. One replica, one PVC, no backups. Fine for evaluating the

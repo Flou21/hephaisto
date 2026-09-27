@@ -1,0 +1,184 @@
+{{- define "hephaisto.codeFixSquidConf" -}}
+http_port 3128
+max_filedescriptors 1024
+pid_filename none
+coredump_dir /tmp
+cache deny all
+cache_mem 8 MB
+memory_pools off
+pinger_enable off
+# Resolve cluster-short names (coder-git.<ns>.svc) through resolv.conf's search list.
+dns_defnames on
+forwarded_for delete
+httpd_suppress_version_string on
+shutdown_lifetime 1 seconds
+logfile_rotate 0
+cache_log stdio:/dev/stderr
+logformat hephaisto %{%Y-%m-%dT%H:%M:%S}tg.%03tuZ %>a %rm %ru %>Hs %<st %Ss/%Sh
+access_log stdio:/dev/stdout hephaisto
+
+acl allowed dstdomain "/etc/squid-hephaisto/allowlist.txt"
+acl SSL_ports port 443
+acl Safe_ports port 80 443
+acl CONNECT method CONNECT
+acl hephaisto_linklocal dst 169.254.0.0/16 fe80::/10
+
+http_access deny manager
+http_access deny !Safe_ports
+http_access deny CONNECT !SSL_ports
+http_access deny hephaisto_linklocal
+http_access allow allowed
+http_access deny all
+{{- end -}}
+{{- if and .Values.codeFix.enabled .Values.codeFix.egressProxy.enabled }}
+{{/*
+=========================================================================================
+The coder's egress proxy - a domain allowlist, and the per-attempt outbound audit
+=========================================================================================
+Calico OSS, kind's CNI and most others have no FQDN NetworkPolicy, and a CIDR allowlist for
+api.anthropic.com or github.com is a list of addresses that changes under you. So the domain
+allowlist is enforced here, by squid, and the coder NetworkPolicy lets coder pods reach this
+proxy and DNS and nothing else.
+
+What squid enforces, in order (first match wins):
+  - no cache manager access;
+  - no port but 80 and 443; CONNECT (the HTTPS tunnel) ONLY to 443 - so no tunnelling SSH or
+    anything else out through an allowed name;
+  - nothing link-local (169.254.0.0/16, fe80::/10) - the cloud metadata service, reachable by
+    a DNS name an attacker controls, is the classic proxy escape;
+  - then the allowlist; then deny.
+
+Every request - allowed or denied - is one line on stdout: time, client pod IP, method,
+URL (host:port for a tunnel), status, bytes. `kubectl logs deploy/<this>` IS the record of
+what a coder tried to reach; a denied line is either a missing allowlist entry or the coder
+doing something it should not, and both are worth reading.
+
+No TLS interception: squid sees the host a CONNECT names, never the content. That is the
+right trade for a proxy whose job is "which hosts", and it means no CA to trust in the coder.
+
+Run as squid's own `proxy` user (13), read-only root, all capabilities dropped, no cache on
+disk. The directories squid insists on existing are emptyDirs. max_filedescriptors is set
+because squid sizes its tables from the file limit, which in a container is often 1M+ - it
+was OOM-killed at 64Mi until it was.
+=========================================================================================
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hephaisto.codeFixEgressName" . }}
+  namespace: {{ include "hephaisto.codeFixNamespace" . }}
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+data:
+  allowlist.txt: |
+    {{- include "hephaisto.codeFixAllowlist" . | nindent 4 }}
+  squid.conf: |
+    {{- include "hephaisto.codeFixSquidConf" . | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hephaisto.codeFixEgressName" . }}
+  namespace: {{ include "hephaisto.codeFixNamespace" . }}
+  labels:
+    {{- include "hephaisto.codeFixEgressSelector" . | nindent 4 }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/part-of: hephaisto
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "hephaisto.codeFixEgressSelector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "hephaisto.codeFixEgressSelector" . | nindent 8 }}
+        app.kubernetes.io/part-of: hephaisto
+      annotations:
+        # Roll the proxy when its configuration changes. squid reads both files once, at start.
+        checksum/config: {{ print (include "hephaisto.codeFixSquidConf" .) (include "hephaisto.codeFixAllowlist" .) | sha256sum }}
+    spec:
+      # The coder's ServiceAccount: bound to nothing, and no token mounted.
+      serviceAccountName: {{ include "hephaisto.codeFixServiceAccountName" . }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 13
+        runAsGroup: 13
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: squid
+          image: "{{ .Values.codeFix.egressProxy.image.repository }}:{{ .Values.codeFix.egressProxy.image.tag }}"
+          imagePullPolicy: {{ .Values.codeFix.egressProxy.image.pullPolicy | default "IfNotPresent" }}
+          # Not the image's entrypoint: that tails log files and runs `squid -z` as root to build
+          # a disk cache this proxy does not have.
+          command: ["/usr/sbin/squid", "-N", "-f", "/etc/squid-hephaisto/squid.conf"]
+          ports:
+            - name: proxy
+              containerPort: 3128
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: proxy
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: proxy
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # Measured at ~11Mi idle with the settings above.
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/squid-hephaisto
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: run
+              mountPath: /var/run/squid
+            - name: spool
+              mountPath: /var/spool/squid
+            - name: log
+              mountPath: /var/log/squid
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "hephaisto.codeFixEgressName" . }}
+        - name: tmp
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+        - name: spool
+          emptyDir: {}
+        - name: log
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hephaisto.codeFixEgressName" . }}
+  namespace: {{ include "hephaisto.codeFixNamespace" . }}
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "hephaisto.codeFixEgressSelector" . | nindent 4 }}
+  ports:
+    - name: proxy
+      port: 3128
+      targetPort: proxy
+      protocol: TCP
+{{- end }}

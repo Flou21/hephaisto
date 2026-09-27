@@ -85,7 +85,7 @@ public sealed class CodeFixOptions
     /// </summary>
     public bool AllowUnauthenticatedApproval { get; set; }
 
-    /// <summary><c>http://coder-egress.&lt;ns&gt;:3128</c> when the chart's egress proxy is on; empty otherwise.</summary>
+    /// <summary><c>http://&lt;release&gt;-coder-egress.&lt;ns&gt;.svc:3128</c> when the chart's egress proxy is on; empty otherwise.</summary>
     public string EgressProxyUrl { get; set; } = string.Empty;
 
     /// <summary>Passed through as <c>CODEFIX_SDK</c>. <c>fake</c> runs scripted, $0 plumbing - dev and CI only.</summary>

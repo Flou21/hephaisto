@@ -1,5 +1,6 @@
 {{- include "hephaisto.validateActionableNamespaces" . -}}
 {{- include "hephaisto.validateExtraEnv" . -}}
+{{- include "hephaisto.validateCodeFix" . -}}
 {{/*
 =========================================================================================
 WHY replicas: 1 AND strategy: Recreate - and why the chart exposes no replicaCount
@@ -388,6 +389,125 @@ spec:
                   name: {{ required "secrets.llm is required: the chart never creates a Secret, it only references one." .Values.secrets.llm }}
                   key: LLM_API_KEY
                   optional: true
+
+            # ---------------------------------------------------------------------------
+            # Self namespaces - the agent's own signals are escalated, never acted on
+            # ---------------------------------------------------------------------------
+            # The release namespace, the observability stack, and the coder namespace when code
+            # fixes are on. An alert about Hephaisto itself is intended; Hephaisto restarting
+            # itself mid-action because of one is a feedback loop. Until v0.9.0 the chart set
+            # none of these and an install outside `hephaisto`/`hephaisto-obs` relied on the
+            # agent's built-in defaults naming the right namespaces by coincidence - backlog #115.
+            {{- range $i, $ns := include "hephaisto.selfNamespaces" . | splitList " " }}
+            - name: Ingest__SelfNamespaces__{{ $i }}
+              value: {{ $ns | quote }}
+            {{- end }}
+
+            {{- if .Values.codeFix.enabled }}
+            {{- with .Values.codeFix }}
+
+            # ---------------------------------------------------------------------------
+            # Code fixes - a second stage, on its own axis. See templates/rbac-codefix.yaml.
+            # ---------------------------------------------------------------------------
+            # The env arm of the code-fix mode. The switch ConfigMap's codeFixMode is the other,
+            # the most restrictive wins, and the agent's kill switch overrides both.
+            - name: CodeFix__Mode
+              value: {{ .mode | toString | quote }}
+            # The ONE namespace the Role in rbac-codefix.yaml grants `create jobs` in. Rendered
+            # from the same helper as that Role, so the two cannot name different places.
+            - name: CodeFix__Namespace
+              value: {{ include "hephaisto.codeFixNamespace" $ | quote }}
+            - name: CodeFix__Image
+              value: {{ include "hephaisto.codeFixImage" $ | quote }}
+            - name: CodeFix__ImagePullPolicy
+              value: {{ .image.pullPolicy | default "IfNotPresent" | quote }}
+            - name: CodeFix__ServiceAccountName
+              value: {{ include "hephaisto.codeFixServiceAccountName" $ | quote }}
+            # A NAME. The Secret is in the coder namespace and reaches coder pods by secretKeyRef;
+            # Hephaisto has no RBAC that could read it, and does not try.
+            - name: CodeFix__SecretName
+              value: {{ $.Values.secrets.codeFix | quote }}
+            - name: CodeFix__ContextRepositoryUrl
+              value: {{ .contextRepository.url | quote }}
+            - name: CodeFix__ContextRepositoryRef
+              value: {{ .contextRepository.ref | quote }}
+            # The authorization list, evaluated in-process by the eligibility predicate.
+            {{- range $i, $r := .repositories }}
+            - name: CodeFix__Repositories__{{ $i }}__Workload
+              value: {{ $r.workload | quote }}
+            - name: CodeFix__Repositories__{{ $i }}__Url
+              value: {{ $r.url | quote }}
+            - name: CodeFix__Repositories__{{ $i }}__DefaultBranch
+              value: {{ $r.defaultBranch | default "main" | quote }}
+            - name: CodeFix__Repositories__{{ $i }}__Path
+              value: {{ $r.path | default "" | quote }}
+            {{- end }}
+            {{- range $i, $h := .allowedRepositoryHosts }}
+            - name: CodeFix__AllowedRepositoryHosts__{{ $i }}
+              value: {{ $h | quote }}
+            {{- end }}
+            {{- range $i, $c := .eligibleCategories }}
+            - name: CodeFix__EligibleCategories__{{ $i }}
+              value: {{ $c | quote }}
+            {{- end }}
+            - name: CodeFix__ConfidenceFloor
+              value: {{ .confidenceFloor | toString | quote }}
+            - name: CodeFix__MaxCostUsdPerPlan
+              value: {{ .budgets.perPlanUsd | toString | quote }}
+            - name: CodeFix__MaxCostUsdPerImplement
+              value: {{ .budgets.perImplementUsd | toString | quote }}
+            - name: CodeFix__MaxCostUsdPerDay
+              value: {{ .budgets.perDayUsd | toString | quote }}
+            - name: CodeFix__MaxAttemptsPerRepositoryPerDay
+              value: {{ .budgets.attemptsPerRepositoryPerDay | toString | quote }}
+            - name: CodeFix__MaxConcurrentJobs
+              value: {{ .budgets.concurrentJobs | toString | quote }}
+            # .NET TimeSpans, validated by the schema - never Go durations.
+            - name: CodeFix__PlanDeadline
+              value: {{ .deadlines.plan | quote }}
+            - name: CodeFix__ImplementDeadline
+              value: {{ .deadlines.implement | quote }}
+            - name: CodeFix__ApprovalTimeout
+              value: {{ .deadlines.approvalTimeout | quote }}
+            - name: CodeFix__JobTtl
+              value: {{ .deadlines.jobTtl | quote }}
+            - name: CodeFix__PollInterval
+              value: {{ .deadlines.pollInterval | quote }}
+            - name: CodeFix__WorkspaceSize
+              value: {{ .workspaceSize | quote }}
+            - name: CodeFix__Resources__CpuRequest
+              value: {{ .resources.cpuRequest | toString | quote }}
+            - name: CodeFix__Resources__MemoryRequest
+              value: {{ .resources.memoryRequest | quote }}
+            - name: CodeFix__Resources__CpuLimit
+              value: {{ .resources.cpuLimit | toString | quote }}
+            - name: CodeFix__Resources__MemoryLimit
+              value: {{ .resources.memoryLimit | quote }}
+            - name: CodeFix__RequireGreenBuild
+              value: {{ .requireGreenBuild | toString | quote }}
+            - name: CodeFix__AllowUnauthenticatedApproval
+              value: {{ .allowUnauthenticatedApproval | toString | quote }}
+            # Empty when the proxy is off, and then the Job sets no proxy variables at all.
+            - name: CodeFix__EgressProxyUrl
+              value: {{ if .egressProxy.enabled }}{{ include "hephaisto.codeFixProxyUrl" $ | quote }}{{ else }}""{{ end }}
+            - name: CodeFix__Sdk
+              value: {{ .sdk | quote }}
+            - name: CodeFix__Gh
+              value: {{ .gh | quote }}
+            - name: CodeFix__NugetCacheClaim
+              value: {{ if .nugetCache.enabled }}{{ include "hephaisto.codeFixNugetClaim" $ | quote }}{{ else }}""{{ end }}
+            # For the incident link in the PR body: the same externally reachable URL the
+            # notifications use. Empty means the PR body carries the incident id without a link.
+            - name: CodeFix__ConsoleBaseUrl
+              value: {{ $.Values.notifications.baseUrl | quote }}
+            # The investigator's read tools must never read the coder namespace. A coder's log is
+            # written by a model that just read attacker-influenceable evidence; feeding it back
+            # into the NEXT investigation is a reflection path for a prompt injection. The code-fix
+            # launcher reads its Jobs through its own client, which this does not restrict.
+            - name: Kubernetes__DeniedNamespaces__0
+              value: {{ include "hephaisto.codeFixNamespace" $ | quote }}
+            {{- end }}
+            {{- end }}
 
             # A DIRECTORY, not a file: each ConfigMap key projects as its own file under it.
             # Unset outside Kubernetes, which makes the ConfigMap arm silent rather than
