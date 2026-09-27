@@ -255,6 +255,33 @@ Two traps worth knowing before you test acting:
   Deployment leaves it at 2 and the fixture comes back healthy — which looks exactly like the
   agent fixing something it never touched. Delete the PVC to reset it.
 
+## Code fixes, as of v0.9.0
+
+A second, separately gated stage: an escalation whose grounded primary finding points at code,
+on a workload mapped in `codeFix.repositories`, starts a **coder** Job in `hephaisto-coder`
+(`coder/`, Claude Code through the Agent SDK). Plan automatically, implement only after a human
+approves, Draft PR only. Four things to know before touching it:
+
+- **Its own mode, and silence is Off.** `CodeFixMode {Off, Plan, Pr}` - env `CodeFix__Mode` plus
+  the `codeFixMode` key of `hephaisto-switches`, most restrictive wins, and the agent's kill
+  switch (Off, emergency stop, runaway latch) overrides it *by arm*. `AgentMode.Observe` does not
+  refuse; that is the point.
+- **The contract is vendored.** `dev-context/schemas` (TrueRelevance/dev-context) is the source of
+  truth; `scripts/sync-schemas.sh` copies it into `src/Hephaisto.Agent/CodeFix/Contract/schemas`
+  and `coder/contracts` with a `SCHEMAS.lock`. Never edit the copies; parity tests on both sides
+  fail on a hand edit.
+- **The coder answers through its log.** The last framed block, sha256 and byte count checked,
+  read only from a pod the Job's controller created. It has no Hephaisto credential and no route
+  in - do not add a callback.
+- **`create jobs` exists in one namespace.** `RbacSelfCheck` refuses to boot if it is held
+  cluster-wide, in `kube-system` or in an actionable namespace.
+
+Locally: `tilt_config.json` `"coder": true` builds the coder image and an in-cluster git server
+(`coder-git`, seeded from `~/hephaisto-fixture-dotnet` and `~/dev/dev-context`), `"coder-sdk":
+"fake"` runs a scripted $0 coder, `"local-llm": true` points investigations at the host's Ollama
+(`gpt-oss:120b`) - never Gemini. The end-to-end check is `scripts/e2e/codefix-local.sh`, which pins
+itself to `studio-rancher-desktop` through a private kubeconfig. See `docs/verification.md`.
+
 ## The console has a design language, as of v0.4.0
 
 **Read [`docs/design.md`](docs/design.md) before changing any CSS.** Four rules there are enforced
