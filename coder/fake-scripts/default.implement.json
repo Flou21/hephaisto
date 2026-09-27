@@ -1,0 +1,18 @@
+{
+  "description": "Default FAKE SDK implementation: appends a marker comment to the first file of the approved plan and commits it with the Hephaisto trailers. No model runs.",
+  "steps": [
+    { "tool": "Bash", "input": { "command": "git status --short" } },
+    { "append": { "path": "{{plan_file}}", "text": "{{line_comment}} hephaisto-coder fake run, attempt {{attempt_id}}\n" } },
+    { "commit": "chore: fake-sdk marker for attempt {{attempt_id}}" },
+    {
+      "result": {
+        "cost_usd": 0,
+        "structured_output": {
+          "files": ["{{plan_file}}"],
+          "deviations": [],
+          "summary": "FAKE SDK (no model ran): appended a marker comment to {{plan_file}}."
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "description": "Default FAKE SDK plan: looks at the repository, reads the first file the evidence names, and plans a harmless one-line change to it. No model runs; it exists to exercise the plumbing end to end.",
+  "steps": [
+    { "tool": "Bash", "input": { "command": "git log --oneline -5" } },
+    { "tool": "Glob", "input": { "pattern": "**/*" } },
+    { "tool": "Read", "input": { "file_path": "{{target}}/{{first_evidence_file}}" } },
+    {
+      "result": {
+        "cost_usd": 0,
+        "structured_output": {
+          "outcome": "planned",
+          "summary": "FAKE SDK plan (no model ran): add a marker comment to {{first_evidence_file}}, the first file the evidence names.",
+          "root_cause": "{{first_evidence_file}}:1 - placeholder produced by the fake SDK; nothing was analysed.",
+          "confidence": 0.1,
+          "files": ["{{first_evidence_file}}"],
+          "steps": ["Append a one-line marker comment to {{first_evidence_file}}."],
+          "verification": { "level": "build-only", "not_verifiable": ["Everything: this plan came from the fake SDK."] },
+          "needs_cait": false,
+          "notes": ["Produced by CODEFIX_SDK=fake: no model ran and no analysis happened."]
+        }
+      }
+    }
+  ]
+}

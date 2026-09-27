@@ -1,0 +1,8 @@
+#!/bin/sh
+# GIT_ASKPASS for the DRIVER's git children only. The credential is read from a variable that is
+# set solely in those children's environment - never in the agent's, never on disk, never on a
+# command line.
+case "$1" in
+  Username*) printf '%s\n' "x-access-token" ;;
+  *) printf '%s\n' "${CODEFIX_GIT_PASSWORD:-}" ;;
+esac

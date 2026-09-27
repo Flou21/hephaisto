@@ -1,0 +1,178 @@
+import { delimiter } from 'node:path';
+import type { RunnerEnv } from './config.js';
+import { type ExecResult, run } from './exec.js';
+import type { Git } from './git.js';
+import { log } from './log.js';
+import { evidenceMarkdown, loadTemplate, render } from './prompts.js';
+import type { CodeFixRequest, PlanResult } from './schemas.js';
+import { type VerificationReport, verificationTable } from './verify.js';
+
+// Everything that talks to GitHub. The agent never reaches any of it: `gh` is denied by the
+// guard, and GITHUB_TOKEN is only ever in the environment of the children spawned here.
+
+export const BRANCH_RE = /^hephaisto\/codefix-[0-9a-f]{12}$/;
+
+export function ghEnv(env: RunnerEnv, home: string): NodeJS.ProcessEnv {
+  const e: NodeJS.ProcessEnv = {
+    PATH: env.ghMode === 'shim' ? `${env.ghShimDir}${delimiter}${env.base.PATH ?? ''}` : env.base.PATH,
+    HOME: home,
+    GH_CONFIG_DIR: `${home}/.config/gh`,
+    GH_PROMPT_DISABLED: '1',
+    GH_NO_UPDATE_NOTIFIER: '1',
+    GH_SPINNER_DISABLED: '1',
+    NO_COLOR: '1',
+  };
+  for (const [k, v] of Object.entries(env.base)) {
+    if (k.startsWith('GH_SHIM_') || /^(HTTPS?_PROXY|NO_PROXY|https?_proxy|no_proxy|TMPDIR)$/.test(k)) e[k] = v;
+  }
+  if (env.githubToken) e.GH_TOKEN = env.githubToken;
+  return e;
+}
+
+/** `https://github.com/org/repo(.git)` → the form gh accepts for --repo. */
+export function ghRepoArg(url: string): string {
+  return url.replace(/\.git$/, '').replace(/\/+$/, '');
+}
+
+async function gh(args: string[], env: NodeJS.ProcessEnv, cwd: string): Promise<ExecResult> {
+  log.info(`gh ${args.filter((a) => !a.startsWith('--body')).slice(0, 8).join(' ')}`);
+  return run('gh', args, { env, cwd, timeoutMs: 120_000 });
+}
+
+export interface ExistingPr {
+  number: number;
+  url: string;
+}
+
+export async function findOpenPr(repoUrl: string, branch: string, env: NodeJS.ProcessEnv, cwd: string): Promise<ExistingPr | null> {
+  const r = await gh(['pr', 'list', '--repo', ghRepoArg(repoUrl), '--head', branch, '--state', 'open', '--json', 'number,url,headRefName'], env, cwd);
+  if (r.code !== 0) throw new Error(`gh pr list failed: ${(r.stderr || r.stdout).trim().slice(-500)}`);
+  const list = JSON.parse(r.stdout || '[]') as { number: number; url: string; headRefName: string }[];
+  const hit = list.find((p) => p.headRefName === branch);
+  return hit ? { number: hit.number, url: hit.url } : null;
+}
+
+export type BranchState = { kind: 'fresh' } | { kind: 'reset'; lease: string } | { kind: 'foreign'; reason: string };
+
+/**
+ * The remote branch, if it exists without an open PR, is ours to reuse only if EVERY commit on
+ * it (past the default branch) carries this attempt's trailer - a retried Job. Anything else on
+ * that branch is someone's work and is never overwritten.
+ */
+export async function inspectRemoteBranch(git: Git, branch: string, defaultBranch: string, attemptId: string): Promise<BranchState> {
+  const ls = await git.try(['ls-remote', '--heads', 'origin', `refs/heads/${branch}`]);
+  if (ls.code !== 0) throw new Error(`git ls-remote failed: ${ls.stderr.trim().slice(-300)}`);
+  const line = ls.stdout.trim();
+  if (!line) return { kind: 'fresh' };
+  const remoteSha = line.split(/\s+/)[0]!;
+  const fetched = await git.try(['fetch', '--quiet', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
+  if (fetched.code !== 0) return { kind: 'foreign', reason: `remote branch ${branch} exists and could not be fetched` };
+  const log = await git.ok(['log', '--format=%H%x1f%(trailers:key=Hephaisto-Attempt,valueonly,separator=%x2c)%x1e', `origin/${defaultBranch}..${remoteSha}`]);
+  const commits = log.split('\x1e').map((s) => s.trim()).filter(Boolean);
+  if (commits.length === 0) return { kind: 'reset', lease: remoteSha };
+  const foreign = commits.filter((c) => !(c.split('\x1f')[1] ?? '').split(',').map((s) => s.trim()).includes(attemptId));
+  if (foreign.length > 0) {
+    return { kind: 'foreign', reason: `remote branch ${branch} has ${foreign.length} commit(s) without Hephaisto-Attempt: ${attemptId}; refusing to overwrite it` };
+  }
+  return { kind: 'reset', lease: remoteSha };
+}
+
+/** Pushes the assigned branch and nothing else. A lease is only used to replace this attempt's own earlier push. */
+export async function pushBranch(git: Git, branch: string, assigned: string, lease?: string): Promise<void> {
+  if (branch !== assigned || !BRANCH_RE.test(branch)) throw new Error(`refusing to push ${branch}: only ${assigned} may be pushed`);
+  const args = ['push', '--porcelain', '--no-verify'];
+  if (lease) args.push(`--force-with-lease=refs/heads/${branch}:${lease}`);
+  args.push('origin', `refs/heads/${branch}:refs/heads/${branch}`);
+  await git.ok(args, { timeoutMs: 5 * 60_000 });
+  log.info(`pushed ${branch}${lease ? ' (replacing this attempt\'s earlier push)' : ''}`);
+}
+
+export interface CreatedPr {
+  number: number;
+  url: string;
+  deviations: string[];
+}
+
+export async function createDraftPr(
+  opts: { repoUrl: string; base: string; head: string; title: string; bodyFile: string; assignee: string; labels: string[] },
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+): Promise<CreatedPr> {
+  const base = ['pr', 'create', '--repo', ghRepoArg(opts.repoUrl), '--draft', '--base', opts.base, '--head', opts.head, '--title', opts.title, '--body-file', opts.bodyFile];
+  if (opts.assignee) base.push('--assignee', opts.assignee);
+  const deviations: string[] = [];
+  let r = await gh([...base, ...opts.labels.flatMap((l) => ['--label', l])], env, cwd);
+  if (r.code !== 0 && opts.labels.length > 0) {
+    // Creating a missing label is not the runner's business; open the PR without it and say so.
+    const why = (r.stderr || r.stdout).trim().split('\n').pop() ?? '';
+    log.warn(`gh pr create with labels failed (${why}); retrying without labels`);
+    deviations.push(`The PR was opened without the label(s) ${opts.labels.join(', ')}: labelling failed (${why.slice(0, 300)}).`);
+    r = await gh(base, env, cwd);
+  }
+  if (r.code !== 0) throw new Error(`gh pr create failed: ${(r.stderr || r.stdout).trim().slice(-800)}`);
+  const url = r.stdout.trim().split('\n').filter(Boolean).pop() ?? '';
+  const m = /\/pull\/(\d+)\s*$/.exec(url);
+  if (!m) throw new Error(`gh pr create printed no PR URL: ${r.stdout.slice(-300)}`);
+  return { number: Number(m[1]), url, deviations };
+}
+
+export interface PrBodyInput {
+  req: CodeFixRequest;
+  plan: PlanResult;
+  changeSummary: string;
+  files: string[];
+  deviations: string[];
+  notes: string[];
+  report: VerificationReport;
+  costUsd: number;
+  versions: string;
+  contextDir: string | null;
+}
+
+export function renderPrBody(i: PrBodyInput): string {
+  const { req, plan } = i;
+  const bullets = (xs: string[], empty: string) => (xs.length ? xs.map((x) => `- ${x}`).join('\n') : empty);
+  const weak =
+    i.report.level !== 'tests'
+      ? [
+          '### Verification weak',
+          '',
+          `The runner could only verify this change at level \`${i.report.level}\`. Not verifiable here:`,
+          '',
+          bullets(
+            plan.verification.not_verifiable.length > 0 ? plan.verification.not_verifiable : ['(the plan listed nothing; a reviewer should decide what to check before merging)'],
+            '',
+          ),
+        ].join('\n')
+      : '';
+  const { text } = loadTemplate('pr-body', i.contextDir);
+  return render(text, {
+    incident_link: `Hephaisto incident \`${req.incident_id}\``,
+    incident_title: req.incident.title,
+    summary: plan.summary,
+    root_cause: plan.root_cause,
+    evidence_md: evidenceMarkdown(req),
+    change_summary: i.changeSummary || plan.summary,
+    files: bullets(i.files.map((f) => `\`${f}\``), '- (none)'),
+    deviations: bullets(i.deviations, '- none'),
+    verification_table: verificationTable(i.report),
+    verification_weak: weak,
+    notes: bullets([...plan.notes, ...i.notes], '- none'),
+    cost: `$${i.costUsd.toFixed(2)} (implement phase, API-equivalent estimate)`,
+    versions: i.versions,
+    attempt_id: req.attempt_id,
+    incident_id: req.incident_id,
+    workload: req.incident.target.workload,
+    image: req.incident.image ?? '(unknown)',
+    analysed_ref: plan.analysed_ref ?? '(unknown)',
+    branch: req.repository.branch,
+    repo_url: req.repository.url,
+  });
+}
+
+export function prTitle(req: CodeFixRequest, plan: PlanResult): string {
+  const first = (plan.summary.split(/(?<=[.!?])\s/)[0] ?? plan.summary).trim().replace(/\s+/g, ' ');
+  const name = req.incident.target.workload.split('/').pop() || 'service';
+  const t = `fix(${name}): ${first.charAt(0).toLowerCase()}${first.slice(1)}`.replace(/\.$/, '');
+  return t.length > 120 ? `${t.slice(0, 117)}...` : t;
+}

@@ -35,6 +35,7 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE: ghcr.io/flou21/hephaisto
+  CODER_IMAGE: ghcr.io/flou21/hephaisto-coder
   CHART_REPO: oci://ghcr.io/flou21/charts
   DOTNET_NOLOGO: 1
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
@@ -231,6 +232,101 @@ jobs:
       # nightly, and the retention step below deletes them. Two minutes per run for a
       # signature nobody checks.
 
+  # The code-fix runner's image, beside the agent's and on the same pattern: native runner per
+  # architecture, pushed by digest, joined below. It is tested INSIDE the image it publishes
+  # first - the push step rebuilds from the cache the tested build just filled, so the layers
+  # that were tested are the layers that ship.
+  coder-image:
+    runs-on: ${{ matrix.runner }}
+    needs: [version]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build for the test run
+        uses: docker/build-push-action@v7
+        with:
+          context: coder
+          platforms: ${{ matrix.platform }}
+          load: true
+          tags: hephaisto/coder:test
+          build-args: |
+            VERSION=${{ needs.version.outputs.semver }}
+          cache-from: type=gha,scope=coder-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=coder-${{ matrix.platform }}
+
+      - name: Test inside the image
+        run: coder/scripts/test.sh --in-image hephaisto/coder:test
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: coder
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            VERSION=${{ needs.version.outputs.semver }}
+          outputs: type=image,name=${{ env.CODER_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=coder-${{ matrix.platform }}
+
+      # Named coder-digest-*, so the agent's `digest-*` download never picks these up.
+      - name: Export the digest
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/digests
+          DIGEST='${{ steps.build.outputs.digest }}'
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coder-digest-${{ strategy.job-index }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  publish-coder-image:
+    runs-on: ubuntu-latest
+    needs: [version, coder-image]
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: /tmp/digests
+          pattern: coder-digest-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Same two tags as the agent's nightly, and `:nightly` the only moving one.
+      - name: Join the per-architecture images into one tag
+        run: |
+          set -euo pipefail
+          cd /tmp/digests
+          V='${{ needs.version.outputs.semver }}'
+          docker buildx imagetools create \
+            -t "${{ env.CODER_IMAGE }}:$V" \
+            -t "${{ env.CODER_IMAGE }}:nightly" \
+            $(printf '${{ env.CODER_IMAGE }}@sha256:%s ' *)
+          docker buildx imagetools inspect "${{ env.CODER_IMAGE }}:$V"
+
   publish-chart:
     runs-on: ubuntu-latest
     needs: [version, publish-image]
@@ -382,4 +478,5 @@ jobs:
           }
 
           prune_package hephaisto
+          prune_package hephaisto-coder
           prune_package charts/hephaisto
