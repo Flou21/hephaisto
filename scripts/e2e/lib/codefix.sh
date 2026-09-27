@@ -444,3 +444,52 @@ run_forged() {
     kc -n "$CF_CODER_NS" delete pod -l "job-name=$job" --field-selector=status.phase!=Running --ignore-not-found >/dev/null 2>&1 || true
 }
 
+
+# --- the kind nightly (run.sh --codefix) ------------------------------------------------------
+
+# Everything the stage needs before the chart is installed: the coder namespace, the in-cluster
+# git server seeded from the fixture repository and dev-context, and the helm values that turn
+# the stage on against the PUBLISHED coder image of the version under test. The coder runs the
+# fake SDK and the gh shim, so the nightly needs no model and no GitHub token - the plumbing, the
+# guard and the driver's own build are what it proves; model quality is the local runner's job.
+codefix_kind_prepare() {
+    say "code fixes: seeding and loading the in-cluster git server"
+
+    CODER_GIT_SEED_DIR="$WORKDIR/coder-git-seed" "$REPO/scripts/coder-git-seed.sh" >/dev/null \
+        || die "could not seed the git server (needs ~/hephaisto-fixture-dotnet and ~/dev/dev-context, or FIXTURE_REPO/DEV_CONTEXT_REPO)"
+    rm -rf "$REPO/infra/coder/git-server/seed" && cp -R "$WORKDIR/coder-git-seed" "$REPO/infra/coder/git-server/seed"
+    docker build -q -t hephaisto/coder-git:e2e "$REPO/infra/coder/git-server" >/dev/null \
+        || die "could not build the git server image"
+    kind load docker-image hephaisto/coder-git:e2e --name "$E2E_CLUSTER" >/dev/null 2>&1 \
+        || die "could not load the git server image into kind"
+
+    kc create namespace "$CF_CODER_NS" --dry-run=client -o yaml | kc apply -f - >/dev/null
+    kc label namespace "$CF_CODER_NS" pod-security.kubernetes.io/enforce=restricted --overwrite >/dev/null
+    sed 's#image: hephaisto/coder-git.*#image: hephaisto/coder-git:e2e#' "$REPO/infra/coder/git-server/git-server.yaml" \
+        | kc -n "$CF_CODER_NS" apply -f - >/dev/null
+    kc -n "$CF_CODER_NS" rollout status deploy/coder-git --timeout=180s >/dev/null \
+        && pass "the in-cluster git server is up" || fail "the in-cluster git server is up"
+
+    E2E_HELM_EXTRA+=(
+        --values "$REPO/charts/hephaisto/values-dev-coder.yaml"
+        --set-string "codeFix.image.repository=ghcr.io/flou21/hephaisto-coder"
+        --set-string "codeFix.image.tag=$VERSION"
+        --set-string "codeFix.image.pullPolicy=IfNotPresent"
+        --set-string "codeFix.mode=pr"
+        --set-string "codeFix.sdk=fake"
+        --set-string "codeFix.gh=shim"
+        --set "codeFix.nugetCache.enabled=false"
+    )
+}
+
+codefix_kind_phase() {
+    CF_API="http://127.0.0.1:${PF_PORT_APP}"
+    RUN_DIR="$WORKDIR/codefix"
+    mkdir -p "$RUN_DIR"
+
+    cf_assert_rbac
+    run_c15
+    run_forged
+    run_c13
+    run_c19
+}

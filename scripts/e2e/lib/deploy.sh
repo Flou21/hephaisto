@@ -111,6 +111,7 @@ deploy_install() {
         --set "mode=${E2E_MODE:-Observe}" \
         --set "policy.autoEnabledActionTypes={$(act_auto_enabled)}" \
         "${extra[@]+"${extra[@]}"}" \
+        "${E2E_HELM_EXTRA[@]+"${E2E_HELM_EXTRA[@]}"}" \
         --wait --timeout 8m \
         || { fail "hephaisto installed" "helm install failed; see kubectl describe"; return 1; }
 

@@ -60,6 +60,8 @@ FULL=0
 KEEP_CLUSTER=0
 RUN_JUDGE=1
 RUN_UI=1
+CODEFIX=0
+E2E_HELM_EXTRA=()
 ASSUME_YES=0
 FROM_PHASE=""
 ONLY_PHASE=""
@@ -96,10 +98,14 @@ Options:
                        executed. DryRun and Auto both add $ACT_FIXTURE (c13 by default) to
                        whatever fixtures were selected.
   --no-ui              skip the Playwright suite
+  --codefix            also run the code-fix tier (v0.9.0): installs the stage with the
+                       published coder image, the fake SDK and an in-cluster git server,
+                       then c15 end to end plus the forged-result, c13 and c19 negatives.
+                       No model and no GitHub token needed.
   --yes                do not prompt before pushing an rc tag
   -h, --help           this
 
-Phases: build, cluster, deps, deploy, chaos, validate, act, notify, ui, report
+Phases: build, cluster, deps, deploy, chaos, validate, act, notify, codefix, ui, report
 
 A local model, which is free: set HEPHAISTO_LLM_PROVIDER=openai with an endpoint the CLUSTER
 can reach - not localhost, which from a pod is a different machine. See scripts/e2e/README.md.
@@ -124,6 +130,7 @@ while [ $# -gt 0 ]; do
         --keep-cluster) KEEP_CLUSTER=1; shift ;;
         --no-judge)     RUN_JUDGE=0; shift ;;
         --no-ui)        RUN_UI=0; shift ;;
+        --codefix)      CODEFIX=1; shift ;;
         --mode)         E2E_MODE="${2:?--mode needs Observe|DryRun|Auto}"; shift 2 ;;
         --yes)          ASSUME_YES=1; shift ;;
         -h|--help)      usage; exit 0 ;;
@@ -189,7 +196,7 @@ trap teardown EXIT INT TERM
 # ---------------------------------------------------------------------------------------
 # Phase sequencing
 # ---------------------------------------------------------------------------------------
-PHASES=(build cluster deps deploy chaos validate act notify ui report)
+PHASES=(build cluster deps deploy chaos validate act notify codefix ui report)
 
 should_run() {
     local p="$1"
@@ -280,6 +287,10 @@ port_forward receiver "$OBS_NS" svc/notification-receiver "$PF_PORT_RECEIVER" 80
 # --- deploy -------------------------------------------------------------------------------
 CURRENT_PHASE=deploy
 if should_run deploy; then
+    if [ "$CODEFIX" = 1 ]; then
+        source "$E2E_DIR/lib/codefix.sh"
+        codefix_kind_prepare
+    fi
     phase "5. install the published build"
     deploy_install
 fi
@@ -403,6 +414,13 @@ if should_run notify; then
 fi
 
 # --- ui -----------------------------------------------------------------------------------
+CURRENT_PHASE=codefix
+if should_run codefix && [ "$CODEFIX" = "1" ]; then
+    phase "7d. code fixes"
+    source "$E2E_DIR/lib/codefix.sh"
+    codefix_kind_phase
+fi
+
 CURRENT_PHASE=ui
 if should_run ui && [ "$RUN_UI" = "1" ]; then
     phase "7c. the console"
