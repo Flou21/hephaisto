@@ -107,6 +107,9 @@ public sealed class Incident
 
     public List<IncidentEvent> Events { get; set; } = [];
 
+    /// <summary>Code-fix attempts, newest last. Their own lifecycle; see <see cref="CodeFixAttempt"/>.</summary>
+    public List<CodeFixAttempt> CodeFixAttempts { get; set; } = [];
+
     /// <summary>
     /// Is this still live? <see cref="IncidentState.Escalated"/> counts as open, deliberately:
     /// the agent has given up but the cluster problem has not gone away, so it still belongs on

@@ -68,6 +68,18 @@ public sealed record NotificationSnapshot
     /// <summary>The transition's own reason text, which is prose written for a person.</summary>
     public string? Reason { get; init; }
 
+    /// <summary>
+    /// A link outside Hephaisto that IS the subject of the event - the Draft PR of a code fix.
+    /// Unlike the incident link it is a fact, not derived from configuration, so it is frozen here.
+    /// </summary>
+    public string? ExternalUrl { get; init; }
+
+    /// <summary>The repository a code-fix event is about.</summary>
+    public string? Repository { get; init; }
+
+    /// <summary>The code-fix attempt, for the deep link to its section of the incident page.</summary>
+    public Guid? CodeFixAttemptId { get; init; }
+
     public DateTimeOffset At { get; init; }
 }
 
