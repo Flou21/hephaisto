@@ -172,5 +172,19 @@ public sealed class CodeFixResultParserTests
     public void ARedBuild_IsRefused() => Check(Opened(tests: false)).Should().Contain("not green");
 
     [Fact]
+    public void RedTests_AreAcceptable_WhenThePlanNeverPromisedTests()
+    {
+        CodeFixResultParser.CheckImplementPostConditions(
+                Opened(tests: false), "hephaisto/codefix-0192a6f00000", "https://github.com/Flou21/hephaisto-fixture-dotnet.git",
+                ["github.com"], requireGreenBuild: true, requireTests: false)
+            .Should().BeNull();
+
+        CodeFixResultParser.CheckImplementPostConditions(
+                Opened(build: false), "hephaisto/codefix-0192a6f00000", "https://github.com/Flou21/hephaisto-fixture-dotnet.git",
+                ["github.com"], requireGreenBuild: true, requireTests: false)
+            .Should().Contain("build", "the build is required whatever the plan promised");
+    }
+
+    [Fact]
     public void ANoPrOutcome_HasNothingToCheck() => Check(Opened() with { Outcome = "tests_failed", PrUrl = null }).Should().BeNull();
 }

@@ -20,6 +20,10 @@ RUN apk add --no-cache git git-daemon lighttpd \
  # and the only things it admits are coder pods and the egress proxy.
  && git config --system http.receivepack true \
  && git config --system http.uploadpack true \
+    # The runner clones blobless and fetches the running image's commit by sha, both of which
+    # GitHub allows and a stock git-http-backend refuses.
+ && git config --system uploadpack.allowFilter true \
+ && git config --system uploadpack.allowAnySHA1InWant true \
  && git config --system init.defaultBranch main \
  # The repositories are copied into an emptyDir at start, owned by the serving uid; this only
  # silences git's ownership check if a volume ever comes up owned by someone else.

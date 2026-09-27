@@ -141,7 +141,8 @@ public static partial class CodeFixResultParser
         string assignedBranch,
         string repositoryUrl,
         IReadOnlyCollection<string> allowedHosts,
-        bool requireGreenBuild)
+        bool requireGreenBuild,
+        bool requireTests = true)
     {
         if (!ImplementOutcomes.Contains(result.Outcome))
             return $"unknown outcome '{result.Outcome}'";
@@ -166,8 +167,16 @@ public static partial class CodeFixResultParser
             return $"the PR '{result.PrUrl}' is not on the mapped repository '{repositoryUrl}'";
         }
 
-        if (requireGreenBuild && result.Outcome == "pr_opened" && !(result.BuildPassed && result.TestsPassed))
-            return "a PR was opened on a build or test run that was not green";
+        // Tests are required only when the approved plan claimed a test-level verification. Most
+        // service repositories have no test project at all; the runner then reports
+        // tests_passed=false because nothing ran, and demanding it would refuse every PR from
+        // them. Those PRs carry a literal "Verification weak" heading instead - the honest place
+        // for that fact - and the build is still required either way.
+        if (requireGreenBuild && result.Outcome == "pr_opened" && !result.BuildPassed)
+            return "a PR was opened on a build that was not green";
+
+        if (requireGreenBuild && requireTests && result.Outcome == "pr_opened" && !result.TestsPassed)
+            return "a PR was opened on a test run that was not green, for a plan that promised tests";
 
         return null;
     }

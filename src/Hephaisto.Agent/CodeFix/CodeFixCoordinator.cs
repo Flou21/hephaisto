@@ -509,7 +509,8 @@ public sealed class CodeFixCoordinator(
         Charge(attempt, CodeFixPhase.Implement, result.CostUsd);
 
         var violation = CodeFixResultParser.CheckImplementPostConditions(
-            result, attempt.Branch, attempt.RepositoryUrl, o.AllowedRepositoryHosts, o.RequireGreenBuild);
+            result, attempt.Branch, attempt.RepositoryUrl, o.AllowedRepositoryHosts, o.RequireGreenBuild,
+            requireTests: string.Equals(attempt.VerificationLevel, "tests", StringComparison.Ordinal));
 
         if (violation is not null)
         {
