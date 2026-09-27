@@ -84,7 +84,9 @@ case "$ONLY" in
     c15) run_c15 ;;
     c13) run_c13 ;;
     c19) run_c19 ;;
-    *) die "--only takes c15, c13 or c19" ;;
+    forged) run_forged ;;
+    negatives) run_forged; run_c13; run_c19 ;;
+    *) die "--only takes c15, c13, c19, forged or negatives" ;;
 esac
 
 phase "summary"
