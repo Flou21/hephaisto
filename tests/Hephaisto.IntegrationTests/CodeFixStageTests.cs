@@ -440,7 +440,6 @@ public sealed class CodeFixStageTests(PostgresFixture pg)
             new NullGrafanaAnnotator(),
             options,
             new OptionsStub<IngestOptions>(new IngestOptions()),
-            new OptionsStub<AuthOptions>(new AuthOptions()),
             clock,
             NullLogger<CodeFixCoordinator>.Instance);
     }

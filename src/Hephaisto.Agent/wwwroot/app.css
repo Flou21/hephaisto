@@ -1387,3 +1387,250 @@ details > summary {
 .hp-version a:hover {
     color: var(--fg-dim);
 }
+
+/* ---------------------------------------------------------------------------------------
+ * Code fixes (v0.9.0)
+ * ---------------------------------------------------------------------------------------
+ * The /codefixes table, the nav badge and the #codefix section of an incident. NO NEW TOKEN:
+ * every colour below is one the incident vocabulary already gives the same meaning - cyan is work
+ * in progress, yellow waits for a human, green is the good end, red needs looking at - and the
+ * state cells reuse the st-* classes through Display.CodeFixClass, so "awaiting approval" is one
+ * colour on both tables by construction rather than by care.
+ */
+
+/* The nav count. A number, not a state, so it carries no state colour: the title says what it
+   counts, and the page it links to says the rest in glyphs and words. */
+.hp-nav-badge {
+    display: inline-block;
+    margin-left: 0.3rem;
+    padding: 0 0.35rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    color: var(--fg);
+    font-size: var(--text-xs);
+    line-height: 1.35;
+}
+
+/* Mode and counts above the table, and the mode + verdict strip on an incident. */
+.hp-codefix-summary {
+    display: flex;
+    gap: 0.5rem 1.1rem;
+    align-items: baseline;
+    flex-wrap: wrap;
+    margin-bottom: 0.6rem;
+}
+
+.hp-codefix-count {
+    color: var(--fg-dim);
+    font-size: var(--text-xl);
+}
+
+.hp-codefix-count .glyph {
+    font-family: var(--mono);
+}
+
+.hp-codefix-count strong {
+    color: var(--fg);
+}
+
+.hp-codefix-blocked {
+    font-size: var(--text-md);
+}
+
+/* The table. The progress column is the one that carries the answer, so it takes the room the
+   title column takes on the incident list. */
+.hp-codefixes .c-cf-progress {
+    width: 34%;
+}
+
+.hp-codefixes .c-cf-incident {
+    width: 18%;
+}
+
+/* A branch name is compared character by character and breaking it mid-word makes a new one, so
+   it does not wrap; the progress column gives up the room instead. */
+.hp-codefixes .c-cf-branch {
+    white-space: nowrap;
+}
+
+/* A running phase may carry a long job name; it wraps in a cell rather than widening the table. */
+.hp-codefixes .hp-running {
+    white-space: normal;
+}
+
+.hp-codefix-await {
+    color: var(--yellow);
+    font-family: var(--mono);
+    font-size: var(--text-lg);
+    white-space: nowrap;
+}
+
+/* A second line under a status: the plan summary, or why it ended. */
+.hp-cf-line {
+    display: block;
+    color: var(--fg-dim);
+    font-size: var(--text-md);
+    margin-top: 0.15rem;
+}
+
+.hp-cf-reason {
+    overflow-wrap: anywhere;
+}
+
+/* The PR and its build/test result on one line. The link is the loudest thing in the row on
+   purpose: it is the deliverable. */
+.hp-cf-pr {
+    display: inline-flex;
+    gap: 0.4rem 0.8rem;
+    align-items: baseline;
+    flex-wrap: wrap;
+}
+
+.hp-pr-link {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: var(--text-2xl);
+    white-space: nowrap;
+}
+
+.hp-cf-failed {
+    color: var(--red);
+    font-family: var(--mono);
+    font-size: var(--text-lg);
+    font-weight: 600;
+}
+
+/* One attempt on an incident page: the investigation panel's shape, with the left edge in the
+   colour of what it is waiting on. */
+.hp-codefix {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 0.7rem 0.9rem;
+    margin-bottom: 1rem;
+    background: var(--bg-raised);
+}
+
+.hp-codefix-live {
+    border-left: 3px solid var(--cyan);
+    background: color-mix(in srgb, var(--cyan) 4%, var(--bg-raised));
+}
+
+.hp-codefix-ready {
+    border-left: 3px solid var(--yellow);
+}
+
+.hp-codefix-pr {
+    border-left: 3px solid var(--green);
+}
+
+.hp-cf-phase {
+    margin: 0.5rem 0 0.2rem;
+}
+
+.hp-cf-pr-row {
+    display: flex;
+    gap: 0.8rem;
+    align-items: baseline;
+    flex-wrap: wrap;
+}
+
+.hp-cf-approved {
+    font-size: var(--text-xl);
+    margin: 0.4rem 0 0;
+}
+
+.hp-cf-approved .glyph {
+    color: var(--green);
+    font-family: var(--mono);
+}
+
+.hp-cf-eval .hp-muted {
+    margin-left: 0.5rem;
+    font-size: var(--text-md);
+}
+
+/* Why no code fix was started: one line per reason, its code as a chip. */
+.hp-cf-reasons {
+    list-style: none;
+    margin: 0 0 0.6rem;
+    padding: 0;
+}
+
+.hp-cf-reasons > li {
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+    padding: 0.12rem 0;
+    color: var(--fg-dim);
+}
+
+/* Files are compared character by character, so they are monospace and never reflowed. */
+.hp-cf-files {
+    list-style: none;
+    margin: 0 0 0.5rem;
+    padding: 0.3rem 0.55rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: var(--text-md);
+}
+
+.hp-cf-steps,
+.hp-cf-list {
+    margin: 0 0 0.5rem;
+    padding-left: 1.4rem;
+}
+
+.hp-cf-steps > li,
+.hp-cf-list > li {
+    padding: 0.08rem 0;
+}
+
+.hp-cf-notes {
+    list-style: none;
+    margin: 0 0 0.5rem;
+    padding: 0;
+}
+
+.hp-cf-notes > li {
+    padding: 0.2rem 0 0.2rem 0.6rem;
+    border-left: 2px solid var(--border-strong);
+    margin-bottom: 0.25rem;
+}
+
+/* A note that reads like an instruction to the coder. It outranks every other note: a workload
+   emitting text like that is worth a human's attention whatever the plan says. */
+.hp-cf-notes > li.note-injection {
+    border-left: 3px solid var(--red);
+    background: var(--bg-sunken);
+    padding: 0.3rem 0.5rem;
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+}
+
+.chip-injection {
+    color: var(--red);
+    border-color: var(--red);
+    font-weight: 600;
+}
+
+.hp-cf-denied {
+    margin: 0.4rem 0;
+}
+
+.hp-cf-input {
+    max-width: 32rem;
+    overflow-wrap: anywhere;
+}
+
+/* The decision. Separated by a rule, because it is the one control on the page that turns a
+   read-only analysis into a Job that writes. */
+.hp-cf-decide {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin-top: 0.7rem;
+    padding-top: 0.6rem;
+    border-top: 1px solid var(--border);
+}

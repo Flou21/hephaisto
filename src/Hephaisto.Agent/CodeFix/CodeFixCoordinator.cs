@@ -65,7 +65,6 @@ public sealed class CodeFixCoordinator(
     IGrafanaAnnotator annotator,
     IOptionsMonitor<CodeFixOptions> options,
     IOptionsMonitor<IngestOptions> ingest,
-    IOptionsMonitor<AuthOptions> auth,
     IClock clock,
     ILogger<CodeFixCoordinator> logger)
 {

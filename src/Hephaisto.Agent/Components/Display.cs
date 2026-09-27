@@ -1,5 +1,6 @@
 using System.Globalization;
 
+using Hephaisto.Core.CodeFix;
 using Hephaisto.Core.Domain;
 using Hephaisto.Agent.Observability;
 
@@ -85,6 +86,116 @@ public static class Display
         ConnectionState.NotConfigured => "conn-unset",
         _ => "conn-unset",
     };
+
+    /// <summary>
+    /// A code-fix attempt's state (v0.9.0). Its own vocabulary, because an attempt has its own
+    /// lifecycle and is routinely running on an incident that is already Closed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The glyphs borrow the incident vocabulary wherever the meaning is the same, so a reader
+    /// who knows one table can read the other: <c>*</c> exists but nothing runs yet, <c>~</c> is
+    /// read-only work in progress (as investigating), <c>!</c> waits for a human (as awaiting
+    /// approval), <c>&gt;</c> is writing (as acting), <c>+</c> is the good end, <c>.</c> is
+    /// nobody answered (as expired).
+    /// </para>
+    /// <para>
+    /// The three that have no incident twin: <c>x</c> failed, <c>-</c> a person said no, and
+    /// <c>/</c> cancelled - cut off by the kill switch or the mode, which is neither a failure
+    /// of the coder nor a human judgement on the plan.
+    /// </para>
+    /// </remarks>
+    public static string CodeFixGlyph(CodeFixState state) => state switch
+    {
+        CodeFixState.Eligible => "*",
+        CodeFixState.Planning => "~",
+        CodeFixState.PlanReady => "!",
+        CodeFixState.Implementing => ">",
+        CodeFixState.PrOpened => "+",
+        CodeFixState.Failed => "x",
+        CodeFixState.Denied => "-",
+        CodeFixState.Expired => ".",
+        CodeFixState.Cancelled => "/",
+        _ => "?",
+    };
+
+    /// <summary>
+    /// Reuses the incident state classes where the meaning matches, so the colour of "waiting for a
+    /// human" or "writing" is one decision in app.css rather than two that can drift.
+    /// </summary>
+    /// <remarks>
+    /// Denied takes the closed colour - dim, a person decided - and Cancelled the suppressed one,
+    /// faint: a switch stopped it and nobody judged it. Failed takes the escalated red because it
+    /// is the one outcome that says "look at this".
+    /// </remarks>
+    public static string CodeFixClass(CodeFixState state) => state switch
+    {
+        CodeFixState.Eligible => "st-detected",
+        CodeFixState.Planning => "st-investigating",
+        CodeFixState.PlanReady => "st-awaiting",
+        CodeFixState.Implementing => "st-acting",
+        CodeFixState.PrOpened => "st-resolved",
+        CodeFixState.Failed => "st-escalated",
+        CodeFixState.Denied => "st-closed",
+        CodeFixState.Expired => "st-expired",
+        CodeFixState.Cancelled => "st-suppressed",
+        _ => "st-detected",
+    };
+
+    /// <summary>The word beside the glyph. Spelled out because "propened" is not a word.</summary>
+    public static string CodeFixWord(CodeFixState state) => state switch
+    {
+        CodeFixState.Eligible => "eligible",
+        CodeFixState.Planning => "planning",
+        CodeFixState.PlanReady => "plan ready",
+        CodeFixState.Implementing => "implementing",
+        CodeFixState.PrOpened => "pr opened",
+        CodeFixState.Failed => "failed",
+        CodeFixState.Denied => "denied",
+        CodeFixState.Expired => "expired",
+        CodeFixState.Cancelled => "cancelled",
+        _ => "unknown",
+    };
+
+    /// <summary>
+    /// The code-fix mode as the nav's agent-mode badge colours it: Off is quiet, Plan only reads
+    /// (the observe colour), Pr can end in a write and takes the auto colour.
+    /// </summary>
+    public static string CodeFixModeClass(CodeFixMode mode) => mode switch
+    {
+        CodeFixMode.Plan => "mode-observe",
+        CodeFixMode.Pr => "mode-auto",
+        _ => "mode-off",
+    };
+
+    /// <summary>
+    /// <c>owner/repo</c> from a clone URL, for a dense cell. The full URL always goes in a title.
+    /// </summary>
+    public static string ShortRepo(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return "—";
+        }
+
+        var trimmed = url.Trim().TrimEnd('/');
+
+        if (trimmed.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+        {
+            trimmed = trimmed[..^4];
+        }
+
+        // git@host:owner/repo as well as https://host/owner/repo.
+        var parts = trimmed.Replace(':', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        return parts.Length >= 2 ? $"{parts[^2]}/{parts[^1]}" : trimmed;
+    }
+
+    /// <summary>Seven characters of a commit sha, the length git itself abbreviates to.</summary>
+    public static string ShortSha(string? sha) =>
+        string.IsNullOrWhiteSpace(sha) ? "—"
+        : sha.Length > 7 && sha.All(Uri.IsHexDigit) ? sha[..7]
+        : sha;
 
     public static string SeverityGlyph(Severity severity) => severity switch
     {

@@ -1,0 +1,31 @@
+@*
+    A build or test result as the coder reported it. Three states, not two: a result that was never
+    reported is not a pass, and rendering it as one would be the coder assessing itself by omission.
+*@
+
+@if (Passed is true)
+{
+    <span class="hp-yes" data-testid="codefix-check" data-check="@Label" data-passed="true">
+        <span class="glyph">+</span> @Label passed
+    </span>
+}
+else if (Passed is false)
+{
+    <span class="hp-cf-failed" data-testid="codefix-check" data-check="@Label" data-passed="false">
+        <span class="glyph">x</span> @Label failed
+    </span>
+}
+else
+{
+    <span class="hp-no" data-testid="codefix-check" data-check="@Label">
+        <span class="glyph">&middot;</span> @Label not reported
+    </span>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public string Label { get; set; } = string.Empty;
+
+    [Parameter]
+    public bool? Passed { get; set; }
+}
