@@ -35,6 +35,12 @@ public enum IncidentLiveEventKind
     /// <see cref="Acknowledged"/> is: assigning changes no state.
     /// </summary>
     Assigned = 9,
+
+    /// <summary>
+    /// A code-fix attempt moved: started, produced a plan, was decided, opened a PR or failed. Its
+    /// own kind because the incident's state does not change - an attempt runs on a Closed incident.
+    /// </summary>
+    CodeFixChanged = 10,
 }
 
 public sealed record IncidentLiveEvent

@@ -52,6 +52,7 @@ public sealed class InvestigationCoordinator(
     IClock clock,
     HephaistoMetrics metrics,
     Observability.IGrafanaAnnotator annotator,
+    CodeFix.CodeFixCoordinator codeFix,
     ILogger<InvestigationCoordinator> logger) : IIncidentInvestigator
 {
     public async Task InvestigateAsync(Guid incidentId, CancellationToken ct)
@@ -274,6 +275,15 @@ public sealed class InvestigationCoordinator(
         if (disposition.Kind == DispositionKind.Act)
         {
             await ActAsync(incident, disposition.Actions, ct).ConfigureAwait(false);
+        }
+
+        // THE CODE-FIX STAGE, also strictly after the commit. Only an escalation is a candidate: an
+        // incident that is acting or awaiting approval has a cluster answer in flight. Evaluated even
+        // with the mode Off, so the console can say whether turning it on would have mattered, and
+        // it never throws - the diagnosis above is already safe and must stay so.
+        if (disposition.Kind == DispositionKind.Escalate)
+        {
+            await codeFix.EvaluateAsync(incident, investigation, ct).ConfigureAwait(false);
         }
     }
 

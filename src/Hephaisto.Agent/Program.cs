@@ -1,3 +1,4 @@
+using Hephaisto.Agent.CodeFix;
 using Hephaisto.Agent.Components;
 using Hephaisto.Agent.Demo;
 using Microsoft.Extensions.AI;
@@ -39,6 +40,10 @@ builder.Services.AddHephaistoSafety(builder.Configuration);
 builder.Services.AddHephaistoLlm(builder.Configuration);
 builder.Services.AddHephaistoPipeline(builder.Configuration);
 builder.Services.AddHephaistoNotifications(builder.Configuration);
+
+// The code-fix stage (v0.9.0): after notifications, whose outbox it enlists into, and before the
+// web layer, whose endpoints call it. Registered always; inert unless CodeFix:Mode is raised.
+builder.Services.AddHephaistoCodeFix(builder.Configuration);
 builder.Services.AddHephaistoWeb();
 
 // OIDC (#110). Off unless Auth:Enabled, because the eval harness, a developer running

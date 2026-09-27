@@ -25,7 +25,7 @@
       "additionalProperties": false,
       "required": ["url", "default_branch", "path", "branch"],
       "properties": {
-        "url": { "type": "string", "pattern": "^https://[^\\s]+$", "maxLength": 512 },
+        "url": { "type": "string", "pattern": "^(https://|http://|file://)[^\\s]+$", "maxLength": 512, "description": "https in production. http and file exist for the in-cluster dev git server and tests; Hephaisto only sends a URL whose host is in CodeFix:AllowedRepositoryHosts." },
         "default_branch": { "type": "string", "minLength": 1, "maxLength": 255 },
         "path": { "type": "string", "maxLength": 512, "description": "Subdirectory of the repository the workload is built from; empty for the root." },
         "branch": { "type": "string", "pattern": "^hephaisto/codefix-[0-9a-f]{12}$", "description": "Assigned by Hephaisto. The runner pushes nothing else." }

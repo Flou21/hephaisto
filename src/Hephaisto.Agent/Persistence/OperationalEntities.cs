@@ -25,6 +25,13 @@ public sealed class LlmUsageRecord
 
     public Guid? InvestigationId { get; set; }
 
+    /// <summary>
+    /// Set when the spend was a coder Job's rather than an investigation's. Coder cost enters the
+    /// same rolling windows as every other LLM call, so a runaway coder trips the global budget
+    /// like a runaway investigation would.
+    /// </summary>
+    public Guid? CodeFixAttemptId { get; set; }
+
     public DateTimeOffset At { get; set; }
 
     public long InputTokens { get; set; }

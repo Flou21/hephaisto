@@ -107,6 +107,7 @@ public static class HephaistoWebExtensions
         console.MapStatusEndpoints();
         console.MapModeEndpoints();
         console.MapVersionEndpoints();
+        CodeFix.CodeFixEndpoints.MapCodeFixEndpoints(console);
 
         // Authentication (#110). The webhook group is the ONE surface that stays anonymous, and
         // it has to: Alertmanager has no field for a credential, which is why it needs its own

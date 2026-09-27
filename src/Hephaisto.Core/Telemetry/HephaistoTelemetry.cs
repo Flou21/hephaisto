@@ -26,6 +26,11 @@ public static class HephaistoTelemetry
 
         /// <summary>One attempt to hand one message to one channel.</summary>
         public const string NotificationDeliver = "hephaisto.notification.deliver";
+
+        public const string CodeFixEvaluate = "hephaisto.codefix.evaluate";
+        public const string CodeFixLaunch = "hephaisto.codefix.launch";
+        public const string CodeFixCollect = "hephaisto.codefix.collect";
+        public const string CodeFixApprove = "hephaisto.codefix.approve";
     }
 
     public static class Metrics
@@ -56,6 +61,17 @@ public static class HephaistoTelemetry
         public const string LlmBudgetUtilization = "hephaisto.llm.budget_utilization";
 
         public const string PolicyDecisions = "hephaisto.policy.decisions";
+
+        /// <summary>Every escalation judged for a code fix, with result and first reason code.</summary>
+        public const string CodeFixEvaluations = "hephaisto.codefix.evaluations";
+
+        /// <summary>Coder phases finished, by phase and outcome.</summary>
+        public const string CodeFixAttempts = "hephaisto.codefix.attempts";
+
+        public const string CodeFixCostUsd = "hephaisto.codefix.cost_usd";
+        public const string CodeFixDuration = "hephaisto.codefix.duration";
+        public const string CodeFixJobsActive = "hephaisto.codefix.jobs_active";
+        public const string CodeFixAwaitingApproval = "hephaisto.codefix.awaiting_approval";
         public const string ActionsExecuted = "hephaisto.actions.executed";
         public const string ActionsRolledBack = "hephaisto.actions.rolled_back";
         public const string VerificationResult = "hephaisto.verification.result";

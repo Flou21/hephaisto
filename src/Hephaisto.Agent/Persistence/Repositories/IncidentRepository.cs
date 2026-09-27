@@ -14,6 +14,7 @@ public sealed class IncidentRepository(HephaistoDbContext db, IClock clock) : II
             .Include(i => i.Signals)
             .Include(i => i.Events)
             .Include(i => i.Actions)
+            .Include(i => i.CodeFixAttempts)
             // Split, because three collection Includes on one query is a cartesian product:
             // 40 signals x 20 events x 3 actions is 2 400 rows to materialise 63 objects.
             .AsSplitQuery()

@@ -187,7 +187,11 @@ public sealed class NotificationDispatcher : BackgroundService
         {
             Snapshot = delivery.Snapshot,
             DeliveryId = delivery.Id,
-            IncidentUrl = NotificationLinks.Incident(o.BaseUrl, delivery.IncidentId),
+            // A code-fix event deep-links to the code-fix section, where the plan and its buttons are.
+            IncidentUrl = NotificationLinks.Incident(o.BaseUrl, delivery.IncidentId) is { } link
+                && delivery.Snapshot.CodeFixAttemptId is not null
+                    ? link + "#codefix"
+                    : NotificationLinks.Incident(o.BaseUrl, delivery.IncidentId),
             GrafanaUrl = NotificationLinks.Grafana(o.GrafanaUrl, delivery.Snapshot),
             AlsoSuppressed = budget.SuppressedSinceLastDelivery,
         };
