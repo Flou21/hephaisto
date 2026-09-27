@@ -1,0 +1,149 @@
+# =============================================================================
+# C15 - a code bug: a NullReferenceException at startup, fixable only in source
+# =============================================================================
+# WHY THIS FIXTURE EXISTS
+#   C1-C14 are all faults a human fixes in a manifest, or a restart fixes, or
+#   nothing fixes. None of them is a bug in application code, and that is the
+#   fault v0.9.0's code-fix stage exists for: an investigation whose grounded
+#   primary finding is `application` escalates with no_action_required, and
+#   CodeFixCoordinator hands it to the coder, which plans a fix in the repo the
+#   workload is mapped to and - after a human approves - opens a Draft PR.
+#
+#   So this is the first fixture with a SOURCE REPOSITORY behind it:
+#
+#     repo    https://github.com/Flou21/hephaisto-fixture-dotnet
+#     branch  fixture/c15-null-deref   (main + one commit that plants the bug)
+#     sha     583b1e5b75add2ba341319eef1ae438e8346c4b0
+#
+#   The two annotations below carry the branch and the sha, and the image tag is
+#   c15-<that sha>, so the running image maps to exactly one commit - the same
+#   property the TR services have had since their images were tagged by sha.
+#
+# WHAT IT BREAKS
+#   Shop.Api binds ShopOptions from the Shop configuration section. This
+#   Deployment sets Shop__Name and NO Shop__Endpoints__N. When the Endpoints key
+#   is absent the configuration binder leaves the list null - not empty - and
+#   Startup/Endpoints.cs guards only against empty:
+#
+#       if (options.Endpoints.Count == 0)      // line 17: throws on null
+#
+#   The exception escapes Program.cs before the host starts, the runtime aborts,
+#   and the container exits 134 about a second after it starts. Every restart
+#   reads the same configuration, so it crash-loops for ever.
+#
+# WHAT THE AGENT SHOULD CONCLUDE
+#   Primary finding, category `application`: the service throws an unhandled
+#   NullReferenceException at startup in Shop.Api.Startup.Endpoints.Primary
+#   (src/Shop.Api/Startup/Endpoints.cs line 17) because Shop:Endpoints is not
+#   configured, the bound list is null, and the code dereferences it without a
+#   null check. Plan: no_action_required - a restart re-runs the same code
+#   against the same configuration and fails identically.
+#
+#   Then, in the code-fix stage: a plan naming src/Shop.Api/Startup/Endpoints.cs,
+#   and a fix that is a null guard there, with
+#   EndpointsOptionsTests.Empty_endpoints_do_not_throw going green.
+#
+#   THE PLAUSIBLE WRONG ANSWERS, which is why the repo keeps deploy/shop.yaml:
+#   "add Shop__Endpoints__0 to the manifest" makes the pod start and leaves the
+#   defect for the next Deployment that omits it; "catch the exception" hides
+#   it; "raise the limits" has nothing to do with it. A diagnosis of `config`
+#   is not wrong about the trigger, and is wrong about the cause - an optional
+#   setting that crashes the service when absent is a code defect.
+#
+# THE IMAGE
+#   ghcr.io/flou21/hephaisto-fixture-dotnet:c15-<sha>, pinned; never a floating
+#   tag (FixtureImagePinTests). Published by the fixture repo's
+#   publish-fixtures.yml only after its test job proved the planted test red. For
+#   dev the same exact tag is built into the node's docker from the branch - see
+#   the Tiltfile - so IfNotPresent finds it without a pull.
+#
+#   tini is PID 1 in that image and the crash depends on it: as PID 1, the .NET
+#   runtime's abort() is a SIGABRT the kernel drops, and the process printed its
+#   exception and then stayed Up - measured with docker run. That would be a
+#   Running pod with zero restarts, and no crash-loop alert.
+#
+# EXPECTED KUBERNETES EVENTS
+#   - Warning  BackOff   Back-off restarting failed container app in pod shop-api-...
+#
+# EXPECTED METRIC / PROMQL SIGNAL
+#   kube_pod_container_status_waiting_reason{
+#     namespace="hephaisto-chaos", container="app",
+#     reason="CrashLoopBackOff"} == 1
+#
+#   Fires ChaosPodCrashLooping - the shipped crash-loop rule, hephaisto_kind
+#   CrashLoopBackOff - like C2, C11, C12 and C13. No new rule.
+#
+#   kube_pod_container_status_last_terminated_reason{
+#     namespace="hephaisto-chaos", container="app", reason="Error"} == 1
+#   kube_pod_container_status_last_terminated_exitcode{
+#     namespace="hephaisto-chaos", container="app"} == 134      (KSM >= 2.10)
+#
+# EXPECTED LOG SIGNAL
+#   {k8s_namespace_name="hephaisto-chaos", k8s_deployment_name="shop-api"}
+#     |= "NullReferenceException"
+#
+#   Exact expected lines (stderr; one Loki line each):
+#     Unhandled exception. System.NullReferenceException: Object reference not set to an instance of an object.
+#        at Shop.Api.Startup.Endpoints.Primary(ShopOptions options) in /src/src/Shop.Api/Startup/Endpoints.cs:line 17
+#        at Program.<Main>$(String[] args) in /src/src/Shop.Api/Program.cs:line 15
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  # Named for the service, not the fixture: a workload called c15-null-deref
+  # would hand the investigator the answer in the one string every tool prints.
+  # (The source-ref annotation below still names the branch, and describe shows
+  # it; the code-fix stage needs the ref, and a hint an agent has to go and read
+  # is a smaller leak than one in every alert and incident title.)
+  name: shop-api
+  namespace: hephaisto-chaos
+  labels:
+    app.kubernetes.io/name: shop-api
+    hephaisto.chaos/scenario: c15
+    hephaisto.chaos/fault: crashloop
+  annotations:
+    hephaisto.dev/source-ref: fixture/c15-null-deref
+    hephaisto.dev/source-sha: 583b1e5b75add2ba341319eef1ae438e8346c4b0
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: shop-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: shop-api
+        hephaisto.chaos/scenario: c15
+        hephaisto.chaos/fault: crashloop
+    spec:
+      terminationGracePeriodSeconds: 1
+      containers:
+        - name: app
+          # Built from fixture/c15-null-deref at the sha above; arm64 and amd64.
+          image: ghcr.io/flou21/hephaisto-fixture-dotnet:c15-583b1e5b75add2ba341319eef1ae438e8346c4b0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            # The Shop section is present, so this does not look unconfigured at a
+            # glance - it is only Shop:Endpoints that is missing. That is the fault.
+            - name: Shop__Name
+              value: shop
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

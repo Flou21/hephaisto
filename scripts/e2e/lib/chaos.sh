@@ -73,6 +73,14 @@ fixture_kind() {
         # REVISION behind it, so the answer is a rollback rather than a restart.
         # See infra/chaos/c14-bad-deploy.yaml.
         c14) echo HighErrorRate ;;
+        # The shipped crash-loop rule once more, and on purpose: c15 is the same
+        # symptom as c2 with the cause in application CODE rather than in a
+        # dependency, so the kind cannot tell them apart and must not try. What
+        # separates them is the finding's category, and then the code-fix stage.
+        # See infra/chaos/c15-null-deref.yaml.
+        c15) echo CrashLoopBackOff ;;
+        # c15 plus two injected log lines; the kind is c15's by construction.
+        c19) echo CrashLoopBackOff ;;
         *)   echo "" ;;
     esac
 }
@@ -135,9 +143,20 @@ chaos_build_images() {
 #
 # c14 avoids the trap rather than adding a second special case: it sets
 # OTEL_SERVICE_NAME=c14-bad-deploy, so the default `c<N>-` mapping already matches.
+#
+# c15 and c19 are the other exception, deliberately: their Deployments are named for the
+# service (shop-api, catalog-api) because a workload called c15-null-deref would put the
+# answer in every alert and incident title. The fixture repository's workload mapping keys on
+# those names too.
+#
+# Neither name may be a prefix of the other: every match below is `== $t or startswith($t +
+# "-")`, the same trap as the c1/c10 family. c19 was first called shop-api-c19, which made a run
+# applying both fixtures attribute c19's incidents to c15; it is catalog-api for that reason.
 fixture_target() {
     case "$1" in
         c10) echo faulty-service ;;
+        c15) echo shop-api ;;
+        c19) echo catalog-api ;;
         *)   echo "$1" ;;
     esac
 }
@@ -150,6 +169,8 @@ fixture_workload() {
         c12) echo c12-stale-lease ;;
         c13) echo c13-wedged-lock ;;
         c14) echo c14-bad-deploy ;;
+        c15) echo shop-api ;;
+        c19) echo catalog-api ;;
         *)   echo "" ;;
     esac
 }
