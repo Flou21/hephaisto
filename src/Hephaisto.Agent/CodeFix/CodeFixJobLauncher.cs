@@ -143,11 +143,27 @@ public sealed class KubernetesCodeFixJobLauncher(
     {
         var o = options.CurrentValue;
 
+        V1Job job;
+
+        try
+        {
+            job = await api.Batch.ReadNamespacedJobAsync(jobName, o.Namespace, cancellationToken: ct).ConfigureAwait(false);
+        }
+        catch (HttpOperationException ex) when (ex.Response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
         var pods = await api.Core.ListNamespacedPodAsync(
                 o.Namespace, labelSelector: $"job-name={jobName}", cancellationToken: ct)
             .ConfigureAwait(false);
 
+        // Only a pod the Job's controller created: a label is something anyone who can create a
+        // pod in this namespace can copy, and the result is read from whichever pod is chosen
+        // here. The owner reference with controller=true and the Job's uid is what the Job
+        // controller sets and a copied label does not bring along.
         var pod = pods.Items
+            .Where(p => p.Metadata.OwnerReferences?.Any(r => r.Controller == true && r.Kind == "Job" && r.Uid == job.Metadata.Uid) == true)
             .OrderByDescending(p => p.Metadata.CreationTimestamp ?? DateTime.MinValue)
             .FirstOrDefault();
 
