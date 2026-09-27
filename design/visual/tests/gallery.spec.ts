@@ -56,6 +56,10 @@ test.describe('the design language', () => {
     ['lifecycle', 'Incident lifecycle'],
     ['assignment', 'Assignment'],
     ['connections', 'Connections panel'],
+    // v0.9.0: the code-fix table (every state, a running phase, a PR) and the incident section
+    // (a plan with approve/deny, the disabled-approve variant, an implementing and a PR attempt).
+    ['codefix-table', 'Code fixes table'],
+    ['codefix-section', 'Code fix on an incident'],
   ] as const;
 
   /**

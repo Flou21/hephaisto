@@ -74,6 +74,7 @@ public sealed class RbacSelfCheck(
     KubernetesApi api,
     IOptions<KubernetesOptions> options,
     IOptionsMonitor<Core.Policy.PolicyOptions> policy,
+    IOptionsMonitor<CodeFix.CodeFixOptions> codeFix,
     ILogger<RbacSelfCheck> logger) : IHostedService
 {
     private readonly KubernetesOptions options = options.Value;
@@ -116,6 +117,42 @@ public sealed class RbacSelfCheck(
 
         new("delete", "nodes", Why: "removing a node is not in the action vocabulary"),
         new("create", "serviceaccounts", Subresource: "token", Why: "minting tokens is identity forgery"),
+
+        // v0.9.0 grants `create jobs` in exactly one namespace, the coder's. Held anywhere else
+        // it is arbitrary code execution with whatever identity that namespace's pods run as, so
+        // the cluster-wide and kube-system forms are refused here and every actionable namespace
+        // is refused in ForbiddenElsewhere. Creating a pod directly is never needed: the Job
+        // controller creates the coder's pod, not Hephaisto.
+        new("create", "jobs", "batch", Why: "create jobs is granted in the coder namespace only; cluster-wide it is code execution anywhere"),
+        new("create", "jobs", "batch", "kube-system", Why: "a Job in kube-system runs with the control plane's reach"),
+        new("create", "pods", Why: "Hephaisto never creates a pod; the Job controller does"),
+        new("create", "cronjobs", "batch", Why: "a CronJob is a Job that keeps coming back"),
+    ];
+
+    /// <summary>
+    /// Namespace-scoped refusals computed from configuration: <c>create jobs</c> in any namespace the
+    /// agent may act in. The coder namespace is validated at startup never to be one of them.
+    /// </summary>
+    private IReadOnlyList<RbacProbe> ForbiddenElsewhere() =>
+    [
+        .. policy.CurrentValue.AllowedNamespaces
+            .Where(ns => !string.Equals(ns, codeFix.CurrentValue.Namespace, StringComparison.Ordinal))
+            .Select(ns => new RbacProbe("create", "jobs", "batch", ns,
+                Why: "an actionable namespace must never also be a place the agent can run code")),
+    ];
+
+    /// <summary>
+    /// What the code-fix stage calls, in its own namespace. Warn-only, like the write probes: a
+    /// missing grant fails an attempt with a clear 403, it does not endanger anything.
+    /// </summary>
+    public static IReadOnlyList<RbacProbe> CodeFixProbes(string ns) =>
+    [
+        new("create", "jobs", "batch", ns, Why: "start a coder Job"),
+        new("get", "jobs", "batch", ns, Why: "observe a coder Job"),
+        new("delete", "jobs", "batch", ns, Why: "cancel a coder Job on the kill switch or a deadline"),
+        new("create", "configmaps", Namespace: ns, Why: "the request a coder Job mounts"),
+        new("list", "pods", Namespace: ns, Why: "find a coder Job's pod"),
+        new("get", "pods", Namespace: ns, Subresource: "log", Why: "read the framed result a coder prints"),
     ];
 
     /// <summary>
@@ -193,7 +230,8 @@ public sealed class RbacSelfCheck(
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        var forbidden = await RunAsync(Forbidden, cancellationToken).ConfigureAwait(false);
+        var forbidden = await RunAsync([.. Forbidden, .. ForbiddenElsewhere()], cancellationToken).ConfigureAwait(false);
+        await CheckCodeFixAsync(cancellationToken).ConfigureAwait(false);
         var required = await RunAsync(Required, cancellationToken).ConfigureAwait(false);
         var writes = await RunAsync(WriteProbes(), cancellationToken).ConfigureAwait(false);
 
@@ -267,6 +305,29 @@ public sealed class RbacSelfCheck(
         }
 
         throw new RbacSelfCheckException(message.ToString());
+    }
+
+    private async Task CheckCodeFixAsync(CancellationToken ct)
+    {
+        var o = codeFix.CurrentValue;
+
+        if ((Core.CodeFix.CodeFixModeResolver.Parse("env", o.Mode).Ceiling ?? Core.CodeFix.CodeFixMode.Off) == Core.CodeFix.CodeFixMode.Off)
+            return;
+
+        var results = await RunAsync(CodeFixProbes(o.Namespace), ct).ConfigureAwait(false);
+        var missing = results.Where(r => r.Allowed != true).ToArray();
+
+        if (missing.Length > 0)
+        {
+            logger.LogWarning(
+                "RBAC self-check: code fixes are on but {Count} permission(s) in {Namespace} are NOT granted, so "
+                + "every attempt will fail with a 403: {Missing}. Enable codeFix in the chart, which renders the Role.",
+                missing.Length, o.Namespace, string.Join("; ", missing.Select(m => $"{m.Probe.Display} ({m.Probe.Why})")));
+        }
+        else
+        {
+            logger.LogInformation("RBAC self-check: all {Count} code-fix permission(s) granted in {Namespace}.", results.Count, o.Namespace);
+        }
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;

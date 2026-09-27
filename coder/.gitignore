@@ -1,0 +1,5 @@
+node_modules/
+dist/
+*.tsbuildinfo
+# the repo-root .gitignore ignores every bin/ (dotnet output); this one is source
+!bin/

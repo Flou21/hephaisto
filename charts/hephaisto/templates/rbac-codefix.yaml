@@ -1,0 +1,92 @@
+{{- include "hephaisto.validateCodeFix" . -}}
+{{- if .Values.codeFix.enabled }}
+{{/*
+=========================================================================================
+CODE FIXES - the ONLY place in this chart that grants `create` on jobs
+=========================================================================================
+Until v0.9.0, `create jobs` was granted nowhere, at any phase: creating a Job is arbitrary
+code execution with an image and a command of the creator's choosing, a categorically
+different power from restarting a pod. The code-fix stage needs exactly that power - its
+coder IS a Job - so it is granted here, and the grant is bounded four ways:
+
+  1. IN ONE NAMESPACE. A namespaced Role, bound only in codeFix.namespace. A Role cannot be
+     bound outside its own namespace at all, so the scope is a property of the object rather
+     than of a binding someone might later widen.
+
+  2. IN A NAMESPACE THE AGENT MAY NOT ACT IN. hephaisto.validateCodeFix refuses to render if
+     codeFix.namespace is default, kube-*, the release namespace, the observability namespace
+     or any policy.actionableNamespaces entry. A namespace where the agent may both delete
+     pods and create Jobs would let it run code beside the workloads it acts on.
+
+  3. CHECKED AT BOOT. RbacSelfCheck refuses to start the agent if it holds `create jobs`
+     cluster-wide, in kube-system, or in any actionable namespace - so a ClusterRole someone
+     adds by hand later, with `create jobs` in it, takes the agent down rather than quietly
+     widening it. It also refuses `create pods` anywhere: the Job controller creates the
+     coder's pod, Hephaisto never does.
+
+  4. NOTHING MODEL-CHOSEN REACHES THE SPEC. The image is codeFix.image, a reviewed chart
+     value. The Job spec is rendered in C# (CodeFixJobSpec, golden-tested). The only
+     model-influenced input is a ConfigMap of JSON the coder reads as DATA.
+
+And the Job it creates runs as a ServiceAccount bound to NOTHING, with its token never
+mounted - see serviceaccount-codefix.yaml. The agent can start a coder; the coder can reach
+nothing in the cluster.
+
+Verbs, and why each:
+  jobs         create             start a coder (plan, or implement after approval)
+               get, list, watch   observe it; the watcher polls Job status
+               delete             cancel on the kill switch, a deadline or a denial
+  configmaps   create, get        the request.json a coder mounts, owned by its Job so the
+                                  garbage collector removes it with the Job
+               delete             clean up a request whose Job failed to create
+  pods         get, list, watch   find the Job's pod
+  pods/log     get                read the framed result the coder prints - the ONLY channel
+                                  back from the coder, which is why there is no callback
+                                  endpoint for a shell-holding model to write to
+
+Deliberately ABSENT: update/patch on anything (a running coder is never modified, only
+cancelled), pods create/delete (the Job controller owns them), secrets (the coder's tokens
+reach its pod by secretKeyRef, which the kubelet resolves - Hephaisto never reads them),
+jobs/finalizers and ownerReference escalation (the ConfigMap's ownerReference sets
+blockOwnerDeletion: false, which needs no extra grant).
+=========================================================================================
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "hephaisto.fullname" . }}-codefix
+  namespace: {{ include "hephaisto.codeFixNamespace" . }}
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "hephaisto.fullname" . }}-codefix
+  namespace: {{ include "hephaisto.codeFixNamespace" . }}
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "hephaisto.fullname" . }}-codefix
+subjects:
+  # The AGENT's ServiceAccount, in the release namespace. Never the coder's own - see
+  # serviceaccount-codefix.yaml, and negative-tests.sh, which asserts it is bound nowhere.
+  - kind: ServiceAccount
+    name: {{ include "hephaisto.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

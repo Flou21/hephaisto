@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/TrueRelevance/dev-context/schemas/codefix-plan-result.schema.json",
+  "title": "CodeFixPlanResult",
+  "description": "What the plan phase returns, as the last framed block on stdout. Deliberately small: anything Hephaisto can derive from the Job or the pod log is not in it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "attempt_id", "phase", "outcome", "summary", "root_cause", "confidence", "files", "steps", "verification", "needs_cait", "notes", "analysed_ref", "context_sha", "cost_usd", "session_id", "error", "denied_tool_calls"],
+  "properties": {
+    "contract_version": { "const": "1" },
+    "attempt_id": { "type": "string", "format": "uuid" },
+    "phase": { "const": "plan" },
+    "outcome": { "enum": ["planned", "not_a_code_problem", "insufficient_context", "failed"] },
+    "summary": { "type": "string", "maxLength": 2000 },
+    "root_cause": { "type": "string", "maxLength": 4000 },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "files": { "type": "array", "maxItems": 50, "items": { "type": "string", "maxLength": 512 } },
+    "steps": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 2000 } },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level", "not_verifiable"],
+      "properties": {
+        "level": { "enum": ["tests", "build-only", "typecheck-only", "none"] },
+        "not_verifiable": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 1000 } }
+      }
+    },
+    "needs_cait": { "type": "boolean" },
+    "notes": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 2000 } },
+    "analysed_ref": { "type": ["string", "null"], "maxLength": 64 },
+    "context_sha": { "type": ["string", "null"], "maxLength": 64 },
+    "cost_usd": { "type": "number", "minimum": 0 },
+    "session_id": { "type": ["string", "null"], "maxLength": 128 },
+    "error": { "type": ["string", "null"], "maxLength": 4000 },
+    "denied_tool_calls": { "$ref": "#/$defs/denials" }
+  },
+  "$defs": {
+    "denials": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tool", "input", "reason"],
+        "properties": {
+          "tool": { "type": "string", "maxLength": 64 },
+          "input": { "type": "string", "maxLength": 500 },
+          "reason": { "type": "string", "maxLength": 500 }
+        }
+      }
+    }
+  }
+}

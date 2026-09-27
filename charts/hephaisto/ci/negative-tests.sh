@@ -25,7 +25,7 @@ refuses() {
     local out
     if out=$(helm template t "$CHART" --namespace hephaisto "$@" 2>&1); then
         fail "$what -- rendered successfully, but must be refused"
-    elif grep -qi "may not contain\|may not set\|is required\|don't meet the specifications of the schema" <<<"$out"; then
+    elif grep -qi "may not contain\|may not set\|may not be\|may not map\|is required\|is refused\|don't meet the specifications of the schema" <<<"$out"; then
         # values.schema.json rejects some of these before a template runs, which is an
         # earlier and better refusal than a `fail` in a template. Both count.
         pass "$what"
@@ -110,7 +110,7 @@ fi
 
 # Read means read. Any of these verbs in the cluster-wide ClusterRole would make "reads
 # cannot break anything" untrue.
-if grep -qE '"(create|update|patch|delete|deletecollection)"' <<<"$(awk '/name: t-hephaisto-read/,/^---/' <<<"$FULL")"; then
+if grep -qE '"(create|update|patch|delete|deletecollection)"' <<<"$(awk '/^  name: hephaisto-read$/,/^---/' <<<"$FULL")"; then
     fail "the read ClusterRole has grown a write verb"
 else
     pass "the read ClusterRole has no write verbs"
@@ -163,7 +163,7 @@ fi
 # Egress is off by default, and that default is load-bearing: adding Egress to a policy denies
 # everything not listed, which for this pod means DNS, the API server, Postgres and the LLM.
 # An accidental default here is an agent that starts, reports healthy, and does nothing.
-if awk '/name: t-hephaisto-ingress/,/^---$/' <<<"$FULL" | grep -q '^\s*- Egress$'; then
+if awk '/^  name: hephaisto-ingress$/,/^---$/' <<<"$FULL" | grep -q '^\s*- Egress$'; then
     fail "egress must be off by default"
 else
     pass "egress is off by default"
@@ -175,7 +175,7 @@ EGRESS=$(helm template t "$CHART" --namespace hephaisto --values "$CHART/ci/full
 
 # Postgres talks to nothing, so its policy must stay Ingress-only even when the agent's grows
 # an egress section. Restricting the wrong pod is how this lands as a database outage.
-if awk '/name: t-hephaisto-postgres-ingress/,0' <<<"$EGRESS" | grep -q '^\s*- Egress$'; then
+if awk '/^  name: hephaisto-postgres-ingress$/,/^---$/' <<<"$EGRESS" | grep -q '^\s*- Egress$'; then
     fail "the Postgres policy must never gain an Egress section"
 else
     pass "enabling egress does not restrict Postgres"
@@ -331,6 +331,145 @@ else
 fi
 
 renders "webhookPort=0 keeps the previous single-port behaviour" --set webhookPort=0
+
+echo
+echo "Code fixes: the one place 'create jobs' is granted must stay one place:"
+
+# The minimum an enabled stage needs, so each refusal below differs from a rendering install by
+# exactly the one value under test.
+CF=(--set codeFix.enabled=true)
+
+refuses "codeFix enabled with an empty image repository" "${CF[@]}" --set codeFix.image.repository=""
+refuses "codeFix enabled with no secret name"            "${CF[@]}" --set secrets.codeFix=""
+refuses "coder namespace = the release namespace"        "${CF[@]}" --set codeFix.namespace=hephaisto
+refuses "coder namespace = kube-system"                  "${CF[@]}" --set codeFix.namespace=kube-system
+refuses "coder namespace = default"                      "${CF[@]}" --set codeFix.namespace=default
+refuses "coder namespace = the observability namespace"  "${CF[@]}" --set codeFix.namespace=hephaisto-obs
+refuses "coder namespace = an actionable namespace" \
+    "${CF[@]}" --set codeFix.namespace=hephaisto-chaos --set 'policy.actionableNamespaces[0]=hephaisto-chaos'
+refuses "coder namespace empty"                          "${CF[@]}" --set codeFix.namespace=""
+# A repository write on the strength of an unauthenticated click. The agent refuses this at
+# startup too; refusing at render is earlier and says why in the pipeline that caused it.
+refuses "mode pr with auth off"                          "${CF[@]}" --set codeFix.mode=pr
+refuses "a mode that is not a mode"                      "${CF[@]}" --set codeFix.mode=auto
+refuses "a Go duration where a .NET TimeSpan belongs"    "${CF[@]}" --set codeFix.deadlines.plan=30m
+refuses "a repository whose host is not allowed" \
+    "${CF[@]}" --set 'codeFix.repositories[0].workload=shop/Deployment/api' \
+               --set 'codeFix.repositories[0].url=https://gitlab.com/example/api'
+refuses "the coder NetworkPolicy without the proxy it points at" \
+    "${CF[@]}" --set codeFix.egressProxy.enabled=false
+refuses "extraEnv cannot set a CodeFix__ key behind the chart's checks" \
+    --set 'extraEnv[0].name=CodeFix__Namespace' --set 'extraEnv[0].value=hephaisto-chaos'
+refuses "extraEnv cannot displace the coder namespace from the investigator's deny list" \
+    "${CF[@]}" --set 'extraEnv[0].name=Kubernetes__DeniedNamespaces__0' --set 'extraEnv[0].value=nothing'
+
+renders "codeFix enabled with its defaults"              "${CF[@]}"
+renders "mode pr with auth on"  "${CF[@]}" --set codeFix.mode=pr \
+    --set auth.enabled=true --set auth.authority=https://kc/realms/h
+renders "mode pr with the throwaway-cluster escape hatch" "${CF[@]}" --set codeFix.mode=pr \
+    --set codeFix.allowUnauthenticatedApproval=true
+renders "no proxy and no coder NetworkPolicy (egress controlled elsewhere)" "${CF[@]}" \
+    --set codeFix.egressProxy.enabled=false --set codeFix.networkPolicy.enabled=false
+
+# Disabled means ABSENT, not merely inert: no Role anywhere that mentions jobs with a create
+# verb, no coder ServiceAccount, no CodeFix__ env - only the switch key, reading off.
+if grep -v '^\s*#' <<<"$MIN" | grep -q 'CodeFix__\|hephaisto-coder\|Kubernetes__DeniedNamespaces'; then
+    fail "codeFix disabled must render nothing code-fix related"
+else
+    pass "codeFix disabled renders no coder objects and no CodeFix__ env"
+fi
+
+if grep -qE '^\s+codeFixMode: "off"$' <<<"$MIN"; then
+    pass "codeFix disabled still ships the switch key, reading off"
+else
+    fail "the switch ConfigMap must carry codeFixMode: \"off\" even when disabled"
+fi
+
+JOBS_GRANTS=$(printf '%s' "$MIN" | python3 "$CHART/ci/rbac-grants.py" jobs create)
+if [ -z "$JOBS_GRANTS" ]; then
+    pass "codeFix disabled grants create on jobs nowhere"
+else
+    fail "codeFix disabled still grants create jobs: $JOBS_GRANTS"
+fi
+
+# Enabled: create on jobs in EXACTLY the coder namespace, through a namespaced Role - never a
+# ClusterRole, which a single ClusterRoleBinding would turn into code execution everywhere.
+JOBS_GRANTS=$(printf '%s' "$FULL" | python3 "$CHART/ci/rbac-grants.py" jobs create)
+if [ "$JOBS_GRANTS" = "Role hephaisto-coder/hephaisto-codefix" ]; then
+    pass "create jobs is granted by one Role, in the coder namespace only"
+else
+    fail "create jobs grants must be exactly the coder Role; found: [$JOBS_GRANTS]"
+fi
+
+# The Role holds nothing it does not need: no pod creation (the Job controller makes the pod),
+# no secrets (the kubelet resolves the coder's secretKeyRefs), no patch/update of anything.
+EXTRA=$(printf '%s' "$FULL" | python3 "$CHART/ci/rbac-grants.py" --role hephaisto-codefix --forbidden)
+if [ -z "$EXTRA" ]; then
+    pass "the coder Role grants no pod creation, no secrets and no update/patch"
+else
+    fail "the coder Role grants more than it needs: $EXTRA"
+fi
+
+# The coder's own identity is bound to NOTHING. It is a model with a shell that has read
+# attacker-influenceable text; whatever this ServiceAccount could do, an injection could.
+BOUND=$(printf '%s' "$FULL" | python3 "$CHART/ci/rbac-grants.py" --subject hephaisto-coder:hephaisto-coder)
+if [ -z "$BOUND" ]; then
+    pass "the coder ServiceAccount is the subject of no RoleBinding or ClusterRoleBinding"
+else
+    fail "the coder ServiceAccount is bound: $BOUND"
+fi
+
+if printf '%s' "$FULL" | python3 -c '
+import sys, yaml
+sa = [d for d in yaml.safe_load_all(sys.stdin)
+      if d and d.get("kind") == "ServiceAccount" and d["metadata"]["name"] == "hephaisto-coder"]
+sys.exit(0 if sa and all(d.get("automountServiceAccountToken") is False for d in sa) else 1)'; then
+    pass "the coder ServiceAccount never mounts its token"
+else
+    fail "the coder ServiceAccount must set automountServiceAccountToken: false"
+fi
+
+# The investigator must never read what a coder wrote: that log is a model's output after
+# reading attacker-influenceable evidence, and feeding it into the next investigation is a
+# reflection path for an injection.
+if grep -A1 'name: Kubernetes__DeniedNamespaces__0' <<<"$FULL" | grep -q 'value: "hephaisto-coder"'; then
+    pass "the coder namespace is denied to the investigator's read tools"
+else
+    fail "Kubernetes__DeniedNamespaces__0 must be the coder namespace when codeFix is enabled"
+fi
+
+# The coder policy is independent of the top-level flag, and denies all ingress.
+NOPOL=$(helm template t "$CHART" --namespace hephaisto --values "$CHART/ci/full-values.yaml" \
+    --set networkPolicy.enabled=false 2>/dev/null)
+if awk '/^kind: NetworkPolicy$/,/^---$/' <<<"$NOPOL" | grep -q 'name: hephaisto-coder$'; then
+    pass "the coder NetworkPolicy renders even with the top-level networkPolicy off"
+else
+    fail "the coder NetworkPolicy must not depend on networkPolicy.enabled"
+fi
+
+# Squid refuses to start on an allowlist entry another entry covers, and the default list has
+# two. The rendered list must have none, or the proxy - the coder's only way out - never starts.
+OVERLAP=$(printf '%s' "$FULL" | python3 -c '
+import sys, yaml
+for d in yaml.safe_load_all(sys.stdin):
+    if d and d.get("kind") == "ConfigMap" and "allowlist.txt" in d.get("data", {}):
+        names = [l.strip() for l in d["data"]["allowlist.txt"].splitlines() if l.strip()]
+        for a in names:
+            for w in names:
+                if w.startswith(".") and a != w and (a.endswith(w) or "." + a == w):
+                    print(a, "is covered by", w)
+')
+if [ -z "$OVERLAP" ]; then
+    pass "the proxy allowlist has no entry squid would refuse as covered"
+else
+    fail "the proxy allowlist would crash squid: $OVERLAP"
+fi
+
+if grep -q 'CONNECT !SSL_ports' <<<"$FULL" && grep -q 'http_access deny all' <<<"$FULL"; then
+    pass "the proxy tunnels only to 443 and denies by default"
+else
+    fail "the proxy config must deny CONNECT to non-443 ports and end in deny all"
+fi
 
 echo
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"

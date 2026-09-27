@@ -1,0 +1,23 @@
+{{- if and .Values.codeFix.enabled .Values.codeFix.createNamespace }}
+{{/*
+Off by default: most installs own their namespaces in GitOps, and a namespace rendered here is
+DELETED by `helm uninstall` - taking the operator-created secrets.codeFix Secret with it.
+
+Pod Security `restricted` is enforced, and everything this chart runs here complies: the coder
+Job (non-root, no privilege escalation, all capabilities dropped, RuntimeDefault seccomp) and
+the egress proxy. A pod that does not comply is refused by the API server, which is the right
+failure for the one namespace where a model runs a shell.
+
+NEVER label this namespace hephaisto.dev/destructive-actions-allowed. It is refused as an
+actionable namespace at render time; the label would only make that intent confusing.
+*/}}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "hephaisto.codeFixNamespace" . }}
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+    hephaisto.dev/role: coder
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+{{- end }}

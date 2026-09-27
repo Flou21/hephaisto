@@ -1427,7 +1427,7 @@ address read a dashboard no longer lets it inject a forged alert. And both wrong
 corrected: `secrets.grafanaMcp` is the caller bearer rather than a Grafana credential, and
 `grafanaMcp.url` needs its `/mcp` path.
 
-**The getting-started guide is what remains, and it carries to v0.9.0** with the rest of the
+**The getting-started guide is what remains, and it carries to v0.10.0** (renumbered from v0.9.0) with the rest of the
 install-ergonomics work. Writing one was deferred deliberately rather than forgotten: v0.8.0's
 theme became operating the agent rather than installing it, on the grounds that installing is
 something you do once and had just been done.
@@ -1663,6 +1663,95 @@ an approved action in Observe is still **not executed**, which is the promise
 **Size.** M - S for the tests, M for the host fixture they need.
 
 ---
+
+### 115. The chart never set `Ingest:SelfNamespaces`, so the agent's own namespaces were a code default
+
+**Symptom.** `IngestOptions.SelfNamespaces` defaults to `hephaisto` and `hephaisto-obs`, and no
+template emitted `Ingest__SelfNamespaces__*`. An install into any other namespace name treated its
+own pods' signals as ordinary workload signals — escalated rather than self-signals, and eligible
+for everything a workload is eligible for.
+
+**Why it matters now.** v0.9.0 adds a third namespace of Hephaisto's own, the coder's. A coder Job
+failing in `hephaisto-coder` must be a self-signal, never a candidate for a code fix: a coder asked
+to fix the thing that runs coders is a loop.
+
+**Fix.** The chart emits the release namespace, the observability namespace and the coder
+namespace; the code default gains `hephaisto-coder`; `CodeFixEligibility` also refuses the coder
+namespace directly (`SelfSignal`). **Size.** S. **Fixed in v0.9.0.**
+
+### 116. The coder's agent and its driver run as the same uid, so the model can read the driver's tokens
+
+**Symptom.** Inside the coder pod the Agent SDK's Bash tool and the driver that holds
+`GITHUB_TOKEN` are one uid. The guard denies `env`, `printenv`, `/proc/*/environ` and every
+`*TOKEN*` reference, and the agent's own environment carries no write token — but a sufficiently
+indirect read of `/proc/<driver pid>/environ` is not something a regex can promise to catch.
+
+**What bounds it today.** The token is a fine-grained PAT scoped to the mapped repositories
+(`contents:write`, `pull_requests:write`); branch protection on every default branch is an operator
+prerequisite; egress goes only through the allowlist proxy, whose log is the per-attempt audit;
+Hephaisto re-checks branch, repository and host before believing a PR exists.
+
+**Fix (v2).** Two containers sharing `/work`: the driver with the tokens, the agent without, so the
+separation is the kernel's rather than the guard's. **Size.** M. Open.
+
+### 117. The code-fix gate exercises one fixture repository, never a True Relevance service
+
+**Symptom.** `--codefix` runs c15 (and c19) against `hephaisto-fixture-dotnet`, a tiny minimal
+API with a real test suite. The services the feature is for have tests in 4 of 19 .NET repos, pin
+Cait at versions from 46.x to 51.x, and restore from a private GitHub Packages feed. None of that is
+on the gate.
+
+**What would close it.** A cassette of a real, redacted production request replayed against a
+pinned commit of one service, graded on plan location only (no push). Needs `codefix run`, which is
+deferred to v0.9.x. **Size.** M. Open.
+
+### 118. The subscription OAuth token's headless terms and lifetime are unverified
+
+**Symptom.** The coder authenticates with `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`: a
+personal identity, sharing its rolling usage window with the same person's interactive sessions, of
+unconfirmed lifetime. `cost_usd` under it is nominal — the caps bound behaviour, not money.
+
+**What to do.** Confirm the lifetime and headless-use terms before `Pr` goes to production; keep an
+API key as the documented fallback (`ANTHROPIC_API_KEY` is an optional key of the same Secret); treat
+the first `RateLimited` failure as a data point. **Size.** S. Open.
+
+### 119. Three chart assertions matched a name no render produces, and passed for that reason
+
+**Symptom.** `ci/negative-tests.sh` asserted "the read ClusterRole has no write verbs", "egress is
+off by default" and "enabling egress does not restrict Postgres" by `awk`-ranging over
+`/name: t-hephaisto-read/`, `/name: t-hephaisto-ingress/` and `/name: t-hephaisto-postgres-ingress/`.
+The chart's `fullname` does not include the release name (`_helpers.tpl` says why), so the objects
+are `hephaisto-read` and so on, the range matched nothing, and all three reported `ok` against an
+empty string. A write verb in the cluster-wide ClusterRole would have passed the test written to
+catch it.
+
+**How it was found.** Adding the code-fix assertions, whose expected names had to be read from a
+real render rather than copied from the neighbouring lines.
+
+**Fix.** The ranges anchor on the real names (`^  name: hephaisto-read$`), and the Postgres one ends
+at its document's `---` instead of end-of-file - which it now has to, because the coder
+NetworkPolicies render after it and legitimately carry `- Egress`. Each was checked against real
+content (the read range spans ten `verbs:` lines). The new code-fix RBAC assertions parse the render
+(`ci/rbac-grants.py`) instead of ranging over text, and each carries a positive control.
+**Size.** S. **Fixed in v0.9.0.**
+
+### 120. The chart can widen `codeFix.eligibleCategories` and `allowedRepositoryHosts`, never narrow them
+
+**Symptom.** `appsettings.json` ships `CodeFix:EligibleCategories: ["application"]` and
+`CodeFix:AllowedRepositoryHosts: ["github.com"]`. The chart emits the same lists as
+`CodeFix__EligibleCategories__<i>`, and configuration merges by key path: the chart's index 0
+replaces the JSON's index 0 and anything beyond it is added. An operator who sets
+`eligibleCategories: []` to stop every code fix, or `allowedRepositoryHosts: [ghe.example.com]` to
+exclude github.com, still gets the JSON's entries - the values file says one thing and the agent
+does another, in the direction of doing more. `Ingest:SelfNamespaces` ([#115](#115)) has the same
+shape through a collection initialiser, harmlessly (more self namespaces only escalate more).
+
+**Fix.** In `src/`, not the chart: drop the two list defaults from `appsettings.json`. The options
+class already defaults both to empty, and the chart always emits them when the stage is enabled, so
+"empty permits nothing" would then be true for every install. Until then `values.yaml` says so
+beside both values. **Size.** S. **Fixed in v0.9.0**: both lists are gone from `appsettings.json`, so
+the chart's values are the whole list.
+
 
 ## Dead or unreachable code
 

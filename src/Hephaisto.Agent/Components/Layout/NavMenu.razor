@@ -1,4 +1,7 @@
+@using Hephaisto.Agent.CodeFix
 @inject IncidentQueries Queries
+@inject IServiceScopeFactory Scopes
+@inject IIncidentNotifier Notifier
 @implements IDisposable
 
 <nav class="hp-nav">
@@ -13,6 +16,19 @@
     <ul class="hp-navlinks">
         <li>
             <NavLink href="" Match="NavLinkMatch.All">incidents</NavLink>
+        </li>
+        <li>
+            @* The badge counts what needs somebody: a Job running now, or a plan waiting for a
+               decision. PRs already opened are not counted - they are a forge's queue, not this
+               console's - and a badge that never returns to zero is one people stop seeing. *@
+            <NavLink href="codefixes" data-testid="nav-codefixes">
+                code fixes
+                @if (CodeFixBadge > 0)
+                {
+                    <span class="hp-nav-badge" data-testid="nav-codefixes-badge"
+                          title="@_codeFixes!.Running running, @_codeFixes.AwaitingApproval awaiting approval">@CodeFixBadge</span>
+                }
+            </NavLink>
         </li>
         <li>
             <NavLink href="search">search</NavLink>
@@ -45,7 +61,10 @@
 
 @code {
     private AgentStatusView? _status;
+    private CodeFixCounts? _codeFixes;
     private CancellationTokenSource? _cts;
+
+    private int CodeFixBadge => _codeFixes is { } c ? c.Running + c.AwaitingApproval : 0;
 
     /// <summary>
     /// Slow on purpose. The mode and the watchdog change on the order of minutes; polling
@@ -83,6 +102,46 @@
         _cts = new CancellationTokenSource();
         await RefreshAsync();
         _ = PollAsync(_cts.Token);
+        _ = ListenAsync(_cts.Token);
+    }
+
+    /// <summary>
+    /// The badge moves the moment an attempt does, rather than up to thirty seconds later: a plan
+    /// becoming ready is the event somebody has to act on, and it should not wait for the poll.
+    /// Only the counts are re-read - the mode and watchdog stay on the slow timer.
+    /// </summary>
+    private async Task ListenAsync(CancellationToken ct)
+    {
+        try
+        {
+            await foreach (var e in Notifier.SubscribeAsync(ct))
+            {
+                if (e.Kind != IncidentLiveEventKind.CodeFixChanged)
+                {
+                    continue;
+                }
+
+                await RefreshCodeFixesAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task RefreshCodeFixesAsync()
+    {
+        try
+        {
+            var ct = _cts?.Token ?? CancellationToken.None;
+            _codeFixes = await Scopes.QueryAsync(q => q.CountsAsync(ct));
+        }
+        catch (Exception)
+        {
+            // Same rule as the mode badge: a database blip keeps the last known count rather than
+            // taking the navigation down.
+        }
     }
 
     private async Task PollAsync(CancellationToken ct)
@@ -118,6 +177,10 @@
             // A database blip must not take the navigation down. The mode badge shows its
             // last known value; the status page is where a real diagnosis belongs.
         }
+
+        // Outside the try above, and it never throws: a status query that failed must not also
+        // freeze the code-fix count.
+        await RefreshCodeFixesAsync();
     }
 
     public void Dispose()

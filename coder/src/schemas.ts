@@ -1,0 +1,251 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { Ajv2020, type ErrorObject, type ValidateFunction } from 'ajv/dist/2020.js';
+import addFormatsModule from 'ajv-formats';
+import { z } from 'zod';
+import { APP_ROOT } from './config.js';
+
+// The vendored contract (coder/contracts, byte-identical to dev-context/schemas and pinned by
+// SCHEMAS.lock) is the AUTHORITY at runtime: every request is validated against it before
+// anything runs, and every result before it is written. The zod mirrors below exist for the
+// TypeScript types and for contracts.test.ts, which fails if they drift from the JSON.
+
+export const CONTRACTS_DIR = join(APP_ROOT, 'contracts');
+
+export const SCHEMA_FILES = {
+  request: 'codefix-request.schema.json',
+  plan: 'codefix-plan-result.schema.json',
+  implement: 'codefix-implement-result.schema.json',
+  repos: 'repos.schema.json',
+} as const;
+export type SchemaName = keyof typeof SCHEMA_FILES;
+
+type JsonSchema = Record<string, unknown>;
+
+const raw: Record<SchemaName, JsonSchema> = Object.fromEntries(
+  Object.entries(SCHEMA_FILES).map(([k, f]) => [k, JSON.parse(readFileSync(join(CONTRACTS_DIR, f), 'utf8')) as JsonSchema]),
+) as Record<SchemaName, JsonSchema>;
+
+export function rawSchema(name: SchemaName): JsonSchema {
+  return raw[name];
+}
+
+// ajv-formats is CJS with a default export; under NodeNext the callable is on .default.
+const addFormats = ((addFormatsModule as unknown as { default?: unknown }).default ?? addFormatsModule) as (a: Ajv2020) => Ajv2020;
+
+const ajv = new Ajv2020({ allErrors: true, strict: false });
+addFormats(ajv);
+for (const s of Object.values(raw)) ajv.addSchema(s);
+
+function compiled(name: SchemaName): ValidateFunction {
+  const id = raw[name].$id as string;
+  const fn = ajv.getSchema(id);
+  if (!fn) throw new Error(`schema ${id} did not compile`);
+  return fn;
+}
+
+const validators: Record<SchemaName, ValidateFunction> = {
+  request: compiled('request'),
+  plan: compiled('plan'),
+  implement: compiled('implement'),
+  repos: compiled('repos'),
+};
+
+export interface Validation {
+  ok: boolean;
+  errors: string[];
+}
+
+export function formatErrors(errors: ErrorObject[] | null | undefined): string[] {
+  return (errors ?? []).map((e) => `${e.instancePath || '/'} ${e.message ?? 'invalid'}${e.params && 'additionalProperty' in e.params ? ` (${String(e.params.additionalProperty)})` : ''}`);
+}
+
+export function validate(name: SchemaName, value: unknown): Validation {
+  const fn = validators[name];
+  const ok = fn(value) as boolean;
+  return { ok, errors: ok ? [] : formatErrors(fn.errors) };
+}
+
+/** Validates against an ad-hoc schema (the agent's structured-output schema). */
+export function validateWith(schema: JsonSchema, value: unknown): Validation {
+  const fn = ajv.compile(schema);
+  const ok = fn(value) as boolean;
+  return { ok, errors: ok ? [] : formatErrors(fn.errors) };
+}
+
+// ---------------------------------------------------------------------------------------------
+// zod mirrors (types + drift test)
+
+export const DenialZ = z
+  .object({ tool: z.string().max(64), input: z.string().max(500), reason: z.string().max(500) })
+  .strict();
+
+export const VerificationLevelZ = z.enum(['tests', 'build-only', 'typecheck-only', 'none']);
+
+export const PlanResultZ = z
+  .object({
+    contract_version: z.literal('1'),
+    attempt_id: z.guid(),
+    phase: z.literal('plan'),
+    outcome: z.enum(['planned', 'not_a_code_problem', 'insufficient_context', 'failed']),
+    summary: z.string().max(2000),
+    root_cause: z.string().max(4000),
+    confidence: z.number().min(0).max(1),
+    files: z.array(z.string().max(512)).max(50),
+    steps: z.array(z.string().max(2000)).max(20),
+    verification: z
+      .object({ level: VerificationLevelZ, not_verifiable: z.array(z.string().max(1000)).max(20) })
+      .strict(),
+    needs_cait: z.boolean(),
+    notes: z.array(z.string().max(2000)).max(20),
+    analysed_ref: z.string().max(64).nullable(),
+    context_sha: z.string().max(64).nullable(),
+    cost_usd: z.number().min(0),
+    session_id: z.string().max(128).nullable(),
+    error: z.string().max(4000).nullable(),
+    denied_tool_calls: z.array(DenialZ).max(50),
+  })
+  .strict();
+
+export const ImplementResultZ = z
+  .object({
+    contract_version: z.literal('1'),
+    attempt_id: z.guid(),
+    phase: z.literal('implement'),
+    outcome: z.enum(['pr_opened', 'already_exists', 'no_changes', 'build_failed', 'tests_failed', 'policy_diff', 'failed']),
+    branch: z.string().max(255).nullable(),
+    pr_url: z.string().max(512).nullable(),
+    pr_number: z.number().int().min(1).nullable(),
+    base_commit: z.string().max(64).nullable(),
+    files: z.array(z.string().max(512)).max(100),
+    build_passed: z.boolean(),
+    tests_passed: z.boolean(),
+    log_tail: z.string().max(8192),
+    deviations: z.array(z.string().max(2000)).max(20),
+    cost_usd: z.number().min(0),
+    session_id: z.string().max(128).nullable(),
+    error: z.string().max(4000).nullable(),
+    denied_tool_calls: z.array(DenialZ).max(50),
+  })
+  .strict();
+
+export const RequestZ = z
+  .object({
+    contract_version: z.literal('1'),
+    attempt_id: z.guid(),
+    incident_id: z.guid(),
+    phase: z.enum(['plan', 'implement']),
+    budget: z
+      .object({ max_cost_usd: z.number().min(0).max(1000), deadline_seconds: z.number().int().min(60).max(86400) })
+      .strict(),
+    repository: z
+      .object({
+        url: z.string().max(512).regex(/^(https:\/\/|http:\/\/|file:\/\/)[^\s]+$/),
+        default_branch: z.string().min(1).max(255),
+        path: z.string().max(512),
+        branch: z.string().regex(/^hephaisto\/codefix-[0-9a-f]{12}$/),
+      })
+      .strict(),
+    context: z.object({ repository_url: z.string().min(1).max(512), ref: z.string().min(1).max(255) }).strict(),
+    incident: z
+      .object({
+        title: z.string().max(512),
+        kind: z.string().max(64),
+        severity: z.string().max(32),
+        target: z
+          .object({
+            namespace: z.string().max(253),
+            kind: z.string().max(64),
+            name: z.string().max(253),
+            workload: z.string().max(600),
+          })
+          .strict(),
+        image: z.string().max(1024).nullable(),
+        rollout_revision: z.string().max(64).nullable(),
+        escalation_reason: z.string().max(64),
+      })
+      .strict(),
+    findings: z
+      .array(
+        z
+          .object({
+            id: z.guid(),
+            primary: z.boolean(),
+            category: z.string().max(64),
+            confidence: z.number().min(0).max(1),
+            hypothesis: z.string().max(4000),
+            evidence: z
+              .array(z.object({ step_id: z.guid(), tool: z.string().max(128), excerpt: z.string().max(2048) }).strict())
+              .max(20),
+          })
+          .strict(),
+      )
+      .max(10),
+    investigation_summary: z.string().max(8000).nullable(),
+    plan: PlanResultZ.nullable(),
+  })
+  .strict();
+
+const WorkloadZ = z
+  .object({
+    namespace: z.string(),
+    kind: z.string(),
+    name: z.string(),
+    imageRepo: z.string().optional(),
+    helmChart: z.string().optional(),
+    aliases: z.array(z.string()).optional(),
+  })
+  .strict();
+
+export const RepoEntryZ = z
+  .object({
+    name: z.string(),
+    url: z.string().regex(/^(https:\/\/|file:\/\/|\/)/),
+    defaultBranch: z.string(),
+    stack: z.enum(['dotnet', 'nuxt', 'python', 'other']),
+    projectFile: z.string().optional(),
+    path: z.string().optional(),
+    owner: z.string().optional(),
+    coderEnabled: z.boolean(),
+    workloads: z.array(WorkloadZ),
+    commands: z
+      .object({ restore: z.string().optional(), build: z.string().optional(), test: z.string().optional(), typecheck: z.string().optional() })
+      .strict(),
+    verification: z.object({ hasUnitTests: z.boolean(), note: z.string().optional() }).strict(),
+    cait: z.object({ pinned: z.boolean().optional(), sibling: z.enum(['never', 'if-incident-targets-cait']).optional() }).strict().optional(),
+    protectedPaths: z.array(z.string()).optional(),
+    timeouts: z
+      .object({
+        restoreSeconds: z.number().int().min(1).optional(),
+        buildSeconds: z.number().int().min(1).optional(),
+        testSeconds: z.number().int().min(1).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+export const ReposZ = z
+  .object({
+    defaults: z
+      .object({
+        pr: z
+          .object({ assignee: z.string(), labels: z.array(z.string()), branchPrefix: z.literal('hephaisto/'), draft: z.literal(true) })
+          .strict(),
+        clone: z.object({ filter: z.enum(['blob:none', 'none']) }).strict(),
+        imageTagIsCommitSha: z.boolean(),
+        protectedPaths: z.array(z.string()),
+      })
+      .strict(),
+    repos: z.array(RepoEntryZ),
+  })
+  .strict();
+
+export type CodeFixRequest = z.infer<typeof RequestZ>;
+export type PlanResult = z.infer<typeof PlanResultZ>;
+export type ImplementResult = z.infer<typeof ImplementResultZ>;
+export type Denial = z.infer<typeof DenialZ>;
+export type VerificationLevel = z.infer<typeof VerificationLevelZ>;
+export type Repos = z.infer<typeof ReposZ>;
+export type RepoEntry = z.infer<typeof RepoEntryZ>;
+export type Phase = CodeFixRequest['phase'];

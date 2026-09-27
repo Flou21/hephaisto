@@ -1,0 +1,64 @@
+#!/usr/bin/env node
+// Claude Code command hook around the runner's guard (src/guard.ts), registered by dev-context's
+// .claude/settings.json:
+//   PreToolUse  -> /opt/coder/bin/guard         exit 0 = allow, exit 2 + reason on stderr = deny
+//   PostToolUse -> /opt/coder/bin/guard --log   logs the call to stderr, ALWAYS exits 0
+// Defence in depth: the in-process hook and canUseTool in the driver are the primary enforcement
+// and use the same evaluate(). This one FAILS CLOSED - misconfigured or crashing, it denies.
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const logMode = process.argv.includes('--log');
+const here = dirname(fileURLToPath(import.meta.url));
+
+function deny(reason) {
+  process.stderr.write(`${reason}\n`);
+  process.exit(2);
+}
+
+let data = '';
+try {
+  for await (const chunk of process.stdin) data += chunk;
+} catch {
+  /* no stdin */
+}
+
+let hook = {};
+try {
+  hook = JSON.parse(data || '{}');
+} catch {
+  if (logMode) process.exit(0);
+  deny('guard: hook input is not JSON; denying');
+}
+
+if (logMode) {
+  try {
+    const input = hook.tool_input ?? {};
+    const what = typeof input.command === 'string' ? input.command : typeof input.file_path === 'string' ? input.file_path : JSON.stringify(input);
+    process.stderr.write(`[guard --log] ${hook.hook_event_name ?? '?'} ${hook.tool_name ?? '?'}: ${String(what).slice(0, 300).replace(/\n/g, ' ')}\n`);
+  } catch {
+    /* logging never fails a tool call */
+  }
+  process.exit(0);
+}
+
+try {
+  const { evaluate } = await import(join(here, '..', 'dist', 'guard.js'));
+  const mode = process.env.GUARD_MODE;
+  const targetDir = process.env.GUARD_TARGET_DIR;
+  if ((mode !== 'plan' && mode !== 'implement') || !targetDir) {
+    deny('guard is not configured (GUARD_MODE / GUARD_TARGET_DIR missing); denying every tool call');
+  }
+  const protectedGlobs = JSON.parse(process.env.GUARD_PROTECTED_GLOBS ?? '[]');
+  const v = evaluate(String(hook.tool_name ?? ''), hook.tool_input ?? {}, mode, {
+    targetDir,
+    protectedGlobs,
+    allowedBranch: process.env.GUARD_ALLOWED_BRANCH || undefined,
+    homeDir: process.env.GUARD_HOME || undefined,
+    cwd: typeof hook.cwd === 'string' && hook.cwd ? hook.cwd : undefined,
+  });
+  if (v.allow) process.exit(0);
+  deny(v.reason);
+} catch (e) {
+  deny(`guard failed (${e?.message ?? e}); denying`);
+}

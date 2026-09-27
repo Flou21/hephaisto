@@ -197,11 +197,14 @@ public class StructuralGraderTests
     }
 
     [Fact]
-    public void The_answer_key_covers_the_twelve_gradeable_fixtures_and_omits_c6_and_c9()
+    public void The_answer_key_covers_the_fourteen_gradeable_fixtures_and_omits_c6_and_c9()
     {
-        AnswerKey.All.Should().HaveCount(12);
+        // c15 and c19 joined in v0.9.0 as the code-fix fixtures. c16-c18 are designed and not
+        // built; when they land this list grows, and it should grow here rather than by
+        // loosening the assertion into a lower bound.
+        AnswerKey.All.Should().HaveCount(14);
         AnswerKey.All.Select(k => k.Fixture).Should().BeEquivalentTo(
-            ["c1", "c2", "c3", "c4", "c5", "c7", "c8", "c10", "c11", "c12", "c13", "c14"]);
+            ["c1", "c2", "c3", "c4", "c5", "c7", "c8", "c10", "c11", "c12", "c13", "c14", "c15", "c19"]);
 
         // c6 cannot fire on local-path and c9 is node-wide; neither is gradeable, and pretending
         // otherwise is how a corpus of 8 gets reported as 10.
@@ -263,10 +266,11 @@ public class StructuralGraderTests
             ]);
 
         // And the other direction stays asserted: the four fixtures a restart would answer
-        // plausibly and wrongly still forbid it.
+        // plausibly and wrongly still forbid it - and so do the two code-fix fixtures, whose
+        // fault no cluster action answers and whose route to a fix is proposing nothing.
         AnswerKey.All.Where(k => k.MustNotPropose.Contains(ActionType.RestartPod))
             .Select(k => k.Fixture)
-            .Should().BeEquivalentTo(["c1", "c2", "c3", "c4"]);
+            .Should().BeEquivalentTo(["c1", "c2", "c3", "c4", "c15", "c19"]);
     }
 
     [Fact]

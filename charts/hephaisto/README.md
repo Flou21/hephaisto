@@ -71,6 +71,52 @@ The agent binds far more configuration than the chart promotes to values: `Llm:M
 `Section__Key` environment variables through `extraEnv`. That is deliberate — mirroring every
 options class in YAML would duplicate them and drift the first time one is renamed.
 
+## Code fixes (v0.9.0)
+
+When an investigation's grounded primary finding is a bug in application code, nothing in the
+cluster can fix it. With `codeFix.enabled`, Hephaisto hands that finding to a **coder** — Claude
+Code in a Kubernetes Job of its own — which clones the repository the workload is mapped to and
+writes a fix **plan**, read-only and automatically. After a human approves the plan, a second Job
+implements it on a `hephaisto/codefix-*` branch, runs the build and tests, and opens a **Draft
+PR**. A human reviews, merges and deploys; nothing here does.
+
+It ships **off, and unrendered**: `codeFix.enabled: false` renders no coder object at all, and
+`codeFix.mode` (`off | plan | pr`) is its own axis, independent of the agent's `mode`. An
+`Observe` agent can still plan code fixes — planning writes nothing anywhere — and the agent's kill
+switch still stops the stage.
+
+**What the coder can reach.** No cluster identity: its ServiceAccount is bound to nothing and its
+token is never mounted. No Hephaisto credential and no inbound surface: it answers by printing a
+framed result to its own log, which Hephaisto reads. Egress only through a squid allowlist proxy
+(`codeFix.egressProxy`), enforced by a NetworkPolicy that is independent of the top-level one —
+DNS and the proxy, nothing else — and every request it makes is a line in the proxy's log.
+
+**What Hephaisto gains.** `create jobs`, in exactly one namespace. The chart refuses to render if
+that namespace is `default`, `kube-*`, the release or observability namespace, or any
+`policy.actionableNamespaces` entry, and the agent refuses to boot if it holds `create jobs`
+anywhere else.
+
+```sh
+kubectl create namespace hephaisto-coder
+# Every key optional. GITHUB_TOKEN: a FINE-GRAINED PAT, contents:write + pull_requests:write,
+# limited to the mapped repositories. Hephaisto never reads this Secret.
+kubectl -n hephaisto-coder create secret generic hephaisto-codefix \
+  --from-literal=CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-... \
+  --from-literal=GITHUB_TOKEN=github_pat_...
+
+helm upgrade hephaisto oci://ghcr.io/flou21/charts/hephaisto -n hephaisto --reuse-values \
+  --set codeFix.enabled=true --set codeFix.mode=plan \
+  --set codeFix.contextRepository.url=https://github.com/you/dev-context \
+  --set 'codeFix.repositories[0].workload=shop/Deployment/shop-api' \
+  --set 'codeFix.repositories[0].url=https://github.com/you/shop'
+```
+
+Protect the default branch of every mapped repository before the first attempt — no direct push,
+no force push, for everyone including the coder's token. It is the one control the chart cannot
+check, and `NOTES.txt` lists the repositories it applies to. Start in `plan`, read the plans, and
+move to `pr` only with `auth.enabled: true`: approving a repository write on an unauthenticated
+click is refused at render time and again at startup.
+
 ## Try it without a cluster
 
 The published image can run with no Kubernetes behind it at all, loaded with recorded

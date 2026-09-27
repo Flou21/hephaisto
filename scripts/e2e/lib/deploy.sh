@@ -111,6 +111,7 @@ deploy_install() {
         --set "mode=${E2E_MODE:-Observe}" \
         --set "policy.autoEnabledActionTypes={$(act_auto_enabled)}" \
         "${extra[@]+"${extra[@]}"}" \
+        "${E2E_HELM_EXTRA[@]+"${E2E_HELM_EXTRA[@]}"}" \
         --wait --timeout 8m \
         || { fail "hephaisto installed" "helm install failed; see kubectl describe"; return 1; }
 
@@ -236,6 +237,44 @@ deploy_assert_rbac() {
     must "read pods cluster-wide"             get pods -A
     must "read events cluster-wide"           get events -A
     must "read nodes"                         get nodes
+
+    # --- Code fixes: `create jobs` in the coder namespace, and nowhere else -----------------
+    # The refusals hold whether or not the stage is enabled: with it off, `create jobs` must
+    # exist nowhere at all, which is the stronger form of the same claim.
+    local coder_ns="${CODER_NS:-hephaisto-coder}"
+    must_not "create jobs in its own namespace"          create jobs -n "$APP_NS"
+    must_not "create jobs in the chaos namespace"        create jobs -n "$CHAOS_NS"
+    must_not "create jobs in kube-system"                create jobs -n kube-system
+    must_not "create jobs cluster-wide"                  create jobs -A
+    must_not "create pods anywhere"                      create pods -A
+    must_not "create pods in the coder namespace"        create pods -n "$coder_ns"
+    must_not "read secrets in the coder namespace"       get secrets -n "$coder_ns"
+    must_not "create secrets anywhere"                   create secrets -A
+
+    # The grants are only there when the chart rendered them. Detected from the Role itself
+    # rather than from a harness flag, so the answer is about what is installed; when it is
+    # absent the grants are SKIPPED by name, never passed - a skipped positive control is
+    # visible in the report, and a missing one would make every refusal above vacuous.
+    if kc -n "$coder_ns" get role hephaisto-codefix >/dev/null 2>&1; then
+        local verb
+        for verb in create get list watch delete; do
+            must "$verb jobs in the coder namespace" "$verb" jobs -n "$coder_ns"
+        done
+        must "create configmaps in the coder namespace"  create configmaps -n "$coder_ns"
+        must "read coder pod logs"                       get pods/log -n "$coder_ns"
+
+        # The coder's own identity is bound to nothing.
+        local coder_sa="system:serviceaccount:$coder_ns:hephaisto-coder"
+        if kc auth can-i get pods -n "$coder_ns" --as="$coder_sa" >/dev/null 2>&1 \
+           || kc auth can-i get secrets -n "$coder_ns" --as="$coder_sa" >/dev/null 2>&1 \
+           || kc auth can-i create jobs -n "$coder_ns" --as="$coder_sa" >/dev/null 2>&1; then
+            fail "the coder ServiceAccount is bound to nothing" "it holds at least one grant"
+        else
+            pass "the coder ServiceAccount is bound to nothing"
+        fi
+    else
+        skip "code-fix grants in $coder_ns" "codeFix is not enabled in this install"
+    fi
 }
 
 # ---------------------------------------------------------------------------------------

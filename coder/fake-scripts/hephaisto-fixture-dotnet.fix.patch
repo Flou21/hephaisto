@@ -1,0 +1,18 @@
+diff --git a/src/Shop.Api/Startup/Endpoints.cs b/src/Shop.Api/Startup/Endpoints.cs
+index ba33f3b..6505034 100644
+--- a/src/Shop.Api/Startup/Endpoints.cs
++++ b/src/Shop.Api/Startup/Endpoints.cs
+@@ -14,9 +14,11 @@ public static class Endpoints
+     {
+         ArgumentNullException.ThrowIfNull(options);
+ 
+-        if (options.Endpoints.Count == 0)
++        // Shop:Endpoints is optional, and when the section is absent the binder leaves the
++        // list null rather than empty - so null has to mean "none configured" too.
++        if (options.Endpoints is not { Count: > 0 } endpoints)
+             return Local;
+ 
+-        return options.Endpoints[0];
++        return endpoints[0];
+     }
+ }

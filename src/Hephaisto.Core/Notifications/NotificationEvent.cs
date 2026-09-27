@@ -62,4 +62,19 @@ public enum NotificationEvent
     /// from an attack, which is why this is notifiable and not merely audited.
     /// </summary>
     PolicyChanged = 6,
+
+    /// <summary>
+    /// A coder has written a fix plan and it waits on a person. Routed to developers rather than
+    /// on-call: the decision is "is this the right change to a repository", not "is the cluster ok".
+    /// </summary>
+    CodeFixPlanReady = 7,
+
+    /// <summary>A Draft PR exists. Carries its URL; a human reviews, merges and deploys.</summary>
+    CodeFixPrOpened = 8,
+
+    /// <summary>
+    /// A code fix ended without a PR - failed, cancelled or expired. Silence would read as "still
+    /// working", which is the one wrong conclusion to leave someone with.
+    /// </summary>
+    CodeFixFailed = 9,
 }

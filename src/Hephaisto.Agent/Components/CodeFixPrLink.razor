@@ -1,0 +1,29 @@
+@using Hephaisto.Agent.CodeFix
+
+@*
+    The pull request, and what the coder reported about building and testing it. Opens in a new
+    tab with rel=noopener: the forge is another origin, and the console tab is the one somebody
+    is watching during an incident.
+*@
+
+<span class="hp-cf-pr">
+    @if (Attempt.PrUrl is { Length: > 0 } url)
+    {
+        <a class="hp-pr-link" href="@url" target="_blank" rel="noopener" data-testid="codefix-pr-link"
+           title="@url">
+            <span class="glyph">+</span> @(Attempt.PrNumber is { } n ? $"#{n}" : "draft PR")
+        </a>
+    }
+    else
+    {
+        <span class="hp-no"><span class="glyph">-</span> no PR link recorded</span>
+    }
+
+    <CodeFixCheck Label="build" Passed="Attempt.BuildPassed" />
+    <CodeFixCheck Label="tests" Passed="Attempt.TestsPassed" />
+</span>
+
+@code {
+    [Parameter, EditorRequired]
+    public CodeFixAttemptView Attempt { get; set; } = default!;
+}

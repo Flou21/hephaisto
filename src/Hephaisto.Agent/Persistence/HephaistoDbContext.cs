@@ -75,6 +75,8 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
 
     public DbSet<NotificationDelivery> NotificationDeliveries => Set<NotificationDelivery>();
 
+    public DbSet<CodeFixAttempt> CodeFixAttempts => Set<CodeFixAttempt>();
+
     /// <summary>
     /// Marks children created since <paramref name="fromEventIndex"/> / for a new
     /// investigation as Added, so they INSERT rather than UPDATE.
@@ -275,6 +277,39 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
                 .WithOne(a => a.Incident!)
                 .HasForeignKey(a => a.IncidentId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            e.HasMany(i => i.CodeFixAttempts)
+                .WithOne(a => a.Incident!)
+                .HasForeignKey(a => a.IncidentId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<CodeFixAttempt>(e =>
+        {
+            e.ToTable("code_fix_attempts");
+            e.HasKey(a => a.Id);
+
+            // Verbatim documents as they crossed the process boundary. jsonb so "what did the
+            // coder say" is a query, not a grep through pod logs that expired an hour ago.
+            e.Property(a => a.RequestJson).HasColumnType("jsonb");
+            e.Property(a => a.PlanResultJson).HasColumnType("jsonb");
+            e.Property(a => a.ImplementResultJson).HasColumnType("jsonb");
+
+            e.Property(a => a.RepositoryUrl).IsRequired();
+            e.Property(a => a.Branch).IsRequired();
+
+            e.HasIndex(a => a.IncidentId, "ix_code_fix_attempts_incident_id");
+            e.HasIndex(a => new { a.State, a.CreatedAt });
+
+            // The per-repository daily cap counts over this.
+            e.HasIndex(a => new { a.RepositoryUrl, a.CreatedAt });
+
+            // At most one open attempt per incident, enforced by Postgres and not only by the
+            // eligibility check: two alerts for one incident arriving in the same second both
+            // pass an in-memory "is one open" read, and exactly one of them may win.
+            e.HasIndex(a => a.IncidentId, "ux_code_fix_attempts_one_open_per_incident")
+                .IsUnique()
+                .HasFilter(CodeFixOpenStateFilterSql("state"));
         });
 
         b.Entity<IncidentEvent>(e =>
@@ -852,6 +887,9 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
     // ------------------------------------------------------------------
 
     /// <summary>The partial-index predicate, shared with the migration's raw SQL.</summary>
+    internal static string CodeFixOpenStateFilterSql(string column) =>
+        $"{column} IN ({string.Join(", ", Hephaisto.Core.CodeFix.CodeFixStates.Open.Select(st => $"'{st}'"))})";
+
     internal static string OpenStateFilterSql(string column) =>
         $"{column} IN ({string.Join(", ", OpenStates.Select(s => $"'{s}'"))})";
 

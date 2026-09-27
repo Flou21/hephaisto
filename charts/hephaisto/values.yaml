@@ -240,6 +240,18 @@ secrets:
   # value because the URL *is* the credential - its `sig` query parameter is the entire
   # authentication - so it must never reach `helm get values` or a git repo.
   notificationTeams: hephaisto-notification-teams
+  # The code-fix coder's credentials. Only referenced when codeFix.enabled is true, and never
+  # read by Hephaisto at all: the Secret lives in codeFix.namespace - NOT in this release's
+  # namespace - and each coder Job receives it by secretKeyRef. Hephaisto can name it and holds
+  # no RBAC that could read it. Every key is optional; which ones a coder needs depends on you:
+  #
+  #   CLAUDE_CODE_OAUTH_TOKEN  the Claude subscription token, from `claude setup-token`
+  #   ANTHROPIC_API_KEY        the API-key alternative to the OAuth token
+  #   GITHUB_TOKEN             a FINE-GRAINED PAT: contents:write + pull_requests:write on the
+  #                            mapped repositories ONLY. Never a classic token - a classic
+  #                            `repo` scope is every repository the account can see.
+  #   NUGET_GITHUB_TOKEN       read:packages, for a private GitHub Packages NuGet feed
+  codeFix: hephaisto-codefix
 
 # -----------------------------------------------------------------------------------------
 # Alertmanager - for the SilenceAlert action, and nothing else
@@ -306,7 +318,8 @@ notifications:
   # thing being routed is the message that says the agent needs help.
   #
   # events: IncidentEscalated | ApprovalRequired | IncidentResolved | VerificationFailed |
-  #         ModeChanged | PolicyChanged
+  #         ModeChanged | PolicyChanged |
+  #         CodeFixPlanReady | CodeFixPrOpened | CodeFixFailed      (see codeFix below)
   # minSeverity: Info | Warning | Critical   (inclusive; defaults to Info)
   # namespaces: empty means "not scoped by namespace", which is the only way a route can carry
   #             ModeChanged or PolicyChanged - those are about the agent and have no namespace.
@@ -317,6 +330,227 @@ notifications:
   #     minSeverity: Warning
   #     namespaces: []
   routes: []
+
+# -----------------------------------------------------------------------------------------
+# Code fixes - a SECOND, separately gated stage. Off, and not even rendered, by default.
+# -----------------------------------------------------------------------------------------
+# When an investigation's grounded primary finding is a bug in application code, nothing in the
+# cluster can fix it: the planner says "a human must fix this" and the incident escalates. This
+# stage hands that finding to a coder - Claude Code, in a Kubernetes Job of its own - which
+# clones the repository the workload is mapped to and writes a fix PLAN (automatically,
+# read-only). After a human approves the plan, a second Job implements it on a branch, runs the
+# build and tests, and opens a DRAFT pull request. A human reviews, merges and deploys. Nothing
+# here merges, deploys or touches the workload.
+#
+# WHAT THE CODER CAN REACH, which is the security argument in full:
+#
+#   - NO cluster identity. Its ServiceAccount is bound to nothing and its token is never
+#     mounted. It cannot read a Secret, a log, a pod or anything else in the cluster.
+#   - NO Hephaisto credential and NO inbound surface. It answers by printing a framed block to
+#     its own log; Hephaisto pulls it with the `get pods/log` it already holds. A callback
+#     endpoint would be a second write surface reachable by a shell that just read
+#     attacker-influenceable logs.
+#   - Egress ONLY through the allowlist proxy below (when networkPolicy and egressProxy are on,
+#     which is the default): DNS, and the proxy's port. Every request it makes is on the proxy's
+#     stdout - that log is the per-attempt outbound audit.
+#   - Its write target is a git BRANCH and a DRAFT PR, with a token scoped to the mapped
+#     repositories. Branch protection on each default branch is YOUR prerequisite - the chart
+#     cannot check it, NOTES.txt reminds you.
+#
+# WHAT HEPHAISTO GAINS: `create jobs` - in exactly ONE namespace, this one, which is refused at
+# render time if it is also a namespace Hephaisto may act in, its own, the observability one,
+# `default` or kube-*. The agent's RbacSelfCheck refuses to boot if it holds `create jobs`
+# anywhere else. See templates/rbac-codefix.yaml.
+#
+# TWO SWITCHES, deliberately:
+#   enabled  renders the infrastructure (namespace objects, RBAC, proxy, policies). Off renders
+#            NOTHING code-fix related, except `codeFixMode: "off"` in the switch ConfigMap.
+#   mode     off | plan | pr - what the stage may DO. Its own axis, independent of the agent's
+#            `mode`: an Observe-only agent may still plan code fixes, because planning writes
+#            nothing anywhere. The agent's kill switch (mode Off, the emergency stop, the
+#            runaway latch) still overrides it, and so does the codeFixMode ConfigMap key -
+#            the most restrictive arm wins, and silence is Off.
+#
+# PROMOTE IN ORDER: enabled + plan, then watch the plans for a while, then pr - and pr only once
+# auth.enabled is true. Approving a repository write on the strength of an unauthenticated click
+# is refused at render time AND at startup.
+codeFix:
+  enabled: false
+
+  # off | plan | pr. QUOTE IT: YAML 1.1 reads a bare `off` as the boolean false, which the
+  # schema then refuses with a type error that does not mention quoting.
+  #   off   evaluate every escalation and record "would have started a code fix" - no Job, $0.
+  #   plan  start a read-only plan Job for each eligible incident.
+  #   pr    additionally allow an approved plan to be implemented and opened as a Draft PR.
+  mode: "off"
+
+  # Where coder Jobs run. Must exist (or set createNamespace), and must never be a namespace
+  # Hephaisto may act in - see the header. The Secret named by secrets.codeFix lives HERE.
+  namespace: hephaisto-coder
+  # Render the Namespace object. Off by default because most GitOps setups own namespaces
+  # elsewhere, and a chart that deletes a namespace on uninstall takes the Secret with it.
+  createNamespace: false
+
+  # The coder image: Claude Code + the Agent SDK, git, gh, the .NET SDK, bun, python. Pinned by
+  # the chart's appVersion like the agent image, so chart, agent and coder speak one contract.
+  image:
+    repository: ghcr.io/flou21/hephaisto-coder
+    # Empty means .Chart.AppVersion.
+    tag: ""
+    pullPolicy: IfNotPresent
+
+  # The dev-context repository: the coder's CLAUDE.md, rules, skills, curated memory and
+  # repos.yaml. Cloned at `ref` at the start of EVERY Job, so a merged change is in effect for the
+  # next attempt with no restart. Pin a tag instead of a branch if you want a review gate between
+  # "merged" and "used". Needs to be readable with GITHUB_TOKEN.
+  contextRepository:
+    url: ""
+    ref: main
+
+  # THE AUTHORIZATION LIST: which workload maps to which repository. Empty maps nothing, so no
+  # Job can start however eligible an incident is. This is the operator's half of a double
+  # opt-in; the other half is dev-context's repos.yaml (coderEnabled: true), which the coder
+  # itself enforces. Same posture as policy.actionableNamespaces.
+  #
+  #   workload       namespace/Kind/name of the CONTROLLER, e.g. shop/Deployment/shop-api
+  #   url            the repository to clone and open the PR against
+  #   defaultBranch  the PR's base, and the branch that must be protected
+  #   path           subdirectory the workload is built from; empty for the root
+  #
+  # repositories:
+  #   - workload: shop/Deployment/shop-api
+  #     url: https://github.com/example/shop
+  #     defaultBranch: main
+  #     path: ""
+  repositories: []
+
+  # Every mapped repository's host must be in here, which the chart checks at render time.
+  # Hephaisto re-checks the PR URL the coder reports against it before recording a PR. Only
+  # GitHub is supported in this release: the coder opens PRs with `gh`.
+  allowedRepositoryHosts:
+    - github.com
+
+  # Which primary-finding categories may start a coder. `application` is the whole point;
+  # `config` is an opt-in (a wrong key in code vs a wrong value in a manifest is often a judgment
+  # call). `image` is deliberately NEVER a default - a bad image is a build or deploy problem.
+  # Also never, regardless of this list: Unschedulable, ImagePullBackOff, NodePressure and
+  # PvcNearlyFull incidents, which are infrastructure by construction.
+  #
+  # This list and allowedRepositoryHosts are the WHOLE list: the agent has no built-in entries
+  # for either (backlog #120), so an empty list here permits nothing.
+  eligibleCategories:
+    - application
+
+  # A primary finding below this confidence starts nothing.
+  confidenceFloor: 0.7
+
+  # Money and rate. cost is NOMINAL on a subscription (OAuth) token - it is what the same run
+  # would have cost on the API - so these bound behaviour rather than a bill. A crashed runner is
+  # charged its phase cap. Coder spend also enters the agent's global LLM budget windows.
+  budgets:
+    perPlanUsd: 5
+    perImplementUsd: 15
+    perDayUsd: 50
+    # Per mapped repository per day, so one flapping service cannot open a PR an hour.
+    attemptsPerRepositoryPerDay: 3
+    # Coder Jobs in flight at once. 1 is right for a subscription token, which shares a
+    # rolling usage window with its owner's interactive use - and the NuGet cache below is RWO.
+    concurrentJobs: 1
+
+  # .NET TimeSpan - "hh:mm:ss" or "d.hh:mm:ss" - NOT Go durations: "30m" does not parse and the
+  # agent would fail to start. Plan and implement deadlines must exceed four minutes; the runner
+  # reserves three to report. They become the Job's activeDeadlineSeconds.
+  deadlines:
+    plan: "00:30:00"
+    implement: "01:00:00"
+    # A plan nobody decided on expires. Stale advice is not advice.
+    approvalTimeout: "3.00:00:00"
+    # Finished Jobs and their logs are garbage-collected after this - the result is in Postgres.
+    jobTtl: "01:00:00"
+    pollInterval: "00:00:15"
+
+  # The coder's scratch space (an emptyDir): the clones, the build output, the NuGet packages
+  # when nugetCache is off.
+  workspaceSize: 8Gi
+
+  # Per coder pod. A .NET restore + build + test of a mid-sized service wants the memory.
+  resources:
+    cpuRequest: "1"
+    memoryRequest: 2Gi
+    cpuLimit: "4"
+    memoryLimit: 6Gi
+
+  # A PR is opened only when the runner's OWN build and tests were green. Off means a red PR can
+  # be opened (still a draft, with the failure in its body).
+  requireGreenBuild: true
+
+  # THROWAWAY E2E CLUSTERS ONLY. Lets mode: pr run with auth.enabled false, so the approval that
+  # authorises a repository write is an unauthenticated click. The agent logs a warning at every
+  # start while this is on.
+  allowUnauthenticatedApproval: false
+
+  # real | fake. fake runs scripted, $0 plumbing (dev and CI): no model is called, and the coder
+  # refuses to start if a real token is present.
+  sdk: real
+  # "" | shim. shim answers `gh` locally instead of calling GitHub - dev and CI only.
+  gh: ""
+
+  # The allowlist egress proxy (squid), in codeFix.namespace. Calico OSS and most CNIs have no
+  # FQDN NetworkPolicy, so a domain allowlist has to be a proxy: the NetworkPolicy lets coder pods
+  # reach DNS and this proxy and nothing else, and the proxy lets them reach these domains and
+  # nothing else. CONNECT only to 443; plain HTTP only to 80. Every request is logged to its
+  # stdout - the per-attempt outbound audit.
+  #
+  # Domain syntax is squid `dstdomain`: `.example.com` matches example.com AND every subdomain;
+  # `example.com` matches exactly. Squid REFUSES TO START on an entry covered by another one
+  # (api.nuget.org beside .nuget.org), so the chart drops covered entries when it renders.
+  egressProxy:
+    enabled: true
+    image:
+      repository: ubuntu/squid
+      # Ubuntu 24.04 LTS base, squid 6.x. Pinned: a proxy that is the only way out of the pod
+      # is not something to let float.
+      tag: 6.6-24.04_edge
+      pullPolicy: IfNotPresent
+    allowlist:
+      # The model (api.anthropic.com) and the OAuth token's endpoints.
+      - .anthropic.com
+      - .claude.ai
+      - platform.claude.com
+      # git clone/push, gh, release assets.
+      - github.com
+      - api.github.com
+      - codeload.github.com
+      - objects.githubusercontent.com
+      - .githubusercontent.com
+      # NuGet: GitHub Packages and nuget.org.
+      - nuget.pkg.github.com
+      - api.nuget.org
+      - .nuget.org
+      # npm, PyPI, and GHCR for container base-image lookups a build may make.
+      - registry.npmjs.org
+      - pypi.org
+      - files.pythonhosted.org
+      - ghcr.io
+    # Added to `allowlist` rather than replacing it, so admitting one internal package mirror
+    # does not mean restating the whole list.
+    extraAllowlist: []
+
+  # A PVC for NuGet packages shared across coder Jobs, so every attempt does not start with a
+  # cold 2-4 minute restore. ReadWriteOnce, which is why concurrentJobs defaults to 1: two Jobs
+  # scheduled on different nodes cannot both mount it.
+  nugetCache:
+    enabled: false
+    size: 10Gi
+    # Empty means the cluster's default StorageClass.
+    storageClass: ""
+
+  # The coder NetworkPolicies. INDEPENDENT of the top-level networkPolicy.enabled, on purpose:
+  # an install that runs the agent without a policy (the webhook protected some other way) must
+  # still not run a shell-holding model with open egress. Turning this off is a deliberate act:
+  # without it the coder can reach anything the cluster can, and the proxy is advisory.
+  networkPolicy:
+    enabled: true
 
 # -----------------------------------------------------------------------------------------
 # Database

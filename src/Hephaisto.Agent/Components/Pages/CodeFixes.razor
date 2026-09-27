@@ -1,0 +1,274 @@
+@page "/codefixes"
+@using Hephaisto.Agent.CodeFix
+@using Hephaisto.Core.CodeFix
+@inject IServiceScopeFactory Scopes
+@inject IIncidentNotifier Notifier
+@implements IDisposable
+
+<PageTitle>hephaisto — code fixes</PageTitle>
+
+<h1>code fixes</h1>
+
+@* The mode first, because it is the answer to "why is nothing happening here": an empty table
+   under code-fix mode Off is the configuration working, not the feature broken. *@
+<div class="hp-codefix-summary" data-testid="codefix-summary">
+    @if (_mode is { } mode)
+    {
+        <span class="hp-mode @Display.CodeFixModeClass(mode.Effective)" title="@mode.Explanation"
+              data-testid="codefix-mode">
+            code-fix mode @mode.Effective.ToString().ToLowerInvariant()
+        </span>
+    }
+    else
+    {
+        <span class="hp-mode mode-unknown">code-fix mode …</span>
+    }
+
+    @if (_counts is { } c)
+    {
+        <span class="hp-codefix-count" data-testid="codefix-count-running">
+            <span class="glyph">~</span> <strong class="mono">@c.Running</strong> running
+        </span>
+        <span class="hp-codefix-count" data-testid="codefix-count-awaiting">
+            <span class="glyph">!</span> <strong class="mono">@c.AwaitingApproval</strong> awaiting approval
+        </span>
+        <span class="hp-codefix-count" data-testid="codefix-count-prs">
+            <span class="glyph">+</span> <strong class="mono">@c.PrsOpenedLastWeek</strong> PRs opened in the last 7 days
+        </span>
+    }
+
+    @if (_mode is { CanApprove: false, ApprovalBlockedBecause: { Length: > 0 } blocked })
+    {
+        <span class="hp-muted hp-codefix-blocked" title="@blocked">approval blocked: @blocked</span>
+    }
+</div>
+
+<div class="hp-filters">
+    <label>
+        state
+        <select value="@_state" @onchange="OnStateChanged" data-testid="codefix-filter">
+            <option value="all">all</option>
+            <option value="open">open</option>
+            @foreach (var s in Enum.GetValues<CodeFixState>())
+            {
+                <option value="@s">@Display.CodeFixWord(s)</option>
+            }
+        </select>
+    </label>
+
+    <span class="hp-filter-status">
+        @if (_loading)
+        {
+            <span class="hp-muted">loading…</span>
+        }
+        else
+        {
+            <span class="hp-muted">@_attempts.Count shown · refreshed @Display.TimeOnly(_refreshedAt)</span>
+        }
+        @if (_error is not null)
+        {
+            <span class="hp-error" title="@_error"><span class="glyph">!!</span> query failed</span>
+        }
+    </span>
+</div>
+
+@if (_attempts.Count == 0 && !_loading)
+{
+    <p class="hp-empty">
+        No code fixes match this filter.
+        @if (_mode is { Effective: CodeFixMode.Off })
+        {
+            <text>The code-fix mode is Off, so none are started — each escalation still records
+            whether one <em>would</em> have been, on its incident page.</text>
+        }
+    </p>
+}
+else
+{
+    <table class="hp-table hp-codefixes">
+        <thead>
+            <tr>
+                <th class="c-state">state</th>
+                <th class="c-cf-incident">incident</th>
+                <th class="c-target">workload</th>
+                <th class="c-cf-repo">repository</th>
+                <th class="c-cf-branch">branch</th>
+                <th class="c-cf-progress">progress</th>
+                <th class="c-num">cost</th>
+                <th class="c-time">created</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var a in _attempts)
+            {
+                <tr @key="a.Id" data-testid="codefix-row" data-state="@a.State" data-attempt="@a.Id">
+                    <td class="c-state">
+                        <span class="hp-state @Display.CodeFixClass(a.State)">
+                            <span class="glyph">@Display.CodeFixGlyph(a.State)</span>
+                            @Display.CodeFixWord(a.State)
+                        </span>
+                    </td>
+                    <td class="c-cf-incident">
+                        <a href="incidents/@a.IncidentId#codefix" title="@a.IncidentTitle"
+                           data-testid="codefix-incident-link">@Display.Truncate(a.IncidentTitle, 60)</a>
+                    </td>
+                    <td class="c-target mono">@a.Workload</td>
+                    <td class="c-cf-repo mono" title="@a.Repository">@Display.ShortRepo(a.Repository)</td>
+                    <td class="c-cf-branch mono" title="@a.Branch (from @a.DefaultBranch)">@a.Branch</td>
+                    <td class="c-cf-progress">
+                        <CodeFixProgress Attempt="a" Now="_now" />
+                    </td>
+                    <td class="c-num mono"
+                        title="plan @Display.Usd(a.PlanCostUsd) · implement @Display.Usd(a.ImplementCostUsd)">
+                        $@a.TotalCostUsd.ToString("0.00", CultureInfo.InvariantCulture)
+                    </td>
+                    <td class="c-time mono">@Display.Timestamp(a.CreatedAt)</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private IReadOnlyList<CodeFixAttemptView> _attempts = [];
+    private CodeFixModeView? _mode;
+    private CodeFixCounts? _counts;
+    private DateTimeOffset _refreshedAt;
+    private DateTimeOffset _now = DateTimeOffset.UtcNow;
+    private bool _loading = true;
+    private string? _error;
+
+    /// <summary>All by default, not open: a PR is terminal for Hephaisto and it is the thing
+    /// most people come to this page to find.</summary>
+    private string _state = "all";
+
+    private CancellationTokenSource? _cts;
+
+    /// <summary>
+    /// The fallback tick, as on the incident list: the live event says an attempt moved, but
+    /// nothing publishes while a coder Job is merely running - and a Job that stops reporting is
+    /// exactly the case a reader must be able to see from the elapsed time.
+    /// </summary>
+    private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(10);
+
+    /// <summary>Kept in step with the incident list's cap for the same reason (#49).</summary>
+    private const int Limit = 200;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _cts = new CancellationTokenSource();
+
+        await LoadAsync();
+
+        _ = TickAsync(_cts.Token);
+        _ = ClockAsync(_cts.Token);
+        _ = ListenAsync(_cts.Token);
+    }
+
+    /// <summary>Only code-fix events: an unrelated signal arriving changes nothing on this page.</summary>
+    private async Task ListenAsync(CancellationToken ct)
+    {
+        try
+        {
+            await foreach (var e in Notifier.SubscribeAsync(ct))
+            {
+                if (e.Kind != IncidentLiveEventKind.CodeFixChanged)
+                {
+                    continue;
+                }
+
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    /// <summary>Moves the elapsed times once a second without a query.</summary>
+    private async Task ClockAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                _now = DateTimeOffset.UtcNow;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task TickAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(RefreshInterval);
+
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        var ct = _cts?.Token ?? CancellationToken.None;
+
+        CodeFixState? state = Enum.TryParse<CodeFixState>(_state, ignoreCase: false, out var s) ? s : null;
+
+        var attempts = await SafeAsync(() => Scopes.QueryAsync(q => q.ListAsync(state, Limit, ct)), _attempts);
+
+        // "open" is not a single state, so it is filtered here rather than in the query.
+        _attempts = _state == "open" ? attempts.Where(a => a.State.IsOpen()).ToList() : attempts;
+
+        _counts = await SafeAsync(() => Scopes.QueryAsync<CodeFixCounts?>(async q => await q.CountsAsync(ct)), _counts);
+        _mode = await SafeAsync(() => Scopes.QueryAsync<CodeFixModeView?>(async q => await q.ModeAsync(ct)), _mode);
+
+        _now = DateTimeOffset.UtcNow;
+        _refreshedAt = _now;
+        _loading = false;
+    }
+
+    /// <summary>Keeps the last good result on failure: an empty table reads as "nothing is running".</summary>
+    private async Task<T> SafeAsync<T>(Func<Task<T>> load, T fallback)
+    {
+        try
+        {
+            var result = await load();
+            _error = null;
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            return fallback;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            return fallback;
+        }
+    }
+
+    private async Task OnStateChanged(ChangeEventArgs e)
+    {
+        _state = e.Value?.ToString() ?? "all";
+        await LoadAsync();
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+}

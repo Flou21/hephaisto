@@ -1,0 +1,39 @@
+# The dev agent on a LOCAL model: gpt-oss:120b and nomic-embed-text, served by Ollama running
+# natively on this machine. Layered over values-dev.yaml by the Tiltfile when the `local-llm`
+# toggle is on. This project's dev cluster does not investigate with Gemini.
+#
+# The two endpoints below are PLACEHOLDERS. The Tiltfile overwrites both by index with
+# http://<host-ip from tilt_config.json>:11434/v1, because the address is per-machine and this
+# file is tracked. Keep the entries' order stable, or the Tiltfile's name lookup is what finds
+# them - it reads this file rather than assuming an index.
+#
+# Mirrors what scripts/e2e/lib/deploy.sh sets for an openai-compatible provider, including its
+# per-model ceilings: backlog #59 measured gpt-oss-120b at 17/30 with the 12-step default and
+# 18/20 at 20, and a ceiling tuned for one model reads as the other model being worse. The
+# wall-clock and token ceilings follow for the same reason one axis over (backlog #82, #88).
+#
+# No API key: Ollama needs none, and OpenAiChatClientFactory substitutes a placeholder for a
+# keyless local endpoint. EmbeddingDimensions stays at its 768 default, which is what
+# nomic-embed-text produces and what incident_digests.embedding is.
+#
+# Egress: values-dev.yaml leaves networkPolicy.egress OFF, so the agent pod may reach the host.
+# If that is ever turned on here, <host-ip>:11434 must be added to extraEgressCIDRs/-Ports.
+extraEnv:
+  - name: Llm__Provider
+    value: openai
+  - name: Llm__Endpoint
+    value: http://set-by-the-tiltfile:11434/v1
+  - name: Llm__Model
+    value: gpt-oss:120b
+  - name: Llm__EmbeddingProvider
+    value: openai
+  - name: Llm__EmbeddingEndpoint
+    value: http://set-by-the-tiltfile:11434/v1
+  - name: Llm__EmbeddingModel
+    value: nomic-embed-text
+  - name: Llm__Investigation__MaxSteps
+    value: "20"
+  - name: Llm__Investigation__MaxWallClock
+    value: "00:20:00"
+  - name: Llm__Investigation__MaxInputTokens
+    value: "1200000"

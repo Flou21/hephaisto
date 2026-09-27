@@ -58,6 +58,9 @@ public sealed class TeamsNotificationChannelTests
     [InlineData(NotificationEvent.VerificationFailed, "Verification failed")]
     [InlineData(NotificationEvent.ModeChanged, "Autonomy re-armed")]
     [InlineData(NotificationEvent.PolicyChanged, "Policy configuration changed")]
+    [InlineData(NotificationEvent.CodeFixPlanReady, "Code fix planned")]
+    [InlineData(NotificationEvent.CodeFixPrOpened, "Draft PR opened")]
+    [InlineData(NotificationEvent.CodeFixFailed, "Code fix ended without a PR")]
     public void Every_event_has_its_own_headline(NotificationEvent kind, string expected)
     {
         var message = Message() with
@@ -87,6 +90,38 @@ public sealed class TeamsNotificationChannelTests
 
         // No submit action of any kind, which is what would need an inbound route.
         Card(message).ToString().Should().NotContain("Action.Submit");
+    }
+
+    [Fact]
+    public void A_pr_card_puts_the_draft_pr_first_and_still_approves_nothing_in_card()
+    {
+        var message = Message() with
+        {
+            Snapshot = GivenNotifications.Escalation(@event: NotificationEvent.CodeFixPrOpened) with
+            {
+                ExternalUrl = "https://github.com/o/r/pull/7",
+                Repository = "https://github.com/o/r",
+                CodeFixAttemptId = Guid.CreateVersion7(),
+            },
+        };
+
+        var card = Card(message);
+        var actions = card.GetProperty("actions");
+
+        actions[0].GetProperty("title").GetString().Should().Be("Open the Draft PR");
+        actions[0].GetProperty("url").GetString().Should().Be("https://github.com/o/r/pull/7");
+        card.ToString().Should().Contain("https://github.com/o/r").And.NotContain("Action.Submit");
+    }
+
+    [Fact]
+    public void A_plan_card_links_to_the_plan_review()
+    {
+        var message = Message() with
+        {
+            Snapshot = GivenNotifications.Escalation(@event: NotificationEvent.CodeFixPlanReady) with { CodeFixAttemptId = Guid.CreateVersion7() },
+        };
+
+        Card(message).GetProperty("actions")[0].GetProperty("title").GetString().Should().Be("Review the plan in Hephaisto");
     }
 
     [Fact]

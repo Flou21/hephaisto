@@ -114,6 +114,10 @@ namespace Hephaisto.Agent.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("at");
 
+                    b.Property<Guid?>("CodeFixAttemptId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("code_fix_attempt_id");
+
                     b.Property<decimal>("CostUsd")
                         .HasColumnType("numeric(14,6)")
                         .HasColumnName("cost_usd");
@@ -477,6 +481,184 @@ namespace Hephaisto.Agent.Persistence.Migrations
                         .HasDatabaseName("ix_audit_events_type_at");
 
                     b.ToTable("audit_events", (string)null);
+                });
+
+            modelBuilder.Entity("Hephaisto.Core.Domain.CodeFixAttempt", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AnalysedRef")
+                        .HasColumnType("text")
+                        .HasColumnName("analysed_ref");
+
+                    b.Property<string>("ApprovalSource")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("approval_source");
+
+                    b.Property<string>("ApprovedBy")
+                        .HasColumnType("text")
+                        .HasColumnName("approved_by");
+
+                    b.Property<string>("Branch")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("branch");
+
+                    b.Property<double?>("Confidence")
+                        .HasColumnType("double precision")
+                        .HasColumnName("confidence");
+
+                    b.Property<string>("ContextSha")
+                        .HasColumnType("text")
+                        .HasColumnName("context_sha");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DecidedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("decided_at");
+
+                    b.Property<string>("DefaultBranch")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("default_branch");
+
+                    b.Property<string>("FailureReason")
+                        .HasColumnType("text")
+                        .HasColumnName("failure_reason");
+
+                    b.Property<DateTimeOffset?>("FinishedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("finished_at");
+
+                    b.Property<decimal>("ImplementCostUsd")
+                        .HasColumnType("numeric(14,6)")
+                        .HasColumnName("implement_cost_usd");
+
+                    b.Property<string>("ImplementJobName")
+                        .HasColumnType("text")
+                        .HasColumnName("implement_job_name");
+
+                    b.Property<string>("ImplementResultJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("implement_result_json");
+
+                    b.Property<string>("ImplementSessionId")
+                        .HasColumnType("text")
+                        .HasColumnName("implement_session_id");
+
+                    b.Property<DateTimeOffset?>("ImplementStartedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("implement_started_at");
+
+                    b.Property<Guid>("IncidentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("incident_id");
+
+                    b.Property<Guid?>("InvestigationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("investigation_id");
+
+                    b.Property<bool>("NeedsCait")
+                        .HasColumnType("boolean")
+                        .HasColumnName("needs_cait");
+
+                    b.Property<decimal>("PlanCostUsd")
+                        .HasColumnType("numeric(14,6)")
+                        .HasColumnName("plan_cost_usd");
+
+                    b.Property<string>("PlanJobName")
+                        .HasColumnType("text")
+                        .HasColumnName("plan_job_name");
+
+                    b.Property<DateTimeOffset?>("PlanReadyAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("plan_ready_at");
+
+                    b.Property<string>("PlanResultJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("plan_result_json");
+
+                    b.Property<string>("PlanSessionId")
+                        .HasColumnType("text")
+                        .HasColumnName("plan_session_id");
+
+                    b.Property<DateTimeOffset?>("PlanStartedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("plan_started_at");
+
+                    b.Property<int?>("PrNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("pr_number");
+
+                    b.Property<string>("PrUrl")
+                        .HasColumnType("text")
+                        .HasColumnName("pr_url");
+
+                    b.Property<string>("RepositoryUrl")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("repository_url");
+
+                    b.Property<string>("RequestJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("request_json");
+
+                    b.Property<string>("RequestedBy")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("requested_by");
+
+                    b.Property<string>("RootCause")
+                        .HasColumnType("text")
+                        .HasColumnName("root_cause");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("state");
+
+                    b.Property<string>("Summary")
+                        .HasColumnType("text")
+                        .HasColumnName("summary");
+
+                    b.Property<string>("TraceId")
+                        .HasColumnType("text")
+                        .HasColumnName("trace_id");
+
+                    b.Property<string>("VerificationLevel")
+                        .HasColumnType("text")
+                        .HasColumnName("verification_level");
+
+                    b.Property<string>("Workload")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("workload");
+
+                    b.HasKey("Id")
+                        .HasName("pk_code_fix_attempts");
+
+                    b.HasIndex("RepositoryUrl", "CreatedAt")
+                        .HasDatabaseName("ix_code_fix_attempts_repository_url_created_at");
+
+                    b.HasIndex("State", "CreatedAt")
+                        .HasDatabaseName("ix_code_fix_attempts_state_created_at");
+
+                    b.HasIndex(new[] { "IncidentId" }, "ix_code_fix_attempts_incident_id")
+                        .HasDatabaseName("ix_code_fix_attempts_incident_id");
+
+                    b.HasIndex(new[] { "IncidentId" }, "ux_code_fix_attempts_one_open_per_incident")
+                        .IsUnique()
+                        .HasDatabaseName("ux_code_fix_attempts_one_open_per_incident")
+                        .HasFilter("state IN ('Eligible', 'Planning', 'PlanReady', 'Implementing')");
+
+                    b.ToTable("code_fix_attempts", (string)null);
                 });
 
             modelBuilder.Entity("Hephaisto.Core.Domain.Evidence", b =>
@@ -1233,6 +1415,18 @@ namespace Hephaisto.Agent.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Hephaisto.Core.Domain.CodeFixAttempt", b =>
+                {
+                    b.HasOne("Hephaisto.Core.Domain.Incident", "Incident")
+                        .WithMany("CodeFixAttempts")
+                        .HasForeignKey("IncidentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_code_fix_attempts_incidents_incident_id");
+
+                    b.Navigation("Incident");
+                });
+
             modelBuilder.Entity("Hephaisto.Core.Domain.Evidence", b =>
                 {
                     b.HasOne("Hephaisto.Core.Domain.Finding", "Finding")
@@ -1476,6 +1670,8 @@ namespace Hephaisto.Agent.Persistence.Migrations
             modelBuilder.Entity("Hephaisto.Core.Domain.Incident", b =>
                 {
                     b.Navigation("Actions");
+
+                    b.Navigation("CodeFixAttempts");
 
                     b.Navigation("Events");
 

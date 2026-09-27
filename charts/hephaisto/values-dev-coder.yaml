@@ -1,0 +1,87 @@
+# The code-fix stage on THIS repo's dev cluster. Layered over values-dev.yaml by the Tiltfile
+# only when the `coder` toggle is on; codeFix.mode, codeFix.sdk and codeFix.gh come from the
+# `coder-mode` and `coder-sdk` toggles and are --set on top of this file.
+#
+# Nothing here reaches GitHub. The coder clones from, and pushes to, an in-cluster git server
+# (infra/coder/git-server, the `coder-git` Tilt resource) seeded from local checkouts of the
+# fixture repository and dev-context. With coder-sdk=fake (the default) no model is called
+# either: a scripted plan, an approve, a scripted implement that pushes a hephaisto/codefix-*
+# branch to coder-git, and a `fake://` PR from the gh shim - a $0 run of every moving part.
+
+codeFix:
+  enabled: true
+  namespace: hephaisto-coder
+  # infra/namespaces.yaml creates it, with the Pod Security label, before the chart applies.
+  createNamespace: false
+
+  # Built into the node's docker daemon by the Tiltfile's `coder-image` local_resource and never
+  # pushed anywhere; Never, because there is no registry that has it.
+  image:
+    repository: hephaisto/coder
+    tag: dev
+    pullPolicy: Never
+
+  contextRepository:
+    url: http://coder-git.hephaisto-coder.svc/dev-context.git
+    ref: main
+
+  # The two fixtures with a source repository behind them. One repository, two branches: each
+  # fixture branch is main plus exactly one planted bug, and it is the branch a fix PR targets.
+  repositories:
+    - workload: hephaisto-chaos/Deployment/shop-api
+      url: http://coder-git.hephaisto-coder.svc/Flou21/hephaisto-fixture-dotnet.git
+      defaultBranch: fixture/c15-null-deref
+    - workload: hephaisto-chaos/Deployment/catalog-api
+      url: http://coder-git.hephaisto-coder.svc/Flou21/hephaisto-fixture-dotnet.git
+      defaultBranch: fixture/c19-injection
+
+  allowedRepositoryHosts:
+    - coder-git.hephaisto-coder.svc
+    - github.com
+
+  # config as well as application, so a fixture whose finding the model files as config still
+  # exercises the path. Production starts with application alone.
+  eligibleCategories:
+    - application
+    - config
+
+  # SAFE HERE ONLY: this cluster has no OIDC provider in front of the console, so mode pr could
+  # not be approved at all without it. The agent logs a warning at every start while it is on.
+  allowUnauthenticatedApproval: true
+
+  requireGreenBuild: true
+
+  # Short, so a wedged coder is noticed in minutes rather than an hour. Both stay above the four
+  # minutes the runner reserves to report.
+  deadlines:
+    plan: "00:15:00"
+    implement: "00:25:00"
+    approvalTimeout: "1.00:00:00"
+    jobTtl: "00:30:00"
+    pollInterval: "00:00:10"
+
+  # Smaller than the chart's default: the fixture is one small project, and this node is shared
+  # with the whole ~/dev stack.
+  resources:
+    cpuRequest: 500m
+    memoryRequest: 1Gi
+    cpuLimit: "4"
+    memoryLimit: 4Gi
+
+  egressProxy:
+    enabled: true
+    # The in-cluster git server, so an http client that routes through the proxy reaches it too.
+    # git itself does NOT for http:// - it reads only the lowercase http_proxy, and the Job sets
+    # HTTP_PROXY - so it goes direct, and infra/coder/git-server/git-server.yaml carries the
+    # dev-only NetworkPolicy that lets it.
+    extraAllowlist:
+      - coder-git.hephaisto-coder.svc
+
+  # On here, to exercise the template and make the second run of a fixture start warm. See the
+  # comment in templates/codefix-nuget-cache.yaml for why it is off by default.
+  nugetCache:
+    enabled: true
+    size: 5Gi
+
+  networkPolicy:
+    enabled: true

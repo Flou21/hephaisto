@@ -1,0 +1,35 @@
+{{- if and .Values.codeFix.enabled .Values.codeFix.nugetCache.enabled }}
+{{/*
+The NuGet package cache shared by coder Jobs, mounted at /work/nuget/packages (NUGET_PACKAGES in
+the coder image). A cold restore is 2-4 minutes of every attempt's deadline; this makes the
+second attempt against a repository start warm.
+
+ReadWriteOnce, so two coder Jobs on different nodes cannot both mount it - which is one reason
+codeFix.budgets.concurrentJobs defaults to 1.
+
+OFF BY DEFAULT, because it is the one channel between attempts. Every other thing a coder
+touches is an emptyDir that dies with its pod; this survives. A coder that was steered by an
+injected instruction could write a package into it, and a NuGet package can carry MSBuild
+targets that the NEXT attempt's `dotnet build` executes. The coder never writes credentials
+here (its nuget.config holds a %NUGET_GITHUB_TOKEN% placeholder), but a cache is still code
+the next build runs. Turn it on for the speed, knowing that.
+
+Hephaisto holds no delete on PVCs anywhere, and this one outlives `helm uninstall` only if you
+annotate it to - by default Helm removes it with the release.
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "hephaisto.codeFixNugetClaim" . }}
+  namespace: {{ include "hephaisto.codeFixNamespace" . }}
+  labels:
+    {{- include "hephaisto.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.codeFix.nugetCache.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.codeFix.nugetCache.size }}
+{{- end }}

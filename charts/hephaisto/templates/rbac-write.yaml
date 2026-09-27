@@ -102,9 +102,16 @@ rules:
   # chaos fixture C5. Deleting a Job is low-consequence because the Job object itself holds
   # no state -- whatever it produced is elsewhere.
   #
-  # No `create` on jobs. Creating a Job is arbitrary code execution in the cluster with the
-  # agent choosing the image and the command. That is a categorically different power from
-  # anything else in this Role, and it is not granted at any phase.
+  # No `create` on jobs HERE. Creating a Job is arbitrary code execution in the cluster, a
+  # categorically different power from anything else in this Role - and in a namespace the
+  # agent may also act in, it would put code of the agent's launching beside the workloads it
+  # deletes and patches.
+  #
+  # Until v0.9.0 it was granted nowhere at all. The code-fix stage now grants it in exactly ONE
+  # namespace, codeFix.namespace, which the chart refuses to render if it is also listed in
+  # policy.actionableNamespaces - see rbac-codefix.yaml for the full argument. RbacSelfCheck
+  # refuses to boot the agent if `create jobs` is ever held in any of THESE namespaces, in
+  # kube-system, or cluster-wide.
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["delete"]

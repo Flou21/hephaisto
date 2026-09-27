@@ -190,8 +190,8 @@ only the stylesheet would document half the system.**
 
 | Concern | Where |
 |---|---|
-| `StateGlyph`, `SeverityGlyph`, `DecisionGlyph` | `Display.cs` |
-| `StateClass`, `SeverityClass`, `RiskClass` | `Display.cs` |
+| `StateGlyph`, `SeverityGlyph`, `DecisionGlyph`, `CodeFixGlyph` | `Display.cs` |
+| `StateClass`, `SeverityClass`, `RiskClass`, `CodeFixClass` | `Display.cs` |
 | timestamps (always UTC), USD to 6 dp, `ShortId`, byte and token counts | `Display.cs` |
 | everything those classes then look like | `app.css` |
 
@@ -201,6 +201,33 @@ character.
 
 The full vocabulary — ten states, three severities, four risk tiers, three decisions — is rendered
 in the gallery, which is how the "glyph and a word" rule stays enforceable rather than aspirational.
+
+### The code-fix vocabulary (v0.9.0)
+
+A code-fix attempt has its own lifecycle — it routinely runs on an incident that is already
+Closed — so it has its own glyphs, and **borrows the incident ones wherever the meaning is the
+same**, so a reader of one table can read the other. The state cells reuse the `st-*` classes
+through `CodeFixClass`, which makes "waiting for a human" one colour on both tables by construction.
+No token was added for it.
+
+| State | Glyph | Word | Class | Why |
+|---|---|---|---|---|
+| Eligible | `*` | eligible | `st-detected` | exists, nothing runs yet |
+| Planning | `~` | planning | `st-investigating` | read-only work in progress |
+| PlanReady | `!` | plan ready | `st-awaiting` | waits for a human |
+| Implementing | `>` | implementing | `st-acting` | writing |
+| PrOpened | `+` | pr opened | `st-resolved` | the good end for Hephaisto |
+| Failed | `x` | failed | `st-escalated` | the one that says "look at this" |
+| Denied | `-` | denied | `st-closed` | a person decided; dim, not faint |
+| Expired | `.` | expired | `st-expired` | nobody answered |
+| Cancelled | `/` | cancelled | `st-suppressed` | a switch stopped it; nobody judged it |
+
+The console's approve/deny for a plan goes through `CodeFixCoordinator.DecideAsync` with the actor
+resolved as the API resolves it: the token's name when signed in (no name field is offered), the
+typed name otherwise, and the approve policy checked so the console is never a wider door than
+`POST .../approve`. Approve is disabled — with the reason printed beside it — when the mode is not
+Pr, when the plan needs a Cait change first, or when the viewer lacks the approver role. Deny stays
+available: refusing a plan never needs more than being a named human.
 
 ---
 

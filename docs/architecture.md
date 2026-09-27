@@ -43,7 +43,16 @@
 
 ## The single most important design decision
 
-**The LLM never holds a mutating tool handle.**
+**No model in this process ever holds a mutating handle to the cluster.**
+
+Until v0.9.0 this read "the LLM never holds a mutating tool handle", and for the investigator
+it still means exactly that. It was re-scoped, not weakened, when the code-fix stage arrived:
+that stage's coder is by construction a model holding a shell and a filesystem, so "never a
+mutating handle" could no longer be true of every model Hephaisto starts. What stays true is the
+part the safety argument rests on — *nothing a model does can reach the Kubernetes API*. The
+investigator and planner run in this process with no write tool at all; the coder runs in a
+separate pod whose identity is bound to nothing, and its only write target is a git branch and a
+Draft PR. See [Code fixes](#code-fixes-a-second-separately-gated-stage).
 
 Phase 1 gives it read-only tools. Phase 2 is a separate model call with *zero* tools and a
 JSON response schema. Phase 3 is pure C# over the typed result, against a closed `ActionType`
@@ -127,8 +136,8 @@ model that hallucinates a plausible log line will also sincerely believe it cite
 
 The outermost layer is the one that survives a compromised process.
 
-1. **RBAC** — read cluster-wide, write only into `hephaisto-chaos`, no Secrets access at
-   all. A `SelfSubjectAccessReview` at startup asserts the agent does *not* hold verbs it
+1. **RBAC** — read cluster-wide, write only into the actionable namespaces
+   (`hephaisto-chaos` here), no Secrets access at all. A `SelfSubjectAccessReview` at startup asserts the agent does *not* hold verbs it
    should never have, and refuses to boot if it does.
 2. **Policy engine** — pure, deterministic, default-deny.
 3. **Self-protection** — `hephaisto`, `hephaisto-obs` and `kube-system` are permanently
@@ -161,13 +170,85 @@ The outermost layer is the one that survives a compromised process.
     the target object — so `kubectl describe pod` shows *"hephaisto restarted this pod
     because …"*, which is where an on-call engineer actually looks.
 
+12. **`create jobs` in the coder namespace only.** The one `create` verb on a code-executing
+    resource the agent holds, granted by a namespaced `Role` in `codeFix.namespace` and nowhere
+    else. The chart refuses to render if that namespace is `default`, `kube-*`, the release or
+    observability namespace, or actionable; `RbacSelfCheck` refuses to boot if `create jobs` is
+    held cluster-wide, in `kube-system` or in any actionable namespace, and refuses `create pods`
+    anywhere. Rendered only when `codeFix.enabled`.
+13. **Coder isolation.** A coder pod has no ServiceAccount token (its identity is bound to
+    nothing), no Hephaisto credential, no inbound surface, a read-only root, no capabilities, and
+    egress only to DNS and an allowlist proxy that logs every request. Its credentials arrive by
+    `secretKeyRef` from a Secret Hephaisto can name and cannot read. The investigator's read
+    tools are denied the coder namespace, so a coder's output never becomes the next
+    investigation's evidence.
+
 ### Why L3 is safe enough to enable, in four sentences
 
-RBAC bounds the worst case to *delete pods and patch workloads in one namespace*. The LLM
-never holds a mutating handle, so prompt injection from a log line can at most produce a plan
-the policy engine rejects. Every auto action is individually reversible and is actually
+RBAC bounds the worst case to *delete pods and patch workloads in one namespace*. No model
+holds a mutating handle to the cluster, so prompt injection from a log line can at most produce
+a plan the policy engine rejects — or, with code fixes on, a Draft PR a human must still merge. Every auto action is individually reversible and is actually
 reverted on failed verification. Budget, cooldown and oscillation caps mean the worst
 *sustained* case is about ten pod restarts an hour — indistinguishable from a badly tuned HPA.
+
+## Code fixes: a second, separately gated stage
+
+Most production incidents on the cluster this was built for are bugs in application code, and an
+agent whose actions are *restart, roll back, scale* can only escalate them. v0.9.0 adds a stage
+after the outcome rather than a new action: when an investigation escalates because the planner
+said a human must fix the code (`NoPlanProduced`) and its grounded primary finding says
+`application`, a **coder** — Claude Code via the Agent SDK, in a Kubernetes Job — clones the
+repository the workload is mapped to and writes a fix plan. After a human approves, a second Job
+implements it and opens a Draft PR. It is not an `ActionType`, on purpose: every action is gated
+by the agent mode and denied in `Observe` before approval routing, would take the workload's lock
+and cooldown for something that never touches the workload, and would change the planner's prompt
+— and therefore every recorded cassette.
+
+**Two axes.** `AgentMode` means *may mutate the cluster*. `CodeFixMode` (`Off | Plan | Pr`) means
+*may start a coder*, and is independent: an `Observe` agent may still plan code fixes, because
+planning writes nothing anywhere, and tying the two together would either lock production out or
+force widening cluster autonomy for a git feature. The kill switch still wins across both — agent
+`Off`, the emergency stop, the runaway latch or any unreadable arm all resolve the code-fix mode to
+`Off`. Silence is `Off`: an install that never configured the stage spends nothing on it, though
+every escalation is still *evaluated* and the verdict recorded, which is the evidence an operator
+turns it on from.
+
+**The double opt-in.** A workload reaches a coder only if the operator mapped it
+(`codeFix.repositories`, evaluated in-process by the pure `CodeFixEligibility` predicate — the
+same posture as `actionableNamespaces`) *and* the repository's own entry in dev-context's
+`repos.yaml` says `coderEnabled`, which the coder enforces. Eligibility is default-deny and
+accumulates reason codes in gate order like the policy engine; infrastructure-only signal kinds
+never qualify whatever the category says.
+
+**The pull model and result framing.** The coder has no callback. It prints a framed block as the
+last thing on stdout — `---HEPHAISTO-RESULT-BEGIN sha256=… bytes=…---`, JSON,
+`---HEPHAISTO-RESULT-END---` — and Hephaisto reads its pod log with the `get pods/log` it already
+held, takes the *last* pair, verifies length and hash, and deserialises with unknown members
+disallowed. Anything else is `Failed(ContractViolation)`. A callback endpoint would be a second
+write surface into Hephaisto, reachable by a shell that has just read attacker-influenceable logs,
+on installs where the NetworkPolicy is off. The cost is no live streaming.
+
+**What the coder can reach.** Its ServiceAccount is bound to nothing and its token is never
+mounted, so it cannot read a Secret, a log or a pod. Its egress is DNS and a squid proxy whose
+domain allowlist is the model API, GitHub and the package registries; `CONNECT` only to 443, and
+every request is a line in the proxy's log. Its GitHub token is a fine-grained PAT scoped to the
+mapped repositories, and branch protection on their default branches is an operator prerequisite
+the chart names and cannot check. Hephaisto post-validates everything it is told — the branch is
+the one it assigned, the PR is in the mapped repository on an allowed host, the build was green —
+before recording a PR.
+
+**What it cannot.** Merge, deploy, touch the workload, reach the cluster API, read the incident
+database, or see a credential Hephaisto holds. The only model-influenced input to the Job is a
+ConfigMap of JSON the coder treats as data; the image and the spec are chart values and golden-
+tested C#.
+
+**The same-uid caveat, stated rather than hidden.** Inside the coder pod the driver (which holds
+the GitHub token to push) and the agent's Bash tool run as the same uid, so a determined agent
+could read the driver's environment through `/proc`. The controls that actually bound that are
+outside the pod: the token's repository scope, branch protection, the proxy allowlist and its log,
+and the guard hook's denial record. The v2 hardening is a two-container split — a driver container
+holding the tokens and an agent container without them, sharing `/work` — deferred because the
+first version has to prove the flow before it is worth splitting.
 
 ## Self-observability
 

@@ -45,3 +45,7 @@ docs-site/.vitepress/cache/
 # demo-site renders to dist/ from the transcripts; like website/, what is served is built, and
 # the build is reproducible from what is committed.
 demo-site/dist/
+
+# The dev git server's seed bundles (scripts/coder-git-seed.sh). A bundle of dev-context is a
+# copy of a private repository, and both are regenerated before every coder-git build anyway.
+infra/coder/git-server/seed/

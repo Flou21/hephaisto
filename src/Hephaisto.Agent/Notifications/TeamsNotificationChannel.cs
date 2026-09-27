@@ -178,6 +178,8 @@ public sealed class TeamsNotificationChannel(
             {
                 AddFact(facts, "Why", s.EscalationReason.ToString());
             }
+
+            AddFact(facts, "Repository", s.Repository);
         }
 
         AddFact(facts, "When", s.At.ToString("u", System.Globalization.CultureInfo.InvariantCulture));
@@ -226,15 +228,30 @@ public sealed class TeamsNotificationChannel(
 
         var actions = new JsonArray();
 
+        // For a code fix the PR IS the subject, so it comes first. A human reviews, merges and
+        // deploys it; nothing in the card approves or merges anything.
+        if (s.Event is NotificationEvent.CodeFixPrOpened && !string.IsNullOrWhiteSpace(s.ExternalUrl))
+        {
+            actions.Add(new JsonObject
+            {
+                ["type"] = "Action.OpenUrl",
+                ["title"] = "Open the Draft PR",
+                ["url"] = s.ExternalUrl,
+            });
+        }
+
         if (!string.IsNullOrWhiteSpace(message.IncidentUrl))
         {
             // Deliberately "Open" rather than "Approve". See the class remarks.
             actions.Add(new JsonObject
             {
                 ["type"] = "Action.OpenUrl",
-                ["title"] = s.Event is NotificationEvent.ApprovalRequired
-                    ? "Review and approve in Hephaisto"
-                    : "Open in Hephaisto",
+                ["title"] = s.Event switch
+                {
+                    NotificationEvent.ApprovalRequired => "Review and approve in Hephaisto",
+                    NotificationEvent.CodeFixPlanReady => "Review the plan in Hephaisto",
+                    _ => "Open in Hephaisto",
+                },
                 ["url"] = message.IncidentUrl,
             });
         }
@@ -277,6 +294,9 @@ public sealed class TeamsNotificationChannel(
         NotificationEvent.VerificationFailed => "Verification failed - the fix did not hold",
         NotificationEvent.ModeChanged => "Autonomy re-armed",
         NotificationEvent.PolicyChanged => "Policy configuration changed",
+        NotificationEvent.CodeFixPlanReady => "Code fix planned - a plan is waiting for a developer",
+        NotificationEvent.CodeFixPrOpened => "Draft PR opened - a code fix is ready for review",
+        NotificationEvent.CodeFixFailed => "Code fix ended without a PR",
         _ => "Hephaisto",
     };
 

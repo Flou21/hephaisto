@@ -1,0 +1,52 @@
+{
+  "contract_version": "1",
+  "attempt_id": "0192a6f0-0000-7000-8000-000000000001",
+  "incident_id": "0192a6f0-0000-7000-8000-0000000000aa",
+  "phase": "plan",
+  "budget": {
+    "max_cost_usd": 5,
+    "deadline_seconds": 1800
+  },
+  "repository": {
+    "url": "https://github.com/Flou21/hephaisto-fixture-dotnet",
+    "default_branch": "main",
+    "path": "",
+    "branch": "main"
+  },
+  "context": {
+    "repository_url": "https://github.com/TrueRelevance/dev-context",
+    "ref": "main"
+  },
+  "incident": {
+    "title": "shop-api is crash-looping",
+    "kind": "CrashLoopBackOff",
+    "severity": "Critical",
+    "target": {
+      "namespace": "hephaisto-chaos",
+      "kind": "Pod",
+      "name": "shop-api-7f9c-abcde",
+      "workload": "hephaisto-chaos/Deployment/shop-api"
+    },
+    "image": "ghcr.io/flou21/hephaisto-fixture-dotnet:c15-0123456789abcdef0123456789abcdef01234567",
+    "rollout_revision": "3",
+    "escalation_reason": "NoPlanProduced"
+  },
+  "findings": [
+    {
+      "id": "0192a6f0-0000-7000-8000-0000000000f1",
+      "primary": true,
+      "category": "application",
+      "confidence": 0.86,
+      "hypothesis": "Startup throws a NullReferenceException in Endpoints configuration.",
+      "evidence": [
+        {
+          "step_id": "0192a6f0-0000-7000-8000-0000000000c1",
+          "tool": "get_pod_logs",
+          "excerpt": "Unhandled exception. System.NullReferenceException: Object reference not set to an instance of an object.\n   at Shop.Api.Startup.Endpoints.Map(WebApplication app)"
+        }
+      ]
+    }
+  ],
+  "investigation_summary": "Container exits 134 on start; logs show a NullReferenceException in Shop.Api.Startup.Endpoints.",
+  "plan": null
+}

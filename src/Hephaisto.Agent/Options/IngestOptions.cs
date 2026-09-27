@@ -33,5 +33,5 @@ public sealed class IngestOptions
     /// Namespaces whose signals are always escalated and never auto-actionable. The agent
     /// alerting on itself is intended - the agent acting on itself is a feedback loop.
     /// </summary>
-    public HashSet<string> SelfNamespaces { get; set; } = ["hephaisto", "hephaisto-obs"];
+    public HashSet<string> SelfNamespaces { get; set; } = ["hephaisto", "hephaisto-obs", "hephaisto-coder"];
 }

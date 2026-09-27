@@ -182,6 +182,10 @@
         "auth": {
           "type": "string",
           "description": "Secret holding the OIDC client secret under key `clientSecret`. Required when auth.enabled is true."
+        },
+        "codeFix": {
+          "type": "string",
+          "description": "Secret in codeFix.namespace (NOT the release namespace) with keys CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, GITHUB_TOKEN, NUGET_GITHUB_TOKEN, each optional. Required when codeFix.enabled. Hephaisto never reads it."
         }
       },
       "additionalProperties": false
@@ -276,7 +280,10 @@
                     "IncidentResolved",
                     "VerificationFailed",
                     "ModeChanged",
-                    "PolicyChanged"
+                    "PolicyChanged",
+                    "CodeFixPlanReady",
+                    "CodeFixPrOpened",
+                    "CodeFixFailed"
                   ]
                 }
               },
@@ -299,6 +306,320 @@
         }
       },
       "additionalProperties": false
+    },
+    "codeFix": {
+      "type": "object",
+      "description": "The code-fix stage (v0.9.0): a coder Job plans, and after human approval implements, a fix as a Draft PR. Nothing renders unless enabled; mode is its own axis, independent of the agent's mode.",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "mode",
+        "namespace"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Renders the coder infrastructure. False renders nothing code-fix related except codeFixMode: off in the switch ConfigMap."
+        },
+        "mode": {
+          "enum": [
+            "off",
+            "plan",
+            "pr",
+            "Off",
+            "Plan",
+            "Pr"
+          ],
+          "description": "off | plan | pr. QUOTE it in YAML: a bare off is the boolean false. pr requires auth.enabled (or allowUnauthenticatedApproval)."
+        },
+        "namespace": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+          "maxLength": 63,
+          "description": "Where coder Jobs run and where the secrets.codeFix Secret lives. Refused at render time if it is default, kube-*, the release namespace, observabilityNamespace or an actionable namespace."
+        },
+        "createNamespace": {
+          "type": "boolean"
+        },
+        "image": {
+          "type": "object",
+          "description": "The coder image. Empty tag means .Chart.AppVersion.",
+          "required": [
+            "repository"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "repository": {
+              "type": "string"
+            },
+            "tag": {
+              "type": "string",
+              "pattern": "^$|^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}$"
+            },
+            "pullPolicy": {
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
+            }
+          }
+        },
+        "contextRepository": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "url": {
+              "type": "string",
+              "pattern": "^$|^https?://",
+              "description": "The dev-context repository, cloned at ref at the start of every Job."
+            },
+            "ref": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "repositories": {
+          "type": "array",
+          "description": "The authorization list: workload -> repository. Empty maps nothing.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "workload",
+              "url"
+            ],
+            "properties": {
+              "workload": {
+                "type": "string",
+                "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?/[A-Za-z]+/[a-z0-9]([-a-z0-9.]*[a-z0-9])?$",
+                "description": "namespace/Kind/name of the controller, e.g. shop/Deployment/shop-api."
+              },
+              "url": {
+                "type": "string",
+                "pattern": "^https?://[^/]+/.+",
+                "description": "The repository to clone and open the PR against. Its host must be in allowedRepositoryHosts."
+              },
+              "defaultBranch": {
+                "type": "string",
+                "minLength": 1
+              },
+              "path": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "allowedRepositoryHosts": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9.-]+(:[0-9]+)?$"
+          }
+        },
+        "eligibleCategories": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Primary-finding categories that may start a coder. image is deliberately never a default."
+        },
+        "confidenceFloor": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "budgets": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "perPlanUsd": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "perImplementUsd": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "perDayUsd": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "attemptsPerRepositoryPerDay": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "concurrentJobs": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "deadlines": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "plan": {
+              "type": "string",
+              "pattern": "^([0-9]+\\.)?[0-9]{1,2}:[0-9]{2}:[0-9]{2}$",
+              "description": "Plan Job deadline. .NET TimeSpan (hh:mm:ss), not Go duration. Must exceed four minutes."
+            },
+            "implement": {
+              "type": "string",
+              "pattern": "^([0-9]+\\.)?[0-9]{1,2}:[0-9]{2}:[0-9]{2}$",
+              "description": "Implement Job deadline. .NET TimeSpan, must exceed four minutes."
+            },
+            "approvalTimeout": {
+              "type": "string",
+              "pattern": "^([0-9]+\\.)?[0-9]{1,2}:[0-9]{2}:[0-9]{2}$",
+              "description": "A plan nobody decided on expires after this. d.hh:mm:ss for days."
+            },
+            "jobTtl": {
+              "type": "string",
+              "pattern": "^([0-9]+\\.)?[0-9]{1,2}:[0-9]{2}:[0-9]{2}$",
+              "description": "ttlSecondsAfterFinished for coder Jobs."
+            },
+            "pollInterval": {
+              "type": "string",
+              "pattern": "^([0-9]+\\.)?[0-9]{1,2}:[0-9]{2}:[0-9]{2}$",
+              "description": "How often the watcher polls Job status."
+            }
+          }
+        },
+        "workspaceSize": {
+          "type": "string",
+          "pattern": "^[0-9]+(Mi|Gi|Ti)$"
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Per coder pod. Declared, not free-form: these bind to CodeFix:Resources, not to a Kubernetes resources block.",
+          "properties": {
+            "cpuRequest": {
+              "type": [
+                "string",
+                "number"
+              ],
+              "pattern": "^[0-9]+(\\.[0-9]+)?m?$",
+              "description": "Kubernetes CPU quantity, e.g. \"1\" or \"500m\"."
+            },
+            "memoryRequest": {
+              "type": "string",
+              "pattern": "^[0-9]+(Ki|Mi|Gi|Ti)$"
+            },
+            "cpuLimit": {
+              "type": [
+                "string",
+                "number"
+              ],
+              "pattern": "^[0-9]+(\\.[0-9]+)?m?$",
+              "description": "Kubernetes CPU quantity, e.g. \"1\" or \"500m\"."
+            },
+            "memoryLimit": {
+              "type": "string",
+              "pattern": "^[0-9]+(Ki|Mi|Gi|Ti)$"
+            }
+          }
+        },
+        "requireGreenBuild": {
+          "type": "boolean"
+        },
+        "allowUnauthenticatedApproval": {
+          "type": "boolean",
+          "description": "Throwaway e2e clusters only: lets mode pr run with auth off."
+        },
+        "sdk": {
+          "enum": [
+            "real",
+            "fake"
+          ]
+        },
+        "gh": {
+          "enum": [
+            "",
+            "shim"
+          ]
+        },
+        "egressProxy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "image": {
+              "type": "object",
+              "description": "The squid image. Pinned.",
+              "required": [
+                "repository"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "repository": {
+                  "type": "string"
+                },
+                "tag": {
+                  "type": "string",
+                  "pattern": "^$|^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}$"
+                },
+                "pullPolicy": {
+                  "enum": [
+                    "Always",
+                    "IfNotPresent",
+                    "Never"
+                  ]
+                }
+              }
+            },
+            "allowlist": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^\\.?[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$",
+                "description": "squid dstdomain: '.example.com' matches the domain and every subdomain, 'example.com' only itself."
+              }
+            },
+            "extraAllowlist": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^\\.?[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$",
+                "description": "squid dstdomain: '.example.com' matches the domain and every subdomain, 'example.com' only itself."
+              }
+            }
+          }
+        },
+        "nugetCache": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "size": {
+              "type": "string",
+              "pattern": "^[0-9]+(Mi|Gi|Ti)$"
+            },
+            "storageClass": {
+              "type": "string"
+            }
+          }
+        },
+        "networkPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Independent of the top-level networkPolicy.enabled."
+            }
+          }
+        }
+      }
     },
     "postgres": {
       "type": "object",

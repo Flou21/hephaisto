@@ -1,0 +1,34 @@
+@*
+    Who is acting. Signed in, it is the token's name and nothing can be typed - an authenticated
+    request ignores a supplied actor entirely, exactly as ActorResolution does for the API, so
+    offering a field would be offering a lie. Signed out, it is the typed name: attribution, not
+    authentication, as everywhere else on this console.
+*@
+
+@if (Viewer.Authenticated)
+{
+    <span class="hp-muted" data-testid="@TestId">signed in as <span class="mono">@Viewer.SignedInAs</span></span>
+}
+else
+{
+    <input class="hp-retry-name" placeholder="your name" aria-label="your name"
+           data-testid="@TestId"
+           value="@Name"
+           @oninput="OnInput" />
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public ConsoleViewer Viewer { get; set; } = ConsoleViewer.Anonymous;
+
+    [Parameter]
+    public string Name { get; set; } = string.Empty;
+
+    [Parameter]
+    public EventCallback<string> NameChanged { get; set; }
+
+    [Parameter]
+    public string? TestId { get; set; }
+
+    private Task OnInput(ChangeEventArgs e) => NameChanged.InvokeAsync(e.Value?.ToString() ?? string.Empty);
+}

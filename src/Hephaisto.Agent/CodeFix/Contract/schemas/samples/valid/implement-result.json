@@ -1,0 +1,19 @@
+{
+  "contract_version": "1",
+  "attempt_id": "0192a6f0-0000-7000-8000-000000000001",
+  "phase": "implement",
+  "outcome": "pr_opened",
+  "branch": "hephaisto/codefix-0192a6f00000",
+  "pr_url": "https://github.com/Flou21/hephaisto-fixture-dotnet/pull/7",
+  "pr_number": 7,
+  "base_commit": "0123456789abcdef0123456789abcdef01234567",
+  "files": ["src/Shop.Api/Startup/Endpoints.cs"],
+  "build_passed": true,
+  "tests_passed": true,
+  "log_tail": "Passed!  - Failed: 0, Passed: 4, Skipped: 0",
+  "deviations": [],
+  "cost_usd": 3.1,
+  "session_id": "5d2f7a0e-1111-2222-3333-444455556667",
+  "error": null,
+  "denied_tool_calls": [{ "tool": "Bash", "input": "git push --force origin main", "reason": "git push is reserved to the driver" }]
+}

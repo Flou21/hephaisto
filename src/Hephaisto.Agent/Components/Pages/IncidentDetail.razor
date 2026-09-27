@@ -969,6 +969,14 @@ else
     </section>
 
     @* ---------------------------------------------------------------
+       5. Code fix (v0.9.0) — after the plan, because a code fix is what
+       happens when the plan's closed action vocabulary had no answer.
+       Its own component: it has its own live source, and an attempt
+       keeps moving on an incident that is already Closed.
+       --------------------------------------------------------------- *@
+    <CodeFixSection IncidentId="incident.Id" IncidentState="incident.State" Now="_now" />
+
+    @* ---------------------------------------------------------------
        6. Feedback
        --------------------------------------------------------------- *@
     <section class="hp-section" id="feedback">

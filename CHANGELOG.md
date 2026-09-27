@@ -10,6 +10,56 @@ broken, with the evidence for each.
 Versions are set by the git tag through MinVer; the chart version and the app version are always
 the same number.
 
+## v0.9.0 — unreleased (`v0.9.0-rc1`, 2026-09-27)
+
+**It proposes the fix, and a person opens the door.** Most real incidents on the cluster this runs
+against are code bugs, and v0.8.0's planner correctly declines to touch them - "a code problem a
+human must fix" - so a grounded, correct diagnosis stopped at an escalation. v0.9.0 adds a second,
+separately gated stage: an escalation whose primary finding points at code, on a workload the
+operator mapped to a repository, starts a **coder** (Claude Code through the Agent SDK) in a
+Kubernetes Job that has no cluster identity. It analyses the repository at the commit the running
+image was built from and writes a plan; a human approves it; a fresh Job implements it on an
+assigned branch, the driver builds and tests it, and a **Draft PR** opens. A human reviews, merges
+and deploys. Nothing about what the agent may do to the cluster changed.
+
+Upgrading changes nothing until you opt in: `codeFix.enabled` is false, and the mode defaults to
+Off. With it Off every escalation is still judged and audited, so the console can say "would have
+started a code fix, but the mode is Off" before you turn anything on.
+
+### Added
+- **The code-fix stage.** `codeFix.mode` `off | plan | pr`, its own axis beside `mode` - Observe
+  does not refuse it, and the kill switch (Off, emergency stop, runaway latch) overrides it. A pure,
+  default-deny eligibility gate with 21 closed reason codes; `code_fix_attempts` with one open
+  attempt per incident enforced by Postgres; a watcher that collects results, enforces deadlines,
+  expires unanswered plans and cancels on the switch; coder spend in the same `llm_usage` ledger.
+- **The coder runner**, `ghcr.io/flou21/hephaisto-coder`: TypeScript around the Agent SDK, one
+  authoritative tool guard checked three times, a fake SDK for $0 plumbing runs, uid 64198 with a
+  read-only root. It answers only through a sha256-framed block in its own log.
+- **Approval**: `POST /api/incidents/{id}/codefix/{attempt}/approve|deny`, under a row lock, only
+  in mode `pr`, and `pr` refuses to start without `auth.enabled` - a repository write needs an
+  authenticated human.
+- **In the console**: a **code fixes** page listing running attempts, plans waiting on a person and
+  opened PRs; a count in the navigation; a code-fix section on every incident with the full plan,
+  denied tool calls and suspected injection called out.
+- **Chart**: the coder namespace Role (the only `create jobs` grant anywhere), an unbound
+  ServiceAccount, a NetworkPolicy, and a squid egress proxy with a domain allowlist and one log line
+  per request.
+- **Notifications** `CodeFixPlanReady`, `CodeFixPrOpened`, `CodeFixFailed`, the PR link first on
+  the card; a Grafana annotation when a PR opens.
+- **Fixtures** c15 (a null dereference at startup) and c19 (c15 plus prompt-injection bait in the
+  log), from `Flou21/hephaisto-fixture-dotnet`, and `scripts/e2e/codefix-local.sh`.
+
+### Changed
+- The headline invariant is re-scoped: **no model in this process ever holds a mutating handle to
+  the cluster.** The coder holds a shell by construction; its only mutation target is a branch.
+- `Ingest:SelfNamespaces` is now set by the chart ([#115](docs/backlog.md#115)).
+- The install-ergonomics work ([#108](docs/backlog.md#108)) moves to v0.10.0.
+
+### Known
+- The coder's agent and its driver share a uid ([#116](docs/backlog.md#116)); the gate exercises
+  only the fixture repository ([#117](docs/backlog.md#117)); the subscription token's headless
+  terms are unverified ([#118](docs/backlog.md#118)).
+
 ## v0.8.0 — 2026-09-13
 
 **An on-call engineer can actually use it.** The agent diagnosed well and said so nowhere a

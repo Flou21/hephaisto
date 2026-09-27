@@ -1,0 +1,703 @@
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Hephaisto.Agent.CodeFix
+@using Hephaisto.Core.CodeFix
+@inject IServiceScopeFactory Scopes
+@inject IIncidentNotifier Notifier
+@inject IJSRuntime Js
+@inject NavigationManager Nav
+@inject IAuthorizationService Authorization
+@implements IAsyncDisposable
+
+@*
+    The code-fix stage on one incident (v0.9.0): what was judged, what ran, what it proposes, and
+    the one door from a read-only plan to a Job that writes to a repository.
+
+    Its own component rather than more of IncidentDetail, because it has its own live source - an
+    attempt moves on a Closed incident, where nothing else on that page ever changes again.
+*@
+
+<section class="hp-section" id="codefix" data-testid="codefix-section">
+    <h2>code fix <span class="hp-count">@(_view?.Attempts.Count ?? 0)</span></h2>
+
+    @if (_view is null)
+    {
+        <p class="hp-muted">@(_error is { } e ? $"could not load the code-fix stage: {e}" : "loading…")</p>
+    }
+    else
+    {
+        var view = _view;
+
+        <div class="hp-codefix-summary">
+            <span class="hp-mode @Display.CodeFixModeClass(view.Mode.Effective)" title="@view.Mode.Explanation"
+                  data-testid="codefix-mode">
+                code-fix mode @view.Mode.Effective.ToString().ToLowerInvariant()
+            </span>
+
+            @if (view.LatestEvaluation is { } ev)
+            {
+                <span class="hp-cf-eval" data-testid="codefix-evaluation"
+                      data-eligible="@ev.Eligible.ToString().ToLowerInvariant()"
+                      data-would="@ev.WouldHaveStarted.ToString().ToLowerInvariant()">
+                    @if (ev.Eligible)
+                    {
+                        <span class="hp-yes"><span class="glyph">+</span> code fix started</span>
+                    }
+                    else if (ev.WouldHaveStarted)
+                    {
+                        @* The would-have line. Same honesty as the plan banner in Observe: an
+                           operator deciding whether to raise the mode should decide from what it
+                           WOULD have done, not from hope. *@
+                        <span class="hp-partial">
+                            <span class="glyph">~</span> would have started a code fix, but the code-fix mode is
+                            @(ev.Mode ?? "Off")
+                        </span>
+                    }
+                    else
+                    {
+                        <span class="hp-no"><span class="glyph">-</span> no code fix</span>
+                    }
+                    <span class="hp-muted mono">
+                        judged @Display.Timestamp(ev.At) by @ev.Actor
+                        @if (ev.Repository is { Length: > 0 } repo)
+                        {
+                            <text> · @Display.ShortRepo(repo)</text>
+                        }
+                    </span>
+                </span>
+            }
+            else
+            {
+                <span class="hp-muted" data-testid="codefix-evaluation">
+                    not judged — the code-fix stage runs when an investigation escalates.
+                </span>
+            }
+        </div>
+
+        @if (view.LatestEvaluation is { Eligible: false } declined && declined.Reasons.Count > 0)
+        {
+            <ul class="hp-cf-reasons" data-testid="codefix-reasons">
+                @for (var i = 0; i < declined.Reasons.Count; i++)
+                {
+                    <li>
+                        @if (i < declined.Codes.Count && declined.Codes[i] is { Length: > 0 } reasonCode)
+                        {
+                            <span class="hp-chip mono">@reasonCode</span>
+                        }
+                        <span>@declined.Reasons[i]</span>
+                    </li>
+                }
+            </ul>
+        }
+
+        @if (CanRequest)
+        {
+            @* The manual door. A human's judgement replaces the model's on category and confidence;
+               every other gate - the mode, the repository binding, the budgets - still applies,
+               which is why a refusal is shown verbatim rather than as "failed". *@
+            <div class="hp-callout callout-lifecycle" data-testid="codefix-request">
+                <span class="glyph">~</span>
+                <div class="hp-retry">
+                    <div>
+                        <strong>no code fix is running.</strong>
+                        <span class="hp-muted">
+                            Requesting one asks a read-only coder for a plan; nothing is pushed until a
+                            human approves it.
+                        </span>
+                    </div>
+                    <div class="hp-retry-controls">
+                        <ActorField Viewer="_viewer" @bind-Name="_actor" TestId="codefix-request-actor" />
+                        <button type="button" class="hp-submit" data-testid="codefix-request-button"
+                                disabled="@(_busy || !_viewer.MayDecide || string.IsNullOrWhiteSpace(_viewer.Actor(_actor)))"
+                                title="@(_viewer.MayDecide ? null : "your account does not hold the approver role")"
+                                @onclick="RequestAsync">
+                            @(_busy ? "requesting…" : "request a code fix")
+                        </button>
+                    </div>
+                    @if (_requestError is { Length: > 0 })
+                    {
+                        <span class="hp-error" data-testid="codefix-request-error"><span class="glyph">!!</span> @_requestError</span>
+                    }
+                    else if (_requestMessage is { Length: > 0 })
+                    {
+                        <span class="hp-yes"><span class="glyph">+</span> @_requestMessage</span>
+                    }
+                </div>
+            </div>
+        }
+
+        @if (view.Attempts.Count == 0 && !CanRequest)
+        {
+            <p class="hp-empty">No code fix was attempted for this incident.</p>
+        }
+
+        @foreach (var a in view.Attempts)
+        {
+            <article @key="a.Id" class="hp-codefix @ArticleClass(a.State)"
+                     data-testid="codefix-attempt" data-state="@a.State" data-attempt="@a.Id">
+                <header class="hp-inv-header">
+                    <span class="hp-state @Display.CodeFixClass(a.State)">
+                        <span class="glyph">@Display.CodeFixGlyph(a.State)</span>
+                        @Display.CodeFixWord(a.State)
+                    </span>
+                    <span class="mono" title="@a.Repository">@Display.ShortRepo(a.Repository)</span>
+                    <span class="mono hp-muted" title="branched from @a.DefaultBranch">@a.Branch</span>
+                    <span class="hp-muted">requested by <span class="mono">@a.RequestedBy</span></span>
+                    <span class="hp-muted mono">@Display.Timestamp(a.CreatedAt)</span>
+                    <span class="hp-muted mono"
+                          title="plan @Display.Usd(a.PlanCostUsd) · implement @Display.Usd(a.ImplementCostUsd)">
+                        $@a.TotalCostUsd.ToString("0.00", CultureInfo.InvariantCulture)
+                    </span>
+                    @if (a.AnalysedRef is { Length: > 0 } analysed)
+                    {
+                        <span class="hp-muted mono" title="The commit the coder analysed: @analysed">ref @Display.ShortSha(analysed)</span>
+                    }
+                </header>
+
+                @if (a.State.IsRunning() || a.State == CodeFixState.Eligible)
+                {
+                    <div class="hp-cf-phase"><CodeFixProgress Attempt="a" Now="Now" /></div>
+                }
+
+                @if (a.State == CodeFixState.PrOpened)
+                {
+                    <div class="hp-cf-phase hp-cf-pr-row">
+                        <span class="hp-muted">draft pull request</span>
+                        <CodeFixPrLink Attempt="a" />
+                    </div>
+                    @if (a.Deviations.Count > 0)
+                    {
+                        <h4>deviations from the approved plan <span class="hp-count">@a.Deviations.Count</span></h4>
+                        <ul class="hp-cf-list" data-testid="codefix-deviations">
+                            @foreach (var d in a.Deviations)
+                            {
+                                <li>@d</li>
+                            }
+                        </ul>
+                    }
+                }
+
+                @if (a.FailureReason is { Length: > 0 } reason && a.State is CodeFixState.Failed or CodeFixState.Denied or CodeFixState.Expired or CodeFixState.Cancelled)
+                {
+                    <div class="hp-callout @(a.State == CodeFixState.Failed ? "callout-error" : "callout-suppressed")"
+                         data-testid="codefix-failure">
+                        <span class="glyph">@Display.CodeFixGlyph(a.State)</span>
+                        <strong>@Display.CodeFixWord(a.State)</strong>@(a.State == CodeFixState.Denied && a.ApprovedBy is { Length: > 0 } by ? $" by {by}" : ""):
+                        @reason
+                    </div>
+                }
+
+                @* Denied carries its decider in the callout above; every other state with a
+                   decider got one by approving. *@
+                @if (a.ApprovedBy is { Length: > 0 } && a.State != CodeFixState.Denied)
+                {
+                    <p class="hp-muted hp-cf-approved">
+                        <span class="glyph">+</span> approved by <span class="mono">@a.ApprovedBy</span>
+                        @if (a.DecidedAt is { } decided)
+                        {
+                            <text> at <span class="mono">@Display.Timestamp(decided)</span></text>
+                        }
+                    </p>
+                }
+
+                @if (a.Summary is { Length: > 0 } || a.Steps.Count > 0)
+                {
+                    <h3>plan</h3>
+
+                    @if (a.Summary is { Length: > 0 } summary)
+                    {
+                        <p class="hp-plan-summary" data-testid="codefix-summary">@summary</p>
+                    }
+
+                    <dl class="hp-kv">
+                        @if (a.Confidence is { } confidence)
+                        {
+                            <dt>confidence</dt>
+                            <dd>
+                                <span class="hp-conf" title="The coder's own estimate. Advisory, uncalibrated.">
+                                    <span class="hp-conf-track">
+                                        <span class="hp-conf-fill" style="width:@Width(confidence)"></span>
+                                    </span>
+                                    <span class="mono">@confidence.ToString("F2", CultureInfo.InvariantCulture)</span>
+                                </span>
+                            </dd>
+                        }
+
+                        <dt>verification</dt>
+                        <dd>
+                            <span class="mono">@(a.VerificationLevel ?? "unstated")</span>
+                            @if (!string.Equals(a.VerificationLevel, "tests", StringComparison.OrdinalIgnoreCase))
+                            {
+                                @* Anything short of tests means the PR can be green and wrong, and the
+                                   reviewer is the only check left. That belongs in front of the approver. *@
+                                <span class="hp-warn" data-testid="codefix-verification-weak">
+                                    <span class="glyph">!</span> verification weak
+                                </span>
+                            }
+                        </dd>
+
+                        @if (a.NotVerifiable.Count > 0)
+                        {
+                            <dt>not verifiable</dt>
+                            <dd>
+                                <ul class="hp-cf-list">
+                                    @foreach (var nv in a.NotVerifiable)
+                                    {
+                                        <li>@nv</li>
+                                    }
+                                </ul>
+                            </dd>
+                        }
+
+                        @if (a.PlanJobName is { Length: > 0 } || a.ImplementJobName is { Length: > 0 })
+                        {
+                            <dt>jobs</dt>
+                            <dd class="mono">
+                                @a.PlanJobName
+                                @if (a.ImplementJobName is { Length: > 0 } impl)
+                                {
+                                    <text> · @impl</text>
+                                }
+                            </dd>
+                        }
+                    </dl>
+
+                    @if (a.RootCause is { Length: > 0 } rootCause)
+                    {
+                        <h4>root cause</h4>
+                        <pre class="hp-code" data-testid="codefix-root-cause">@rootCause</pre>
+                    }
+
+                    @if (a.Files.Count > 0)
+                    {
+                        <h4>affected files <span class="hp-count">@a.Files.Count</span></h4>
+                        <ul class="hp-cf-files mono" data-testid="codefix-files">
+                            @foreach (var f in a.Files)
+                            {
+                                <li>@f</li>
+                            }
+                        </ul>
+                    }
+
+                    @if (a.Steps.Count > 0)
+                    {
+                        <h4>steps</h4>
+                        <ol class="hp-cf-steps" data-testid="codefix-steps">
+                            @foreach (var step in a.Steps)
+                            {
+                                <li>@step</li>
+                            }
+                        </ol>
+                    }
+
+                    @if (a.Notes.Count > 0)
+                    {
+                        <h4>notes <span class="hp-count">@a.Notes.Count</span></h4>
+                        <ul class="hp-cf-notes" data-testid="codefix-notes">
+                            @foreach (var note in a.Notes)
+                            {
+                                @if (IsInjection(note))
+                                {
+                                    @* Text in the evidence that read like an instruction to the coder.
+                                       Loud on purpose: a workload emitting that is itself worth a
+                                       human's attention, whatever the plan says. *@
+                                    <li class="note-injection" data-testid="codefix-note-injection">
+                                        <span class="hp-chip chip-injection"><span class="glyph">!!</span> suspected injection</span>
+                                        <span>@note</span>
+                                    </li>
+                                }
+                                else
+                                {
+                                    <li>@note</li>
+                                }
+                            }
+                        </ul>
+                    }
+                }
+
+                @if (a.DeniedToolCalls.Count > 0)
+                {
+                    <details class="hp-cf-denied" data-testid="codefix-denied-tools">
+                        <summary>
+                            <span class="hp-warn"><span class="glyph">!</span> @a.DeniedToolCalls.Count denied tool call@(a.DeniedToolCalls.Count == 1 ? "" : "s")</span>
+                            <span class="hp-muted">— the coder asked for something its sandbox refused</span>
+                        </summary>
+                        <table class="hp-table">
+                            <thead>
+                                <tr><th>tool</th><th>input</th><th>reason</th></tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var d in a.DeniedToolCalls)
+                                {
+                                    <tr>
+                                        <td class="mono">@d.Tool</td>
+                                        <td class="mono hp-cf-input">@d.Input</td>
+                                        <td>@d.Reason</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </details>
+                }
+
+                @if (a.State == CodeFixState.PlanReady)
+                {
+                    var blocked = ApproveBlockedBecause(view.Mode, a);
+
+                    <div class="hp-cf-decide" data-testid="codefix-approval">
+                        <div class="hp-retry-controls">
+                            <ActorField Viewer="_viewer" @bind-Name="_actor" TestId="codefix-actor" />
+                            <input class="hp-retry-name" placeholder="deny reason (optional)" aria-label="deny reason"
+                                   data-testid="codefix-deny-reason"
+                                   @bind="_denyReason" @bind:event="oninput" />
+                            <button type="button" class="hp-submit" data-testid="codefix-approve"
+                                    disabled="@(blocked is not null || _busy || string.IsNullOrWhiteSpace(_viewer.Actor(_actor)))"
+                                    title="@(blocked ?? "Starts the implement Job: a coder with write access to one branch, ending in a Draft PR")"
+                                    @onclick="() => DecideAsync(a.Id, true)">
+                                @(_deciding == a.Id && _approving ? "…" : "approve")
+                            </button>
+                            <button type="button" class="hp-submit" data-testid="codefix-deny"
+                                    disabled="@(!_viewer.MayDecide || _busy || string.IsNullOrWhiteSpace(_viewer.Actor(_actor)))"
+                                    @onclick="() => DecideAsync(a.Id, false)">
+                                @(_deciding == a.Id && !_approving ? "…" : "deny")
+                            </button>
+                        </div>
+                        @if (blocked is not null)
+                        {
+                            <span class="hp-warn" data-testid="codefix-approve-blocked">
+                                <span class="glyph">!</span> approve is unavailable: @blocked
+                            </span>
+                        }
+                    </div>
+                }
+
+                @if (_messages.TryGetValue(a.Id, out var message))
+                {
+                    <span class="@(message.Ok ? "hp-yes" : "hp-error")" data-testid="codefix-decision-message">
+                        <span class="glyph">@(message.Ok ? "+" : "!!")</span> @message.Text
+                    </span>
+                }
+            </article>
+        }
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired]
+    public Guid IncidentId { get; set; }
+
+    [Parameter]
+    public IncidentState IncidentState { get; set; }
+
+    /// <summary>The parent's one-second clock, so elapsed times move without a query here.</summary>
+    [Parameter]
+    public DateTimeOffset Now { get; set; } = DateTimeOffset.UtcNow;
+
+    private IncidentCodeFixView? _view;
+    private ConsoleViewer _viewer = ConsoleViewer.Anonymous;
+    private string? _error;
+    private Guid _loadedFor;
+
+    private string _actor = string.Empty;
+    private string _denyReason = string.Empty;
+    private bool _busy;
+    private bool _approving;
+    private Guid? _deciding;
+    private readonly Dictionary<Guid, (bool Ok, string Text)> _messages = [];
+    private string? _requestError;
+    private string? _requestMessage;
+    private bool _revealed;
+
+    private CancellationTokenSource? _cts;
+
+    /// <summary>Shared with the rest of the incident page, so a name typed once is typed once.</summary>
+    private const string NameStorageKey = "hephaisto.feedback.name";
+
+    [Inject]
+    private AuthenticationStateProvider? AuthProvider { get; set; }
+
+    private bool CanRequest =>
+        _view is { } v
+        && IncidentState == IncidentState.Escalated
+        && !v.Attempts.Any(a => a.State.IsOpen());
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedFor == IncidentId && _cts is not null)
+        {
+            return;
+        }
+
+        if (_cts is not null)
+        {
+            await _cts.CancelAsync();
+            _cts.Dispose();
+        }
+
+        _cts = new CancellationTokenSource();
+        _loadedFor = IncidentId;
+        _view = null;
+        _messages.Clear();
+        _requestError = null;
+        _requestMessage = null;
+        _revealed = false;
+
+        _viewer = await ConsoleViewer.ResolveAsync(AuthProvider, Authorization);
+
+        await LoadAsync();
+
+        _ = ListenAsync(_cts.Token);
+        _ = TickAsync(_cts.Token);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                var remembered = await Js.InvokeAsync<string?>("hephaisto.storageGet", NameStorageKey);
+
+                if (!string.IsNullOrWhiteSpace(remembered) && string.IsNullOrWhiteSpace(_actor))
+                {
+                    _actor = remembered;
+                    StateHasChanged();
+                }
+            }
+            catch (JSException)
+            {
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
+
+        // Linked from the code-fix list as incidents/{id}#codefix. The browser's own jump happens
+        // before this section exists - it is loaded after the page - so land the reader here once
+        // it has rendered with data.
+        if (!_revealed && _view is not null && Nav.Uri.EndsWith("#codefix", StringComparison.Ordinal))
+        {
+            _revealed = true;
+
+            try
+            {
+                await Js.InvokeVoidAsync("hephaisto.revealStep", "codefix");
+            }
+            catch (JSException)
+            {
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        var ct = _cts?.Token ?? CancellationToken.None;
+
+        try
+        {
+            _view = await Scopes.QueryAsync(q => q.ForIncidentAsync(IncidentId, ct));
+            _error = null;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            // Keeps the last good view: a blip must not make a running coder look absent.
+            _error = ex.Message;
+        }
+    }
+
+    /// <summary>This incident's code-fix events only.</summary>
+    private async Task ListenAsync(CancellationToken ct)
+    {
+        try
+        {
+            await foreach (var e in Notifier.SubscribeAsync(ct))
+            {
+                if (e.IncidentId != IncidentId || e.Kind != IncidentLiveEventKind.CodeFixChanged)
+                {
+                    continue;
+                }
+
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// The fallback. Only while something is open: a finished attempt cannot change without an
+    /// event, and polling a closed incident's history every five seconds buys nothing.
+    /// </summary>
+    private async Task TickAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                if (_view is { } v && !v.Attempts.Any(a => a.State.IsOpen()) && !CanRequest)
+                {
+                    continue;
+                }
+
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Why approve is unavailable, in the words the reader needs, or null when it is available.
+    /// </summary>
+    /// <remarks>
+    /// A courtesy, never the guard: <see cref="CodeFixCoordinator.DecideAsync"/> re-checks all of
+    /// this under a row lock at the moment of approving, and its refusal is shown verbatim.
+    /// </remarks>
+    private string? ApproveBlockedBecause(CodeFixModeView mode, CodeFixAttemptView attempt) =>
+        !mode.CanApprove ? mode.ApprovalBlockedBecause ?? "the code-fix mode does not allow it"
+        : attempt.NeedsCait ? "this fix needs a Cait change first; that is staged delivery by a human, Cait first"
+        : !_viewer.MayDecide ? "your account does not hold the approver role"
+        : null;
+
+    private async Task DecideAsync(Guid attemptId, bool approve)
+    {
+        var actor = _viewer.Actor(_actor);
+
+        if (string.IsNullOrWhiteSpace(actor) || _busy)
+        {
+            return;
+        }
+
+        _busy = true;
+        _approving = approve;
+        _deciding = attemptId;
+        _messages.Remove(attemptId);
+
+        try
+        {
+            var ct = _cts?.Token ?? CancellationToken.None;
+            var reason = string.IsNullOrWhiteSpace(_denyReason) ? null : _denyReason.Trim();
+
+            var result = await Scopes.CoordinateAsync(c => c.DecideAsync(
+                IncidentId, attemptId, approve, actor, ApprovalSource.Ui, _viewer.Authenticated, approve ? null : reason, ct));
+
+            _messages[attemptId] = (result.Outcome == CodeFixDecisionOutcome.Done, result.Message);
+
+            if (result.Outcome == CodeFixDecisionOutcome.Done && !approve)
+            {
+                _denyReason = string.Empty;
+            }
+
+            await RememberAsync();
+            await LoadAsync();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _messages[attemptId] = (false, ex.Message);
+        }
+        finally
+        {
+            _busy = false;
+            _deciding = null;
+        }
+    }
+
+    private async Task RequestAsync()
+    {
+        var actor = _viewer.Actor(_actor);
+
+        if (string.IsNullOrWhiteSpace(actor) || _busy)
+        {
+            return;
+        }
+
+        _busy = true;
+        _requestError = null;
+        _requestMessage = null;
+
+        try
+        {
+            var ct = _cts?.Token ?? CancellationToken.None;
+            var (_, attempt, refusal) = await Scopes.CoordinateAsync(c => c.RequestAsync(IncidentId, actor, ct));
+
+            if (attempt is null)
+            {
+                _requestError = refusal ?? "declined";
+            }
+            else
+            {
+                _requestMessage = $"started — {Display.CodeFixWord(attempt.State)}.";
+                await RememberAsync();
+            }
+
+            await LoadAsync();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _requestError = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task RememberAsync()
+    {
+        if (_viewer.Authenticated || string.IsNullOrWhiteSpace(_actor))
+        {
+            return;
+        }
+
+        try
+        {
+            await Js.InvokeVoidAsync("hephaisto.storageSet", NameStorageKey, _actor.Trim());
+        }
+        catch (JSException)
+        {
+            // A convenience; the decision is already recorded.
+        }
+    }
+
+    private static bool IsInjection(string note) =>
+        note.Contains("injection", StringComparison.OrdinalIgnoreCase);
+
+    private static string ArticleClass(CodeFixState state) => state switch
+    {
+        CodeFixState.Planning or CodeFixState.Implementing or CodeFixState.Eligible => "hp-codefix-live",
+        CodeFixState.PlanReady => "hp-codefix-ready",
+        CodeFixState.PrOpened => "hp-codefix-pr",
+        _ => string.Empty,
+    };
+
+    private static string Width(double confidence) =>
+        (Math.Clamp(confidence, 0, 1) * 100).ToString("F1", CultureInfo.InvariantCulture) + "%";
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_cts is not null)
+        {
+            await _cts.CancelAsync();
+            _cts.Dispose();
+            _cts = null;
+        }
+    }
+}

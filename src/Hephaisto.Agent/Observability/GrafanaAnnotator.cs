@@ -34,6 +34,12 @@ public interface IGrafanaAnnotator
     /// <param name="incident">Read after the transition, so <c>State</c> is the outcome.</param>
     /// <param name="summary">The primary hypothesis, when there is one.</param>
     Task IncidentClosedAsync(Incident incident, string? summary, CancellationToken ct);
+
+    /// <summary>
+    /// A point annotation when a code fix opens its Draft PR, so the dashboard that showed the
+    /// incident also shows where its fix is waiting. Default no-op for annotators that predate it.
+    /// </summary>
+    Task CodeFixPrOpenedAsync(Incident incident, CodeFixAttempt attempt, CancellationToken ct) => Task.CompletedTask;
 }
 
 /// <summary>
@@ -106,6 +112,22 @@ public sealed class GrafanaAnnotator(
     }
 
     /// <summary>One line at startup saying whether this is on, and why not when it is off.</summary>
+    public Task CodeFixPrOpenedAsync(Incident incident, CodeFixAttempt attempt, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(incident);
+        ArgumentNullException.ThrowIfNull(attempt);
+
+        return PostAsync(
+            new AnnotationRequest
+            {
+                Time = (attempt.FinishedAt ?? DateTimeOffset.UtcNow).ToUnixTimeMilliseconds(),
+                Tags = TagsFor(incident, "codefix-pr"),
+                Text = $"<b>Draft PR opened</b> — {System.Net.WebUtility.HtmlEncode(attempt.PrUrl)} for {Describe(incident)}",
+            },
+            incident,
+            ct);
+    }
+
     public static string Describe(GrafanaOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);

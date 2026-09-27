@@ -1,0 +1,79 @@
+{
+  "contract_version": "1",
+  "attempt_id": "0192a6f0-0000-7000-8000-000000000001",
+  "incident_id": "0192a6f0-0000-7000-8000-0000000000aa",
+  "phase": "implement",
+  "budget": {
+    "max_cost_usd": 15,
+    "deadline_seconds": 3600
+  },
+  "repository": {
+    "url": "https://github.com/Flou21/hephaisto-fixture-dotnet",
+    "default_branch": "main",
+    "path": "",
+    "branch": "hephaisto/codefix-0192a6f00000"
+  },
+  "context": {
+    "repository_url": "https://github.com/TrueRelevance/dev-context",
+    "ref": "main"
+  },
+  "incident": {
+    "title": "shop-api is crash-looping",
+    "kind": "CrashLoopBackOff",
+    "severity": "Critical",
+    "target": {
+      "namespace": "hephaisto-chaos",
+      "kind": "Pod",
+      "name": "shop-api-7f9c-abcde",
+      "workload": "hephaisto-chaos/Deployment/shop-api"
+    },
+    "image": "ghcr.io/flou21/hephaisto-fixture-dotnet:c15-0123456789abcdef0123456789abcdef01234567",
+    "rollout_revision": "3",
+    "escalation_reason": "NoPlanProduced"
+  },
+  "findings": [
+    {
+      "id": "0192a6f0-0000-7000-8000-0000000000f1",
+      "primary": true,
+      "category": "application",
+      "confidence": 0.86,
+      "hypothesis": "Startup throws a NullReferenceException in Endpoints configuration.",
+      "evidence": [
+        {
+          "step_id": "0192a6f0-0000-7000-8000-0000000000c1",
+          "tool": "get_pod_logs",
+          "excerpt": "Unhandled exception. System.NullReferenceException: Object reference not set to an instance of an object.\n   at Shop.Api.Startup.Endpoints.Map(WebApplication app)"
+        }
+      ]
+    }
+  ],
+  "investigation_summary": "Container exits 134 on start; logs show a NullReferenceException in Shop.Api.Startup.Endpoints.",
+  "plan": {
+    "contract_version": "1",
+    "attempt_id": "0192a6f0-0000-7000-8000-000000000001",
+    "phase": "plan",
+    "outcome": "planned",
+    "summary": "Endpoints.Map dereferences options.Endpoints without a null check; an empty configuration section crashes startup.",
+    "root_cause": "src/Shop.Api/Startup/Endpoints.cs:14 calls options.Endpoints.First() while Endpoints is null when Shop:Endpoints is absent.",
+    "confidence": 0.9,
+    "files": [
+      "src/Shop.Api/Startup/Endpoints.cs"
+    ],
+    "steps": [
+      "Treat a null Endpoints list as empty in Endpoints.Map.",
+      "Keep EndpointsOptionsTests.Empty_endpoints_do_not_throw green."
+    ],
+    "verification": {
+      "level": "tests",
+      "not_verifiable": []
+    },
+    "needs_cait": false,
+    "notes": [],
+    "analysed_ref": "0123456789abcdef0123456789abcdef01234567",
+    "context_sha": "89abcdef0123456789abcdef0123456789abcdef",
+    "cost_usd": 1.42,
+    "session_id": "5d2f7a0e-1111-2222-3333-444455556666",
+    "error": null,
+    "denied_tool_calls": []
+  }
+}

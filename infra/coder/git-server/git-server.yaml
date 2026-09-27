@@ -1,0 +1,194 @@
+# =============================================================================
+# coder-git - a git server for the DEV cluster, standing in for GitHub
+# =============================================================================
+# Applied by the Tiltfile only when the `coder` toggle is on. Never part of the chart.
+#
+# The code-fix stage on this cluster clones two repositories and pushes to one:
+#
+#   http://coder-git.hephaisto-coder.svc/Flou21/hephaisto-fixture-dotnet.git   (fixture/c15-*, fixture/c19-*)
+#   http://coder-git.hephaisto-coder.svc/dev-context.git                        (the coder's context)
+#
+# Both are seeded from local checkouts by scripts/coder-git-seed.sh at image build time. Pushes
+# land in an emptyDir: a pod restart - or `tilt trigger coder-git` - resets every repository to
+# its seeded state, which is what a test fixture should do.
+#
+# Plain HTTP, no authentication, push enabled. The NetworkPolicies below are the whole boundary.
+#
+# See what the coder pushed:
+#   kubectl --context studio-rancher-desktop -n hephaisto-coder logs deploy/coder-git
+#   kubectl --context studio-rancher-desktop -n hephaisto-coder port-forward svc/coder-git 8099:80
+#   curl -s localhost:8099/          # every repository, every branch, newest first
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coder-git
+  namespace: hephaisto-coder
+  labels:
+    app.kubernetes.io/name: coder-git
+    app.kubernetes.io/part-of: hephaisto
+    app.kubernetes.io/component: dev-git-server
+spec:
+  replicas: 1
+  # Recreate: two pods would be two diverging sets of pushed branches behind one Service.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: coder-git
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: coder-git
+        app.kubernetes.io/part-of: hephaisto
+        app.kubernetes.io/component: dev-git-server
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 64199
+        runAsGroup: 64199
+        fsGroup: 64199
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: git
+          image: hephaisto/coder-git
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: repos
+              mountPath: /srv/git
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: repos
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coder-git
+  namespace: hephaisto-coder
+  labels:
+    app.kubernetes.io/name: coder-git
+    app.kubernetes.io/part-of: hephaisto
+spec:
+  selector:
+    app.kubernetes.io/name: coder-git
+  ports:
+    # 80, so the repository URLs carry no port and look like the GitHub ones they replace.
+    - name: http
+      port: 80
+      targetPort: http
+---
+# Who may reach the git server: coder pods, and the egress proxy on their behalf. Nothing else -
+# a push endpoint with no authentication must not be reachable from the rest of the cluster.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: coder-git-ingress
+  namespace: hephaisto-coder
+  labels:
+    app.kubernetes.io/part-of: hephaisto
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: coder-git
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [hephaisto-coder, hephaisto-coder-egress]
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+# DEV ONLY: coder pods may reach the git server DIRECTLY, not only through the egress proxy.
+#
+# The chart's coder policy allows DNS and the proxy and nothing else, and on a real install that
+# is right: every host a coder talks to is HTTPS, and git honours HTTPS_PROXY. This git server is
+# plain HTTP, and for http:// URLs git reads ONLY the lowercase `http_proxy` - it ignores
+# HTTP_PROXY by design (httpoxy) - while the Job sets the uppercase pair. So git's clone and push
+# here go straight to the Service, and without this policy they time out at the NetworkPolicy.
+#
+# NetworkPolicies are additive, so this widens the chart's coder policy by exactly one
+# destination, in this cluster only, and the chart itself stays as strict as it ships. The proxy
+# allowlist in values-dev-coder.yaml ALSO admits this host, so a client that does honour
+# HTTP_PROXY for http works as well.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: coder-git-dev-egress
+  namespace: hephaisto-coder
+  labels:
+    app.kubernetes.io/part-of: hephaisto
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: hephaisto-coder
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: coder-git
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+# DEV ONLY, the other half: the egress proxy may reach the git server's pod port.
+#
+# The chart's proxy policy allows egress on 80 and 443, and NetworkPolicy ports are matched
+# against the DESTINATION POD's port after the Service has translated it - so a request to
+# coder-git:80 arrives as 8080 and would be dropped there. This admits exactly that one pod on
+# exactly that port, so an http client that does route through the proxy (anything honouring
+# HTTP_PROXY) reaches the git server too, and the proxy log shows it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: coder-git-dev-proxy-egress
+  namespace: hephaisto-coder
+  labels:
+    app.kubernetes.io/part-of: hephaisto
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: hephaisto-coder-egress
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: coder-git
+      ports:
+        - protocol: TCP
+          port: 8080

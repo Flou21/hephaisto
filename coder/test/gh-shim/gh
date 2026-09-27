@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# gh shim: a stand-in for the GitHub CLI with no network. Used by the tests, and by local-cluster
+# plumbing runs (CODEFIX_GH=shim) against an in-cluster git server that real gh would refuse.
+#
+#   GH_SHIM_LOG           every invocation is appended here      (default $TMPDIR/gh-shim.log)
+#   GH_SHIM_STATE         created PRs persist here as JSON       (default $TMPDIR/gh-shim-state)
+#   GH_SHIM_KNOWN_LABELS  comma list of labels that exist        (default "hephaisto")
+#
+# PR URLs are "<repo url without .git>/pull/<n>", which is what Hephaisto checks against the
+# mapped repository. Answers: auth status, pr list, pr view, pr create, label list.
+set -euo pipefail
+
+tmp=${TMPDIR:-/tmp}
+LOG=${GH_SHIM_LOG:-$tmp/gh-shim.log}
+STATE=${GH_SHIM_STATE:-$tmp/gh-shim-state}
+KNOWN=${GH_SHIM_KNOWN_LABELS-hephaisto}
+mkdir -p "$STATE/prs" "$(dirname "$LOG")"
+printf '%s\n' "$(printf '%q ' gh "$@")" >> "$LOG"
+
+die() { echo "$*" >&2; exit 1; }
+
+repo='' head='' base='' state='open' title='' body_file='' body='' assignee='' draft=false
+labels=() pos=()
+cmd1=${1:-}; cmd2=${2:-}
+shift $(( $# >= 2 ? 2 : $# ))
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -R|--repo) repo=$2; shift 2 ;;
+    --repo=*) repo=${1#*=}; shift ;;
+    -H|--head) head=$2; shift 2 ;;
+    -B|--base) base=$2; shift 2 ;;
+    -s|--state) state=$2; shift 2 ;;
+    -t|--title) title=$2; shift 2 ;;
+    -F|--body-file) body_file=$2; shift 2 ;;
+    -b|--body) body=$2; shift 2 ;;
+    -a|--assignee) assignee=$2; shift 2 ;;
+    -l|--label) labels+=("$2"); shift 2 ;;
+    -d|--draft) draft=true; shift ;;
+    --json|-q|--jq|-L|--limit) shift 2 ;;
+    --*) shift ;;
+    *) pos+=("$1"); shift ;;
+  esac
+done
+
+repo_url() {
+  local r=${repo%.git}; r=${r%/}
+  case "$r" in
+    http://*|https://*|file://*) printf '%s' "$r" ;;
+    '') die "gh-shim: --repo is required (the runner always passes it)" ;;
+    *) printf 'https://github.com/%s' "$r" ;;
+  esac
+}
+
+all_prs() {
+  shopt -s nullglob
+  local files=("$STATE"/prs/*.json)
+  if [ ${#files[@]} -eq 0 ]; then echo '[]'; else jq -s '.' "${files[@]}"; fi
+}
+
+case "$cmd1 $cmd2" in
+  "auth status")
+    echo "github.com: logged in as hephaisto-shim (gh shim, no network)" >&2
+    ;;
+  "label list")
+    IFS=',' read -ra ls <<< "$KNOWN"
+    for l in "${ls[@]}"; do [ -n "$l" ] && printf '%s\t\t#ededed\n' "$l"; done
+    ;;
+  "pr list")
+    url=$(repo_url)
+    all_prs | jq -c --arg repo "$url" --arg head "$head" --arg state "$state" \
+      '[ .[] | select(.repository == $repo)
+             | select($head == "" or .headRefName == $head)
+             | select($state == "all" or (.state | ascii_downcase) == ($state | ascii_downcase)) ]'
+    ;;
+  "pr view")
+    url=$(repo_url)
+    key=${pos[0]:-}
+    all_prs | jq -e -c --arg repo "$url" --arg key "$key" \
+      'first(.[] | select(.repository == $repo)
+                  | select((.number | tostring) == $key or .url == $key or .headRefName == $key))' \
+      || die "no pull requests found for $key"
+    ;;
+  "pr create")
+    url=$(repo_url)
+    [ -n "$head" ] && [ -n "$base" ] && [ -n "$title" ] || die "gh-shim: pr create needs --head, --base and --title"
+    [ -n "$body_file" ] || [ -n "$body" ] || die "gh-shim: pr create needs --body or --body-file"
+    for l in "${labels[@]+"${labels[@]}"}"; do
+      case ",$KNOWN," in *",$l,"*) ;; *) die "could not add label: '$l' not found" ;; esac
+    done
+    if all_prs | jq -e --arg repo "$url" --arg head "$head" \
+         'any(.[]; .repository == $repo and .headRefName == $head and .state == "OPEN")' > /dev/null; then
+      die "a pull request for branch \"$head\" into branch \"$base\" already exists"
+    fi
+    n=$(( $(cat "$STATE/next" 2>/dev/null || echo 0) + 1 ))
+    echo "$n" > "$STATE/next"
+    pr_url="$url/pull/$n"
+    if [ -n "$body_file" ]; then cp "$body_file" "$STATE/prs/$n.body.md"; else printf '%s' "$body" > "$STATE/prs/$n.body.md"; fi
+    jq -n --argjson n "$n" --arg url "$pr_url" --arg repo "$url" --arg head "$head" --arg base "$base" \
+      --arg title "$title" --arg assignee "$assignee" --argjson draft "$draft" \
+      --arg labels "$(IFS=,; echo "${labels[*]+"${labels[*]}"}")" \
+      '{number: $n, url: $url, repository: $repo, headRefName: $head, baseRefName: $base, title: $title,
+        state: "OPEN", isDraft: $draft, assignees: [$assignee | select(. != "")],
+        labels: ($labels | split(",") | map(select(. != "")))}' > "$STATE/prs/$n.json"
+    echo "$pr_url"
+    ;;
+  *)
+    die "gh-shim: unsupported command: $cmd1 $cmd2"
+    ;;
+esac

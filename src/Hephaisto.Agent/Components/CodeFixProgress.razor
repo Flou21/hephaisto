@@ -1,0 +1,70 @@
+@using Hephaisto.Agent.CodeFix
+@using Hephaisto.Core.CodeFix
+
+@*
+    One line that answers "where is this attempt, and what do I do about it", for the code-fix
+    table. Shared rather than inlined so the list and anything else that summarises an attempt say
+    the same thing in the same words.
+*@
+
+@switch (Attempt.State)
+{
+    case CodeFixState.Planning or CodeFixState.Implementing:
+        var phase = Attempt.State == CodeFixState.Planning ? "planning" : "implementing";
+        var job = Attempt.State == CodeFixState.Planning ? Attempt.PlanJobName : Attempt.ImplementJobName;
+        @* Elapsed from the start of the CURRENT phase, not from creation: a plan that took twenty
+           minutes and an implement Job that has been silent for twenty minutes are different facts. *@
+        <span class="hp-running" data-testid="codefix-running"
+              title="@(Attempt.RunningSince is { } since ? $"{phase} since {Display.Timestamp(since)}" : phase)">
+            <span class="glyph">*</span>
+            @phase @(Attempt.RunningSince is { } started ? Display.Duration(Now - started) : "")
+            @if (job is { Length: > 0 })
+            {
+                <text>&middot; job </text><span class="mono">@job</span>
+            }
+        </span>
+        break;
+
+    case CodeFixState.Eligible:
+        <span class="hp-queued" title="Eligible and recorded; the plan Job has not been created yet">
+            <span class="glyph">.</span> waiting for its job
+        </span>
+        break;
+
+    case CodeFixState.PlanReady:
+        <span class="hp-codefix-await" data-testid="codefix-awaiting">
+            <span class="glyph">!</span> awaiting approval
+        </span>
+        @if (Attempt.NeedsCait)
+        {
+            <span class="hp-warn"><span class="glyph">!</span> needs a Cait change first</span>
+        }
+        @if (Attempt.Summary is { Length: > 0 } summary)
+        {
+            <span class="hp-cf-line" title="@summary">@Display.Truncate(summary, 120)</span>
+        }
+        break;
+
+    case CodeFixState.PrOpened:
+        <CodeFixPrLink Attempt="Attempt" />
+        break;
+
+    default:
+        @if (Attempt.State == CodeFixState.Denied && Attempt.ApprovedBy is { Length: > 0 } by)
+        {
+            <span class="hp-cf-line">denied by @by</span>
+        }
+        @if (Attempt.FailureReason is { Length: > 0 } reason)
+        {
+            <span class="hp-cf-line hp-cf-reason" title="@reason">@Display.Truncate(reason, 140)</span>
+        }
+        break;
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public CodeFixAttemptView Attempt { get; set; } = default!;
+
+    [Parameter]
+    public DateTimeOffset Now { get; set; } = DateTimeOffset.UtcNow;
+}

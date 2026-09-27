@@ -163,6 +163,10 @@ public sealed class HttpNotificationChannel(
         [JsonPropertyName("severity")]
         public required string Severity { get; init; }
 
+        [JsonPropertyName("codeFix")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public CodeFixPayload? CodeFix { get; init; }
+
         public static Payload From(NotificationMessage message)
         {
             var s = message.Snapshot;
@@ -194,11 +198,27 @@ public sealed class HttpNotificationChannel(
                         CorrelationKey = s.CorrelationKey,
                     },
 
+                CodeFix = s.CodeFixAttemptId is not { } attempt
+                    ? null
+                    : new CodeFixPayload { AttemptId = attempt, Repository = s.Repository, PrUrl = s.ExternalUrl },
+
                 Links = message.IncidentUrl is null && message.GrafanaUrl is null
                     ? null
                     : new LinksPayload { Incident = message.IncidentUrl, Grafana = message.GrafanaUrl },
             };
         }
+    }
+
+    private sealed record CodeFixPayload
+    {
+        [JsonPropertyName("attemptId")]
+        public required Guid AttemptId { get; init; }
+
+        [JsonPropertyName("repository")]
+        public string? Repository { get; init; }
+
+        [JsonPropertyName("prUrl")]
+        public string? PrUrl { get; init; }
     }
 
     private sealed record IncidentPayload
