@@ -202,8 +202,8 @@ into specific namespaces and nowhere else. **No access to Secrets at all, ever.*
 cordon/drain `ClusterRole` ships *unbound* — binding it is an explicit, separate human act.
 No amount of prompt injection changes what a ServiceAccount is allowed to do.
 
-**2. The model never holds a mutating tool handle.** The three phases are separated on
-purpose:
+**2. No model in this process ever holds a mutating handle to the cluster.** The three
+phases are separated on purpose:
 
 - *investigate* — read-only tools only
 - *plan* — **no tools at all**; emits JSON against a fixed schema
@@ -233,6 +233,17 @@ instead of accepting a fictional one.
 
 **5. Budgets, cooldowns and oscillation detection** cap the worst sustained case at roughly
 ten pod restarts an hour — indistinguishable from a badly tuned HPA.
+
+**6. Code fixes are a second, separately gated stage (v0.9.0).** A coder — Claude Code in a
+Kubernetes Job — *does* hold a shell, which is why invariant 2 says "to the cluster" and why the
+coder is built to have nothing else: no ServiceAccount token on a ServiceAccount bound to nothing,
+no Hephaisto credential and no inbound surface (it answers through a framed block in its own log),
+egress only through an allowlist proxy, a non-root read-only pod. Its only mutation target is an
+assigned `hephaisto/codefix-*` branch and a **Draft** PR, and only after a human approves the plan
+— which needs `codeFix.mode: pr` *and* an authenticated login. `create jobs` is granted in the
+coder namespace and nowhere else; the agent refuses to start if it holds it anywhere else. The mode
+is its own axis (`Off`/`Plan`/`Pr`, silence is `Off`), and the kill switch overrides it: `Off`,
+the emergency stop and the runaway latch all stop coders.
 
 ### Two invariants that must never be weakened
 
@@ -429,13 +440,16 @@ audit row already lives.
 | `POST /api/incidents/{id}/feedback` | mark a diagnosis right or wrong |
 | `GET /api/status` | mode, budgets, kill-switch arms |
 | `GET /api/version` | the running version and commit; touches no database |
+| `GET /api/codefixes`, `/counts`, `/mode` | code-fix attempts, running and waiting counts, the code-fix mode |
+| `GET /api/incidents/{id}/codefix` | an incident's code-fix attempts and its latest verdict |
+| `POST /api/incidents/{id}/codefix` | ask for a code fix (approver policy) |
+| `POST /api/incidents/{id}/codefix/{attemptId}/approve`, `/deny` | decide on a plan (approver policy; approve needs mode `Pr`) |
 | `GET /healthz`, `/readyz`, `/metrics` | health and Prometheus metrics |
 | `/` | Blazor Server UI |
 
-This table is **unchanged since v0.3.0**, which is worth stating rather than leaving implied:
-that milestone added outbound delivery and no new inbound route, and none has been added since.
-That is the property that makes linking out of a Teams card cheap and approving inside one
-expensive.
+v0.9.0 added the code-fix rows, the first new inbound routes since v0.3.0 — all on the console
+port, all behind the console's auth, and the two that write behind the approver policy. The coder
+itself calls none of them: it has no route in, by design. Teams cards still only link out.
 
 **The Alertmanager webhook is unauthenticated** (Alertmanager cannot authenticate to a
 receiver). It is protected by a NetworkPolicy, and that NetworkPolicy is therefore its

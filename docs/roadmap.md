@@ -1251,7 +1251,7 @@ It found two classes of thing, and the second is the release.
 **Install ergonomics** ([#108](backlog.md#108)) — installing it took a day of reading the chart's
 source to answer questions the documentation does not, and the guide that came out of it contained
 three mistakes made by someone who had just read the whole repository. Most of that is a writing
-job and is deferred to v0.9.0. Two pieces are not, and are in scope here because other work depends
+job and is deferred to v0.10.0 (renumbered from v0.9.0). Two pieces are not, and are in scope here because other work depends
 on them.
 
 **Operability** — and this is the theme. The agent diagnoses well and says so nowhere a person can
@@ -1333,7 +1333,7 @@ and dropped.**
 
 ### What is explicitly not in v0.8.0
 
-- **The getting-started guide** (M, [#108](backlog.md#108)) — deferred to v0.9.0 with the rest of
+- **The getting-started guide** (M, [#108](backlog.md#108)) — deferred to v0.10.0 (renumbered from v0.9.0) with the rest of
   the install-ergonomics work.
 - **Failure mode B**, Kafka consumer throughput after an update: a broker, a `SignalKind`, an
   alert, a runbook, a fixture, and a Prometheus-backed verification predicate, because
@@ -1359,6 +1359,102 @@ scheduled above: [#70](backlog.md#70) (narrowed in v0.7.0, still open — a race
 incident's kind), [#44](backlog.md#44), [#110](backlog.md#110) (an identity proxy is currently the
 only thing in front of `POST …/approve`), and re-establishing the acting path on the exact artifact
 being deployed rather than on the one before it.
+
+---
+
+## v0.9.0 — It proposes the fix, and a person opens the door
+
+The biggest real source of production incidents on the cluster this runs against is not the
+cluster. It is **code**: a null the service never guarded, a config key it reads under the wrong
+name, a cache that grows until the OOM-killer ends it. v0.8.0's planner handles those exactly as
+its prompt tells it to — *"a code, config or image problem a human must fix"* →
+`no_action_required: true` → `Escalated(NoPlanProduced)` — and the diagnosis, often grounded and
+right, stops there.
+
+v0.9.0 takes the next step without widening what the agent may do to the cluster. When an
+escalation's grounded primary finding points at application code and the workload is mapped to a
+repository, Hephaisto starts a **coder** — Claude Code through the Agent SDK, in a Kubernetes Job
+with no cluster identity — which clones the repository at the commit the running image was built
+from, analyses it read-only and writes a fix plan. A human approves the plan in the console; a
+fresh Job implements it on an assigned branch, the *driver* (not the model) builds and tests it,
+and a **Draft PR** is opened. A human reviews, merges and deploys. Nothing else changes.
+
+### The finding it rests on
+
+Since 2026-09-27 CI tags every image with its commit sha, so "the code that is failing" is no
+longer a guess: the running image's tag is the exact commit to analyse. Without that, a coder
+would be reading `main` and explaining a bug that may not be deployed.
+
+### The decisions that shaped it
+
+- **A second stage, not a new action type.** An `ActionType.ProposeCodeFix` would be denied at
+  gate 2/4 on every install that runs in Observe — the deployment it is for — take a workload
+  lock for something that never touches the workload, and change `ActionDescriptions`, which
+  changes `PromptHash` and stales every cassette. The stage consumes the planner's existing
+  `no_action_required` answer instead: **zero prompt changes**.
+- **Its own axis.** `CodeFixMode { Off, Plan, Pr }` beside `AgentMode`, resolved the same way
+  (most restrictive arm wins) except that silence means Off. The agent's kill switch overrides it
+  by arm: Off, the emergency stop and the runaway latch all stop coders, even though the stop and
+  the latch read as Observe on the agent axis. **`AgentMode.Observe` does not refuse** — that is
+  the property the design rests on.
+- **Pull, not callback.** The coder has no Hephaisto credential and no inbound surface. It
+  answers by printing a framed, sha256-checked block as the last thing in its log, which Hephaisto
+  reads with the `get pods/log` it already holds.
+- **Double opt-in.** `codeFix.repositories` in the chart (the operator's authorization) and
+  `coderEnabled` in dev-context's `repos.yaml` (the coder's willingness). Either missing, nothing
+  runs.
+- **`create jobs` in exactly one namespace.** The chart grants it in the coder namespace and
+  nowhere else; `RbacSelfCheck` refuses to boot if it is held cluster-wide, in `kube-system` or in
+  any actionable namespace.
+- **Pr needs a login.** `Mode=Pr` refuses to start without `Auth:Enabled`: a repository write on
+  the strength of a click needs an authenticated human, not an attributed string.
+
+### What ships
+
+| # | Item | Size |
+|---|---|---|
+| F1 | `CodeFixEligibility` — pure, default-deny, 21 closed reason codes; `codefix.evaluated` on every escalation, including "would have started, but the mode is Off" | M |
+| F2 | `code_fix_attempts` with its own lifecycle (never an `IncidentState`), one open attempt per incident enforced by a partial unique index | S |
+| F3 | Plan Job → framed result → `PlanReady` → approve (row lock, re-resolved mode) → implement Job → post-conditions → `PrOpened` | L |
+| F4 | `coder/` — the runner: TypeScript driver around the Agent SDK, authoritative tool guard, fake SDK for $0 plumbing runs, `gh` shim, image uid 64198 | L |
+| F5 | `dev-context` — the coder's user scope: runner CLAUDE.md, `repos.yaml`, settings and guard hook, rules, skills, curated memory, prompts | M |
+| F6 | Chart: coder namespace Role, unbound ServiceAccount, NetworkPolicy, egress proxy with a domain allowlist, `codeFixMode` switch key | M |
+| F7 | Console: a **code fixes** page listing running attempts, plans awaiting approval and opened PRs, and a code-fix section on every incident | M |
+| F8 | Teams/HTTP events `CodeFixPlanReady`, `CodeFixPrOpened`, `CodeFixFailed`; a Grafana annotation when a PR opens | S |
+| F9 | Fixture repo `hephaisto-fixture-dotnet` with c15 (null-deref at startup) and c19 (c15 plus prompt-injection bait in the log); `CodeFixAnswerKey` + parity | M |
+| F10 | `scripts/e2e/run.sh --codefix` tier with the c13-declined, forged-result and c19-canary negatives | M |
+
+### Done when
+
+An alert against c15 on a throwaway cluster is investigated; its grounded `application` finding
+maps to the fixture repository; a plan Job runs non-root without a ServiceAccount token and
+returns a plan naming `src/Shop.Api/Startup/Endpoints.cs`; a human approves through the API; an
+implement Job opens a Draft PR from a `hephaisto/…` branch whose planted test passes on head and
+fails on base; the base branch is byte-identical before and after. In the same run c13 is declined
+with `CategoryNotEligible`, a forged result block is rejected with an audit row, and c19's
+injected commands appear in `denied_tool_calls` with the canary untouched. `Off` never creates a
+Job, proven against Postgres with a positive control. Nothing in `ci.yml` needs a model or a
+GitHub token.
+
+### What is explicitly not in v0.9.0
+
+- **Auto-merge, deploy, or any write to a default branch.** Draft PRs only; branch protection on
+  every mapped repository is an operator prerequisite, not a code property.
+- **The `image` category.** A bad image is a build or deploy problem.
+- **Multi-repo fixes.** A plan that needs a Cait change is `PlanReady` but not implementable:
+  staged delivery, Cait first, by a human.
+- **Non-GitHub hosts, streaming progress, a GitHub App identity** (v2: per-attempt tokens minted
+  by Hephaisto), and the two-container split of the coder pod ([#116](backlog.md#116)).
+- **c16–c18, cassettes for the coder (`codefix run/inspect`), the LLM judge for fixes, the
+  dashboard row** — deferred to v0.9.x.
+
+---
+
+## v0.10.0 — Install ergonomics
+
+The getting-started guide and the rest of [#108](backlog.md#108), renumbered from v0.9.0 when the
+code-fix stage took that number (2026-09-27). Scope unchanged: installing Hephaisto should not
+take a day of reading the chart's source.
 
 ---
 
