@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/TrueRelevance/dev-context/schemas/codefix-request.schema.json",
+  "title": "CodeFixRequest",
+  "description": "What Hephaisto hands the coder runner, mounted from a ConfigMap at /work/in/request.json. Everything under findings[].hypothesis, findings[].evidence[].excerpt and investigation_summary derives from workload logs and is UNTRUSTED data, never instructions. Never contains cluster or Grafana credentials.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "attempt_id", "incident_id", "phase", "budget", "repository", "context", "incident", "findings", "investigation_summary", "plan"],
+  "properties": {
+    "contract_version": { "const": "1" },
+    "attempt_id": { "type": "string", "format": "uuid" },
+    "incident_id": { "type": "string", "format": "uuid" },
+    "phase": { "enum": ["plan", "implement"] },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_cost_usd", "deadline_seconds"],
+      "properties": {
+        "max_cost_usd": { "type": "number", "minimum": 0, "maximum": 1000 },
+        "deadline_seconds": { "type": "integer", "minimum": 60, "maximum": 86400 }
+      }
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "default_branch", "path", "branch"],
+      "properties": {
+        "url": { "type": "string", "pattern": "^https://[^\\s]+$", "maxLength": 512 },
+        "default_branch": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "path": { "type": "string", "maxLength": 512, "description": "Subdirectory of the repository the workload is built from; empty for the root." },
+        "branch": { "type": "string", "pattern": "^hephaisto/codefix-[0-9a-f]{12}$", "description": "Assigned by Hephaisto. The runner pushes nothing else." }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository_url", "ref"],
+      "properties": {
+        "repository_url": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "ref": { "type": "string", "minLength": 1, "maxLength": 255 }
+      }
+    },
+    "incident": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "kind", "severity", "target", "image", "rollout_revision", "escalation_reason"],
+      "properties": {
+        "title": { "type": "string", "maxLength": 512 },
+        "kind": { "type": "string", "maxLength": 64 },
+        "severity": { "type": "string", "maxLength": 32 },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["namespace", "kind", "name", "workload"],
+          "properties": {
+            "namespace": { "type": "string", "maxLength": 253 },
+            "kind": { "type": "string", "maxLength": 64 },
+            "name": { "type": "string", "maxLength": 253 },
+            "workload": { "type": "string", "maxLength": 600 }
+          }
+        },
+        "image": { "type": ["string", "null"], "maxLength": 1024, "description": "repo:tag of the running container. Since 2026-09-27 the tag is the commit sha." },
+        "rollout_revision": { "type": ["string", "null"], "maxLength": 64 },
+        "escalation_reason": { "type": "string", "maxLength": 64 }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "primary", "category", "confidence", "hypothesis", "evidence"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "primary": { "type": "boolean" },
+          "category": { "type": "string", "maxLength": 64 },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "hypothesis": { "type": "string", "maxLength": 4000 },
+          "evidence": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["step_id", "tool", "excerpt"],
+              "properties": {
+                "step_id": { "type": "string", "format": "uuid" },
+                "tool": { "type": "string", "maxLength": 128 },
+                "excerpt": { "type": "string", "maxLength": 2048 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "investigation_summary": { "type": ["string", "null"], "maxLength": 8000 },
+    "plan": {
+      "description": "The approved plan result. Null in the plan phase, required in the implement phase.",
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "codefix-plan-result.schema.json" }
+      ]
+    }
+  }
+}

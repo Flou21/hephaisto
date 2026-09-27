@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/TrueRelevance/dev-context/schemas/repos.schema.json",
+  "title": "Repos",
+  "description": "repos.yaml: the coder's knowledge of each repository and its own opt-in (coderEnabled). Hephaisto's codeFix.repositories chart value is the operator's authorization; a repo needs both.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["defaults", "repos"],
+  "properties": {
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pr", "clone", "imageTagIsCommitSha", "protectedPaths"],
+      "properties": {
+        "pr": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["assignee", "labels", "branchPrefix", "draft"],
+          "properties": {
+            "assignee": { "type": "string" },
+            "labels": { "type": "array", "items": { "type": "string" } },
+            "branchPrefix": { "const": "hephaisto/" },
+            "draft": { "const": true }
+          }
+        },
+        "clone": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["filter"],
+          "properties": { "filter": { "enum": ["blob:none", "none"] } }
+        },
+        "imageTagIsCommitSha": { "type": "boolean" },
+        "protectedPaths": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "repos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "url", "defaultBranch", "stack", "coderEnabled", "workloads", "commands", "verification"],
+        "properties": {
+          "name": { "type": "string" },
+          "url": { "type": "string", "pattern": "^(https://|file://|/)" },
+          "defaultBranch": { "type": "string" },
+          "stack": { "enum": ["dotnet", "nuxt", "python", "other"] },
+          "projectFile": { "type": "string" },
+          "path": { "type": "string" },
+          "owner": { "type": "string" },
+          "coderEnabled": { "type": "boolean" },
+          "workloads": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["namespace", "kind", "name"],
+              "properties": {
+                "namespace": { "type": "string" },
+                "kind": { "type": "string" },
+                "name": { "type": "string" },
+                "imageRepo": { "type": "string" },
+                "helmChart": { "type": "string" },
+                "aliases": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          },
+          "commands": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "restore": { "type": "string" },
+              "build": { "type": "string" },
+              "test": { "type": "string" },
+              "typecheck": { "type": "string" }
+            }
+          },
+          "verification": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["hasUnitTests"],
+            "properties": {
+              "hasUnitTests": { "type": "boolean" },
+              "note": { "type": "string" }
+            }
+          },
+          "cait": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "pinned": { "type": "boolean" },
+              "sibling": { "enum": ["never", "if-incident-targets-cait"] }
+            }
+          },
+          "protectedPaths": { "type": "array", "items": { "type": "string" } },
+          "timeouts": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "restoreSeconds": { "type": "integer", "minimum": 1 },
+              "buildSeconds": { "type": "integer", "minimum": 1 },
+              "testSeconds": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

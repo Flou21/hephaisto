@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/TrueRelevance/dev-context/schemas/codefix-implement-result.schema.json",
+  "title": "CodeFixImplementResult",
+  "description": "What the implement phase returns, as the last framed block on stdout. build_passed/tests_passed are what the DRIVER ran, never what the agent claimed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "attempt_id", "phase", "outcome", "branch", "pr_url", "pr_number", "base_commit", "files", "build_passed", "tests_passed", "log_tail", "deviations", "cost_usd", "session_id", "error", "denied_tool_calls"],
+  "properties": {
+    "contract_version": { "const": "1" },
+    "attempt_id": { "type": "string", "format": "uuid" },
+    "phase": { "const": "implement" },
+    "outcome": { "enum": ["pr_opened", "already_exists", "no_changes", "build_failed", "tests_failed", "policy_diff", "failed"] },
+    "branch": { "type": ["string", "null"], "maxLength": 255 },
+    "pr_url": { "type": ["string", "null"], "maxLength": 512 },
+    "pr_number": { "type": ["integer", "null"], "minimum": 1 },
+    "base_commit": { "type": ["string", "null"], "maxLength": 64 },
+    "files": { "type": "array", "maxItems": 100, "items": { "type": "string", "maxLength": 512 } },
+    "build_passed": { "type": "boolean" },
+    "tests_passed": { "type": "boolean" },
+    "log_tail": { "type": "string", "maxLength": 8192 },
+    "deviations": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 2000 } },
+    "cost_usd": { "type": "number", "minimum": 0 },
+    "session_id": { "type": ["string", "null"], "maxLength": 128 },
+    "error": { "type": ["string", "null"], "maxLength": 4000 },
+    "denied_tool_calls": { "$ref": "codefix-plan-result.schema.json#/$defs/denials" }
+  }
+}

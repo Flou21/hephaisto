@@ -1,0 +1,28 @@
+{
+  "contract_version": "1",
+  "attempt_id": "0192a6f0-0000-7000-8000-000000000001",
+  "phase": "plan",
+  "outcome": "fixed",
+  "summary": "Endpoints.Map dereferences options.Endpoints without a null check; an empty configuration section crashes startup.",
+  "root_cause": "src/Shop.Api/Startup/Endpoints.cs:14 calls options.Endpoints.First() while Endpoints is null when Shop:Endpoints is absent.",
+  "confidence": 0.9,
+  "files": [
+    "src/Shop.Api/Startup/Endpoints.cs"
+  ],
+  "steps": [
+    "Treat a null Endpoints list as empty in Endpoints.Map.",
+    "Keep EndpointsOptionsTests.Empty_endpoints_do_not_throw green."
+  ],
+  "verification": {
+    "level": "tests",
+    "not_verifiable": []
+  },
+  "needs_cait": false,
+  "notes": [],
+  "analysed_ref": "0123456789abcdef0123456789abcdef01234567",
+  "context_sha": "89abcdef0123456789abcdef0123456789abcdef",
+  "cost_usd": 1.42,
+  "session_id": "5d2f7a0e-1111-2222-3333-444455556666",
+  "error": null,
+  "denied_tool_calls": []
+}
