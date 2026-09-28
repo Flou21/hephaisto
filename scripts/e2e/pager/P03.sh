@@ -16,6 +16,6 @@ scenario() {
 
     titles=$(pager_incidents "$n" | jq -r '[.[].title] | unique | length')
     want "their titles differ" "$titles" -ge 2
-    pager_incidents "$n" | jq -r '.[].title' | grep -q alpha && pass "a title names its provider" \
+    pager_incidents "$n" | jq -r '.[].title' | grep -c alpha >/dev/null && pass "a title names its provider" \
         || fail "a title names its provider" "$(pager_incidents "$n" | jq -c '[.[].title]')"
 }
