@@ -1484,7 +1484,7 @@ public sealed class IncidentQueries(
             return new AlertNoteResult { Outcome = AlertNoteOutcome.Invalid, Detail = "Say who is writing this." };
         }
 
-        if (IncidentStateMachine.IsForbiddenGranter(actor))
+        if (IsAgentIdentity(actor))
         {
             return new AlertNoteResult
             {
@@ -1532,6 +1532,15 @@ public sealed class IncidentQueries(
                 .ToListAsync(ct),
         };
     }
+
+    /// <summary>
+    /// A note is what PEOPLE learned (#145). Any of the agent's own identities - the model, the
+    /// verifier, the policy's automatic approvals - writing one would pass its own opinion off as
+    /// an operator's, which is the one thing the prompt frames a note as not being.
+    /// </summary>
+    private static bool IsAgentIdentity(string actor) =>
+        IncidentStateMachine.IsForbiddenGranter(actor)
+        || actor.Trim().StartsWith("hephaisto/", StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>What happened to a close or acknowledge request.</summary>
