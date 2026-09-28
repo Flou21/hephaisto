@@ -286,6 +286,40 @@ document.fonts.check('16px Archivo') && document.fonts.check('16px "JetBrains Mo
 This is the same assertion the visual suite makes before every comparison, for the same reason:
 a baseline photographed against a fallback stack is a stable picture of the wrong thing.
 
+## 18. The Teams bot keeps one board, and deletes nothing
+
+Needs `"teams-bot": "stand-in"` in `tilt_config.json`. The stand-in
+(`infra/e2e/teams-stand-in.yaml`) answers as Teams would and serves what somebody looking at
+Teams would see now.
+
+```fish
+# one channel message, however long the agent has been running
+curl -s http://$H:8110/teams/messages | jq '[.messages[] | select(.kind == "channel")] | length'   # 1
+
+# close an incident, and within a refresh the board no longer lists it
+curl -s -X POST http://$H:8100/api/incidents/$ID/close -H 'Content-Type: application/json' \
+    -d '{"closedBy":"you","reason":"checking the board"}'
+curl -s http://$H:8110/teams/messages | jq -r '.messages[0].text' | grep -c $TITLE                  # 0
+
+# and the number this whole design exists for
+curl -s http://$H:8110/teams/messages | jq .deletes                                                 # 0
+```
+
+Measured on 2026-09-28, `studio-rancher-desktop`, 113 open incidents:
+
+| | |
+|---|---|
+| Channel messages | 1 |
+| Listed / open | 20 / 113, "and 93 more" |
+| Board size | 50 KB |
+| Alerts | 2, both to the one recipient who is in the team; the one who is not did not stop them |
+| After a close | board 113 -> 112; that incident's alert "Closed by ..." in green, by edit |
+| Edits over 40 s with nothing changing | 0 |
+| Deletes | 0 |
+
+**Not tested here:** Teams. The stand-in checks the shape of a request and not the identity
+behind it ([#125](backlog.md#125)).
+
 ## Running all of this automatically
 
 Everything above is the manual form, and it is still the right thing when you are chasing one

@@ -1423,6 +1423,7 @@ would be reading `main` and explaining a bug that may not be deployed.
 | F8 | Teams/HTTP events `CodeFixPlanReady`, `CodeFixPrOpened`, `CodeFixFailed`; a Grafana annotation when a PR opens | S |
 | F9 | Fixture repo `hephaisto-fixture-dotnet` with c15 (null-deref at startup) and c19 (c15 plus prompt-injection bait in the log); `CodeFixAnswerKey` + parity | M |
 | F10 | `scripts/e2e/run.sh --codefix` tier with the c13-declined, forged-result and c19-canary negatives | M |
+| F11 | **Added in rc4, on the way to production:** a Teams bot - one board in a channel, edited in place, and alerts by personal chat. Outbound only; it never deletes. | M |
 
 ### Done when
 
@@ -1660,6 +1661,20 @@ can put any string in that field, so mechanism A without a verified claim moves 
 obviously better. **OIDC should land first**, and for a Teams shop that is Entra ID, the same
 directory the card was delivered through. The two converge, which is exactly why linking out cost
 nothing.
+
+#### What changed on 2026-09-28
+
+Mechanism B's **outbound** half shipped in v0.9.0-rc4, for a reason this section did not
+anticipate: not approval, but a channel that was filling up. A bot can edit what it posted, so
+the channel now holds one board instead of a card per event. Its buttons are still links.
+
+Two things measured then change the reasoning above. **A card cannot be taken back** - deleting
+leaves "This message has been deleted." behind - so "stale cards" is solved by editing and only
+by editing. And **an edit notifies nobody**, so a card that refreshes in place is the wrong
+vehicle for anything that needs a person: that has to be a new message.
+
+The inbound half - buttons that act - is [#124](backlog.md#124), and the ordering below still
+holds for it.
 
 #### Ordering, if this is ever picked up
 

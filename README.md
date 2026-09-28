@@ -149,6 +149,7 @@ Being precise about this matters, because the difference is the whole safety arg
 | Oscillation detection wired to a workload quarantine | **works** |
 | `SilenceAlert` — always requiring approval | built, needs Alertmanager configured |
 | Outbound notifications: webhook and Teams, over a Postgres outbox | **works** |
+| A Teams bot: one board edited in place, alerts by personal chat | **works against a stand-in**; not yet run against Teams ([#125](docs/backlog.md#125)) |
 | `RollbackDeployment`, `PatchResources` | not built — refused, not attempted |
 | Runbook memory, OIDC approval identity, in-card approval | not built |
 | A written design language, one token set, visual regression baselines | **works** |
@@ -412,7 +413,7 @@ stock install delivers nowhere. Two independent things have to change, in the sa
 
 | | |
 |---|---|
-| Channels | A generic outbound HTTP endpoint (optionally HMAC-signed), and Microsoft Teams via a Power Automate Workflows trigger |
+| Channels | A generic outbound HTTP endpoint (optionally HMAC-signed); Microsoft Teams via a Power Automate Workflows trigger; Microsoft Teams via a registered bot |
 | Events | `IncidentEscalated`, `ApprovalRequired`, `IncidentResolved`, `VerificationFailed`, `ModeChanged`, `PolicyChanged` |
 | Routing | Per event, minimum severity and namespace. Additive only — there is no deny rule |
 | Delivery | A Postgres outbox with exponential backoff and jitter. **The delivery row and the state transition that caused it are written by one `SaveChangesAsync`** |
@@ -423,7 +424,15 @@ design — right for nudging a browser, catastrophic for telling somebody the ag
 incident cannot reach `Escalated` without a delivery row existing, because both are written in
 the same transaction, so a pod restart cannot lose the news.
 
-**The Teams card carries a link, not an Approve button.** Approving in-card means accepting
+**The Teams bot keeps one board, and never deletes.** A Workflows trigger can post and nothing
+else, so every event is a new card and nothing leaves the channel. The bot
+(`notifications.teamsBot`) can edit what it posted: the channel holds a single message listing
+every open incident, a closed incident disappears from it, and an alert is a personal chat message
+that is later edited to say how the incident ended. Deleting is not used at all - Teams leaves
+"This message has been deleted." behind, for a post and for a reply alike, and nothing switches
+that off.
+
+**A Teams card carries a link, not an Approve button.** Approving in-card means accepting
 inbound calls on a service whose only inbound route is deliberately unauthenticated, which is a
 security change rather than a feature. The link goes to Hephaisto's own approval UI, where the
 audit row already lives.

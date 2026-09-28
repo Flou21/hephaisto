@@ -10,7 +10,7 @@ broken, with the evidence for each.
 Versions are set by the git tag through MinVer; the chart version and the app version are always
 the same number.
 
-## v0.9.0 — unreleased (`v0.9.0-rc1` 2026-09-27, `v0.9.0-rc2`/`-rc3` 2026-09-28)
+## v0.9.0 — unreleased (`v0.9.0-rc1` 2026-09-27, `v0.9.0-rc2`/`-rc3`/`-rc4` 2026-09-28)
 
 **It proposes the fix, and a person opens the door.** Most real incidents on the cluster this runs
 against are code bugs, and v0.8.0's planner correctly declines to touch them - "a code problem a
@@ -68,6 +68,21 @@ started a code fix, but the mode is Off" before you turn anything on.
   cookies: a login that loops. `Web:TrustForwardedHeaders` (off by default; set
   `Web__TrustForwardedHeaders=true` when the console is reached only through the proxy).
 
+### Added in rc4
+- **A Teams bot** (`notifications.teamsBot`), beside the Workflows channel and not instead of it.
+  The channel holds **one message**: a board of every open incident, edited in place, from which a
+  closed incident disappears. An **alert** goes to each recipient as a personal chat message from
+  the bot and is edited to say how the incident ended. Both show the incident as it is now.
+- **It never deletes.** Teams leaves "This message has been deleted." behind for a channel post
+  and for a reply alike, so the bot's client has no delete at all.
+- You need a single-tenant app registration, an Azure Bot resource (free tier) and a Teams app with
+  scopes `team` and `personal`, all in the tenant your Teams runs in. The client secret is a
+  Secret (`secrets.notificationTeamsBot`, key `clientSecret`) and cannot be a value.
+- Every button is a link. Buttons that act need an inbound route
+  ([#124](docs/backlog.md#124)); alert recipients are one list for every route
+  ([#123](docs/backlog.md#123)).
+- A database migration, `TeamsBotMessages`. It adds one table and changes none.
+
 ### Changed
 - The headline invariant is re-scoped: **no model in this process ever holds a mutating handle to
   the cluster.** The coder holds a shell by construction; its only mutation target is a branch.
@@ -75,6 +90,8 @@ started a code fix, but the mode is Off" before you turn anything on.
 - The install-ergonomics work ([#108](docs/backlog.md#108)) moves to v0.10.0.
 
 ### Known
+- The Teams bot has run against a stand-in and not against Teams
+  ([#125](docs/backlog.md#125)).
 - The coder's agent and its driver share a uid ([#116](docs/backlog.md#116)); the gate exercises
   only the fixture repository ([#117](docs/backlog.md#117)); the subscription token's headless
   terms are unverified ([#118](docs/backlog.md#118)).
