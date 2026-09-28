@@ -29,6 +29,6 @@ scenario() {
     want "a signed click is answered 200" \
         "$(click "$(jq -cn --arg id "$id" '{incidentId:$id, verb:"acknowledge", user:"oncall@example.com"}')")" = 200
     sleep 3
-    pager_incident "$id" | jq -r '.acknowledgedBy // ""' | grep -q oncall && pass "the signed click acknowledged it, as the person who clicked" \
+    pager_incident "$id" | jq -r '.acknowledgedBy // ""' | grep -c oncall >/dev/null && pass "the signed click acknowledged it, as the person who clicked" \
         || fail "the signed click acknowledged it, as the person who clicked" "$(pager_incident "$id" | jq -r '.acknowledgedBy')"
 }
