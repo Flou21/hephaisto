@@ -85,7 +85,7 @@ public sealed partial class CodeFixRequestBuilder(IOptionsMonitor<CodeFixOptions
                     incident.Target.Namespace,
                     incident.Target.Kind,
                     incident.Target.Name,
-                    Cap(incident.Target.WorkloadKey, 600)),
+                    Cap(string.IsNullOrEmpty(attempt.Workload) ? incident.Target.WorkloadKey : attempt.Workload, 600)),
                 Image = image is null ? null : Cap(image, 1024),
                 RolloutRevision = rolloutRevision,
                 EscalationReason = incident.EscalationReason.ToString(),

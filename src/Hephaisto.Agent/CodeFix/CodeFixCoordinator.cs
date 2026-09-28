@@ -132,7 +132,8 @@ public sealed class CodeFixCoordinator(
 
         var o = options.CurrentValue;
         var mode = await codeFixSwitch.ResolveAsync(ct).ConfigureAwait(false);
-        var workload = incident.Target.WorkloadKey;
+        var target = await images.ResolveWorkloadAsync(incident.Target, ct).ConfigureAwait(false);
+        var workload = target.WorkloadKey;
         var binding = o.BindingFor(workload);
         var now = clock.UtcNow;
         var dayAgo = now.AddDays(-1);
@@ -272,7 +273,8 @@ public sealed class CodeFixCoordinator(
 
         try
         {
-            var (image, revision) = await images.ReadAsync(incident.Target, ct).ConfigureAwait(false);
+            var target = await images.ResolveWorkloadAsync(incident.Target, ct).ConfigureAwait(false);
+            var (image, revision) = await images.ReadAsync(target, ct).ConfigureAwait(false);
             var request = requests.Build(attempt, phase, incident, investigation, image, revision, plan);
             json = JsonSerializer.Serialize(request, CodeFixContract.Json);
 

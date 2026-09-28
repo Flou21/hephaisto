@@ -213,21 +213,93 @@ public sealed class KubernetesCodeFixJobLauncher(
 public interface IWorkloadImageReader
 {
     Task<(string? Image, string? Revision)> ReadAsync(TargetRef target, CancellationToken ct);
+
+    /// <summary>
+    /// The target with its top controller filled in when the signal that opened the incident did not
+    /// resolve one. Never throws; returns the target unchanged when nothing can be learned.
+    /// </summary>
+    Task<TargetRef> ResolveWorkloadAsync(TargetRef target, CancellationToken ct);
 }
 
 public sealed class NullWorkloadImageReader : IWorkloadImageReader
 {
     public Task<(string? Image, string? Revision)> ReadAsync(TargetRef target, CancellationToken ct) =>
         Task.FromResult<(string?, string?)>((null, null));
+
+    public Task<TargetRef> ResolveWorkloadAsync(TargetRef target, CancellationToken ct) => Task.FromResult(target);
 }
 
 /// <summary>
 /// Reads the controller's pod template, not a pod: the template is what the next pod will run, and
 /// since CI tags images with the commit sha, its tag is the exact commit to analyse.
 /// </summary>
-public sealed class KubernetesWorkloadImageReader(KubernetesApi api, ILogger<KubernetesWorkloadImageReader> logger)
+public sealed class KubernetesWorkloadImageReader(KubernetesApi api, OwnerCache owners, ILogger<KubernetesWorkloadImageReader> logger)
     : IWorkloadImageReader
 {
+    /// <summary>
+    /// Only the pod watch walks a pod up to its Deployment; an incident opened by an Alertmanager
+    /// alert names the bare pod. The repository mapping is keyed by workload, so without this an
+    /// alert-opened incident could never start a code fix - and which signal arrives first is not
+    /// something the mapping should depend on. The incident itself is left as it is: its target
+    /// feeds correlation, and changing it here would split or merge incidents after the fact.
+    /// </summary>
+    public async Task<TargetRef> ResolveWorkloadAsync(TargetRef target, CancellationToken ct)
+    {
+        if (!string.IsNullOrEmpty(target.OwnerKind) || target.Kind != "Pod" || string.IsNullOrEmpty(target.Name))
+            return target;
+
+        try
+        {
+            var ns = target.Namespace;
+
+            // The pod an alert names is often already replaced - a crash-looping Deployment's pods
+            // churn - but its ReplicaSet survives, and the pod name is that ReplicaSet's name plus
+            // a random suffix.
+            var meta = await owners.FetchAsync("Pod", ns, target.Name, ct).ConfigureAwait(false)
+                ?? (ReplicaSetNameOf(target.Name) is { } rs ? await owners.FetchAsync("ReplicaSet", ns, rs, ct).ConfigureAwait(false) : null);
+
+            if (meta is null)
+                return target;
+
+            await owners.WarmAsync(meta, ns, ct).ConfigureAwait(false);
+
+            // A ReplicaSet fetched by name is itself a step of the walk; it may be the top when
+            // nothing owns it.
+            var top = OwnerWalker.TopController(meta, ns, owners.Lookup)
+                ?? (meta.Name != target.Name ? new OwnerRef("ReplicaSet", meta.Name, meta.Uid) : (OwnerRef?)null);
+
+            if (top is not { } owner)
+                return target;
+
+            var resolved = target.Clone();
+            resolved.OwnerKind = owner.Kind;
+            resolved.OwnerName = owner.Name;
+            return resolved;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Could not resolve the workload of pod {Namespace}/{Pod}", target.Namespace, target.Name);
+            return target;
+        }
+    }
+
+    /// <summary><c>shop-api-556d7fb5c6-2jwcd</c> -&gt; <c>shop-api-556d7fb5c6</c>; null when the name has no such shape.</summary>
+    public static string? ReplicaSetNameOf(string podName)
+    {
+        var parts = podName.Split('-');
+
+        return parts.Length >= 3 && parts[^1].Length == 5 && parts[^2].Length is >= 5 and <= 10
+            && IsGenerated(parts[^1]) && IsGenerated(parts[^2])
+            ? string.Join('-', parts[..^1])
+            : null;
+    }
+
+    /// <summary>
+    /// Kubernetes' generated suffixes and pod-template hashes use an alphabet without vowels and
+    /// without 0, 1 and 3 (k8s.io apimachinery rand), so a numeric Job hash like <c>28745120</c> is not mistaken for one.
+    /// </summary>
+    private static bool IsGenerated(string s) => s.All(c => "bcdfghjklmnpqrstvwxz2456789".Contains(c));
+
     public async Task<(string? Image, string? Revision)> ReadAsync(TargetRef target, CancellationToken ct)
     {
         var kind = string.IsNullOrEmpty(target.OwnerKind) ? target.Kind : target.OwnerKind;
