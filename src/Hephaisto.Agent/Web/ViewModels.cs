@@ -15,6 +15,9 @@ namespace Hephaisto.Agent.Web;
 /// computed property with no column, so it is recomputed here rather than selected.</summary>
 public sealed record TargetView
 {
+    /// <summary>The cluster the object is in. Empty for a row from before v0.10.0: this one.</summary>
+    public string Cluster { get; init; } = string.Empty;
+
     public string Namespace { get; init; } = string.Empty;
 
     public string Kind { get; init; } = string.Empty;
@@ -36,6 +39,7 @@ public sealed record TargetView
 
     public static TargetView From(TargetRef t) => new()
     {
+        Cluster = t.Cluster,
         Namespace = t.Namespace,
         Kind = t.Kind,
         Name = t.Name,

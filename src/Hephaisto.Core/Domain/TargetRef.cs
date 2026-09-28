@@ -14,6 +14,16 @@ namespace Hephaisto.Core.Domain;
 /// </remarks>
 public sealed class TargetRef
 {
+    /// <summary>
+    /// The cluster the object is in: the alert's <c>cluster</c> label, else the agent's own.
+    /// </summary>
+    /// <remarks>
+    /// Backlog #131. Empty on rows written before v0.10.0, which means the agent's own. Part of the
+    /// fingerprint and the correlation key, and the reason an incident about another cluster is
+    /// offered no Kubernetes tool: those read the cluster the agent runs in.
+    /// </remarks>
+    public string Cluster { get; set; } = string.Empty;
+
     public string Namespace { get; set; } = string.Empty;
 
     /// <summary>Kind of the object the signal arrived about, e.g. <c>Pod</c>.</summary>
@@ -60,8 +70,23 @@ public sealed class TargetRef
     /// The failure is at SaveChanges, far from the assignment, and it takes down ingest for
     /// every signal rather than just the one - so always copy, never share.
     /// </remarks>
+    /// <summary>
+    /// Nothing in the label set named a Kubernetes object, so the alert names itself.
+    /// </summary>
+    public bool IsAlertOnly => string.Equals(Kind, "Alert", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Whether this is about a cluster other than <paramref name="agentCluster"/>. Empty is the
+    /// agent's own, by the definition above.
+    /// </summary>
+    public bool IsForeignTo(string agentCluster) =>
+        Cluster.Length > 0
+        && !string.IsNullOrEmpty(agentCluster)
+        && !string.Equals(Cluster, agentCluster, StringComparison.Ordinal);
+
     public TargetRef Clone() => new()
     {
+        Cluster = Cluster,
         Namespace = Namespace,
         Kind = Kind,
         Name = Name,

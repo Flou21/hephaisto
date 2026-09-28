@@ -69,8 +69,96 @@ public static class AlertClassifier
             _ => SignalKind.Unknown,
         };
 
-        static bool Has(string haystack, string needle) =>
-            haystack.Contains(needle, StringComparison.OrdinalIgnoreCase);
+        static bool Has(string haystack, string needle) => Mentions(haystack, needle);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="name"/> mentions <paramref name="keyword"/> as a word, not merely
+    /// as letters.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Backlog #134. A plain substring match classified any name containing <c>Slow</c> as a
+    /// latency fault, for its <c>slo</c>, and any name containing <c>pending</c> or
+    /// <c>restart</c> as a Kubernetes kind. Rule names are CamelCase or snake_case, so they carry
+    /// their own word boundaries: a keyword must start where a word does, and a keyword of three
+    /// letters or fewer - <c>oom</c>, <c>slo</c>, <c>pvc</c>, <c>5xx</c> - must also end where one
+    /// does. A longer keyword may run across words, which is how <c>crashloop</c> matches
+    /// <c>CrashLooping</c>.
+    /// </para>
+    /// <para>
+    /// A name with no boundaries at all - <c>crashloopbackoff</c>, all lower case - has nothing to
+    /// anchor on, so it keeps the old substring match rather than matching nothing.
+    /// </para>
+    /// </remarks>
+    public static bool Mentions(string name, string keyword)
+    {
+        if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(keyword))
+        {
+            return false;
+        }
+
+        var starts = WordStarts(name);
+
+        if (starts.Count <= 1)
+        {
+            return name.Contains(keyword, StringComparison.OrdinalIgnoreCase);
+        }
+
+        for (var at = name.IndexOf(keyword, StringComparison.OrdinalIgnoreCase);
+             at >= 0;
+             at = name.IndexOf(keyword, at + 1, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!starts.Contains(at))
+            {
+                continue;
+            }
+
+            var end = at + keyword.Length;
+            if (keyword.Length > 3 || end == name.Length || starts.Contains(end) || !char.IsLetterOrDigit(name[end]))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Where each word of a CamelCase, snake_case or kebab-case name begins: after a separator,
+    /// at a lower-to-upper step, at the last capital of an acronym (<c>OOMKilled</c> is OOM,
+    /// Killed), and between letters and digits.
+    /// </summary>
+    private static HashSet<int> WordStarts(string name)
+    {
+        var starts = new HashSet<int>();
+
+        for (var i = 0; i < name.Length; i++)
+        {
+            var c = name[i];
+            if (!char.IsLetterOrDigit(c))
+            {
+                continue;
+            }
+
+            if (i == 0 || !char.IsLetterOrDigit(name[i - 1]))
+            {
+                starts.Add(i);
+                continue;
+            }
+
+            var prev = name[i - 1];
+            var lowerToUpper = char.IsUpper(c) && (char.IsLower(prev) || char.IsDigit(prev));
+            var acronymEnd = char.IsUpper(c) && char.IsUpper(prev) && i + 1 < name.Length && char.IsLower(name[i + 1]);
+            var letterDigit = char.IsDigit(c) != char.IsDigit(prev);
+
+            if (lowerToUpper || acronymEnd || letterDigit)
+            {
+                starts.Add(i);
+            }
+        }
+
+        return starts;
     }
 
     /// <summary>

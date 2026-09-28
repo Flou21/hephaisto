@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 
 using Hephaisto.Core.Classification;
 using Hephaisto.Core.Domain;
+using Hephaisto.Core.Fingerprinting;
 
 namespace Hephaisto.Agent.Web;
 
@@ -194,9 +195,17 @@ public static class AlertmanagerEndpoints
             payload.Alerts.Count));
     }
 
-    private static bool IsWatchdog(AlertmanagerAlert alert) =>
+    /// <summary>
+    /// The rule named <c>Watchdog</c>, or one that says it is one.
+    /// </summary>
+    /// <remarks>
+    /// An exact name, not a substring (#151). "Any name containing watchdog" swallowed a
+    /// consumer's <c>...WatchdogStalled</c> alert as a heartbeat: a fault recorded as proof that
+    /// the alert path works, and told to nobody.
+    /// </remarks>
+    internal static bool IsWatchdog(AlertmanagerAlert alert) =>
         (alert.Labels.TryGetValue("alertname", out var name)
-            && name.Contains("watchdog", StringComparison.OrdinalIgnoreCase))
+            && string.Equals(name, "Watchdog", StringComparison.OrdinalIgnoreCase))
         || (alert.Labels.TryGetValue(KindLabel, out var kind)
             && string.Equals(kind, nameof(SignalKind.Watchdog), StringComparison.OrdinalIgnoreCase));
 
@@ -205,14 +214,17 @@ public static class AlertmanagerEndpoints
         var labels = alert.Labels;
         var alertName = Label(labels, "alertname") ?? "UnknownAlert";
 
-        var kind = ResolveKind(alertName, labels);
+        var target = ResolveTarget(labels);
+        var kind = ResolveKind(alertName, labels, target);
 
         var signal = new Signal
         {
             Source = SignalSource.Alertmanager,
             Kind = kind,
             Severity = ResolveSeverity(labels, kind),
-            Target = ResolveTarget(labels),
+            Target = target,
+            Status = alert.IsResolved ? SignalStatus.Resolved : SignalStatus.Firing,
+            AlertKey = AlertIdentity.AlertKey(labels),
             Reason = alertName,
             Message = Label(alert.Annotations, "description")
                 ?? Label(alert.Annotations, "summary")
@@ -251,8 +263,25 @@ public static class AlertmanagerEndpoints
     // Kind and severity classification is shared with Kubernetes/SignalMapper via
     // Hephaisto.Core.Classification.AlertClassifier. Both callers used to carry a
     // byte-identical copy of the switch, which is a table that does not stay identical.
-    private static SignalKind ResolveKind(string alertName, IReadOnlyDictionary<string, string> labels) =>
-        AlertClassifier.Kind(alertName, labels);
+    /// <remarks>
+    /// An alert that names no Kubernetes object is <see cref="SignalKind.Pipeline"/> unless it
+    /// states a kind with <c>hephaisto_kind</c> (#134). Guessing from the name is for alerts about
+    /// an object, where a wrong guess costs a runbook; for one about a feed or an export every
+    /// Kubernetes runbook starts from a pod it does not have.
+    /// </remarks>
+    private static SignalKind ResolveKind(
+        string alertName,
+        IReadOnlyDictionary<string, string> labels,
+        TargetRef target)
+    {
+        if (target.IsAlertOnly
+            && !(Label(labels, KindLabel) is { } stated && Enum.TryParse<SignalKind>(stated, ignoreCase: true, out _)))
+        {
+            return SignalKind.Pipeline;
+        }
+
+        return AlertClassifier.Kind(alertName, labels);
+    }
 
     private static Severity ResolveSeverity(IReadOnlyDictionary<string, string> labels, SignalKind kind) =>
         AlertClassifier.SeverityOf(labels, kind);
@@ -272,6 +301,10 @@ public static class AlertmanagerEndpoints
     {
         var target = new TargetRef
         {
+            // The alert's own cluster (#131). Empty means the agent's, which the ingest pipeline
+            // fills in - this mapper has no configuration to know it by.
+            Cluster = Label(labels, "cluster") ?? string.Empty,
+
             // Three spellings, because the shipped rules genuinely disagree and the incident is
             // useless without this. kube-state-metrics rules say `namespace`; a recording rule
             // that has been through a relabel says `exported_namespace`; and the OTel
@@ -319,7 +352,7 @@ public static class AlertmanagerEndpoints
 
     private static (string Kind, string Name) ObjectIdentity(IReadOnlyDictionary<string, string> labels)
     {
-        if (Label(labels, "pod") is { } pod)
+        if (Label(labels, "pod") is { } pod && IsTheSubject(pod, labels))
         {
             return ("Pod", pod);
         }
@@ -373,6 +406,33 @@ public static class AlertmanagerEndpoints
         }
 
         return (null, null);
+    }
+
+    /// <summary>
+    /// Whether a <c>pod</c> label names the pod the alert is about.
+    /// </summary>
+    /// <remarks>
+    /// Backlog #126. kube-state-metrics exports its own pod name in <c>pod</c> on every series
+    /// that has no pod of its own, so "a deployment has no available replicas" arrived naming the
+    /// exporter as its target. On a kube-state-metrics series the label is kept only when it looks
+    /// like a pod of the workload the series is about - <c>{workload}-</c> as a prefix - or when
+    /// the series names no workload at all, which is how the per-pod ones look. Any other source
+    /// is believed.
+    /// </remarks>
+    private static bool IsTheSubject(string pod, IReadOnlyDictionary<string, string> labels)
+    {
+        if (!AlertIdentity.IsFromKubeStateMetrics(labels))
+        {
+            return true;
+        }
+
+        var workload = WorkloadLabels
+            .Select(w => Label(labels, w.Label))
+            .FirstOrDefault(n => n is not null);
+
+        return workload is null
+            ? !pod.Contains("kube-state-metrics", StringComparison.OrdinalIgnoreCase)
+            : pod.StartsWith(workload + "-", StringComparison.Ordinal);
     }
 
     /// <summary>Ordered: the first match wins, so a pod labelled with both its Job and the

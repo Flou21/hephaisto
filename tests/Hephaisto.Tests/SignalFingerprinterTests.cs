@@ -164,10 +164,11 @@ public sealed class SignalFingerprinterTests
     }
 
     [Fact]
-    public void CorrelationKey_IsNamespaceOwnerKindOwnerName()
+    public void CorrelationKey_IsClusterNamespaceOwnerKindOwnerName()
     {
-        SignalFingerprinter.CorrelationKey(Given.Signal())
-            .Should().Be("prod/Deployment/api");
+        // The cluster prefix is #131: one Deployment name in two clusters is two workloads.
+        SignalFingerprinter.CorrelationKey(Given.Signal(), Cluster)
+            .Should().Be($"{Cluster}:prod/Deployment/api");
     }
 
     [Fact]
@@ -185,7 +186,7 @@ public sealed class SignalFingerprinterTests
     {
         var signal = Given.Signal(target: Given.Target(kind: "Node", name: "node-a", ownerKind: null, ownerName: null));
 
-        SignalFingerprinter.CorrelationKey(signal).Should().Be("prod/Node/node-a");
+        SignalFingerprinter.CorrelationKey(signal, Cluster).Should().Be($"{Cluster}:prod/Node/node-a");
     }
 
     [Fact]

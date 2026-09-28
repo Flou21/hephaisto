@@ -29,6 +29,8 @@ public static class SignalFingerprinter
     /// </summary>
     private const char FieldSeparator = '|';
 
+    /// <param name="signal">The signal. Its target's cluster, when set, wins.</param>
+    /// <param name="cluster">The agent's own cluster, for a target that names none.</param>
     public static string Compute(Signal signal, string cluster)
     {
         ArgumentNullException.ThrowIfNull(signal);
@@ -42,10 +44,17 @@ public static class SignalFingerprinter
             FieldSeparator,
             signal.Source.ToString(),
             signal.Kind.ToString(),
-            cluster,
+            ClusterOf(target, cluster),
             target.Namespace,
             owner,
             signal.Reason);
+
+        // An alert that names no object is one incident per series of its rule, not one per
+        // rule (#132). The owner above is "Alert/<alertname>" for every one of them.
+        if (target.IsAlertOnly)
+        {
+            material += FieldSeparator + AlertIdentity.IdentityHash(signal.Labels);
+        }
 
         return Sha256Hex(material);
     }
@@ -55,12 +64,25 @@ public static class SignalFingerprinter
     /// latency alert on the same Deployment - share this and are merged into one incident,
     /// which is almost always the right story: one cause, two symptoms.
     /// </summary>
-    public static string CorrelationKey(Signal signal)
+    /// <remarks>
+    /// The cluster is in it (#131): the same Deployment name in two clusters is two workloads,
+    /// and correlating them would fold one cluster's fault into the other's incident. So is the
+    /// series of an alert that names no object (#132), because the notification cooldown is
+    /// keyed on this, and two providers failing are two things to tell somebody about.
+    /// </remarks>
+    public static string CorrelationKey(Signal signal, string cluster = "")
     {
         ArgumentNullException.ThrowIfNull(signal);
 
-        return $"{signal.Target.Namespace}/{OwnerIdentity(signal.Target)}";
+        var key = $"{ClusterOf(signal.Target, cluster)}:{signal.Target.Namespace}/{OwnerIdentity(signal.Target)}";
+
+        return signal.Target.IsAlertOnly
+            ? $"{key}#{AlertIdentity.IdentityHash(signal.Labels)[..16]}"
+            : key;
     }
+
+    private static string ClusterOf(TargetRef target, string cluster) =>
+        target.Cluster is { Length: > 0 } own ? own : cluster;
 
     /// <summary>
     /// Falls back to the object itself only when it genuinely has no controller (a bare Pod,

@@ -136,6 +136,11 @@ public sealed class SignalIngestPipeline : BackgroundService, ISignalSink
         if (signal.FirstSeen == default) signal.FirstSeen = now;
         if (signal.LastSeen == default) signal.LastSeen = now;
 
+        // An alert that names no cluster is about this one (#131). Filled here, before either
+        // key is computed, so the fingerprint and the correlation key agree about it.
+        if (string.IsNullOrEmpty(signal.Target.Cluster))
+            signal.Target.Cluster = opts.ClusterName;
+
         // The webhook cannot compute this: the fingerprint includes the cluster name, which is
         // ingest configuration rather than anything the payload carries.
         if (string.IsNullOrEmpty(signal.Fingerprint))

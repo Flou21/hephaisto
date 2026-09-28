@@ -251,7 +251,7 @@ public sealed class IncidentTriage(
         var was = incident.Kind;
 
         incident.Kind = signal.Kind;
-        incident.Title = TitleFor(signal.Kind, incident.Target);
+        incident.Title = TitleFor(signal.Kind, incident.Target, signal.Labels);
 
         EnlistAudit(
             incident,
@@ -259,13 +259,36 @@ public sealed class IncidentTriage(
             $"{was} -> {signal.Kind} ({signal.Reason})");
     }
 
-    private static string TitleFor(SignalKind kind, TargetRef target) =>
-        $"{kind} on {target.OwnerName ?? target.Name} ({target.Namespace})";
+    /// <summary>
+    /// What a person reads on the board.
+    /// </summary>
+    /// <remarks>
+    /// An alert that names no object is titled by the labels that tell its series apart (#132) -
+    /// otherwise two providers failing are two lines reading the same - and one about another
+    /// cluster says which (#131). The namespace only when there is one: "()" read as a bug.
+    /// </remarks>
+    private string TitleFor(SignalKind kind, TargetRef target, IReadOnlyDictionary<string, string> labels)
+    {
+        var subject = target.OwnerName ?? target.Name;
 
-    private static Incident OpenIncident(Signal signal, DateTimeOffset now) => new()
+        if (target.IsAlertOnly && AlertIdentity.Distinguishing(labels) is { Length: > 0 } which)
+        {
+            subject = $"{subject} [{which}]";
+        }
+
+        var where = string.Join(", ", new[]
+        {
+            target.Namespace,
+            target.IsForeignTo(options.CurrentValue.ClusterName) ? $"cluster {target.Cluster}" : string.Empty,
+        }.Where(p => p.Length > 0));
+
+        return where.Length > 0 ? $"{kind} on {subject} ({where})" : $"{kind} on {subject}";
+    }
+
+    private Incident OpenIncident(Signal signal, DateTimeOffset now) => new()
     {
         CorrelationKey = SignalFingerprinter.CorrelationKey(signal),
-        Title = TitleFor(signal.Kind, signal.Target),
+        Title = TitleFor(signal.Kind, signal.Target, signal.Labels),
         Kind = signal.Kind,
         Severity = signal.Severity,
         State = IncidentState.Detected,
