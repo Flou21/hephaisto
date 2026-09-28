@@ -60,6 +60,13 @@ the incident service and the pager that alerts go to today; this release is what
 
 - **`SignalKind.Pipeline`** and its runbook, for an alert about a feed, a queue or an export
   rather than a Kubernetes object.
+- **Escalation steps** ([#142](docs/backlog.md#142)): `steps` on a route - after how long
+  unacknowledged, whom to tell. Each fires once per outage; an acknowledgement stops them and a
+  reopen starts them again. Events `IncidentUnanswered` and `SeverityRaised` (a warning that turned
+  critical reaches the routes that want criticals, [#148](docs/backlog.md#148)).
+- `notifications.maxPerChannelPerHour`; a message the cap holds back that a person needed is
+  logged at Error ([#150](docs/backlog.md#150)).
+- A database migration, `NotificationSteps`: `notification_deliveries.step`.
 
 ### Changed
 - **The right person** ([#141](docs/backlog.md#141), [#123](docs/backlog.md#123)). A route can

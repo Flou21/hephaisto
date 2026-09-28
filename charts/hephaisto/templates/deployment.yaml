@@ -333,6 +333,11 @@ spec:
             - name: Notifications__GrafanaUrl
               value: {{ .grafanaUrl | quote }}
             {{- end }}
+            {{- /* Only with routes: a stock install renders no notification setting at all. */}}
+            {{- if and .routes .maxPerChannelPerHour }}
+            - name: Notifications__MaxPerChannelPerHour
+              value: {{ .maxPerChannelPerHour | quote }}
+            {{- end }}
             {{- if .webhook.url }}
             - name: Notifications__Webhook__Url
               value: {{ .webhook.url | quote }}
@@ -422,6 +427,26 @@ spec:
             {{- if $route.fallback }}
             - name: Notifications__Routes__{{ $i }}__Fallback
               value: "true"
+            {{- end }}
+            {{- range $s, $step := $route.steps }}
+            - name: Notifications__Routes__{{ $i }}__Steps__{{ $s }}__After
+              value: {{ required "every notifications.routes[].steps entry needs after, as hh:mm:ss" $step.after | quote }}
+            {{- if $step.minSeverity }}
+            - name: Notifications__Routes__{{ $i }}__Steps__{{ $s }}__MinSeverity
+              value: {{ $step.minSeverity | quote }}
+            {{- end }}
+            {{- if $step.channel }}
+            - name: Notifications__Routes__{{ $i }}__Steps__{{ $s }}__Channel
+              value: {{ $step.channel | quote }}
+            {{- end }}
+            {{- range $r, $recipient := $step.recipients }}
+            - name: Notifications__Routes__{{ $i }}__Steps__{{ $s }}__Recipients__{{ $r }}
+              value: {{ $recipient | quote }}
+            {{- end }}
+            {{- if $step.toAssignee }}
+            - name: Notifications__Routes__{{ $i }}__Steps__{{ $s }}__ToAssignee
+              value: "true"
+            {{- end }}
             {{- end }}
             {{- end }}
             {{- end }}

@@ -111,7 +111,7 @@ Every reserved name already has a value that sets it properly, so refusing costs
       "GEMINI_API_KEY" "LLM_API_KEY" "HEPHAISTO_MODE" "HEPHAISTO_SWITCHES_DIR"
       "ConnectionStrings__hephaisto" "ASPNETCORE_URLS"
       "Grafana__McpUrl" "Grafana__ServiceAccountToken"
-      "Cluster__Name" "Web__WebhookToken" -}}
+      "Cluster__Name" "Web__WebhookToken" "Notifications__MaxPerChannelPerHour" -}}
 {{- /* The indexed entries the chart itself emits. Index 0 of DeniedNamespaces is what keeps the
        investigator's read tools out of the coder namespace; an extraEnv entry at the same index
        would silently replace it. Higher indices are the operator's and still work. */ -}}

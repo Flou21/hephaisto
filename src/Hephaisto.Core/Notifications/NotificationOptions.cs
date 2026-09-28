@@ -80,8 +80,35 @@ public sealed class NotificationRoute
     /// </summary>
     public bool Fallback { get; set; }
 
+    /// <summary>
+    /// What happens when nobody answers, in order (#142). Each step fires once per outage, when
+    /// the incident has been open - since it opened or last reopened - for its
+    /// <see cref="NotificationStep.After"/> and is still unacknowledged. An acknowledgement stops
+    /// every step that has not fired.
+    /// </summary>
+    public List<NotificationStep> Steps { get; set; } = [];
+
     /// <summary>Whether this route owns only some incidents.</summary>
     public bool IsScoped => Namespaces.Count > 0 || Matchers.Count > 0 || Clusters.Count > 0 || Kinds.Count > 0;
+}
+
+/// <summary>One step of a route's escalation: after how long, to whom (#142).</summary>
+public sealed class NotificationStep
+{
+    /// <summary>How long after the incident opened, or last reopened, the step fires.</summary>
+    public TimeSpan After { get; set; }
+
+    /// <summary>The least severity the step fires for. Info, the default, excludes nothing.</summary>
+    public Severity MinSeverity { get; set; } = Severity.Info;
+
+    /// <summary>The channel it tells on. Empty means the route's own.</summary>
+    public string? Channel { get; set; }
+
+    /// <summary>Who it tells. Empty with <see cref="ToAssignee"/> false means the route's recipients.</summary>
+    public List<string> Recipients { get; set; } = [];
+
+    /// <summary>Tell whoever the incident is assigned to, as well.</summary>
+    public bool ToAssignee { get; set; }
 }
 
 /// <summary>A label and the values it may have. It matches when the label is present with one of them.</summary>
@@ -290,6 +317,9 @@ public sealed class NotificationOptions
 
     /// <summary>How often the dispatcher looks for due rows.</summary>
     public TimeSpan DispatchInterval { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>How often the escalation steps are checked (#142).</summary>
+    public TimeSpan UnansweredInterval { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>Rows per tick. Bounded so one backlog cannot monopolise a scope.</summary>
     public int DispatchBatchSize { get; set; } = 20;

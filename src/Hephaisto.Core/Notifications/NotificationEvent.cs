@@ -85,4 +85,20 @@ public enum NotificationEvent
     /// hear of it must not be set by a model.
     /// </summary>
     IncidentOpened = 10,
+
+    /// <summary>
+    /// Nobody acknowledged the incident within one of its route's steps, so the step tells
+    /// somebody else (#142). A new message every time, and exempt from the per-workload cooldown:
+    /// it exists precisely because the first message was not enough.
+    /// </summary>
+    IncidentUnanswered = 11,
+
+    /// <summary>
+    /// An open incident's severity rose - a warning that turned critical - and a route that wants
+    /// the new severity was not told before (#148). Delivered to the routes that carry
+    /// <see cref="IncidentOpened"/>, because for them this is the incident opening at the
+    /// severity they care about; and exempt from the cooldown, which would otherwise swallow it
+    /// behind the opening a minute earlier.
+    /// </summary>
+    SeverityRaised = 12,
 }

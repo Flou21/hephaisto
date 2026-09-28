@@ -278,6 +278,8 @@ public sealed class TeamsBotNotificationChannel(
         var what = message.Snapshot.Event switch
         {
             NotificationEvent.IncidentOpened => "Opened",
+            NotificationEvent.IncidentUnanswered => "Nobody has answered",
+            NotificationEvent.SeverityRaised => "Now " + message.Snapshot.Severity.ToString().ToLowerInvariant(),
             NotificationEvent.IncidentEscalated => "Escalated",
             NotificationEvent.ApprovalRequired => "Approval required",
             NotificationEvent.IncidentResolved => "Resolved",

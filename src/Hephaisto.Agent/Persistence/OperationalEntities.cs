@@ -178,6 +178,12 @@ public sealed class NotificationDelivery
     /// <summary>The routes that matched, by name.</summary>
     public List<string> Routes { get; set; } = [];
 
+    /// <summary>
+    /// For an escalation step (<see cref="NotificationEvent.IncidentUnanswered"/>), which of its
+    /// route's steps this is. That the row exists is what says the step fired (#142).
+    /// </summary>
+    public int? Step { get; set; }
+
     public string CorrelationKey { get; set; } = string.Empty;
 
     public DeliveryStatus Status { get; set; }

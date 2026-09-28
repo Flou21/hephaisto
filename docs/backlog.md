@@ -2208,7 +2208,12 @@ is the sweeper, which expires it after three days of silence
 
 **What to do.** Steps on a route: unacknowledged after N minutes, notify a wider route; after M,
 the loud channel ([#143](#143)). An acknowledgement stops the steps. The state needed is one
-timestamp per step on the incident. **Size.** M. Open.
+timestamp per step on the incident. **Size.** M. **Fixed in v0.10.0**: a route has `steps` - `after`, `recipients`, `minSeverity`, `channel`,
+`toAssignee` - and `UnansweredNotifier` fires each one once per outage for an open, unacknowledged
+incident whose clock (`ReopenedAt ?? OpenedAt`) has passed it, as `IncidentUnanswered`. Nothing
+is scheduled: `NotificationSteps.Due` compares the steps with the clock and the deliveries that
+already exist, so an acknowledgement stops them and a reopen restarts them. The loud channel of
+the original "what to do" is v0.11.0. Pager scenarios P23, P24.
 
 ### 143. Teams is the only way to reach a person
 
@@ -2296,7 +2301,9 @@ on transitions.
 A route that wants criticals only never hears of an incident that opened as a warning.
 
 **What to do.** A raise enlists a notification to the routes that now match and did not before.
-**Size.** S. Open.
+**Size.** S. **Fixed in v0.10.0**: a raise re-asks the routes that carry `IncidentOpened` at the new
+severity, and whoever they reach now and did not before is told, as `SeverityRaised` - exempt from
+the cooldown, which would otherwise hold it behind the opening. Pager scenario P25.
 
 ### 149. An acknowledgement survives a reopen
 
@@ -2315,7 +2322,8 @@ The refusal is a skipped outbox row and a log line at Information. As the pager,
 refused is the first one about an incident. The cap is not a chart value.
 
 **What to do.** The cap as a chart value, and a refused opening or escalation step logged at
-Error. **Size.** S. Open.
+Error. **Size.** S. **Fixed in v0.10.0**: `notifications.maxPerChannelPerHour`, and an opening, an escalation, a
+step or a raise held back by the cap is logged at Error.
 
 ### 151. Any alert name containing "watchdog" is swallowed
 

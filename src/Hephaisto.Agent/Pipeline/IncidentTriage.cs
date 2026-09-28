@@ -44,7 +44,8 @@ public sealed class IncidentTriage(
     IOptionsMonitor<IngestOptions> options,
     HephaistoMetrics metrics,
     Observability.IGrafanaAnnotator annotator,
-    ILogger<IncidentTriage> logger)
+    ILogger<IncidentTriage> logger,
+    IOptionsMonitor<Core.Notifications.NotificationOptions>? notifications = null)
 {
     public async Task<TriageResult> TriageAsync(Signal signal, CancellationToken ct)
     {
@@ -478,11 +479,78 @@ public sealed class IncidentTriage(
         row.Message = signal.Message;
     }
 
-    private static void RaiseSeverity(Incident incident, Signal signal)
+    private void RaiseSeverity(Incident incident, Signal signal)
     {
-        if (signal.Severity > incident.Severity)
+        if (signal.Severity <= incident.Severity)
         {
-            incident.Severity = signal.Severity;
+            return;
+        }
+
+        var before = incident.Severity;
+        incident.Severity = signal.Severity;
+
+        NotifyRaised(incident, before);
+    }
+
+    /// <summary>
+    /// A warning that turns critical is news to a route that wants criticals (#148).
+    /// </summary>
+    /// <remarks>
+    /// A raise is not a transition, and notifications are enqueued on transitions, so until now a
+    /// route with <c>minSeverity: Critical</c> never heard of an incident that opened as a warning.
+    /// The routes that carry <c>IncidentOpened</c> are asked again at the new severity; whoever
+    /// they reach now and did not reach before is told, as <c>SeverityRaised</c>.
+    /// </remarks>
+    private void NotifyRaised(Incident incident, Severity before)
+    {
+        var routes = notifications?.CurrentValue.Routes;
+
+        if (routes is null || routes.Count == 0 || incident.State is IncidentState.Detected)
+        {
+            return;
+        }
+
+        var now = clock.UtcNow;
+        var transition = new IncidentEvent
+        {
+            IncidentId = incident.Id,
+            From = incident.State,
+            To = incident.State,
+            Reason = $"severity raised from {before} to {incident.Severity}",
+            At = now,
+        };
+
+        var opened = Notifications.NotificationEnqueue.Snapshot(Core.Notifications.NotificationEvent.IncidentOpened, transition, incident);
+        var then = Core.Notifications.NotificationRouter.Match(opened with { Severity = before }, routes).Matches;
+        var nowMatches = Core.Notifications.NotificationRouter.Match(opened, routes).Matches;
+
+        foreach (var match in nowMatches)
+        {
+            var old = then.FirstOrDefault(m => string.Equals(m.Channel, match.Channel, StringComparison.Ordinal));
+            var recipients = match.Recipients
+                .Where(r => old is null || !old.Recipients.Contains(r, StringComparer.OrdinalIgnoreCase))
+                .ToList();
+            var channelList = match.UsesChannelRecipients && old is not { UsesChannelRecipients: true };
+
+            if (recipients.Count == 0 && !channelList)
+            {
+                continue;
+            }
+
+            incidents.EnlistNotification(new Persistence.NotificationDelivery
+            {
+                Event = Core.Notifications.NotificationEvent.SeverityRaised,
+                IncidentId = incident.Id,
+                Channel = match.Channel,
+                Recipients = recipients,
+                UsesChannelRecipients = channelList,
+                Routes = [.. match.Routes],
+                CorrelationKey = incident.CorrelationKey,
+                Status = Core.Notifications.DeliveryStatus.Pending,
+                Snapshot = opened with { Event = Core.Notifications.NotificationEvent.SeverityRaised },
+                CreatedAt = now,
+                NextAttemptAt = now,
+            });
         }
     }
 
