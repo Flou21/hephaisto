@@ -492,6 +492,11 @@ codeFix:
   # real | fake. fake runs scripted, $0 plumbing (dev and CI): no model is called, and the coder
   # refuses to start if a real token is present.
   sdk: real
+  # The Claude model the coder runs (CODEFIX_MODEL): a model id such as claude-haiku-4-5-20251001,
+  # or a Claude Code alias (haiku, sonnet, opus). Empty lets the CLI pick its default for the
+  # account - on a subscription usually the most capable and most expensive one. Pin it to bound
+  # cost; the per-phase budgets below still cap every run whichever model it is.
+  model: ""
   # "" | shim. shim answers `gh` locally instead of calling GitHub - dev and CI only.
   gh: ""
 

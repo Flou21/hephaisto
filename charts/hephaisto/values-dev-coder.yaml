@@ -47,6 +47,17 @@ codeFix:
 
   # SAFE HERE ONLY: this cluster has no OIDC provider in front of the console, so mode pr could
   # not be approved at all without it. The agent logs a warning at every start while it is on.
+  # Haiku for the dev loop: the cheapest Claude model that can read a stack trace and fix a null.
+  model: claude-haiku-4-5-20251001
+  # Tight caps for the dev loop: the runner aborts a phase that reaches its cap and reports it,
+  # and Hephaisto starts nothing once a day's spend is reached. attemptsPerRepositoryPerDay stays
+  # generous because the e2e starts several attempts on one fixture repository per run.
+  budgets:
+    perPlanUsd: 1
+    perImplementUsd: 2
+    perDayUsd: 5
+    attemptsPerRepositoryPerDay: 20
+    concurrentJobs: 1
   allowUnauthenticatedApproval: true
 
   requireGreenBuild: true

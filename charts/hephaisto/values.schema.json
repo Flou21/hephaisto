@@ -538,6 +538,11 @@
             "fake"
           ]
         },
+        "model": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:\\[\\]-]*$"
+        },
         "gh": {
           "enum": [
             "",

@@ -494,6 +494,8 @@ spec:
               value: {{ .sdk | quote }}
             - name: CodeFix__Gh
               value: {{ .gh | quote }}
+            - name: CodeFix__Model
+              value: {{ .model | default "" | quote }}
             - name: CodeFix__NugetCacheClaim
               value: {{ if .nugetCache.enabled }}{{ include "hephaisto.codeFixNugetClaim" $ | quote }}{{ else }}""{{ end }}
             # For the incident link in the PR body: the same externally reachable URL the

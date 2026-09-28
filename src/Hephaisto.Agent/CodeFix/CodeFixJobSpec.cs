@@ -69,6 +69,9 @@ public static class CodeFixJobSpec
             new V1EnvVar { Name = "CODEFIX_SDK", Value = string.IsNullOrWhiteSpace(o.Sdk) ? "real" : o.Sdk },
         };
 
+        if (!string.IsNullOrWhiteSpace(o.Model))
+            env.Add(new V1EnvVar { Name = "CODEFIX_MODEL", Value = o.Model.Trim() });
+
         if (!string.IsNullOrWhiteSpace(o.Gh))
             env.Add(new V1EnvVar { Name = "CODEFIX_GH", Value = o.Gh });
 

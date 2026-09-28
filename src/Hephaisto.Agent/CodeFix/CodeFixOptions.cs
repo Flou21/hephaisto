@@ -91,6 +91,14 @@ public sealed class CodeFixOptions
     /// <summary>Passed through as <c>CODEFIX_SDK</c>. <c>fake</c> runs scripted, $0 plumbing - dev and CI only.</summary>
     public string Sdk { get; set; } = "real";
 
+    /// <summary>
+    /// The Claude model the coder runs, passed through as <c>CODEFIX_MODEL</c> - an id such as
+    /// <c>claude-haiku-4-5-20251001</c> or a CLI alias. Empty lets the Claude Code CLI choose its
+    /// default for the account, which on a subscription is usually the most capable (and most
+    /// expensive) model; pin it to control cost.
+    /// </summary>
+    public string Model { get; set; } = string.Empty;
+
     /// <summary>Passed through as <c>CODEFIX_GH</c>. <c>shim</c> answers gh locally - dev and CI only.</summary>
     public string Gh { get; set; } = string.Empty;
 

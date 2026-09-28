@@ -108,6 +108,19 @@ public sealed class CodeFixJobSpecTests
     }
 
     [Fact]
+    public void ThePinnedModel_ReachesTheCoder_AndNoPinLeavesTheCliDefault()
+    {
+        var o = Options();
+        o.Model = "claude-haiku-4-5-20251001";
+
+        CodeFixJobSpec.Job(Attempt, CodeFixPhase.Plan, o).Spec.Template.Spec.Containers.Single().Env
+            .Should().ContainSingle(e => e.Name == "CODEFIX_MODEL").Which.Value.Should().Be("claude-haiku-4-5-20251001");
+
+        CodeFixJobSpec.Job(Attempt, CodeFixPhase.Plan, Options()).Spec.Template.Spec.Containers.Single().Env
+            .Should().NotContain(e => e.Name == "CODEFIX_MODEL");
+    }
+
+    [Fact]
     public void LabelsCarryTheAttempt_TheIncident_AndThePhase()
     {
         var labels = CodeFixJobSpec.Job(Attempt, CodeFixPhase.Implement, Options()).Spec.Template.Metadata.Labels;
