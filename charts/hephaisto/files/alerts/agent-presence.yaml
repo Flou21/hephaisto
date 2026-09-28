@@ -34,7 +34,9 @@ spec:
       rules:
         - alert: HephaistoAbsent
           # hephaisto_build_info is published for as long as the process runs and by nothing
-          # else, so its absence is the process's.
+          # else, so its absence is the process's. Expect it about seven minutes after the pod
+          # goes when the agent's metrics also reach Prometheus through an OTel collector: the
+          # series stays for Prometheus's five-minute staleness, and then this waits two more.
           expr: absent(hephaisto_build_info)
           for: 2m
           labels:
