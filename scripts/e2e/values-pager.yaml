@@ -55,8 +55,8 @@ extraEnv:
     value: "00:00:02"
   - name: Notifications__FirstRetryDelay
     value: "00:00:05"
-  - name: Notifications__MaxPerChannelPerHour
-    value: "1000"
+  - name: Notifications__UnansweredInterval
+    value: "00:00:05"
 
 # Priced at zero, explicitly: a cost cap with an unpriced model refuses to start (#140), and the
 # stand-in costs nothing.
@@ -67,6 +67,7 @@ llm:
       outputPerMillionUsd: 0
 
 notifications:
+  maxPerChannelPerHour: 1000
   # In-cluster, because nothing here is opened by a person. Links only have to be well-formed.
   baseUrl: http://hephaisto.hephaisto:8080
   webhook:
@@ -93,6 +94,10 @@ notifications:
         - label: team
           values: [pager-a]
       recipients: [oncall@example.com]
+      # P23, P24: unacknowledged for 30 seconds, lead@ is told too.
+      steps:
+        - after: "00:00:30"
+          recipients: [lead@example.com]
     - name: team-b
       channel: teamsBot
       events: [IncidentOpened, IncidentEscalated, ApprovalRequired, VerificationFailed, IncidentResolved]

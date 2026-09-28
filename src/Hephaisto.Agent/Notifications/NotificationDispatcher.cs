@@ -164,7 +164,8 @@ public sealed class NotificationDispatcher : BackgroundService
             budget.LastDeliveryForKey,
             budget.DeliveredOnChannelLastHour,
             now,
-            o);
+            o,
+            delivery.Event);
 
         if (rate.IsSuppressed)
         {
@@ -174,11 +175,31 @@ public sealed class NotificationDispatcher : BackgroundService
             await outbox.MarkSuppressedAsync(delivery, rate.Reason, ct).ConfigureAwait(false);
             metrics.NotificationDelivered(delivery.Channel, DeliveryStatus.Suppressed);
 
-            logger.LogInformation(
-                "Suppressed a {Event} on {Channel}: {Reason}",
-                delivery.Event,
-                delivery.Channel,
-                rate.Reason);
+            // #150. The cooldown only ever holds back a repeat of something already said. The
+            // hourly cap can hold back the FIRST word about an incident, or the step that exists
+            // because nobody answered - and that is a person not being told, at Information.
+            if (rate.Exceeded is NotificationLimit.ChannelHour
+                && delivery.Event is NotificationEvent.IncidentOpened
+                    or NotificationEvent.IncidentUnanswered
+                    or NotificationEvent.IncidentEscalated
+                    or NotificationEvent.SeverityRaised)
+            {
+                logger.LogError(
+                    "Nobody was told: a {Event} for incident {IncidentId} on {Channel} was suppressed by the hourly cap ({Reason}). "
+                        + "Raise notifications.maxPerChannelPerHour if this is not a storm.",
+                    delivery.Event,
+                    delivery.IncidentId,
+                    delivery.Channel,
+                    rate.Reason);
+            }
+            else
+            {
+                logger.LogInformation(
+                    "Suppressed a {Event} on {Channel}: {Reason}",
+                    delivery.Event,
+                    delivery.Channel,
+                    rate.Reason);
+            }
 
             return;
         }

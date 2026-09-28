@@ -191,6 +191,9 @@ public static class NotificationServiceCollectionExtensions
         // the pod regardless. Turning notifications on is a restart either way.
         services.AddHostedService<NotificationDispatcher>();
 
+        // The escalation steps (#142). A no-op tick when no route has any.
+        services.AddHostedService<UnansweredNotifier>();
+
         // Says once, at startup, what this process can and cannot send outward - because every
         // outbound thing here degrades silently, and "nothing happened" looks the same whether
         // it was never configured or is broken.

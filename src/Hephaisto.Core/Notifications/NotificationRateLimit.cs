@@ -64,11 +64,18 @@ public static class NotificationRateLimit
         DateTimeOffset? lastDeliveryForCorrelationKey,
         int deliveredOnChannelLastHour,
         DateTimeOffset now,
-        NotificationOptions options)
+        NotificationOptions options,
+        NotificationEvent evt = NotificationEvent.Unspecified)
     {
         ArgumentNullException.ThrowIfNull(options);
 
-        if (!string.IsNullOrWhiteSpace(correlationKey)
+        // An escalation step and a severity raise exist because what went before was not enough;
+        // a cooldown that held them back behind it would defeat both (#142, #148). The hourly cap
+        // still applies - it is what stops a storm.
+        var exempt = evt is NotificationEvent.IncidentUnanswered or NotificationEvent.SeverityRaised;
+
+        if (!exempt
+            && !string.IsNullOrWhiteSpace(correlationKey)
             && lastDeliveryForCorrelationKey is { } last
             && now - last < options.CorrelationCooldown)
         {

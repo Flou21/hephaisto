@@ -436,6 +436,9 @@ notifications:
   #               them (team, product, channel). An incident opened by a Kubernetes signal has none.
   #   clusters:   the `cluster` label values this route owns. kinds: SignalKind names.
   #   recipients: people on a channel that tells people (teamsBot). Empty means the channel's own.
+  #   steps:      [{after: "00:20:00", recipients: [...], minSeverity, channel, toAssignee}] - when
+  #               nobody has acknowledged the incident that long after it opened or reopened, tell
+  #               these people too. Each step once per outage; an acknowledgement stops them.
   #   fallback:   true - owns what no SCOPED route owns (namespaces, matchers, clusters, kinds), so
   #               an alert nobody labelled still reaches somebody. A fallback has no scope itself.
   # Ownership first, then events and minSeverity. An unscoped route hears everything.
@@ -461,6 +464,11 @@ notifications:
   #     minSeverity: Warning
   #     namespaces: []
   routes: []
+
+  # Messages per channel per hour, after which the rest are suppressed and counted. The cap is
+  # what keeps a storm from becoming a flood; a suppressed opening or escalation step is logged
+  # at Error, because that is a person not being told (#150).
+  maxPerChannelPerHour: 60
 
 # -----------------------------------------------------------------------------------------
 # Code fixes - a SECOND, separately gated stage. Off, and not even rendered, by default.

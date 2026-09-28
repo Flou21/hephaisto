@@ -68,6 +68,8 @@ public sealed class IncidentRepository(HephaistoDbContext db, IClock clock) : II
 
     public void AddSignal(Signal signal) => db.Signals.Add(signal);
 
+    public void EnlistNotification(NotificationDelivery delivery) => db.NotificationDeliveries.Add(delivery);
+
     public Task<Incident?> FindOpenByFingerprintAsync(string fingerprint, CancellationToken ct) =>
         db.Incidents
             .Include(i => i.Actions)

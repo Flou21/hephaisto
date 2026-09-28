@@ -59,6 +59,9 @@ public interface IIncidentRepository
     /// </remarks>
     void AddSignal(Signal signal);
 
+    /// <summary>A notification that is not a transition's - a severity raise (#148) - staged into the same commit.</summary>
+    void EnlistNotification(NotificationDelivery delivery);
+
     /// <summary>
     /// The open incident - Escalated included - carrying a signal with this fingerprint, however
     /// long ago it last heard from it (#130). With its actions, which a clearing alert may have

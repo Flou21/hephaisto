@@ -65,7 +65,40 @@ public static class NotificationRouter
             return new RoutingResult([], false);
         }
 
-        var blockedByUnknownNamespace = false;
+        var owners = Owners(snapshot, routes, out var blockedByUnknownNamespace);
+
+        var matches = owners
+            .Where(r => r.Events.Contains(snapshot.Event) && snapshot.Severity >= r.MinSeverity)
+            .GroupBy(r => r.Channel, StringComparer.Ordinal)
+            .Select(g => new ChannelMatch(
+                g.Key,
+                [.. g.SelectMany(r => r.Recipients).Select(x => x.Trim()).Where(x => x.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase)],
+                g.Any(r => r.Recipients.Count == 0),
+                [.. g.Select(r => r.Name ?? r.Channel).Distinct(StringComparer.Ordinal)]))
+            .ToList();
+
+        // Only interesting when nothing matched. If some other route delivered the message
+        // anyway, the empty namespace cost nothing and reporting it would be noise.
+        return new RoutingResult(matches, blockedByUnknownNamespace && matches.Count == 0);
+    }
+
+    /// <summary>
+    /// The routes that own the incident, whatever the event: the half of <see cref="Match"/> the
+    /// escalation steps use (#142), because a step belongs to the route that owns the incident,
+    /// not to the event that started its clock.
+    /// </summary>
+    public static IReadOnlyList<NotificationRoute> Owners(NotificationSnapshot snapshot, IReadOnlyList<NotificationRoute> routes) =>
+        Owners(snapshot, routes, out _);
+
+    private static List<NotificationRoute> Owners(
+        NotificationSnapshot snapshot,
+        IReadOnlyList<NotificationRoute> routes,
+        out bool blockedByUnknownNamespace)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(routes);
+
+        blockedByUnknownNamespace = false;
         var owners = new List<NotificationRoute>();
         var scopedOwner = false;
 
@@ -91,19 +124,7 @@ public static class NotificationRouter
             owners.AddRange(routes.Where(r => r.Fallback && !string.IsNullOrWhiteSpace(r.Channel)));
         }
 
-        var matches = owners
-            .Where(r => r.Events.Contains(snapshot.Event) && snapshot.Severity >= r.MinSeverity)
-            .GroupBy(r => r.Channel, StringComparer.Ordinal)
-            .Select(g => new ChannelMatch(
-                g.Key,
-                [.. g.SelectMany(r => r.Recipients).Select(x => x.Trim()).Where(x => x.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase)],
-                g.Any(r => r.Recipients.Count == 0),
-                [.. g.Select(r => r.Name ?? r.Channel).Distinct(StringComparer.Ordinal)]))
-            .ToList();
-
-        // Only interesting when nothing matched. If some other route delivered the message
-        // anyway, the empty namespace cost nothing and reporting it would be noise.
-        return new RoutingResult(matches, blockedByUnknownNamespace && matches.Count == 0);
+        return owners;
     }
 
     private static bool Owns(NotificationRoute route, NotificationSnapshot snapshot, ref bool blockedByUnknownNamespace)
