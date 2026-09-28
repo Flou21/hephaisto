@@ -102,7 +102,7 @@ public sealed class TeamsBotActionsTests
     {
         var (handler, target, _) = Handler();
 
-        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Acknowledge, displayName: "Somebody Else"), default);
+        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Acknowledge, displayName: "Somebody Else"), TestContext.Current.CancellationToken);
 
         answer.Status.Should().Be(200);
         answer.Body!["type"]!.GetValue<string>().Should().Be("application/vnd.microsoft.card.adaptive");
@@ -120,7 +120,7 @@ public sealed class TeamsBotActionsTests
 
         var (handler, target, _) = Handler();
 
-        var answer = await handler.HandleAsync(Caller(), Click(verb), default);
+        var answer = await handler.HandleAsync(Caller(), Click(verb), TestContext.Current.CancellationToken);
 
         answer.Status.Should().Be(200);
         answer.Body!["statusCode"]!.GetValue<int>().Should().Be(200);
@@ -132,7 +132,7 @@ public sealed class TeamsBotActionsTests
     {
         var (handler, target, _) = Handler();
 
-        await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.AssignToMe), default);
+        await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.AssignToMe), TestContext.Current.CancellationToken);
 
         await target.Received(1).AssignToAsync(IncidentId, "oncall@example.com", Arg.Any<CancellationToken>());
     }
@@ -142,7 +142,7 @@ public sealed class TeamsBotActionsTests
     {
         var (handler, target, members) = Handler();
 
-        var answer = await handler.HandleAsync(Caller(serviceUrl: "https://elsewhere.example/"), Click(TeamsBotVerbs.Acknowledge), default);
+        var answer = await handler.HandleAsync(Caller(serviceUrl: "https://elsewhere.example/"), Click(TeamsBotVerbs.Acknowledge), TestContext.Current.CancellationToken);
 
         answer.Status.Should().Be(403);
         target.ReceivedCalls().Should().BeEmpty();
@@ -154,7 +154,7 @@ public sealed class TeamsBotActionsTests
     {
         var (handler, target, members) = Handler();
 
-        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Acknowledge, tenant: "another-tenant"), default);
+        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Acknowledge, tenant: "another-tenant"), TestContext.Current.CancellationToken);
 
         answer.Status.Should().Be(403);
         target.ReceivedCalls().Should().BeEmpty();
@@ -166,7 +166,7 @@ public sealed class TeamsBotActionsTests
     {
         var (handler, target, _) = Handler(member: new TeamsBotResult<TeamsMember>(HttpStatusCode.OK, null, "not a member"));
 
-        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Acknowledge), default);
+        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Acknowledge), TestContext.Current.CancellationToken);
 
         answer.Status.Should().Be(403);
         target.ReceivedCalls().Should().BeEmpty();
@@ -177,7 +177,7 @@ public sealed class TeamsBotActionsTests
     {
         var (handler, target, _) = Handler(member: new TeamsBotResult<TeamsMember>(HttpStatusCode.BadGateway, null, "down"));
 
-        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Acknowledge), default);
+        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Acknowledge), TestContext.Current.CancellationToken);
 
         answer.Status.Should().Be(503);
         target.ReceivedCalls().Should().BeEmpty();
@@ -190,7 +190,7 @@ public sealed class TeamsBotActionsTests
         var click = Click(TeamsBotVerbs.Acknowledge);
         click["from"]!.AsObject().Remove("aadObjectId");
 
-        var answer = await handler.HandleAsync(Caller(), click, default);
+        var answer = await handler.HandleAsync(Caller(), click, TestContext.Current.CancellationToken);
 
         answer.Status.Should().Be(403);
         target.ReceivedCalls().Should().BeEmpty();
@@ -204,7 +204,7 @@ public sealed class TeamsBotActionsTests
     {
         var (handler, target, _) = Handler();
 
-        var answer = await handler.HandleAsync(Caller(), Click(verb), default);
+        var answer = await handler.HandleAsync(Caller(), Click(verb), TestContext.Current.CancellationToken);
 
         answer.Status.Should().Be(200);
         answer.Body!["type"]!.GetValue<string>().Should().Be("application/vnd.microsoft.error");
@@ -218,7 +218,7 @@ public sealed class TeamsBotActionsTests
         var install = Click(TeamsBotVerbs.Acknowledge);
         install["type"] = "conversationUpdate";
 
-        var answer = await handler.HandleAsync(Caller(), install, default);
+        var answer = await handler.HandleAsync(Caller(), install, TestContext.Current.CancellationToken);
 
         answer.Status.Should().Be(200);
         answer.Body.Should().BeNull();
@@ -230,11 +230,11 @@ public sealed class TeamsBotActionsTests
     public async Task A_closed_incident_says_nothing_changed()
     {
         var (handler, target, _) = Handler();
-        target.AcknowledgeAsync(default, default!, default).ReturnsForAnyArgs(
+        target.AcknowledgeAsync(default, default!, TestContext.Current.CancellationToken).ReturnsForAnyArgs(
             new LifecycleResult { Outcome = LifecycleOutcome.IllegalState, Detail = "already closed" });
-        target.CardAsync(default, default).ReturnsForAnyArgs((JsonObject?)null);
+        target.CardAsync(default, TestContext.Current.CancellationToken).ReturnsForAnyArgs((JsonObject?)null);
 
-        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Acknowledge), default);
+        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Acknowledge), TestContext.Current.CancellationToken);
 
         answer.Body!["value"]!.GetValue<string>().Should().Contain("Nothing changed").And.Contain("already closed");
     }

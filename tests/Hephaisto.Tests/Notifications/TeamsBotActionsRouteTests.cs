@@ -115,7 +115,7 @@ public sealed class TeamsBotActionsRouteTests : IAsyncLifetime
     {
         var response = await Post(actionsPort, Sign(teams, "teams"));
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        response.StatusCode.Should().Be(HttpStatusCode.OK, await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
         await target.Received(1).AcknowledgeAsync(Arg.Any<Guid>(), "oncall@example.com", Arg.Any<CancellationToken>());
     }
 
