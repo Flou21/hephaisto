@@ -179,6 +179,10 @@
         "notificationTeams": {
           "type": "string"
         },
+        "notificationTeamsBot": {
+          "type": "string",
+          "description": "Secret holding the Teams bot's client secret under key `clientSecret`. Required when notifications.teamsBot.enabled is true."
+        },
         "auth": {
           "type": "string",
           "description": "Secret holding the OIDC client secret under key `clientSecret`. Required when auth.enabled is true."
@@ -251,6 +255,52 @@
             }
           }
         },
+        "teamsBot": {
+          "type": "object",
+          "description": "Microsoft Teams through a registered bot: one board in a channel, edited in place, and alerts by personal chat. It never deletes.",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "tenantId": {
+              "type": "string",
+              "description": "The Microsoft Entra tenant id. Required when enabled."
+            },
+            "appId": {
+              "type": "string",
+              "description": "The bot's Microsoft App ID. Not a secret. Required when enabled."
+            },
+            "channelId": {
+              "type": "string",
+              "description": "The channel holding the board, as 19:...@thread.tacv2. Required when enabled."
+            },
+            "teamId": {
+              "type": "string",
+              "description": "The team's group id. Optional; builds the link from an alert to the board."
+            },
+            "recipients": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 3
+              },
+              "description": "Work email addresses that receive alerts by personal chat."
+            },
+            "board": {
+              "type": "object",
+              "properties": {
+                "maxIncidents": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 40
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
         "routes": {
           "type": "array",
           "items": {
@@ -264,7 +314,8 @@
                 "type": "string",
                 "enum": [
                   "webhook",
-                  "teams"
+                  "teams",
+                  "teamsBot"
                 ],
                 "description": "Must name a configured channel, or startup validation refuses it."
               },

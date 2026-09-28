@@ -341,6 +341,31 @@ spec:
                   name: {{ required "secrets.notificationTeams is required when notifications.teams.enabled is true. The URL is the credential, so it cannot be a chart value." $.Values.secrets.notificationTeams }}
                   key: url
             {{- end }}
+            {{- if .teamsBot.enabled }}
+            # The bot. Three ids that are not secrets, and one secretKeyRef that is: the client
+            # secret never becomes a value, for the reason the Workflows URL above does not.
+            - name: Notifications__TeamsBot__TenantId
+              value: {{ required "notifications.teamsBot.tenantId is required when notifications.teamsBot.enabled is true" .teamsBot.tenantId | quote }}
+            - name: Notifications__TeamsBot__AppId
+              value: {{ required "notifications.teamsBot.appId is required when notifications.teamsBot.enabled is true" .teamsBot.appId | quote }}
+            - name: Notifications__TeamsBot__ChannelId
+              value: {{ required "notifications.teamsBot.channelId is required when notifications.teamsBot.enabled is true. It is the channel that holds the board." .teamsBot.channelId | quote }}
+            - name: Notifications__TeamsBot__ClientSecret
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secrets.notificationTeamsBot is required when notifications.teamsBot.enabled is true. The chart never creates a Secret, it only references one." $.Values.secrets.notificationTeamsBot }}
+                  key: clientSecret
+            {{- if .teamsBot.teamId }}
+            - name: Notifications__TeamsBot__TeamId
+              value: {{ .teamsBot.teamId | quote }}
+            {{- end }}
+            - name: Notifications__TeamsBot__BoardMaxIncidents
+              value: {{ .teamsBot.board.maxIncidents | quote }}
+            {{- range $r, $recipient := .teamsBot.recipients }}
+            - name: Notifications__TeamsBot__Recipients__{{ $r }}
+              value: {{ $recipient | quote }}
+            {{- end }}
+            {{- end }}
             {{- range $i, $route := .routes }}
             - name: Notifications__Routes__{{ $i }}__Channel
               value: {{ required "every notifications.routes entry needs a channel" $route.channel | quote }}

@@ -108,9 +108,21 @@ notifications:
   baseUrl: https://hephaisto.example.com
   webhook:
     url: https://hooks.example.com/hephaisto
+  teamsBot:
+    enabled: true
+    tenantId: f4447a03-0000-0000-0000-000000000000
+    appId: 58b00500-0000-0000-0000-000000000000
+    channelId: "19:abc@thread.tacv2"
+    teamId: 11111111-0000-0000-0000-000000000000
+    recipients: [oncall@example.com, dev@example.com]
+    board:
+      maxIncidents: 15
   routes:
     - channel: webhook
       events: [IncidentEscalated, CodeFixPlanReady, CodeFixPrOpened, CodeFixFailed]
+    - channel: teamsBot
+      events: [IncidentEscalated, ApprovalRequired, VerificationFailed, CodeFixPlanReady]
+      minSeverity: Warning
 
 # Every code-fix template at once: its own namespace object, the Role, the unbound
 # ServiceAccount, both NetworkPolicies, the proxy with an extra allowlist entry, and the NuGet

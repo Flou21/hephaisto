@@ -71,6 +71,21 @@ refuses "teams enabled with no secret name" \
     --set notifications.teams.enabled=true \
     --set secrets.notificationTeams=""
 
+# The bot needs four things together. Three missing ones are refused here rather than at
+# startup, and the fourth - the secret - can only ever be named, never given.
+BOT=(--set notifications.teamsBot.enabled=true
+     --set notifications.teamsBot.tenantId=f4447a03-0000-0000-0000-000000000000
+     --set notifications.teamsBot.appId=58b00500-0000-0000-0000-000000000000
+     --set 'notifications.teamsBot.channelId=19:abc@thread.tacv2')
+
+refuses "the teams bot enabled with no secret name" "${BOT[@]}" --set secrets.notificationTeamsBot=""
+refuses "the teams bot enabled with no channel"     "${BOT[@]}" --set notifications.teamsBot.channelId=""
+refuses "the teams bot enabled with no app id"      "${BOT[@]}" --set notifications.teamsBot.appId=""
+refuses "the teams bot enabled with no tenant"      "${BOT[@]}" --set notifications.teamsBot.tenantId=""
+refuses "a board larger than was ever measured"     "${BOT[@]}" --set notifications.teamsBot.board.maxIncidents=41
+# The schema is closed, so the one way to put the credential in a values file does not exist.
+refuses "the teams bot's client secret as a value"  "${BOT[@]}" --set notifications.teamsBot.clientSecret=hunter2
+
 # The routing vocabulary is closed in the schema, so a typo is refused at `helm template`
 # rather than becoming a rule that matches nothing and delivers nowhere - which is the exact
 # failure this whole feature exists to remove, and it looks identical to working.
@@ -158,6 +173,17 @@ if grep -A1 'name: Notifications__Teams__WorkflowUrl' <<<"$TEAMS" | grep -q 'val
     pass "the Teams trigger URL is only ever a secretKeyRef"
 else
     fail "the Teams trigger URL rendered as a plain value; it is a credential"
+fi
+
+# The same for the bot's client secret, and the ids beside it are the control: they DO render as
+# values, so a pass here is not the template having rendered nothing at all.
+BOTTED=$(helm template t "$CHART" --namespace hephaisto --values "$CHART/ci/full-values.yaml" 2>/dev/null)
+
+if grep -A1 'name: Notifications__TeamsBot__ClientSecret' <<<"$BOTTED" | grep -q 'valueFrom:' \
+    && grep -A1 'name: Notifications__TeamsBot__AppId' <<<"$BOTTED" | grep -q 'value: "'; then
+    pass "the Teams bot's client secret is only ever a secretKeyRef"
+else
+    fail "the Teams bot's client secret rendered as a plain value, or the bot did not render"
 fi
 
 # Egress is off by default, and that default is load-bearing: adding Egress to a policy denies
