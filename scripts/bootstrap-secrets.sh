@@ -5,7 +5,7 @@
 # idempotent and will not rotate a secret that already exists, because rotating the caller
 # token without restarting both sides breaks grafana-mcp until the next rollout.
 #
-# Why these are not in git: three of them are credentials, and a credential in a values file
+# Why these are not in git: most of them are credentials, and a credential in a values file
 # is a credential in every clone and in `helm get values` forever. The Grafana token cannot
 # be in git for a stronger reason - it does not exist until Grafana is running, since only
 # Grafana can mint it.
@@ -77,6 +77,24 @@ else
     --from-literal=POSTGRES_APP_PASSWORD="$(openssl rand -hex 24)" \
     --from-literal=POSTGRES_DB=hephaisto >/dev/null
   echo "hephaisto-postgres: created"
+fi
+
+# ---------------------------------------------------------------------------------------
+# 2b. The inbound webhook's bearer token (backlog #138)
+# ---------------------------------------------------------------------------------------
+# The same value in both namespaces, as with the grafana-mcp caller token above: the agent
+# requires it (secrets.webhookToken in values-dev.yaml) and Alertmanager presents it
+# (credentials_file in infra/observability/kube-prometheus-stack.values.yaml, which mounts this
+# Secret optionally so that chart can be installed before this script runs).
+if have "$OBS_NS" hephaisto-webhook-token && have "$APP_NS" hephaisto-webhook-token; then
+  echo "hephaisto-webhook-token: already present in both namespaces, leaving alone"
+else
+  token=$(openssl rand -hex 32)
+  kubectl -n "$OBS_NS" delete secret hephaisto-webhook-token --ignore-not-found >/dev/null
+  kubectl -n "$APP_NS" delete secret hephaisto-webhook-token --ignore-not-found >/dev/null
+  kubectl -n "$OBS_NS" create secret generic hephaisto-webhook-token --from-literal=token="$token" >/dev/null
+  kubectl -n "$APP_NS" create secret generic hephaisto-webhook-token --from-literal=token="$token" >/dev/null
+  echo "hephaisto-webhook-token: created in $OBS_NS and $APP_NS"
 fi
 
 # ---------------------------------------------------------------------------------------

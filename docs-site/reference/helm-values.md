@@ -22,6 +22,9 @@ Read these before the rest.
 | `policy.autoEnabledActionTypes` | `[]` | Empty means everything waits for a human. |
 | `prometheusOperator.selectorLabels.release` | `kube-prometheus-stack` | Wrong value fails **silently**: rules exist, Prometheus selects none, agent reports healthy. |
 
+And one with no default at all: **`cluster.name`**, the `cluster` label on this cluster's metrics.
+Rendering fails without it.
+
 ## The file
 
 <<< ../../charts/hephaisto/values.yaml{yaml}

@@ -11,8 +11,8 @@ spec:
     {{- include "hephaisto.selectorLabels" . | nindent 4 }}
   ports:
     # Alertmanager posts here: /webhooks/alertmanager and /webhooks/watchdog.
-    # Unauthenticated by necessity - Alertmanager cannot send custom headers - and protected
-    # by the NetworkPolicy instead.
+    # Outside OIDC - Alertmanager cannot sign in - and protected by the bearer token in
+    # secrets.webhookToken when set, and by the NetworkPolicy.
     - name: http
       port: 8080
       targetPort: http

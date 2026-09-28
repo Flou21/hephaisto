@@ -118,8 +118,7 @@ public sealed class OpenAiChatClientFactory : IChatClientFactory
         // the guard spends a step per attempt on calls that returned zero tokens.
         _client = new OpenAIClient(new ApiKeyCredential(apiKey), clientOptions);
 
-        if (!_options.Pricing.Keys.Any(k => _options.Model.StartsWith(k, StringComparison.OrdinalIgnoreCase))
-            && !_options.Pricing.ContainsKey(_options.Model))
+        if (!LlmPricing.Resolves(_options.Pricing, _options.Model))
         {
             // LlmPricing warns too, but only once the first turn is priced. Saying it at
             // construction means the operator sees it before the run, not in the middle of
@@ -127,8 +126,7 @@ public sealed class OpenAiChatClientFactory : IChatClientFactory
             // as zero, so MaxCostUsd never binds while the UI reports 0.0% utilisation.
             logger.LogWarning(
                 "No price entry for model {Model}. Its spend will count as $0 and the cost "
-                + "budget will not bind. Add Llm:Pricing:{Model}.",
-                _options.Model,
+                + "budget will not bind. Add it to the chart value llm.pricing.",
                 _options.Model);
         }
     }

@@ -1,5 +1,9 @@
 # The smallest input that must render: nothing enabled beyond the defaults, no namespace the
 # agent may act in, no observability wiring. This is what a first `helm install` looks like.
+# The one value with no default: the value of the `cluster` label on this cluster's metrics.
+cluster:
+  name: ci-minimal
+
 prometheusOperator:
   selectorLabels:
     release: kube-prometheus-stack

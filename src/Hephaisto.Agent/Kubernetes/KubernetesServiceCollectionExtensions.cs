@@ -1,3 +1,5 @@
+using Hephaisto.Agent.Options;
+
 using k8s;
 
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -36,12 +38,14 @@ public static class KubernetesServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
 
+        services.AddHephaistoCluster(configuration);
+
         services.AddOptions<KubernetesOptions>()
             .Bind(configuration.GetSection(KubernetesOptions.SectionName))
             .Validate(
                 o => !string.IsNullOrWhiteSpace(o.ClusterName),
-                "Kubernetes:ClusterName must be set - it is part of every signal fingerprint, and an "
-                + "empty one lets two clusters reporting into one database collide.")
+                "Cluster:Name must be set (chart value cluster.name) - it is part of every signal "
+                + "fingerprint, and an empty one lets two clusters reporting into one database collide.")
             .Validate(
                 o => o.SignalQueueCapacity > 0,
                 "Kubernetes:SignalQueueCapacity must be positive. There is deliberately no unbounded "

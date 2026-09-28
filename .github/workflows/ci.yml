@@ -313,7 +313,8 @@ jobs:
     #
     #   - kind's default CNI ACCEPTS NetworkPolicy objects and does not enforce them. This job
     #     validates their shape, not their effect - and their effect is the Alertmanager
-    #     webhook's entire authentication. That stays a manual acceptance step for 0.0.1.
+    #     webhook's entire protection when no webhook token is set. That stays a manual
+    #     acceptance step.
     #   - No Prometheus here, so the `release:` selector is only covered by the render-time
     #     grep in the chart job.
     #   - No real LLM key, so nothing exercises an investigation end to end.
@@ -391,6 +392,7 @@ jobs:
             --set image.pullPolicy=Never \
             --set postgres.embedded.enabled=true \
             --set 'policy.actionableNamespaces[0]=hephaisto-chaos' \
+            --set cluster.name=hephaisto-e2e \
             --set prometheusOperator.selectorLabels.release=kube-prometheus-stack \
             --set codeFix.enabled=true \
             --set codeFix.mode=plan \

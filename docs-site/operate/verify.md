@@ -68,8 +68,8 @@ these says `yes`, something bound a role the chart did not render.
 
 ## 4. The webhook is not reachable from where it should not be
 
-The Alertmanager receiver is unauthenticated by necessity, so the NetworkPolicy is its entire
-authentication.
+Without `secrets.webhookToken` the Alertmanager receiver checks no credential, and the
+NetworkPolicy is its entire protection. With a token, this is the second of two controls.
 
 ```sh
 # From a pod that should NOT be able to reach it

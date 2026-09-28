@@ -5,6 +5,17 @@ as Helm values — set those through [`extraEnv`](/reference/configuration#the-e
 
 Durations are .NET `TimeSpan` strings (`"00:10:00"`, not `"10m"`).
 
+## `Cluster`
+
+| Key | Type | Default |
+|---|---|---|
+| `Cluster:Name` | string | none — **required**, chart value `cluster.name` |
+
+The value of the `cluster` label on this cluster's metrics and logs. It fills `Ingest:ClusterName`,
+`Kubernetes:ClusterName` and `Investigation:Environment:ClusterName`, which used to be set
+separately and all defaulted to this repository's development cluster. An empty name refuses to
+start; a legacy key that disagrees with it is overridden and logged.
+
 ## `Llm`
 
 The chat model, the embedding model, and what a single investigation is allowed to spend.
@@ -25,12 +36,16 @@ The chat model, the embedding model, and what a single investigation is allowed 
 | `Llm:PlanningStructuredOutput` | `JsonSchema` \| `JsonObject` | `JsonSchema` |
 | `Llm:Temperature` | double | `0.2` |
 | `Llm:MaxOutputTokens` | int? | `8192` |
-| `Llm:Pricing` | map of id → price | eight Gemini entries |
+| `Llm:Pricing` | map of id → price | the Gemini models and a few openai-compatible ones |
+| `Llm:Prices` | list of `{Model, InputPerMillionUsd, OutputPerMillionUsd}` | `[]` — chart value `llm.pricing` |
 
-::: warning An unpriced model is charged at zero
-`Llm:Pricing` maps a model id to `InputPerMillionUsd` / `OutputPerMillionUsd`. A model with no
-entry costs nothing as far as the budget is concerned, which **switches the cost budget off**
-rather than approximating it. Ship a price with the model, always.
+::: warning An unpriced model does not start
+`Llm:Pricing` maps a model id to `InputPerMillionUsd` / `OutputPerMillionUsd`; `Llm:Prices` adds to
+it as a list, because a model id like `gpt-oss:120b` cannot be a configuration key in an
+environment variable. A model with no price costs nothing as far as the budget is concerned, which
+would **switch the cost budget off** rather than approximate it - so with any cost cap set, the
+agent refuses to start on a model or planning model it cannot price. A price of 0 is accepted.
+A response under a model id the gateway chose is priced as the configured model.
 
 The seeded Gemini prices are promotional and double on 2027-01-01. Nothing in the code knows that
 date.
@@ -139,7 +154,7 @@ agent stops acting, on the reasoning that a cluster-wide problem is not one a po
 | Key | Type | Default |
 |---|---|---|
 | `Enabled` | bool | `true` |
-| `ClusterName` | string | `default` |
+| `ClusterName` | string | from `Cluster:Name` |
 | `KubeconfigPath` / `KubeconfigContext` | string? | `null` |
 | `ReadableNamespaces` / `DeniedNamespaces` | set | `{}` |
 | `SignalQueueCapacity` | int | `2048` |
@@ -201,14 +216,13 @@ agent not being one.
 
 ### `Investigation:Environment` — the environment card
 
-What the agent is told about *your* cluster. **The shipped defaults are this repository's own dev
-cluster** and should be overridden.
+What the agent is told about *your* cluster.
 
 | Key | Type | Default |
 |---|---|---|
-| `ClusterName` | string | `studio-rancher-desktop` |
-| `InScopeNamespaces` | list | `["hephaisto-chaos"]` |
-| `ProtectedNamespaces` | list | `["hephaisto","hephaisto-obs","kube-system"]` |
+| `ClusterName` | string | from `Cluster:Name` |
+| `InScopeNamespaces` | list | `[]` — chart value `investigation.inScopeNamespaces`; empty omits the line |
+| `ProtectedNamespaces` | list | `[]` — empty names `Policy:ProtectedNamespaces`, the enforced list |
 | `DatasourceUids` | map | `{}` |
 | `WorkloadOwners` | map | `{}` |
 | `Notes` | list | `[]` |
@@ -217,13 +231,25 @@ cluster** and should be overridden.
 
 | Key | Type | Default |
 |---|---|---|
-| `ClusterName` | string | `studio-rancher-desktop` |
+| `ClusterName` | string | from `Cluster:Name` |
 | `BurstWindow` | TimeSpan | `00:05:00` |
 | `FlapThreshold` | int | `3` |
 | `FlapWindow` | TimeSpan | `01:00:00` |
 | `FlapCooldown` | TimeSpan | `04:00:00` |
 | `CorrelationWindow` | TimeSpan | `00:10:00` |
 | `SelfNamespaces` | set | `["hephaisto","hephaisto-obs"]` |
+
+## `Web`
+
+| Key | Type | Default |
+|---|---|---|
+| `WebhookPort` | int | `0` — chart value `webhookPort`; 0 keeps `/webhooks` on 8080 |
+| `MainPort` | int | `8080` |
+| `TrustForwardedHeaders` | bool | `false` |
+| `WebhookToken` | string? | `null` — chart value `secrets.webhookToken`; at least 16 characters |
+
+With `WebhookToken` set, `/webhooks/*` answers 401 to a request without `Authorization: Bearer
+<token>`. Alertmanager sends it with `http_config.authorization.credentials_file`.
 
 ## `Notifications`
 

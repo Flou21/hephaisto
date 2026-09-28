@@ -40,10 +40,28 @@ serviceAccount:
 sourceUrl: ""
 
 # -----------------------------------------------------------------------------------------
+# The cluster this agent runs in - REQUIRED, and there is no default
+# -----------------------------------------------------------------------------------------
+# The value of the `cluster` label on this cluster's metrics and logs. It goes into every signal
+# fingerprint, it is the cluster an alert without a `cluster` label is taken to be about, and the
+# model is told to put it in every query it writes. Rendering fails without it.
+#
+# It used to be three settings the chart never set, all defaulting to the development machine's
+# name - so every install fingerprinted with somebody else's cluster and told its model to filter
+# on a label that matched nothing (backlog #139). No default can be right for a cluster the chart
+# has never seen, so it has none.
+#
+# Treat it as immutable once the cluster has reported: changing it re-keys every future signal,
+# and nothing new dedupes against what came before.
+cluster:
+  name: ""
+
+# -----------------------------------------------------------------------------------------
 # Where things live
 # -----------------------------------------------------------------------------------------
 # The namespace your Prometheus/Alertmanager/Grafana run in. Used by the NetworkPolicy, which
-# is the webhook's ENTIRE authentication - see networkPolicy below.
+# is the webhook's entire protection unless secrets.webhookToken is set - see networkPolicy
+# below.
 observabilityNamespace: hephaisto-obs
 
 # -----------------------------------------------------------------------------------------
@@ -143,11 +161,11 @@ policy:
 # -----------------------------------------------------------------------------------------
 # The webhook's own port - what makes exposing the console safe
 # -----------------------------------------------------------------------------------------
-# The console, the JSON API and /webhooks/alertmanager used to answer on one port, and the agent
-# has no authentication of its own. The receiver cannot be authenticated either, because
-# Alertmanager has no field for a credential - so the NetworkPolicy is its entire protection, and
-# one port forced a choice on every install: reach the console only by port-forward, or widen the
-# policy for the console and admit forged alerts with it.
+# The console, the JSON API and /webhooks/alertmanager used to answer on one port. The console
+# has OIDC (auth below); the receiver cannot use it, because Alertmanager cannot sign in. It can
+# send a bearer token (secrets.webhookToken), but without one the NetworkPolicy is the receiver's
+# entire protection, and one port forced a choice on every install: reach the console only by
+# port-forward, or widen the policy for the console and admit forged alerts with it.
 #
 # With this set, /webhooks answers ONLY here and the console and API answer ONLY on 8080. Point
 # your NetworkPolicy at this port and expose 8080 however you like.
@@ -194,6 +212,35 @@ auth:
 mode: Observe
 
 # -----------------------------------------------------------------------------------------
+# What the model is told about this cluster
+# -----------------------------------------------------------------------------------------
+investigation:
+  # The namespaces worth investigating at all, stated on the model's environment card. Empty
+  # says nothing about scope - which is right for an install that takes every alert - rather
+  # than naming a namespace that exists on one development machine.
+  inScopeNamespaces: []
+
+# -----------------------------------------------------------------------------------------
+# Model prices - the cost caps bind only on a priced model
+# -----------------------------------------------------------------------------------------
+llm:
+  # A model with no price bills as $0, so every cost cap silently stops binding while the
+  # console reports 0.0% utilisation. The agent therefore REFUSES TO START when a cost cap is
+  # set (they all are, by default) and Llm:Model or Llm:PlanningModel has no price (backlog
+  # #140). The built-in table covers the Gemini models and a few openai-compatible ones; a model
+  # behind a gateway, under a name of your choosing, needs an entry here.
+  #
+  # A price of 0 is accepted, for a model that really is free - a local one. Saying so here is
+  # the acknowledgement the refusal asks for. Prices are USD per million tokens. An entry here
+  # replaces a built-in price of the same name.
+  #
+  # pricing:
+  #   - model: my-gateway-model
+  #     inputPerMillionUsd: 0.30
+  #     outputPerMillionUsd: 2.50
+  pricing: []
+
+# -----------------------------------------------------------------------------------------
 # Secrets - referenced, never created
 # -----------------------------------------------------------------------------------------
 # This chart has no Secret template and will not grow one. A value passed to a chart ends up
@@ -229,6 +276,22 @@ secrets:
   # A Grafana service-account token that may WRITE annotations: key `token`. Editor is enough,
   # and is deliberately less than grafana-mcp's Admin. Only read when grafana.url is set.
   grafanaAnnotation: hephaisto-grafana-annotation
+  # The bearer token the INBOUND webhook requires: key `token`, at least 16 characters. Empty
+  # means /webhooks requires none, and the NetworkPolicy is then its whole protection.
+  #
+  # Alertmanager sends it with `http_config.authorization.credentials_file` on the receiver
+  # (backlog #138 - the comments here used to say it could not). Set both in ONE change: a
+  # token the receiver does not send refuses every alert, and no retry fixes that.
+  #
+  #   receivers:
+  #     - name: hephaisto
+  #       webhook_configs:
+  #         - url: http://hephaisto.hephaisto:8080/webhooks/alertmanager
+  #           send_resolved: true
+  #           http_config:
+  #             authorization:
+  #               credentials_file: /etc/alertmanager/secrets/hephaisto-webhook-token/token
+  webhookToken: ""
   # The HMAC key the outbound webhook signs with: key `signingSecret`. Only read when
   # notifications.webhook.signed is true.
   notificationWebhook: hephaisto-notification-webhook
@@ -307,9 +370,9 @@ notifications:
     # Where to POST. Empty means the channel is not registered at all.
     url: ""
     # Sign each request with HMAC-SHA256 over the exact body, in X-Hephaisto-Signature, so the
-    # receiver can prove it came from this agent. Worth turning on: Hephaisto's own INBOUND
-    # webhook cannot be authenticated at all, because Alertmanager has no field for a header,
-    # and a receiver of yours does not have to accept that trade.
+    # receiver can prove it came from this agent. Worth turning on: an unauthenticated receiver
+    # accepts anything that can reach it, which is why Hephaisto's own inbound webhook takes a
+    # token too (secrets.webhookToken).
     signed: false
 
   # Microsoft Teams, via a Power Automate Workflows trigger. NOT the retired Office 365

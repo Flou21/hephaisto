@@ -23,7 +23,7 @@ fail() { printf '  FAIL  %s\n' "$1"; FAIL=$((FAIL + 1)); }
 refuses() {
     local what="$1"; shift
     local out
-    if out=$(helm template t "$CHART" --namespace hephaisto "$@" 2>&1); then
+    if out=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative "$@" 2>&1); then
         fail "$what -- rendered successfully, but must be refused"
     elif grep -qi "may not contain\|may not set\|may not be\|may not map\|is required\|is refused\|don't meet the specifications of the schema" <<<"$out"; then
         # values.schema.json rejects some of these before a template runs, which is an
@@ -36,7 +36,7 @@ refuses() {
 
 renders() {
     local what="$1"; shift
-    if helm template t "$CHART" --namespace hephaisto "$@" >/dev/null 2>&1; then
+    if helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative "$@" >/dev/null 2>&1; then
         pass "$what"
     else
         fail "$what -- must render, but did not"
@@ -51,6 +51,18 @@ refuses "its own release namespace"   --set 'policy.actionableNamespaces[0]=heph
 refuses "the observability namespace" --set 'policy.actionableNamespaces[0]=hephaisto-obs' --set observabilityNamespace=hephaisto-obs
 refuses "a bad namespace hidden behind a good one" \
     --set 'policy.actionableNamespaces[0]=app' --set 'policy.actionableNamespaces[1]=kube-system'
+
+echo
+echo "The cluster is named, once, by a value with no default (#139):"
+# Every render above and below passes --set cluster.name, so none of their refusals can pass
+# for this reason instead of their own. This one takes it away again.
+refuses "no cluster name"             --set cluster.name=""
+refuses "a legacy cluster key in extraEnv" \
+    --set 'extraEnv[0].name=Ingest__ClusterName' --set 'extraEnv[0].value=eu-1'
+refuses "a price set through extraEnv" \
+    --set 'extraEnv[0].name=Llm__Prices__0__Model' --set 'extraEnv[0].value=x'
+refuses "a price without a model" \
+    --set 'llm.pricing[0].inputPerMillionUsd=1' --set 'llm.pricing[0].outputPerMillionUsd=1'
 
 echo
 echo "Secret names are required rather than silently dangling:"
@@ -112,8 +124,8 @@ renders "an allowed namespace" --set 'policy.actionableNamespaces[0]=hephaisto-c
 echo
 echo "Invariants in the rendered output:"
 
-FULL=$(helm template t "$CHART" --namespace hephaisto --values "$CHART/ci/full-values.yaml" 2>/dev/null)
-MIN=$(helm template t "$CHART" --namespace hephaisto --values "$CHART/ci/minimal-values.yaml" 2>/dev/null)
+FULL=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative --values "$CHART/ci/full-values.yaml" 2>/dev/null)
+MIN=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative --values "$CHART/ci/minimal-values.yaml" 2>/dev/null)
 
 # The single most valuable assertion here. "No access to Secrets at all, ever" is the claim
 # the whole safety argument rests on, and it is one careless line away from being false.
@@ -162,11 +174,41 @@ else
     pass "notifications ship off - no Notifications__ env at all by default"
 fi
 
+# One name for the cluster (#139): the value reaches the agent, and only as Cluster__Name.
+if grep -A1 'name: Cluster__Name' <<<"$FULL" | grep -q 'value: "ci-negative"' \
+    && ! grep -qE 'name: (Ingest|Kubernetes|Investigation__Environment)__ClusterName' <<<"$FULL"; then
+    pass "cluster.name renders as the one Cluster__Name"
+else
+    fail "cluster.name must render as Cluster__Name and nothing else may name the cluster"
+fi
+
+# Prices are values, indexed by the chart (#140).
+if grep -A1 'name: Llm__Prices__0__Model' <<<"$FULL" | grep -q 'my-gateway-model'; then
+    pass "llm.pricing renders as Llm__Prices__N"
+else
+    fail "llm.pricing did not render"
+fi
+
+# The webhook token (#138) is off unless named, and never a value when it is.
+if grep -q 'Web__WebhookToken' <<<"$FULL"; then
+    fail "no webhook token may be rendered unless secrets.webhookToken names one"
+else
+    pass "no webhook token by default"
+fi
+TOKEN=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative --values "$CHART/ci/full-values.yaml" \
+    --set secrets.webhookToken=hephaisto-webhook-token 2>/dev/null)
+if grep -A4 'name: Web__WebhookToken' <<<"$TOKEN" | grep -q 'secretKeyRef:' \
+    && grep -A4 'name: Web__WebhookToken' <<<"$TOKEN" | grep -q 'key: token'; then
+    pass "the webhook token is only ever a secretKeyRef"
+else
+    fail "the webhook token must be a secretKeyRef to key token"
+fi
+
 # The Teams trigger URL carries its bearer token in the query string, so it is the one setting
 # here that must NEVER be renderable as a plain value. If this ever passes as `value:`, the
 # credential is in `helm get values`, in the release Secret, and in the git repo holding the
 # Argo Application - forever.
-TEAMS=$(helm template t "$CHART" --namespace hephaisto --values "$CHART/ci/full-values.yaml" \
+TEAMS=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative --values "$CHART/ci/full-values.yaml" \
     --set notifications.teams.enabled=true 2>/dev/null)
 
 if grep -A1 'name: Notifications__Teams__WorkflowUrl' <<<"$TEAMS" | grep -q 'valueFrom:'; then
@@ -177,7 +219,7 @@ fi
 
 # The same for the bot's client secret, and the ids beside it are the control: they DO render as
 # values, so a pass here is not the template having rendered nothing at all.
-BOTTED=$(helm template t "$CHART" --namespace hephaisto --values "$CHART/ci/full-values.yaml" 2>/dev/null)
+BOTTED=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative --values "$CHART/ci/full-values.yaml" 2>/dev/null)
 
 if grep -A1 'name: Notifications__TeamsBot__ClientSecret' <<<"$BOTTED" | grep -q 'valueFrom:' \
     && grep -A1 'name: Notifications__TeamsBot__AppId' <<<"$BOTTED" | grep -q 'value: "'; then
@@ -195,7 +237,7 @@ else
     pass "egress is off by default"
 fi
 
-EGRESS=$(helm template t "$CHART" --namespace hephaisto --values "$CHART/ci/full-values.yaml" \
+EGRESS=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative --values "$CHART/ci/full-values.yaml" \
     --set networkPolicy.egress.enabled=true \
     --set 'networkPolicy.egress.apiServerCIDRs[0]=10.0.0.1/32' 2>/dev/null)
 
@@ -311,7 +353,7 @@ renders "extraEnv can set an unexposed option" \
 
 # And it must land after the chart's own entries, or last-wins works against the operator
 # rather than for them.
-EXTRA=$(helm template t "$CHART" --namespace hephaisto \
+EXTRA=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative \
     --set 'extraEnv[0].name=Llm__Budget__MaxCostUsdPerHour' --set 'extraEnv[0].value=1.00' 2>/dev/null)
 if [ "$(grep -n 'Llm__Budget__MaxCostUsdPerHour' <<<"$EXTRA" | head -1 | cut -d: -f1)" -gt \
      "$(grep -n 'name: GEMINI_API_KEY' <<<"$EXTRA" | head -1 | cut -d: -f1)" ]; then
@@ -336,7 +378,7 @@ echo "The webhook port split keeps the console hole out of the receiver:"
 # and that is what forced the first production install to disable the NetworkPolicy outright to
 # get a dashboard - its ingress controller runs hostNetwork, so its packets carry the node
 # address and no namespaceSelector can ever match them.
-SPLIT=$(helm template t "$CHART" --namespace hephaisto \
+SPLIT=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative \
     --set webhookPort=8081 \
     --set 'networkPolicy.extraIngressCIDRs[0]=10.10.0.0/24' 2>/dev/null)
 
@@ -465,7 +507,7 @@ else
 fi
 
 # The coder policy is independent of the top-level flag, and denies all ingress.
-NOPOL=$(helm template t "$CHART" --namespace hephaisto --values "$CHART/ci/full-values.yaml" \
+NOPOL=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative --values "$CHART/ci/full-values.yaml" \
     --set networkPolicy.enabled=false 2>/dev/null)
 if awk '/^kind: NetworkPolicy$/,/^---$/' <<<"$NOPOL" | grep -q 'name: hephaisto-coder$'; then
     pass "the coder NetworkPolicy renders even with the top-level networkPolicy off"

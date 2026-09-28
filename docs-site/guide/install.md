@@ -5,7 +5,8 @@ provenance attested, and both are pullable anonymously.
 
 ```sh
 helm install hephaisto oci://ghcr.io/flou21/charts/hephaisto \
-  --namespace hephaisto --create-namespace
+  --namespace hephaisto --create-namespace \
+  --set cluster.name=<the cluster label on this cluster's metrics>
 ```
 
 That resolves the newest published chart. Add `--version 0.6.0` to pin one; the chart version and
@@ -41,9 +42,53 @@ Then install:
 
 ```sh
 helm install hephaisto oci://ghcr.io/flou21/charts/hephaisto -n hephaisto \
+  --set cluster.name=<your-cluster-label> \
   --set prometheusOperator.selectorLabels.release=<your-kube-prometheus-stack-release> \
   --set postgres.embedded.enabled=true
 ```
+
+`cluster.name` has no default and rendering fails without it. It is the value of the `cluster`
+label on this cluster's metrics and logs: it goes into every signal fingerprint, and the model is
+told to put it in every query it writes. Treat it as immutable once the cluster has reported.
+
+### The webhook token
+
+```sh
+kubectl -n hephaisto create secret generic hephaisto-webhook-token \
+  --from-literal=token="$(openssl rand -hex 32)"
+# add: --set secrets.webhookToken=hephaisto-webhook-token
+```
+
+The Alertmanager webhook then answers 401 to any request without `Authorization: Bearer <token>`.
+Give Alertmanager the same value - mount the Secret and point the receiver at it - **in the same
+change**, or every alert is refused:
+
+```yaml
+receivers:
+  - name: hephaisto
+    webhook_configs:
+      - url: http://hephaisto.hephaisto:8080/webhooks/alertmanager
+        send_resolved: true
+        http_config:
+          authorization:
+            credentials_file: /etc/alertmanager/secrets/hephaisto-webhook-token/token
+```
+
+### A model the price table does not know
+
+With any cost cap set - and all of them are, by default - the agent refuses to start when
+`Llm:Model` or `Llm:PlanningModel` has no price: an unpriced model bills as $0, so no cap would
+ever bind. A model behind a gateway, under a name of your choosing, needs an entry:
+
+```yaml
+llm:
+  pricing:
+    - model: my-gateway-model
+      inputPerMillionUsd: 0.30
+      outputPerMillionUsd: 2.50
+```
+
+A price of 0 is accepted for a model that really is free.
 
 Every secret **name** the chart expects is required rather than silently dangling — including the
 conditional ones. Setting `grafanaMcp.url` with an empty `secrets.grafanaMcp`, enabling a signed
@@ -75,9 +120,9 @@ they are worth actually running rather than reading.
   nowhere. Naming a `kube-*` namespace, `default`, its own namespace or the observability
   namespace is a hard render failure, not a dropped entry.
 - **`networkPolicy.extraIngressCIDRs` is empty.** It is sometimes the only way to keep kubelet
-  probes working — but every CIDR you add can forge an alert to an unauthenticated,
-  incident-creating endpoint. The Alertmanager webhook cannot authenticate its caller, so that
-  NetworkPolicy *is* its authentication.
+  probes working — but every CIDR you add can reach an incident-creating endpoint. Without
+  `secrets.webhookToken` the Alertmanager webhook checks no credential, and that NetworkPolicy
+  *is* its protection. Set the token; Alertmanager sends it with `http_config.authorization`.
 - **The cordon/drain ClusterRole is created unbound**, and no value binds it. That stays a
   hand-written `ClusterRoleBinding` in its own commit.
 

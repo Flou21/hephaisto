@@ -374,6 +374,7 @@ jobs:
           # And that it renders from the registry rather than only from the working tree.
           helm template hephaisto '${{ env.CHART_REPO }}/hephaisto' --version "$V" \
             --namespace hephaisto \
+            --set cluster.name=release-check \
             --set prometheusOperator.selectorLabels.release=kube-prometheus-stack > /tmp/rendered.yaml
           # Helm renders `image: "repo:tag"` WITH quotes. Strip them rather than encode the
           # quoting into the pattern: the assertion is about which image the chart names, and
@@ -443,7 +444,7 @@ jobs:
           \`\`\`sh
           docker pull ${{ env.IMAGE }}:$V
           helm install hephaisto ${{ env.CHART_REPO }}/hephaisto --version $V \\
-            --namespace hephaisto --create-namespace
+            --namespace hephaisto --create-namespace --set cluster.name=YOUR-CLUSTER-LABEL
           \`\`\`
 
           Image digest: \`${{ needs.publish-image.outputs.digest }}\`

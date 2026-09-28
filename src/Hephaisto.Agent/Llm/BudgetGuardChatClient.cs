@@ -90,7 +90,9 @@ public sealed class BudgetGuardChatClient(
         var modelId = response.ModelId ?? defaultModelId;
         var input = response.Usage?.InputTokenCount ?? 0;
         var output = response.Usage?.OutputTokenCount ?? 0;
-        var cost = pricing.CostOf(modelId, input, output);
+        // The configured id is the fallback price: a gateway answering under a name of its own
+        // must not turn a priced model into a free one (backlog #140).
+        var cost = pricing.CostOf(modelId, input, output, defaultModelId);
 
         budget.RecordStep(input, output, cost);
         recorder?.RecordLlmTurn(modelId, input, output, cost, durationMs, error, DigestOf(response));

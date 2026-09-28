@@ -17,9 +17,18 @@ public sealed class LlmPricing(IReadOnlyDictionary<string, ModelPrice> prices, I
 {
     private readonly HashSet<string> _warned = new(StringComparer.OrdinalIgnoreCase);
 
-    public decimal CostOf(string? modelId, long inputTokens, long outputTokens)
+    /// <summary>
+    /// The cost of one turn.
+    /// </summary>
+    /// <param name="modelId">The model the provider says answered.</param>
+    /// <param name="fallbackModelId">
+    /// The model that was configured, used when <paramref name="modelId"/> has no price. A
+    /// gateway may answer with a model id of its own - an alias, a deployment name - and pricing
+    /// only what came back would charge the configured, priced model at zero (backlog #140).
+    /// </param>
+    public decimal CostOf(string? modelId, long inputTokens, long outputTokens, string? fallbackModelId = null)
     {
-        if (string.IsNullOrWhiteSpace(modelId) || !TryResolve(modelId, out var price))
+        if (!TryPrice(modelId, out var price) && !TryPrice(fallbackModelId, out price))
         {
             WarnOnce(modelId);
             return 0m;
@@ -29,12 +38,26 @@ public sealed class LlmPricing(IReadOnlyDictionary<string, ModelPrice> prices, I
             + (outputTokens * price.OutputPerMillionUsd / 1_000_000m);
     }
 
+    /// <summary>Whether <paramref name="modelId"/> has a price in <paramref name="prices"/>.</summary>
+    /// <remarks>
+    /// The one resolution rule, used by the startup check and the factory's warning as well as
+    /// by <see cref="CostOf"/>. The factory used to carry a second, subtly different copy of it.
+    /// </remarks>
+    public static bool Resolves(IReadOnlyDictionary<string, ModelPrice> prices, string? modelId) =>
+        !string.IsNullOrWhiteSpace(modelId) && TryResolve(prices, modelId, out _);
+
+    private bool TryPrice(string? modelId, out ModelPrice price)
+    {
+        price = new ModelPrice();
+        return !string.IsNullOrWhiteSpace(modelId) && TryResolve(prices, modelId, out price);
+    }
+
     /// <summary>
     /// Exact match first, then longest-prefix. Providers append dated suffixes
     /// (<c>gemini-2.5-pro-preview-06-05</c>) to a model whose price is the base model's, and
     /// a price list that has to be updated on every such rename is a price list that is wrong.
     /// </summary>
-    private bool TryResolve(string modelId, out ModelPrice price)
+    private static bool TryResolve(IReadOnlyDictionary<string, ModelPrice> prices, string modelId, out ModelPrice price)
     {
         if (prices.TryGetValue(modelId, out var exact))
         {
@@ -72,8 +95,7 @@ public sealed class LlmPricing(IReadOnlyDictionary<string, ModelPrice> prices, I
 
         logger?.LogWarning(
             "No price configured for model {ModelId}; its spend counts as $0 and the cost budget "
-            + "will not bind for it. Add Llm:Pricing:{ModelId}.",
-            key,
+            + "will not bind for it. Add it to the chart value llm.pricing.",
             key);
     }
 }

@@ -13,6 +13,18 @@ serviceAccount:
   annotations:
     example.com/owner: sre
 
+cluster:
+  name: ci-full
+
+investigation:
+  inScopeNamespaces: [app]
+
+llm:
+  pricing:
+    - model: my-gateway-model
+      inputPerMillionUsd: 0.30
+      outputPerMillionUsd: 2.50
+
 observabilityNamespace: hephaisto-obs
 
 prometheusOperator:

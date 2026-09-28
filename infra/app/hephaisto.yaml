@@ -57,8 +57,8 @@ spec:
     app.kubernetes.io/name: hephaisto
   ports:
     # Alertmanager posts here: http://hephaisto.hephaisto:8080/webhooks/alertmanager
-    # and /webhooks/watchdog. Unauthenticated by necessity (Alertmanager cannot send
-    # custom headers) and protected by the NetworkPolicy in rbac.yaml instead.
+    # and /webhooks/watchdog. Protected by the NetworkPolicy in rbac.yaml. (The chart adds a
+    # bearer token, which this reference manifest predates - backlog #138.)
     - name: http
       port: 8080
       targetPort: http

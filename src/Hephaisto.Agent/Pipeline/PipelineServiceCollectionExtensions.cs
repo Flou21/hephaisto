@@ -14,6 +14,7 @@ public static class PipelineServiceCollectionExtensions
         IConfiguration configuration)
     {
         services.Configure<IngestOptions>(configuration.GetSection(IngestOptions.SectionName));
+        services.AddHephaistoCluster(configuration);
 
         // The policy engine's configuration. This binding was missing until v0.2.0, and its
         // absence was invisible: IOptionsMonitor<PolicyOptions> resolves happily to a

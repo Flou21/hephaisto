@@ -2079,7 +2079,12 @@ webhook.
 sends a message to a person, in the agent's name.
 
 **What to do.** An optional bearer token, compared in constant time. With a token configured, a
-request without it is refused. **Size.** S. Open.
+request without it is refused. **Size.** S. **Fixed in v0.10.0**: `secrets.webhookToken` names a
+Secret whose key `token` becomes `Web:WebhookToken`; `WebhookTokenFilter` answers 401 with a
+`Bearer` challenge to anything else, comparing SHA-256 digests with `FixedTimeEquals` so the
+token's length does not leak either. A token under 16 characters refuses to start. The dev stack's
+Alertmanager sends it from an optionally mounted Secret through `credentials_file`, and every
+comment that said it could not has been corrected.
 
 ### 139. The chart never names the cluster
 
@@ -2097,7 +2102,11 @@ machine.
 
 **What to do.** One required chart value feeding all three names, and a value for the in-scope
 namespaces. The code defaults become empty, and an empty cluster name refuses to start.
-**Size.** S. Open.
+**Size.** S. **Fixed in v0.10.0**: `cluster.name` is rendered with `required` into `Cluster:Name`,
+which `AddHephaistoCluster` copies into all three; a legacy key that disagrees is overridden and
+logged, and `extraEnv` may no longer set one. `investigation.inScopeNamespaces` is the scope; an
+empty one omits the line rather than saying "(none configured)", and an empty protected list
+names the policy engine's enforced one instead of a second copy.
 
 ### 140. A model without a price entry has no cost cap
 
@@ -2112,7 +2121,12 @@ an hour.
 ([#134](#134)).
 
 **What to do.** Prices as a chart value rather than `extraEnv`. With a cost cap configured and
-no price for the configured model, refuse to start. **Size.** S. Open.
+no price for the configured model, refuse to start. **Size.** S. **Fixed in v0.10.0**:
+`llm.pricing` renders `Llm:Prices`, a list - a model id like `gpt-oss:120b` cannot be an
+environment variable name, so it could not be a `Pricing` key from a chart at all.
+`LlmPricingValidator` refuses to start when a cost cap is set and the model or planning model has
+no price; an explicit 0 passes. A response under a model id the gateway chose is priced as the
+configured model, and the factory's second copy of the resolution rule is gone.
 
 ### 141. A route cannot match a label
 

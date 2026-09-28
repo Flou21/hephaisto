@@ -532,12 +532,12 @@ rules:
 # NOTE: no ClusterRoleBinding follows. This is intentional. Do not add one here.
 
 # =======================================================================================
-# NETWORK POLICY -- what substitutes for the auth check Alertmanager cannot do
+# NETWORK POLICY -- the webhook's protection at the network layer
 # =======================================================================================
-# Alertmanager's webhook_configs has no field for custom headers, so /webhooks/alertmanager
-# cannot require a bearer token (see the receivers block in
-# infra/observability/kube-prometheus-stack.values.yaml). The endpoint is therefore
-# unauthenticated, and an unauthenticated endpoint that CREATES INCIDENTS and can trigger
+# REFERENCE ONLY: the chart's templates/rbac-node.yaml is what runs. This file predates the
+# webhook's bearer token (backlog #138), and its reasoning that Alertmanager could not send one
+# was wrong - http_config.authorization can. Without a token the endpoint is unauthenticated,
+# and an unauthenticated endpoint that CREATES INCIDENTS and can trigger
 # REMEDIATION ACTIONS is a forged-alert injection point: anything able to POST to it can
 # make the agent believe a workload is broken and act on it.
 #

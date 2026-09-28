@@ -8,6 +8,18 @@ image:
   # from, so Always would fail on a tag that only exists locally.
   pullPolicy: IfNotPresent
 
+# The dev cluster's `cluster` label - what infra/observability stamps on every metric and log.
+cluster:
+  name: studio-rancher-desktop
+
+investigation:
+  inScopeNamespaces: [hephaisto-chaos]
+
+# The bearer token /webhooks requires (backlog #138). scripts/bootstrap-secrets.sh creates it here and in hephaisto-obs, where Alertmanager
+# reads it (infra/observability/kube-prometheus-stack.values.yaml).
+secrets:
+  webhookToken: hephaisto-webhook-token
+
 observabilityNamespace: hephaisto-obs
 
 # This cluster's kube-prometheus-stack release is named `hephaisto`, so its selectors look for

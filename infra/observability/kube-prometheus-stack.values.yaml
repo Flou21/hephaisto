@@ -211,6 +211,25 @@ alertmanager:
       limits:
         memory: 256Mi
 
+    # The bearer token the agent's webhook requires (backlog #138), read by both receivers
+    # below through credentials_file. scripts/bootstrap-secrets.sh creates the Secret, in this
+    # namespace and in the agent's.
+    #
+    # A plain volume marked OPTIONAL rather than alertmanagerSpec.secrets, which cannot be:
+    # this chart is installed before bootstrap-secrets.sh runs (by Tilt, and by the e2e
+    # harness's deps phase), and a required mount would hold Alertmanager in ContainerCreating
+    # until then. Alertmanager reads credentials_file per request, so deliveries made before
+    # the Secret exists are refused with 401 and retried, and the first one after it lands.
+    volumes:
+      - name: hephaisto-webhook-token
+        secret:
+          secretName: hephaisto-webhook-token
+          optional: true
+    volumeMounts:
+      - name: hephaisto-webhook-token
+        mountPath: /etc/alertmanager/secrets/hephaisto-webhook-token
+        readOnly: true
+
   config:
     global:
       resolve_timeout: 2m
@@ -265,21 +284,18 @@ alertmanager:
     receivers:
       - name: hephaisto
         webhook_configs:
-          # === Why this endpoint is unauthenticated ====================================
-          # Alertmanager's webhook_configs has no field for custom headers. There is
-          # `http_config.authorization` (Bearer) and basic_auth, but both put the credential
-          # in Alertmanager's own config Secret, and the receiving side then has to be
-          # taught a second auth scheme purely for this one caller.
+          # === The bearer token ========================================================
+          # The agent requires one (secrets.webhookToken in values-dev.yaml, backlog #138),
+          # and http_config.authorization sends it. This comment used to explain why the
+          # endpoint was unauthenticated; the reason it gave - that Alertmanager could not
+          # send a credential - was wrong, and the field below is the proof.
           #
-          # The chosen answer is network-level instead of token-level: the agent's Service
-          # is ClusterIP-only, and the NetworkPolicy in infra/app/rbac.yaml permits inbound
-          # TCP 8080 into namespace `hephaisto` ONLY from namespace `hephaisto-obs`.
-          # Nothing outside the observability namespace can reach this endpoint at all, so
-          # a bearer check would be guarding a door that is already walled off.
-          #
-          # This trade is only acceptable because the cluster is single-tenant and local.
-          # If this stack is ever multi-tenant, put an authenticating proxy in front.
+          # credentials_file rather than credentials: the token stays in a Secret that
+          # bootstrap-secrets.sh generates, not in this file, which is in git.
           - url: http://hephaisto.hephaisto:8080/webhooks/alertmanager
+            http_config:
+              authorization:
+                credentials_file: /etc/alertmanager/secrets/hephaisto-webhook-token/token
             # Resolution notifications are what let the agent close an incident and compute
             # MTTR. Without send_resolved every incident stays open until a timeout, and the
             # MTTR panel on the dashboard measures nothing.
@@ -290,6 +306,9 @@ alertmanager:
         webhook_configs:
           - url: http://hephaisto.hephaisto:8080/webhooks/watchdog
             send_resolved: true
+            http_config:
+              authorization:
+                credentials_file: /etc/alertmanager/secrets/hephaisto-webhook-token/token
 
     templates:
       - '/etc/alertmanager/config/*.tmpl'

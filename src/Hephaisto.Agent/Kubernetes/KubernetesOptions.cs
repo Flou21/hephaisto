@@ -32,7 +32,10 @@ public sealed class KubernetesOptions
     /// which means historical incidents stop deduping against new ones; treat it as
     /// immutable once a cluster has reported.
     /// </summary>
-    public string ClusterName { get; set; } = "default";
+    /// <remarks>
+    /// Filled from <c>Cluster:Name</c> (backlog #139); see <c>ClusterOptions</c>.
+    /// </remarks>
+    public string ClusterName { get; set; } = string.Empty;
 
     /// <summary>
     /// Whether this process talks to a cluster at all. <see langword="true"/> everywhere that
