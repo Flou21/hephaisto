@@ -43,6 +43,12 @@ public sealed class IncidentStateMachine(IClock clock)
     public const string SystemActor = "hephaisto/system";
 
     /// <summary>
+    /// The actor for a closure because the alert cleared. Alertmanager said so, not a person and
+    /// not the model - which is what makes it distinguishable from both (#129).
+    /// </summary>
+    public const string AlertmanagerActor = "hephaisto/alertmanager";
+
+    /// <summary>
     /// The actor for an action the policy engine admitted under L3, with no human involved.
     /// </summary>
     /// <remarks>
@@ -178,18 +184,79 @@ public sealed class IncidentStateMachine(IClock clock)
         Transition(incident, [.. OpenStates, IncidentState.Escalated], IncidentState.Expired, reason);
 
     /// <summary>
-    /// Resolved -&gt; Investigating. The signal came back, so the fix did not hold. Reopening
-    /// rather than opening a fresh incident is what lets the oscillation detector see that
-    /// the same action has now failed three times on the same workload.
+    /// Resolved | Closed -&gt; Triaging. The alert came back, so the incident is not over.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Reopening rather than opening a fresh incident is what lets the oscillation detector see
+    /// that the same fault keeps returning, and what gives the person paged again the history of
+    /// the last time. Its producer is triage, for an alert that fires again within
+    /// <c>Ingest:ReopenWindow</c> of its incident closing (#129).
+    /// </para>
+    /// <para>
+    /// To <b>Triaging</b>, not Investigating: a reopened incident is decided like a new one -
+    /// investigated, or escalated because it keeps coming back.
+    /// </para>
+    /// <para>
+    /// <b>The acknowledgement is cleared and the assignee kept</b> (#149). "I have seen this"
+    /// was about the previous outage; whose job the workload is has not changed.
+    /// </para>
+    /// </remarks>
     public IncidentEvent Reopen(Incident incident, string reason)
     {
         ArgumentNullException.ThrowIfNull(incident);
 
-        var evt = Transition(incident, [IncidentState.Resolved], IncidentState.Investigating, reason);
+        var evt = Transition(
+            incident,
+            [IncidentState.Resolved, IncidentState.Closed],
+            IncidentState.Triaging,
+            reason);
 
         incident.ResolvedAt = null;
         incident.Resolution = null;
+        incident.ClosedAt = null;
+        incident.ClosedBy = null;
+        incident.EscalationReason = EscalationReason.None;
+        incident.AcknowledgedBy = null;
+        incident.AcknowledgedAt = null;
+        incident.ReopenedAt = clock.UtcNow;
+        return evt;
+    }
+
+    /// <summary>
+    /// Any open state but Acting and Verifying, including Escalated -&gt; Closed, because the
+    /// alert it was opened for has cleared (#129).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Closed and not Resolved: the alert going away is not the agent having fixed anything, and
+    /// Resolved is the verifier's to grant. The closer is <see cref="AlertmanagerActor"/>, so a
+    /// person reading the history can tell this closure from their own.
+    /// </para>
+    /// <para>
+    /// <b>Not from Acting or Verifying.</b> Those have an action in flight and a verifier that
+    /// will decide whether it worked; an alert clearing mid-action is exactly the evidence the
+    /// verifier reads, and closing underneath it would record a fix as an accident.
+    /// </para>
+    /// </remarks>
+    public IncidentEvent AlertCleared(Incident incident, string detail)
+    {
+        ArgumentNullException.ThrowIfNull(incident);
+
+        var evt = Transition(
+            incident,
+            [
+                IncidentState.Detected,
+                IncidentState.Triaging,
+                IncidentState.Investigating,
+                IncidentState.AwaitingApproval,
+                IncidentState.Escalated,
+            ],
+            IncidentState.Closed,
+            $"the alert cleared: {detail}");
+
+        incident.ClosedAt = clock.UtcNow;
+        incident.ClosedBy = AlertmanagerActor;
         return evt;
     }
 

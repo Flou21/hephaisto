@@ -218,19 +218,70 @@ public sealed class IncidentStateMachineTests
     }
 
     [Fact]
-    public void Reopen_MovesResolvedBackToInvestigating_AndClearsTheResolution()
+    public void Reopen_MovesResolvedBackToTriaging_AndClearsTheResolution()
     {
         // Reopening rather than opening a fresh incident is what lets the oscillation detector
-        // see that the same fix has now failed repeatedly on one workload.
+        // see that the same fix has now failed repeatedly on one workload. To Triaging since
+        // v0.10.0 (#129): a reopened incident is decided like a new one.
         var incident = Given.Incident(IncidentState.Verifying);
         var machine = Machine();
         machine.Resolve(incident, "pod is Ready again", "flo");
 
         machine.Reopen(incident, "signal returned after 6 minutes");
 
-        incident.State.Should().Be(IncidentState.Investigating);
+        incident.State.Should().Be(IncidentState.Triaging);
         incident.ResolvedAt.Should().BeNull();
         incident.Resolution.Should().BeNull();
+        incident.ReopenedAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void Reopen_FromAClosure_ClearsIt_AndTheAcknowledgement_ButKeepsTheAssignee()
+    {
+        var incident = Given.Incident(IncidentState.Escalated);
+        var machine = Machine();
+        machine.Acknowledge(incident, "flo");
+        machine.Assign(incident, "flo", "lead");
+        machine.AlertCleared(incident, "KubePodCrashLooping");
+
+        machine.Reopen(incident, "it fired again");
+
+        incident.State.Should().Be(IncidentState.Triaging);
+        incident.ClosedAt.Should().BeNull();
+        incident.ClosedBy.Should().BeNull();
+        incident.AcknowledgedBy.Should().BeNull("an acknowledgement was about the previous outage (#149)");
+        incident.AcknowledgedAt.Should().BeNull();
+        incident.AssignedTo.Should().Be("flo");
+    }
+
+    [Theory]
+    [InlineData(IncidentState.Detected)]
+    [InlineData(IncidentState.Triaging)]
+    [InlineData(IncidentState.Investigating)]
+    [InlineData(IncidentState.AwaitingApproval)]
+    [InlineData(IncidentState.Escalated)]
+    public void AlertCleared_ClosesAsAlertmanager_NotAsAResolution(IncidentState from)
+    {
+        var incident = Given.Incident(from);
+
+        Machine().AlertCleared(incident, "KubePodCrashLooping");
+
+        incident.State.Should().Be(IncidentState.Closed);
+        incident.ClosedBy.Should().Be(IncidentStateMachine.AlertmanagerActor);
+        incident.ResolvedAt.Should().BeNull("an alert going away is not the agent having fixed it");
+    }
+
+    [Theory]
+    [InlineData(IncidentState.Acting)]
+    [InlineData(IncidentState.Verifying)]
+    [InlineData(IncidentState.Resolved)]
+    [InlineData(IncidentState.Closed)]
+    [InlineData(IncidentState.Suppressed)]
+    public void AlertCleared_LeavesAnActionInFlight_AndAnEndedIncident_Alone(IncidentState from)
+    {
+        var act = () => Machine().AlertCleared(Given.Incident(from), "x");
+
+        act.Should().Throw<InvalidStateTransitionException>();
     }
 
     [Fact]
@@ -388,10 +439,8 @@ public sealed class IncidentStateMachineTests
     [InlineData(IncidentState.Investigating)]
     [InlineData(IncidentState.Escalated)]
     [InlineData(IncidentState.Expired)]
-    // Closed belongs to Reinvestigate, which is the single human door back in - it owns the
-    // named-requester rule, the kill-switch check and the queueing that starting work needs.
-    [InlineData(IncidentState.Closed)]
-    public void Reopen_FromAnythingButResolved_Throws(IncidentState from)
+    [InlineData(IncidentState.Suppressed)]
+    public void Reopen_FromAnythingButResolvedOrClosed_Throws(IncidentState from)
     {
         var act = () => Machine().Reopen(Given.Incident(from), "nope");
 

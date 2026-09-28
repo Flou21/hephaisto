@@ -60,6 +60,33 @@ public interface IIncidentRepository
     void AddSignal(Signal signal);
 
     /// <summary>
+    /// The open incident - Escalated included - carrying a signal with this fingerprint, however
+    /// long ago it last heard from it (#130). With its actions, which a clearing alert may have
+    /// to expire.
+    /// </summary>
+    Task<Incident?> FindOpenByFingerprintAsync(string fingerprint, CancellationToken ct);
+
+    /// <summary>
+    /// The most recently ended (Closed or Resolved) incident carrying this fingerprint, or null.
+    /// </summary>
+    Task<Incident?> FindLastEndedByFingerprintAsync(string fingerprint, CancellationToken ct);
+
+    /// <summary>The signal row for one alert instance on one incident, tracked.</summary>
+    Task<Signal?> FindAlertRowAsync(Guid incidentId, string alertKey, CancellationToken ct);
+
+    /// <summary>
+    /// The newest signal row for this alert instance under this fingerprint, on any incident. For
+    /// a resolve whose incident a person already closed.
+    /// </summary>
+    Task<Signal?> FindLatestAlertRowAsync(string fingerprint, string alertKey, CancellationToken ct);
+
+    /// <summary>Whether any alert instance on the incident other than this one still fires.</summary>
+    Task<bool> HasOtherFiringAlertsAsync(Guid incidentId, Guid exceptSignalId, CancellationToken ct);
+
+    /// <summary>How many times the incident reopened since <paramref name="since"/>.</summary>
+    Task<int> CountReopensAsync(Guid incidentId, DateTimeOffset since, CancellationToken ct);
+
+    /// <summary>
     /// Marks children created since <paramref name="fromEventIndex"/> as Added, so they
     /// INSERT. See <c>HephaistoDbContext.TrackNewIncidentChildren</c> for why change
     /// detection cannot be relied on for entities with client-assigned keys.

@@ -35,6 +35,17 @@ public sealed class IngestOptions
     public TimeSpan CorrelationWindow { get; set; } = TimeSpan.FromMinutes(10);
 
     /// <summary>
+    /// An alert that fires again within this long of its incident closing reopens that incident
+    /// rather than opening another (#129, decided 2026-09-28).
+    /// </summary>
+    /// <remarks>
+    /// Only for Alertmanager signals, whose resolve is what closes an incident in the first
+    /// place. Twenty-four hours: an alert that clears overnight and returns in the morning is the
+    /// same fault somebody already has context on; one that returns next week is not.
+    /// </remarks>
+    public TimeSpan ReopenWindow { get; set; } = TimeSpan.FromHours(24);
+
+    /// <summary>
     /// Namespaces whose signals are always escalated and never auto-actionable. The agent
     /// alerting on itself is intended - the agent acting on itself is a feedback loop.
     /// </summary>

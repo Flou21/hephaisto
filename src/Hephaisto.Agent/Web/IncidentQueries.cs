@@ -1131,6 +1131,11 @@ public sealed class IncidentQueries(
 
         await db.SaveChangesAsync(ct);
 
+        // Every other path that ends an incident records it; this one did not, so every incident
+        // a person closed stayed in hephaisto.incidents.open for good (#154).
+        sp.GetRequiredService<HephaistoMetrics>().IncidentClosed(
+            incident.Kind, incident.Severity, IncidentState.Closed, clock.UtcNow - incident.OpenedAt);
+
         notifier.Publish(new IncidentLiveEvent
         {
             IncidentId = incidentId,

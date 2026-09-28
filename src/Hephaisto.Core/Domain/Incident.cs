@@ -61,6 +61,17 @@ public sealed class Incident
     public DateTimeOffset? ClosedAt { get; set; }
 
     /// <summary>
+    /// When the alert last came back after the incident had closed (#129). Null for an incident
+    /// that never reopened.
+    /// </summary>
+    /// <remarks>
+    /// The clock for everything measured from "when this started" - correlation, and the
+    /// escalation steps nobody answered - restarts here, because what a person already knew
+    /// about the previous outage is not an answer to this one.
+    /// </remarks>
+    public DateTimeOffset? ReopenedAt { get; set; }
+
+    /// <summary>
     /// Who has picked this up, and when. Deliberately NOT a state.
     /// </summary>
     /// <remarks>

@@ -38,6 +38,9 @@ public static class HephaistoTelemetry
         public const string SignalsReceived = "hephaisto.signals.received";
         public const string SignalsDropped = "hephaisto.signals.dropped";
         public const string IncidentsOpened = "hephaisto.incidents.opened";
+
+        /// <summary>An ended incident whose alert fired again inside the reopen window (#129).</summary>
+        public const string IncidentsReopened = "hephaisto.incidents.reopened";
         public const string IncidentsClosed = "hephaisto.incidents.closed";
         public const string IncidentsOpen = "hephaisto.incidents.open";
 

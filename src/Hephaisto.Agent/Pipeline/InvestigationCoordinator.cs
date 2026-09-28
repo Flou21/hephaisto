@@ -171,6 +171,49 @@ public sealed class InvestigationCoordinator(
         foreach (var rejection in outcome.Rejections)
             metrics.GroundingRejected(rejection.Reason.ToString());
 
+        // #152: the incident may have ended while the model was thinking - its alert cleared, or a
+        // person closed it. The investigation, its spend and its evidence are kept; the outcome is
+        // not applied, because escalating or acting on an incident that is already closed would
+        // reopen it by the back door and page somebody for a fault that went away.
+        var current = await db.Incidents
+            .AsNoTracking()
+            .Where(i => i.Id == incident.Id)
+            .Select(i => i.State)
+            .FirstAsync(ct)
+            .ConfigureAwait(false);
+
+        if (current != IncidentState.Investigating)
+        {
+            EnlistAudit(incident, investigation.Id, "investigation.completed",
+                $"{investigation.TerminationReason}; not applied: the incident is already {current}");
+            globalBudget.Enlist(
+                incident.Id,
+                investigation.Id,
+                investigation.InputTokens,
+                investigation.OutputTokens,
+                investigation.CostUsd);
+
+            await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
+
+            if (outcome.Blobs.Count > 0)
+            {
+                db.EvidenceBlobs.AddRange(outcome.Blobs);
+                await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
+            }
+
+            logger.LogInformation(
+                "Investigation of incident {IncidentId} ended after the incident became {State}; kept, not applied.",
+                incident.Id, current);
+
+            notifier.Publish(new IncidentLiveEvent
+            {
+                IncidentId = incident.Id,
+                Kind = IncidentLiveEventKind.InvestigationCompleted,
+                State = current,
+            });
+            return;
+        }
+
         var disposition = await DecideOutcomeAsync(incident, outcome, mode, ct).ConfigureAwait(false);
 
         // Snapshot before the transition so the event it appends can be Added explicitly.
