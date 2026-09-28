@@ -16,6 +16,10 @@ scenario() {
     pager_wait_settled "$id" 120 || true
     pager_resolve "$n" $labels
     pager_wait_state "$id" 60 Closed || { fail "the resolve closed it" "state $(pager_state "$id")"; return; }
+    # Past the notification cooldown (twenty seconds in values-pager.yaml, fifteen minutes in
+    # production). Inside it the second "opened" is held back by design - a flapping alert must
+    # not page every time it returns - and that is not what this scenario is about.
+    sleep "${PAGER_COOLDOWN_WAIT:-25}"
     told=$(pager_alerts_sent "$id")
 
     pager_fire "$n" $labels
