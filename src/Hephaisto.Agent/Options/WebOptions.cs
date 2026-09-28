@@ -51,4 +51,22 @@ public sealed class WebOptions
 
     /// <summary>Whether the split is actually in effect.</summary>
     public bool WebhookPortIsSeparate => WebhookPort > 0 && WebhookPort != MainPort;
+
+    /// <summary>
+    /// Honour <c>X-Forwarded-Proto</c> and <c>X-Forwarded-For</c> from the proxy in front of the console.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Needed as soon as TLS ends at an ingress and OIDC is on. Without it the agent sees plain
+    /// http behind the proxy, sends the IdP <c>redirect_uri=http://…/signin-oidc</c> (which a client
+    /// registered for https rejects), and issues its correlation cookies without Secure, which
+    /// browsers drop on the way back - a login that loops.
+    /// </para>
+    /// <para>
+    /// Off by default because it trusts the headers from any peer: only turn it on when the console
+    /// is reachable solely through the proxy. Behind a proxy that sets them, a client-supplied header
+    /// is overwritten, not trusted.
+    /// </para>
+    /// </remarks>
+    public bool TrustForwardedHeaders { get; set; }
 }

@@ -80,6 +80,23 @@ await app.PrepareDatabaseAsync();
 // on a wall keeps running last release's stylesheet and last release's scripts indefinitely -
 // which is how a fix to the reconnect overlay would ship and then not apply to the one page
 // that most needed it.
+// First, before anything reads the scheme: behind a TLS-terminating ingress the OIDC redirect URI
+// and the Secure flag on the sign-in cookies are both derived from it. See WebOptions.
+if (app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<Hephaisto.Agent.Options.WebOptions>>().Value.TrustForwardedHeaders)
+{
+    var forwarded = new Microsoft.AspNetCore.Builder.ForwardedHeadersOptions
+    {
+        ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
+            | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto,
+    };
+
+    // The ingress's address is not known in advance (a DaemonSet on hostNetwork, per node), so no
+    // allowlist of proxies is possible; the option being opt-in is the control.
+    forwarded.KnownIPNetworks.Clear();
+    forwarded.KnownProxies.Clear();
+    app.UseForwardedHeaders(forwarded);
+}
+
 app.MapStaticAssets();
 app.UseAntiforgery();
 
