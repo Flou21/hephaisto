@@ -1251,7 +1251,7 @@ It found two classes of thing, and the second is the release.
 **Install ergonomics** ([#108](backlog.md#108)) — installing it took a day of reading the chart's
 source to answer questions the documentation does not, and the guide that came out of it contained
 three mistakes made by someone who had just read the whole repository. Most of that is a writing
-job and is deferred to v0.10.0 (renumbered from v0.9.0). Two pieces are not, and are in scope here because other work depends
+job and is deferred to v0.11.0 (renumbered from v0.9.0, then from v0.10.0). Two pieces are not, and are in scope here because other work depends
 on them.
 
 **Operability** — and this is the theme. The agent diagnoses well and says so nowhere a person can
@@ -1333,7 +1333,7 @@ and dropped.**
 
 ### What is explicitly not in v0.8.0
 
-- **The getting-started guide** (M, [#108](backlog.md#108)) — deferred to v0.10.0 (renumbered from v0.9.0) with the rest of
+- **The getting-started guide** (M, [#108](backlog.md#108)) — deferred to v0.11.0 (renumbered from v0.9.0, then from v0.10.0) with the rest of
   the install-ergonomics work.
 - **Failure mode B**, Kafka consumer throughput after an update: a broker, a `SignalKind`, an
   alert, a runbook, a fixture, and a Prometheus-backed verification predicate, because
@@ -1451,10 +1451,64 @@ GitHub token.
 
 ---
 
-## v0.10.0 — Install ergonomics
+## v0.10.0 — It is the only thing that tells a person
 
-The getting-started guide and the rest of [#108](backlog.md#108), renumbered from v0.9.0 when the
-code-fix stage took that number (2026-09-27). Scope unchanged: installing Hephaisto should not
+Decided on 2026-09-28: on the first production install Hephaisto **replaces** the incident
+service and the paging service that alerts go to today. It does not run beside them. Every alert
+rule is then routed to `/webhooks/alertmanager`, most of them about a pipeline rather than a
+workload, from five clusters told apart by a `cluster` label.
+
+### The finding it rests on
+
+Hephaisto was built as an agent beside a pager, and the code says so in a dozen places that were
+each right at the time: a resolve is a signal, a repeat is a new incident, the first message
+follows the investigation, the webhook answers before it writes, and a rollout's downtime is
+covered by `repeat_interval`. Read as the pager, every one of them is a way to page for nothing
+or not at all. None was found by a failure. All seventeen entries were found by reading, in one
+afternoon, and that is the reason to do them before the traffic arrives instead of after.
+
+### What ships
+
+In the order it has to happen. Each group is safe to release without the next.
+
+| # | Item | Backlog | Size |
+|---|---|---|---|
+| F1 | **It is configured for the cluster it runs in.** The chart names the cluster, prices the model, and the webhook can check a credential | [#139](backlog.md#139), [#140](backlog.md#140), [#138](backlog.md#138) | S |
+| F2 | **An alert is one incident for as long as it fires.** A resolve is a resolve, a repeat is absorbed, identity comes from the alert's labels and includes the cluster, and the target of a kube-state-metrics alert is the workload | [#129](backlog.md#129), [#130](backlog.md#130), [#131](backlog.md#131), [#132](backlog.md#132), [#126](backlog.md#126) | L |
+| F3 | **It cannot lose an alert or fail silently.** Written before answered, a readiness probe that means it, and an alert for its own absence that does not pass through it | [#136](backlog.md#136), [#137](backlog.md#137), [#144](backlog.md#144) | M |
+| F4 | **A person hears first, and the model second.** An opened event, an investigation that is a property of the rule, a kind and a runbook for pipeline alerts, and the labels in the prompt | [#133](backlog.md#133), [#134](backlog.md#134), [#135](backlog.md#135) | L |
+| F5 | **The right person, and then a louder one.** Label matchers and recipients on a route, escalation steps, a loud channel, buttons that act, and the bot against a real tenant | [#141](backlog.md#141), [#123](backlog.md#123), [#142](backlog.md#142), [#143](backlog.md#143), [#124](backlog.md#124), [#125](backlog.md#125) | L |
+| F6 | **What people learned stays.** A note per alert name | [#145](backlog.md#145) | M |
+
+### Done when
+
+On a throwaway cluster, with Alertmanager routing to Hephaisto and nothing else: an alert that
+fires, repeats twice and resolves is **one** incident, which a person was told about before its
+investigation ended, and which is no longer open after the resolve. The same rule firing for two
+label sets is two incidents. An alert labelled for another cluster is shown as such and is
+offered no Kubernetes tool. A rule labelled not to be investigated costs no tokens. An incident
+nobody acknowledges reaches a second route. With the database stopped, the webhook answers 503
+and the alert arrives after the database is back. With the agent scaled to zero, a person is
+told, by a path the agent is not on.
+
+### What is explicitly not in v0.10.0
+
+- **Acting on another cluster.** [#131](backlog.md#131) makes an incident about another cluster
+  honest; it does not give the agent RBAC there. One-per-cluster against one-observer-many is
+  still its own release.
+- **An on-call rota and quiet hours.** Neither system being replaced has one. Escalation steps
+  go to routes, and a route is a list.
+- **A second replica.** See [#144](backlog.md#144).
+- **Switching the old systems off.** That is a change to the install, made after a period of
+  running beside them, and it is not a property of a release.
+
+---
+
+## v0.11.0 — Install ergonomics
+
+The getting-started guide and the rest of [#108](backlog.md#108). Renumbered twice: from v0.9.0
+when the code-fix stage took that number (2026-09-27), and from v0.10.0 when becoming the only
+incident system took that one (2026-09-28). Scope unchanged: installing Hephaisto should not
 take a day of reading the chart's source.
 
 ---

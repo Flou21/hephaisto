@@ -97,7 +97,8 @@ started a code fix, but the mode is Off" before you turn anything on.
 - The headline invariant is re-scoped: **no model in this process ever holds a mutating handle to
   the cluster.** The coder holds a shell by construction; its only mutation target is a branch.
 - `Ingest:SelfNamespaces` is now set by the chart ([#115](docs/backlog.md#115)).
-- The install-ergonomics work ([#108](docs/backlog.md#108)) moves to v0.10.0.
+- The install-ergonomics work ([#108](docs/backlog.md#108)) moves to v0.11.0. v0.10.0 is what
+  stands between Hephaisto and being the only incident system, in `docs/roadmap.md`.
 
 ### Known
 - The Teams bot has run against a stand-in and not against Teams
