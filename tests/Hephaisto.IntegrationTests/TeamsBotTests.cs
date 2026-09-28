@@ -486,12 +486,16 @@ public sealed class TeamsBotTests(PostgresFixture pg)
         NotificationMessage message,
         params string[] recipients)
     {
-        await using var db = pg.CreateContext();
+        var services = new ServiceCollection();
+
+        services.AddScoped(_ => pg.CreateContext());
+        services.AddScoped<TeamsBotIncidents>();
+
+        await using var provider = services.BuildServiceProvider();
 
         var channel = new TeamsBotNotificationChannel(
             teams,
-            new TeamsBotIncidents(db),
-            db,
+            provider.GetRequiredService<IServiceScopeFactory>(),
             new FixedClock(Now),
             Options(recipients),
             NullLogger<TeamsBotNotificationChannel>.Instance);

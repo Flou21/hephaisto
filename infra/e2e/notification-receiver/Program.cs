@@ -101,6 +101,10 @@ if (recordAll)
 }
 else
 {
+    // Microsoft Teams as the bot sees it. Not in canary mode: the canary serves nothing, so that
+    // anything reaching it is a finding.
+    NotificationReceiver.TeamsStandIn.Map(app, builder.Configuration);
+
     app.MapDelete("/received", () =>
     {
         received.Clear();

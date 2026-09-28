@@ -24,6 +24,10 @@ backup/
 # without it, so a fresh clone works with no config at all.
 tilt_config.json
 
+# The Teams bot against a REAL tenant on the dev cluster: the ids and recipients of one
+# organisation. Not credentials, and still nobody else's business.
+charts/hephaisto/values-*.local.yaml
+
 # Recorded eval scenarios and the reports built from them. Never committed: SafeToolDecorator
 # redacts tool *arguments*, not tool *results*, so a cassette's raw describe_pod and
 # get_pod_logs output carries cluster env vars, hostnames and log contents verbatim. They are

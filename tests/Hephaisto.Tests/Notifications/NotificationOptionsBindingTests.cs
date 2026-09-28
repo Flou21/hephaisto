@@ -217,6 +217,39 @@ public sealed class NotificationOptionsBindingTests
         }
     }
 
+    [Fact]
+    public void Every_channel_can_be_held_by_a_singleton()
+    {
+        // NotificationChannelProbe is a singleton and takes every channel. A channel that
+        // depends on anything scoped - a database context, say - fails the container's scope
+        // validation at startup, and the agent does not start. That is how this was found: on
+        // the dev cluster, by a pod in a crash loop, with every test green.
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(
+            [
+                new("Notifications:Webhook:Url", "https://r.example/hook"),
+                new("Notifications:Teams:WorkflowUrl", "https://logic.example/trigger?sig=x"),
+                new("Notifications:TeamsBot:TenantId", "t"),
+                new("Notifications:TeamsBot:AppId", "a"),
+                new("Notifications:TeamsBot:ClientSecret", "s"),
+                new("Notifications:TeamsBot:ChannelId", "19:abc@thread.tacv2"),
+            ])
+            .Build();
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<Hephaisto.Core.Abstractions.IClock>(Hephaisto.Core.Abstractions.SystemClock.Instance);
+        services.AddHephaistoNotifications(configuration);
+
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+
+        // From the ROOT provider, which is where a singleton resolves its dependencies.
+        var channels = provider.GetServices<INotificationChannel>().Select(c => c.Name).ToList();
+
+        channels.Should().BeEquivalentTo(
+            [NotificationChannelNames.Webhook, NotificationChannelNames.Teams, NotificationChannelNames.TeamsBot]);
+    }
+
     private static void Refused(string because, params (string Key, string Value)[] settings)
     {
         var configuration = new ConfigurationBuilder()

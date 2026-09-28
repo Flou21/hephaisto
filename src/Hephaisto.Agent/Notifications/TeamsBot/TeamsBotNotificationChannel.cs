@@ -4,6 +4,7 @@ using Hephaisto.Agent.Persistence;
 using Hephaisto.Core.Abstractions;
 using Hephaisto.Core.Notifications;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace Hephaisto.Agent.Notifications.TeamsBot;
@@ -29,11 +30,17 @@ namespace Hephaisto.Agent.Notifications.TeamsBot;
 /// A second alert for an incident is a new message, and the older one is shrunk to a line that
 /// points at it. Never deleted; see <see cref="ITeamsBotClient"/>.
 /// </para>
+/// <para>
+/// <b>It takes a scope factory, not a database context.</b> A channel is held for the life of the
+/// process by <c>NotificationChannelProbe</c>, which is a singleton, so a channel that took a
+/// context directly would either fail the container's scope validation - which is how this was
+/// found, on the dev cluster, by an agent that would not start - or, with validation off, keep
+/// one context alive for ever. Each send opens its own.
+/// </para>
 /// </remarks>
 public sealed class TeamsBotNotificationChannel(
     ITeamsBotClient client,
-    TeamsBotIncidents incidents,
-    HephaistoDbContext db,
+    IServiceScopeFactory scopes,
     IClock clock,
     IOptionsMonitor<NotificationOptions> options,
     ILogger<TeamsBotNotificationChannel> logger) : INotificationChannel
@@ -82,7 +89,12 @@ public sealed class TeamsBotNotificationChannel(
             return DeliveryResult.Permanent("Notifications:TeamsBot:Recipients is empty, so there is nobody to tell");
         }
 
-        var (card, incidentId) = await RenderAsync(message, o, ct).ConfigureAwait(false);
+        await using var scope = scopes.CreateAsyncScope();
+
+        var db = scope.ServiceProvider.GetRequiredService<HephaistoDbContext>();
+        var incidents = scope.ServiceProvider.GetRequiredService<TeamsBotIncidents>();
+
+        var (card, incidentId) = await RenderAsync(db, incidents, message, o, ct).ConfigureAwait(false);
         var hash = TeamsBotCards.Hash(card);
 
         var told = 0;
@@ -104,7 +116,7 @@ public sealed class TeamsBotNotificationChannel(
                 continue;
             }
 
-            var chat = await ChatAsync(recipient, ct).ConfigureAwait(false);
+            var chat = await ChatAsync(db, recipient, ct).ConfigureAwait(false);
 
             if (chat.Value is not { } conversation)
             {
@@ -187,7 +199,9 @@ public sealed class TeamsBotNotificationChannel(
         return DeliveryResult.Permanent(refused ?? "nobody was reached");
     }
 
-    private async Task<(JsonObject Card, Guid? IncidentId)> RenderAsync(
+    private static async Task<(JsonObject Card, Guid? IncidentId)> RenderAsync(
+        HephaistoDbContext db,
+        TeamsBotIncidents incidents,
         NotificationMessage message,
         NotificationOptions o,
         CancellationToken ct)
@@ -255,7 +269,7 @@ public sealed class TeamsBotNotificationChannel(
     /// The bot's chat with one person. Reused from the last alert they were sent; looked up in
     /// the team only for somebody who has never had one.
     /// </summary>
-    private async Task<TeamsBotResult<string>> ChatAsync(string recipient, CancellationToken ct)
+    private async Task<TeamsBotResult<string>> ChatAsync(HephaistoDbContext db, string recipient, CancellationToken ct)
     {
         var known = await db.TeamsBotMessages.AsNoTracking()
             .Where(m => m.Kind == TeamsBotMessageKind.Alert && m.Recipient == recipient)
