@@ -39,7 +39,7 @@ public sealed class TeamsBotIncidents(HephaistoDbContext db)
             .Take(Math.Max(0, max))
             .ToList();
 
-        return (await WithCodeFixAsync(listed, ct).ConfigureAwait(false), total);
+        return (await WithNotesAsync(await WithCodeFixAsync(listed, ct).ConfigureAwait(false), ct).ConfigureAwait(false), total);
     }
 
     /// <summary>The named incidents, whatever state they are in. One that no longer exists is absent.</summary>
@@ -58,7 +58,8 @@ public sealed class TeamsBotIncidents(HephaistoDbContext db)
             .ToListAsync(ct)
             .ConfigureAwait(false);
 
-        return (await WithCodeFixAsync(found, ct).ConfigureAwait(false)).ToDictionary(i => i.Id);
+        return (await WithNotesAsync(await WithCodeFixAsync(found, ct).ConfigureAwait(false), ct).ConfigureAwait(false))
+            .ToDictionary(i => i.Id);
     }
 
     private static IQueryable<TeamsIncident> Project(IQueryable<Incident> incidents) =>
@@ -78,7 +79,44 @@ public sealed class TeamsBotIncidents(HephaistoDbContext db)
             AcknowledgedBy = i.AcknowledgedBy,
             ClosedBy = i.ClosedBy,
             Summary = i.Resolution,
+
+            // The alert that opened it: the oldest Alertmanager signal, whose reason is the
+            // alertname. A subquery in the same statement, not a lookup per incident.
+            AlertName = i.Signals
+                .Where(s => s.Source == SignalSource.Alertmanager)
+                .OrderBy(s => s.FirstSeen)
+                .Select(s => s.Reason)
+                .FirstOrDefault(),
         });
+
+    /// <summary>
+    /// The start of each incident's alert note (#145), in one query for all of them.
+    /// </summary>
+    private async Task<IReadOnlyList<TeamsIncident>> WithNotesAsync(
+        IReadOnlyList<TeamsIncident> incidents,
+        CancellationToken ct)
+    {
+        var names = incidents
+            .Select(i => i.AlertName)
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (names.Count == 0)
+        {
+            return incidents;
+        }
+
+        var bodies = await db.AlertNotes.AsNoTracking()
+            .Where(n => names.Contains(n.AlertName) && n.Body != string.Empty)
+            .Select(n => new { n.AlertName, n.Body })
+            .ToDictionaryAsync(n => n.AlertName, n => n.Body, StringComparer.Ordinal, ct)
+            .ConfigureAwait(false);
+
+        return [.. incidents.Select(i => i.AlertName is { } name && bodies.TryGetValue(name, out var body)
+            ? i with { NoteExcerpt = AlertNote.Excerpt(body) }
+            : i)];
+    }
 
     private async Task<IReadOnlyList<TeamsIncident>> WithCodeFixAsync(
         List<TeamsIncident> incidents,

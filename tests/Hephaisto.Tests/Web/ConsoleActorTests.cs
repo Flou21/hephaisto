@@ -91,10 +91,10 @@ public sealed class ConsoleActorTests
     {
         // `Queries.CloseIncidentAsync(Id, _submittedBy, ...)` records what was typed. It has to
         // be `Actor`, which is the token's name when there is one.
-        var typed = new Regex(@"Queries\.\w+Async\((?:[^;]|\n)*?\b(_submittedBy|_approvalActor|_actor)\b", RegexOptions.Compiled);
+        var typed = new Regex(@"Queries\.\w+Async\((?:[^;]|\n)*?\b(_submittedBy|_approvalActor|_actor|_typedName)\b", RegexOptions.Compiled);
 
         var offenders = Razor()
-            .Where(f => Path.GetFileName(f) is "IncidentDetail.razor" or "Status.razor")
+            .Where(f => Path.GetFileName(f) is "IncidentDetail.razor" or "Status.razor" or "AlertNoteSection.razor")
             .SelectMany(f => typed.Matches(File.ReadAllText(f)).Select(m => $"{Path.GetFileName(f)}: {m.Groups[1].Value}"));
 
         offenders.Should().BeEmpty();
@@ -107,7 +107,7 @@ public sealed class ConsoleActorTests
         // actor straight through until 2026-09-28, and re-arm is the audit row that most needs
         // to name a real person.
         var passed = new Regex(
-            @"queries\.\w+Async\((?:[^;]|\n)*?\brequest\.(SubmittedBy|Actor|RequestedBy|ClosedBy|AssignedBy|DecidedBy)\b",
+            @"queries\.\w+Async\((?:[^;]|\n)*?\brequest\.(SubmittedBy|Actor|RequestedBy|ClosedBy|AssignedBy|DecidedBy|Author|UpdatedBy)\b",
             RegexOptions.Compiled);
 
         var root = Root();
@@ -124,18 +124,21 @@ public sealed class ConsoleActorTests
     {
         // A guard that reads files and matches nothing passes for the wrong reason. These are
         // the three shapes it exists to catch, as they were written before the fix.
-        var typed = new Regex(@"Queries\.\w+Async\((?:[^;]|\n)*?\b(_submittedBy|_approvalActor|_actor)\b");
-        var passed = new Regex(@"queries\.\w+Async\((?:[^;]|\n)*?\brequest\.(SubmittedBy|Actor|RequestedBy|ClosedBy|AssignedBy|DecidedBy)\b");
+        var typed = new Regex(@"Queries\.\w+Async\((?:[^;]|\n)*?\b(_submittedBy|_approvalActor|_actor|_typedName)\b");
+        var passed = new Regex(@"queries\.\w+Async\((?:[^;]|\n)*?\brequest\.(SubmittedBy|Actor|RequestedBy|ClosedBy|AssignedBy|DecidedBy|Author|UpdatedBy)\b");
 
         typed.IsMatch("() => Queries.CloseIncidentAsync(Id, _submittedBy, _closeReason, token),").Should().BeTrue();
         typed.IsMatch("await Queries.DecideActionAsync(\n    Id, actionId, approve, _approvalActor, ApprovalSource.Ui,").Should().BeTrue();
         passed.IsMatch("var result = await queries.ReArmAsync(request.Actor, ct);").Should().BeTrue();
+        passed.IsMatch("return Render(await queries.AddAlertNoteEntryAsync(name, request.Text, request.IncidentId, request.Author, ct));").Should().BeTrue();
+        typed.IsMatch("() => Queries.AddAlertNoteEntryAsync(AlertName, _entry, IncidentId, _typedName, CancellationToken.None),").Should().BeTrue();
 
         typed.IsMatch("() => Queries.CloseIncidentAsync(Id, Actor, _closeReason, token),").Should().BeFalse();
         passed.IsMatch("var actor = ActorResolution.Resolve(http.User, request.Actor);\nawait queries.ReArmAsync(actor, ct);").Should().BeFalse();
 
         Razor().Should().Contain(f => f.EndsWith("IncidentDetail.razor", StringComparison.Ordinal))
-            .And.Contain(f => f.EndsWith("Status.razor", StringComparison.Ordinal));
+            .And.Contain(f => f.EndsWith("Status.razor", StringComparison.Ordinal))
+            .And.Contain(f => f.EndsWith("AlertNoteSection.razor", StringComparison.Ordinal));
     }
 
     private static List<string> Razor() =>

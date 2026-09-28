@@ -76,6 +76,15 @@ the incident service and the pager that alerts go to today; this release is what
   tenant, by a member of the team; it is recorded as the team's member list names that person.
   Close, approve and deny are still links. Set the Azure Bot's messaging endpoint to
   `https://<your host>/api/teams/messages`, routed to that port only.
+- **A note per alert name** ([#145](docs/backlog.md#145)). What the people paged for an alert have
+  learned about it - what it means, what to look at first, which dashboard - kept under its
+  `alertname` rather than in one incident. A curated body that approvers rewrite, and under it one
+  line per "what was done this time" that anybody who can read the console may add and nobody can
+  edit afterwards. Shown on the incident page and on `/alerts/{name}`, its start and a link on the
+  Teams alert, and given to the model after the runbook, framed as operator-written reference and
+  never as instruction. API: `GET /api/alerts/{name}/note`, `POST /api/alerts/{name}/note/entries`,
+  `PUT /api/alerts/{name}/note` (approver policy).
+- A database migration, `AlertNotes`. It adds two tables and changes none.
 
 ### Changed
 - **The right person** ([#141](docs/backlog.md#141), [#123](docs/backlog.md#123)). A route can

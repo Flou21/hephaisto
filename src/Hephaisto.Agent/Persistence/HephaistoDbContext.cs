@@ -63,6 +63,10 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
 
     public DbSet<IncidentDigest> IncidentDigests => Set<IncidentDigest>();
 
+    public DbSet<AlertNote> AlertNotes => Set<AlertNote>();
+
+    public DbSet<AlertNoteEntry> AlertNoteEntries => Set<AlertNoteEntry>();
+
     // --- infrastructure tables (see OperationalEntities.cs) ---
 
     public DbSet<LlmUsageRecord> LlmUsage => Set<LlmUsageRecord>();
@@ -229,6 +233,7 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
         ConfigureActions(modelBuilder);
         ConfigureAudit(modelBuilder);
         ConfigureDigests(modelBuilder);
+        ConfigureAlertNotes(modelBuilder);
         ConfigureOperational(modelBuilder);
 
         ApplyConventions(modelBuilder);
@@ -732,6 +737,45 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
             e.Property(m => m.ActivityId).HasMaxLength(128);
             e.Property(m => m.ContentHash).HasMaxLength(64);
             e.Property(m => m.LastError).HasMaxLength(MaxErrorLength);
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // Alert notes (#145)
+    // ------------------------------------------------------------------
+
+    private static void ConfigureAlertNotes(ModelBuilder b)
+    {
+        b.Entity<AlertNote>(e =>
+        {
+            e.ToTable("alert_notes");
+
+            // The alert name IS the key. There is one note per rule name and nothing else to
+            // look one up by, so a surrogate id would only be a second thing to keep unique.
+            e.HasKey(n => n.AlertName);
+            e.Property(n => n.AlertName).HasMaxLength(AlertNote.MaxAlertNameLength);
+            e.Property(n => n.Body).HasMaxLength(AlertNote.MaxBodyLength);
+            e.Property(n => n.UpdatedBy).HasMaxLength(320);
+
+            e.HasMany(n => n.Entries)
+                .WithOne()
+                .HasForeignKey(x => x.AlertName)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<AlertNoteEntry>(e =>
+        {
+            e.ToTable("alert_note_entries");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.AlertName).HasMaxLength(AlertNote.MaxAlertNameLength);
+            e.Property(x => x.Author).HasMaxLength(320);
+            e.Property(x => x.Text).HasMaxLength(AlertNote.MaxEntryLength);
+
+            // Newest first per alert name, which is the only order they are ever read in.
+            e.HasIndex(x => new { x.AlertName, x.CreatedAt }).HasDatabaseName("ix_alert_note_entries_alert_name_created_at");
+
+            // Deliberately no foreign key to incidents, as with audit_events: what was done about
+            // an alert is worth keeping after the incident it was written from is gone.
         });
     }
 

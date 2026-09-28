@@ -457,6 +457,9 @@ a member of the team, and the click is recorded as the team's member list names 
 | `GET /api/incidents/{id}/codefix` | an incident's code-fix attempts and its latest verdict |
 | `POST /api/incidents/{id}/codefix` | ask for a code fix (approver policy) |
 | `POST /api/incidents/{id}/codefix/{attemptId}/approve`, `/deny` | decide on a plan (approver policy; approve needs mode `Pr`) |
+| `GET /api/alerts/{name}/note` | what people wrote about an alert name, and what was done each time |
+| `POST /api/alerts/{name}/note/entries` | add a line of what was done this time |
+| `PUT /api/alerts/{name}/note` | rewrite the note the agent reads beside its runbook (approver policy) |
 | `GET /healthz`, `/readyz`, `/metrics` | health and Prometheus metrics |
 | `POST /api/teams/messages` | a click on a Teams alert's Acknowledge or Assign-to-me button; off by default, its own port, a Bot Framework token |
 | `/` | Blazor Server UI |

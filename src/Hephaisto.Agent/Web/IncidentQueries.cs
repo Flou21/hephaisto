@@ -1306,6 +1306,232 @@ public sealed class IncidentQueries(
         return new LifecycleResult { Outcome = LifecycleOutcome.Applied, Detail = actor };
     }
 
+    // ------------------------------------------------------------------
+    // Alert notes (#145)
+    // ------------------------------------------------------------------
+
+    /// <summary>How many entries a note shows. The rest are counted, not listed.</summary>
+    public const int MaxAlertNoteEntriesShown = 50;
+
+    /// <summary>
+    /// The note for an alert name, or an empty one when nobody has written it yet; null when the
+    /// name cannot key a note at all.
+    /// </summary>
+    public async Task<AlertNoteView?> GetAlertNoteAsync(string alertName, CancellationToken ct)
+    {
+        if (AlertNote.NormaliseName(alertName) is not { } name)
+        {
+            return null;
+        }
+
+        await using var scope = scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<HephaistoDbContext>();
+
+        return await ReadAlertNoteAsync(db, name, ct);
+    }
+
+    /// <summary>
+    /// Replaces the curated body of a note, creating the note when there is none.
+    /// </summary>
+    /// <remarks>
+    /// The whole body is replaced rather than patched: it is a page one person edits at a time,
+    /// and the audit event keeps what it said before, so an overwrite is recoverable from the
+    /// trail rather than lost.
+    /// </remarks>
+    public async Task<AlertNoteResult> SaveAlertNoteBodyAsync(
+        string alertName,
+        string? body,
+        string actorName,
+        CancellationToken ct)
+    {
+        if (Refuse(alertName, actorName) is { } refused)
+        {
+            return refused;
+        }
+
+        var name = AlertNote.NormaliseName(alertName)!;
+        var actor = actorName.Trim();
+
+        await using var scope = scopes.CreateAsyncScope();
+        var sp = scope.ServiceProvider;
+        var db = sp.GetRequiredService<HephaistoDbContext>();
+        var audit = sp.GetRequiredService<IAuditRepository>();
+
+        var now = clock.UtcNow;
+        var note = await db.AlertNotes.FirstOrDefaultAsync(n => n.AlertName == name, ct);
+        var previous = note?.Body;
+
+        if (note is null)
+        {
+            note = new AlertNote { AlertName = name };
+            db.AlertNotes.Add(note);
+        }
+
+        try
+        {
+            note.SetBody(body, actor, now);
+        }
+        catch (ArgumentException ex)
+        {
+            return new AlertNoteResult { Outcome = AlertNoteOutcome.Invalid, Detail = ex.Message };
+        }
+
+        audit.Enlist(new AuditEvent
+        {
+            At = now,
+            Type = "alert-note.updated",
+            Actor = actor,
+            Summary = previous is null ? $"wrote the note for {name}" : $"changed the note for {name}",
+            Detail = JsonSerializer.Serialize(
+                new { alertName = name, previousBody = previous, body = note.Body },
+                AuditJson),
+        });
+
+        await db.SaveChangesAsync(ct);
+
+        return new AlertNoteResult
+        {
+            Outcome = AlertNoteOutcome.Applied,
+            Detail = actor,
+            Note = await ReadAlertNoteAsync(db, name, ct),
+        };
+    }
+
+    /// <summary>
+    /// Appends one line of "what was done", creating an empty note when there is none.
+    /// </summary>
+    public async Task<AlertNoteResult> AddAlertNoteEntryAsync(
+        string alertName,
+        string? text,
+        Guid? incidentId,
+        string actorName,
+        CancellationToken ct)
+    {
+        if (Refuse(alertName, actorName) is { } refused)
+        {
+            return refused;
+        }
+
+        var name = AlertNote.NormaliseName(alertName)!;
+        var actor = actorName.Trim();
+
+        await using var scope = scopes.CreateAsyncScope();
+        var sp = scope.ServiceProvider;
+        var db = sp.GetRequiredService<HephaistoDbContext>();
+        var audit = sp.GetRequiredService<IAuditRepository>();
+
+        var now = clock.UtcNow;
+        var note = await db.AlertNotes.FirstOrDefaultAsync(n => n.AlertName == name, ct);
+
+        if (note is null)
+        {
+            // An entry needs a note to hang from. One made this way has no body yet, and says
+            // who started it - which is somebody who was paged, and exactly who should.
+            note = new AlertNote { AlertName = name, UpdatedBy = actor, UpdatedAt = now };
+            db.AlertNotes.Add(note);
+        }
+
+        AlertNoteEntry entry;
+
+        try
+        {
+            entry = note.AddEntry(text, incidentId, actor, now);
+        }
+        catch (ArgumentException ex)
+        {
+            return new AlertNoteResult { Outcome = AlertNoteOutcome.Invalid, Detail = ex.Message };
+        }
+
+        // Added explicitly: the entry's key is client-assigned, so change detection through the
+        // navigation would state it as existing and emit an UPDATE that matches nothing.
+        db.AlertNoteEntries.Add(entry);
+
+        audit.Enlist(new AuditEvent
+        {
+            At = now,
+            Type = "alert-note.entry-added",
+            IncidentId = incidentId,
+            Actor = actor,
+            Summary = $"added to the note for {name}",
+            Detail = JsonSerializer.Serialize(new { alertName = name, entryId = entry.Id, text = entry.Text }, AuditJson),
+        });
+
+        await db.SaveChangesAsync(ct);
+
+        return new AlertNoteResult
+        {
+            Outcome = AlertNoteOutcome.Applied,
+            Detail = actor,
+            Note = await ReadAlertNoteAsync(db, name, ct),
+        };
+    }
+
+    private static AlertNoteResult? Refuse(string alertName, string actorName)
+    {
+        if (AlertNote.NormaliseName(alertName) is null)
+        {
+            return new AlertNoteResult
+            {
+                Outcome = AlertNoteOutcome.Invalid,
+                Detail = $"'{alertName}' is not an alert name: empty, longer than {AlertNote.MaxAlertNameLength} characters, or holding a control character.",
+            };
+        }
+
+        var actor = actorName?.Trim() ?? string.Empty;
+
+        if (actor.Length == 0)
+        {
+            return new AlertNoteResult { Outcome = AlertNoteOutcome.Invalid, Detail = "Say who is writing this." };
+        }
+
+        if (IncidentStateMachine.IsForbiddenGranter(actor))
+        {
+            return new AlertNoteResult
+            {
+                Outcome = AlertNoteOutcome.ForbiddenActor,
+                Detail = $"'{actor}' may not write an alert note: it is what people learned, and the agent is not a person.",
+            };
+        }
+
+        return null;
+    }
+
+    private static async Task<AlertNoteView> ReadAlertNoteAsync(HephaistoDbContext db, string name, CancellationToken ct)
+    {
+        var note = await db.AlertNotes.AsNoTracking()
+            .Where(n => n.AlertName == name)
+            .Select(n => new { n.Body, n.UpdatedBy, n.UpdatedAt })
+            .FirstOrDefaultAsync(ct);
+
+        if (note is null)
+        {
+            return new AlertNoteView { AlertName = name };
+        }
+
+        var entries = db.AlertNoteEntries.AsNoTracking().Where(e => e.AlertName == name);
+
+        return new AlertNoteView
+        {
+            AlertName = name,
+            Exists = true,
+            Body = note.Body,
+            UpdatedBy = note.UpdatedBy,
+            UpdatedAt = note.UpdatedAt,
+            EntryCount = await entries.CountAsync(ct),
+            Entries = await entries
+                .OrderByDescending(e => e.CreatedAt)
+                .Take(MaxAlertNoteEntriesShown)
+                .Select(e => new AlertNoteEntryView
+                {
+                    Id = e.Id,
+                    IncidentId = e.IncidentId,
+                    Author = e.Author,
+                    Text = e.Text,
+                    CreatedAt = e.CreatedAt,
+                })
+                .ToListAsync(ct),
+        };
+    }
 }
 
 /// <summary>What happened to a close or acknowledge request.</summary>
