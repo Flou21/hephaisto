@@ -203,6 +203,7 @@ public sealed class TeamsBoardReconciler(
             BaseUrl = o.BaseUrl,
             GrafanaUrl = o.GrafanaUrl,
             BoardUrl = TeamsBotLinks.Board(o.TeamsBot, board?.ActivityId),
+            Actions = o.TeamsBot.Actions.Enabled,
         };
 
         var ids = alerts.Where(a => a.IncidentId is not null).Select(a => a.IncidentId!.Value).Distinct().ToList();

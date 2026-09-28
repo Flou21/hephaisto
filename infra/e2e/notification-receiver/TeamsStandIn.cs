@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -17,6 +19,12 @@ namespace NotificationReceiver;
 //   - an id with ':' ';' '=' '@' in it has to arrive percent-encoded, or the path is cut short
 //   - a DELETE leaves "This message has been deleted." behind - so here it is REFUSED and
 //     COUNTED, and the count being zero is an assertion the harness makes
+//
+// It also stands in for the other direction, a click on a button (#124): it publishes a Bot
+// Framework key document with two keys - one endorsed for msteams, one for another channel - and
+// POST /teams/click signs an invoke activity the way Microsoft would and delivers it to the
+// agent's actions port. What can be varied is exactly what the agent must refuse: another app id,
+// another tenant, somebody outside the team, a key not endorsed for Teams, another serviceUrl.
 public static class TeamsStandIn
 {
     private const string Token = "stand-in-token";
@@ -44,6 +52,8 @@ public static class TeamsStandIn
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         string NextId() => Interlocked.Increment(ref next).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        MapClicks(app, configuration, members);
 
         app.MapPost("/{tenant}/oauth2/v2.0/token", async (string tenant, HttpContext ctx) =>
         {
@@ -120,6 +130,7 @@ public static class TeamsStandIn
                 members = members.Select(m => new
                 {
                     id = $"29:{m.Split('@')[0]}",
+                    aadObjectId = ObjectId(m),
                     name = m.Split('@')[0],
                     email = m,
                     userPrincipalName = m,
@@ -202,6 +213,159 @@ public static class TeamsStandIn
 
             return Results.NoContent();
         });
+    }
+
+    /// <summary>
+    /// The Bot Framework's side of a click: a key document, and a signer that delivers.
+    /// </summary>
+    private static void MapClicks(WebApplication app, IConfiguration configuration, string[] members)
+    {
+        // Generated at startup and never persisted: a restart is a key rotation, which the agent
+        // has to survive by re-reading the document - as it would Microsoft's.
+        var teamsKey = RSA.Create(2048);
+        var otherKey = RSA.Create(2048);
+
+        var appId = configuration["TEAMS_APP_ID"] ?? "00000000-0000-0000-0000-0000000000d2";
+        var tenantId = configuration["TEAMS_TENANT_ID"] ?? "00000000-0000-0000-0000-0000000000d1";
+        var actionsUrl = configuration["AGENT_ACTIONS_URL"] ?? "http://hephaisto.hephaisto:8082/api/teams/messages";
+
+        var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+
+        app.MapGet("/teams/openid/.well-known/openidconfiguration", (HttpContext ctx) => Results.Json(new
+        {
+            issuer = "https://api.botframework.com",
+            authorization_endpoint = "https://invalid.example/unused",
+            jwks_uri = $"{ctx.Request.Scheme}://{ctx.Request.Host}/teams/openid/keys",
+            id_token_signing_alg_values_supported = new[] { "RS256" },
+            token_endpoint_auth_methods_supported = new[] { "private_key_jwt" },
+        }));
+
+        app.MapGet("/teams/openid/keys", () => Results.Text(
+            new JsonObject
+            {
+                ["keys"] = new JsonArray(Jwk(teamsKey, "stand-in-msteams", "msteams"), Jwk(otherKey, "stand-in-webchat", "webchat")),
+            }.ToJsonString(),
+            "application/json"));
+
+        // {incidentId, verb, user, tenant?, appId?, endorse?, serviceUrl?, claimedServiceUrl?}
+        // user is an email: a member of the team, or anybody else. endorse=false signs with the
+        // key endorsed for another channel. Answers {status, body} - what the agent said.
+        app.MapPost("/teams/click", async (HttpContext ctx) =>
+        {
+            var request = await ReadAsync(ctx);
+            string? Field(string name) => request?[name] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
+
+            var user = Field("user") ?? members.FirstOrDefault() ?? "oncall@example.com";
+            var serviceUrl = Field("serviceUrl") ?? $"{ctx.Request.Scheme}://{ctx.Request.Host}/teams";
+            var endorsed = request?["endorse"] is not JsonValue e || !e.TryGetValue<bool>(out var endorse) || endorse;
+
+            var token = Sign(
+                endorsed ? teamsKey : otherKey,
+                endorsed ? "stand-in-msteams" : "stand-in-webchat",
+                new JsonObject
+                {
+                    ["iss"] = "https://api.botframework.com",
+                    ["aud"] = Field("appId") ?? appId,
+                    ["serviceurl"] = Field("claimedServiceUrl") ?? serviceUrl,
+                    ["nbf"] = DateTimeOffset.UtcNow.AddMinutes(-1).ToUnixTimeSeconds(),
+                    ["exp"] = DateTimeOffset.UtcNow.AddMinutes(10).ToUnixTimeSeconds(),
+                });
+
+            var activity = new JsonObject
+            {
+                ["type"] = "invoke",
+                ["name"] = "adaptiveCard/action",
+                ["channelId"] = "msteams",
+                ["serviceUrl"] = serviceUrl,
+                ["from"] = new JsonObject
+                {
+                    ["id"] = $"29:{user.Split('@')[0]}",
+                    ["aadObjectId"] = ObjectId(user),
+                    // Deliberately not the roster's name: the agent must record who the roster
+                    // says this is, never what the click claims.
+                    ["name"] = "Whoever The Click Says",
+                },
+                ["conversation"] = new JsonObject { ["id"] = $"a:{user.Split('@')[0]}" },
+                ["channelData"] = new JsonObject { ["tenant"] = new JsonObject { ["id"] = Field("tenant") ?? tenantId } },
+                ["value"] = new JsonObject
+                {
+                    ["action"] = new JsonObject
+                    {
+                        ["type"] = "Action.Execute",
+                        ["verb"] = Field("verb") ?? "acknowledge",
+                        ["data"] = new JsonObject { ["incidentId"] = Field("incidentId") },
+                    },
+                },
+            };
+
+            using var post = new HttpRequestMessage(HttpMethod.Post, actionsUrl)
+            {
+                Content = new StringContent(activity.ToJsonString(), Encoding.UTF8, "application/json"),
+            };
+            post.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+            try
+            {
+                using var answer = await http.SendAsync(post, ctx.RequestAborted);
+                var body = await answer.Content.ReadAsStringAsync(ctx.RequestAborted);
+
+                Console.WriteLine($"TEAMS click {Field("verb")} by {user} -> {(int)answer.StatusCode}");
+
+                return Results.Json(new
+                {
+                    status = (int)answer.StatusCode,
+                    body = string.IsNullOrWhiteSpace(body) ? null : SafeParse(body),
+                });
+            }
+            catch (HttpRequestException ex)
+            {
+                return Results.Json(new { status = 0, body = (JsonNode?)JsonValue.Create(ex.Message) }, statusCode: 502);
+            }
+        });
+    }
+
+    /// <summary>A member's Entra object id: stable per address, and different for everybody else.</summary>
+    private static string ObjectId(string email) =>
+        new Guid(SHA256.HashData(Encoding.UTF8.GetBytes(email.Trim().ToLowerInvariant()))[..16]).ToString();
+
+    private static JsonObject Jwk(RSA key, string kid, string channel)
+    {
+        var p = key.ExportParameters(false);
+
+        return new JsonObject
+        {
+            ["kty"] = "RSA",
+            ["use"] = "sig",
+            ["kid"] = kid,
+            ["n"] = Base64Url(p.Modulus!),
+            ["e"] = Base64Url(p.Exponent!),
+            ["endorsements"] = new JsonArray(channel),
+        };
+    }
+
+    /// <summary>RS256 by hand: the stand-in carries no token library, and needs none for one algorithm.</summary>
+    private static string Sign(RSA key, string kid, JsonObject claims)
+    {
+        var header = new JsonObject { ["alg"] = "RS256", ["typ"] = "JWT", ["kid"] = kid };
+        var unsigned = $"{Base64Url(Encoding.UTF8.GetBytes(header.ToJsonString()))}.{Base64Url(Encoding.UTF8.GetBytes(claims.ToJsonString()))}";
+        var signature = key.SignData(Encoding.ASCII.GetBytes(unsigned), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+
+        return $"{unsigned}.{Base64Url(signature)}";
+    }
+
+    private static string Base64Url(byte[] bytes) =>
+        Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+    private static JsonNode? SafeParse(string body)
+    {
+        try
+        {
+            return JsonNode.Parse(body);
+        }
+        catch (JsonException)
+        {
+            return JsonValue.Create(body);
+        }
     }
 
     /// <summary>

@@ -589,6 +589,13 @@ public sealed class TeamsBotTests(PostgresFixture pg)
                 null));
         }
 
+        public Task<TeamsBotResult<TeamsMember>> FindMemberByObjectIdAsync(string aadObjectId, CancellationToken ct)
+        {
+            Calls.Add($"find object {aadObjectId}");
+
+            return Task.FromResult(new TeamsBotResult<TeamsMember>(HttpStatusCode.OK, null, "not a member"));
+        }
+
         public Task<TeamsBotResult<string>> FindMemberAsync(string email, CancellationToken ct)
         {
             Calls.Add($"find {email}");

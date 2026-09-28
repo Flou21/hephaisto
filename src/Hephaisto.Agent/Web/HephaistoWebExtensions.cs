@@ -84,7 +84,7 @@ public static class HephaistoWebExtensions
     /// port, and saying "forbidden" would confirm it exists somewhere - which is the one thing
     /// the split is trying not to advertise about the webhook.
     /// </remarks>
-    private static Func<EndpointFilterInvocationContext, EndpointFilterDelegate, ValueTask<object?>>
+    internal static Func<EndpointFilterInvocationContext, EndpointFilterDelegate, ValueTask<object?>>
         OnPort(int port) =>
         async (context, next) =>
             context.HttpContext.Connection.LocalPort == port
@@ -152,6 +152,18 @@ public static class HephaistoWebExtensions
             // guarding one door with the wall missing beside it - anything allowed to deliver an
             // alert could also read every incident and approve an action.
             console.AddEndpointFilter(OnPort(web.MainPort));
+        }
+
+        // The one route Microsoft calls, when the Teams bot's buttons act (#124). On its own port
+        // and only there: TeamsBotActionsExtensions.UseTeamsBotActionsPort answers nothing else on
+        // that port, and the filter inside MapTeamsBotActions answers this nowhere else. It carries
+        // its own policy, whose only scheme is the Bot Framework's - never the console's.
+        var teamsActions = app.Services
+            .GetRequiredService<IOptions<Hephaisto.Core.Notifications.NotificationOptions>>().Value.TeamsBot.Actions;
+
+        if (teamsActions.Enabled)
+        {
+            Notifications.TeamsBot.TeamsBotActionsExtensions.MapTeamsBotActions(app, teamsActions.Port);
         }
 
         return app;

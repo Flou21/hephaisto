@@ -129,6 +129,11 @@ notifications:
     recipients: [oncall@example.com, dev@example.com]
     board:
       maxIncidents: 15
+    # The one inbound route Microsoft calls, so the render test covers its port, Service
+    # entry and NetworkPolicy rule.
+    actions:
+      enabled: true
+      port: 8082
   routes:
     - channel: webhook
       events: [IncidentEscalated, CodeFixPlanReady, CodeFixPrOpened, CodeFixFailed]

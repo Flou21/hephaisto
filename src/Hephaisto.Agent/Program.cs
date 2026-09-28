@@ -5,6 +5,7 @@ using Microsoft.Extensions.AI;
 using Hephaisto.Agent.Kubernetes;
 using Hephaisto.Agent.Llm;
 using Hephaisto.Agent.Notifications;
+using Hephaisto.Agent.Notifications.TeamsBot;
 using Hephaisto.Agent.Persistence;
 using Hephaisto.Agent.Pipeline;
 using Hephaisto.Agent.Safety;
@@ -49,6 +50,10 @@ builder.Services.AddHephaistoWeb();
 // OIDC (#110). Off unless Auth:Enabled, because the eval harness, a developer running
 // `dotnet run` and every install predating this have no IdP to point at.
 builder.Services.AddHephaistoAuth(builder.Configuration);
+
+// The Teams bot's buttons that act (#124). Off unless Notifications:TeamsBot:Actions:Enabled; its
+// own Bot Framework scheme and its own port, and nothing about the console's authentication changes.
+builder.Services.AddHephaistoTeamsBotActions(builder.Configuration);
 
 // The demo seed. Inert unless Demo:Seed is set, and refuses on a database that already holds
 // an incident - so it ships in the image without being a thing a real install can trip over.
@@ -96,6 +101,9 @@ if (app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<Hephai
     forwarded.KnownProxies.Clear();
     app.UseForwardedHeaders(forwarded);
 }
+
+// On the Teams actions port, only the one route answers - before anything else can.
+app.UseTeamsBotActionsPort();
 
 app.MapStaticAssets();
 app.UseAntiforgery();

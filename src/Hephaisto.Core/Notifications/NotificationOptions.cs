@@ -217,12 +217,66 @@ public sealed class TeamsBotOptions
     /// <summary>How often the board and the live alerts are compared with the incidents they show.</summary>
     public TimeSpan RefreshInterval { get; set; } = TimeSpan.FromSeconds(15);
 
+    /// <summary>Buttons on an alert that act rather than link. Off unless turned on.</summary>
+    public TeamsBotActionsOptions Actions { get; set; } = new();
+
     /// <summary>Everything a request needs. Anything less and the channel is not registered at all.</summary>
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(TenantId)
         && !string.IsNullOrWhiteSpace(AppId)
         && !string.IsNullOrWhiteSpace(ClientSecret)
         && !string.IsNullOrWhiteSpace(ChannelId);
+}
+
+/// <summary>
+/// The one route Microsoft calls: a click on an alert's Acknowledge or Assign-to-me button.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>Off by default, and served only on its own port.</b> A button that acts is an
+/// <c>Action.Execute</c>, and Teams delivers the click by POSTing an invoke activity to the bot's
+/// messaging endpoint - so turning this on means a route this process answers for Microsoft,
+/// authenticated by a Bot Framework token rather than by the console's identity provider. On a
+/// port of its own nothing else is reachable through whatever exposes it, and a NetworkPolicy can
+/// open that port without opening the console.
+/// </para>
+/// <para>
+/// <b>Acknowledge and assign-to-me only.</b> Both are read-level acts in the console already.
+/// Closing, approving and denying stay links: the click arrives as a Microsoft Entra identity,
+/// and the approver role lives in whatever <c>Auth:Authority</c> names (backlog #124).
+/// </para>
+/// </remarks>
+public sealed class TeamsBotActionsOptions
+{
+    /// <summary>Whether the route exists and the buttons are drawn. Both or neither.</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>The port <c>POST /api/teams/messages</c> answers on, and the only thing that does.</summary>
+    public int Port { get; set; } = 8082;
+
+    /// <summary>
+    /// Where the Bot Framework's signing keys are described. Microsoft's, unless a test harness
+    /// stands in for it; deliberately not a chart value, for the reason <c>LoginUrl</c> is not.
+    /// </summary>
+    public string OpenIdMetadataUrl { get; set; } = "https://login.botframework.com/v1/.well-known/openidconfiguration";
+
+    /// <summary>
+    /// Whether that document must be fetched over https. Only the stand-in, which serves http
+    /// inside the cluster, turns this off.
+    /// </summary>
+    public bool RequireHttpsMetadata { get; set; } = true;
+
+    /// <summary>The issuer a Bot Framework token for a channel carries.</summary>
+    public string Issuer { get; set; } = "https://api.botframework.com";
+
+    /// <summary>The channel a signing key must be endorsed for.</summary>
+    public string Channel { get; set; } = "msteams";
+
+    /// <summary>
+    /// How long "this person is in the team" is believed before the roster is read again. Someone
+    /// removed from the team can still click for at most this long.
+    /// </summary>
+    public TimeSpan MembershipCacheDuration { get; set; } = TimeSpan.FromMinutes(5);
 }
 
 /// <summary>

@@ -178,6 +178,24 @@ public sealed class TeamsBotClientTests
     }
 
     [Fact]
+    public async Task A_clicker_is_found_by_object_id_and_named_as_the_roster_names_them()
+    {
+        var (client, _, _) = Build();
+        var ct = TestContext.Current.CancellationToken;
+
+        var found = await client.FindMemberByObjectIdAsync("5F0C0000-0000-0000-0000-000000000001", ct);
+
+        found.Ok.Should().BeTrue();
+        found.Value!.Id.Should().Be("29:it");
+        found.Value.Actor.Should().Be("it@true-relevance.example");
+
+        var nobody = await client.FindMemberByObjectIdAsync("00000000-0000-0000-0000-00000000dead", ct);
+
+        nobody.Ok.Should().BeTrue("Teams answered; the answer is no");
+        nobody.Value.Should().BeNull();
+    }
+
+    [Fact]
     public async Task Somebody_who_is_not_in_the_team_is_an_answer_and_not_a_failure()
     {
         var (client, _, _) = Build();
@@ -296,7 +314,7 @@ public sealed class TeamsBotClientTests
                 return Json(api, """
                     {"continuationToken":null,"members":[
                       {"id":"29:other","name":"Other","email":"other@true-relevance.example","userPrincipalName":"login@true-relevance.example"},
-                      {"id":"29:it","name":"IT","email":"it@true-relevance.example","userPrincipalName":"it@true-relevance.example"}]}
+                      {"id":"29:it","aadObjectId":"5f0c0000-0000-0000-0000-000000000001","name":"IT","email":"it@true-relevance.example","userPrincipalName":"it@true-relevance.example"}]}
                     """);
             }
 

@@ -301,6 +301,22 @@
                 }
               },
               "additionalProperties": false
+            },
+            "actions": {
+              "type": "object",
+              "description": "Buttons that act on an alert (Acknowledge, Assign to me). Creates the one inbound route Microsoft calls, POST /api/teams/messages, on its own port.",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "port": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535,
+                  "description": "The port the route answers on, and the only thing that does. Not 8080 and not webhookPort."
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false

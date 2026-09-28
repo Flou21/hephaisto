@@ -391,7 +391,8 @@ notifications:
   #   - NOTHING IS EVER DELETED. Teams leaves "This message has been deleted." behind, for a
   #     channel post and for a reply alike, and there is no setting that stops it.
   #
-  # Every button is a link. A button that acts would need Microsoft to call this pod.
+  # Every button is a link, unless `actions.enabled` below: then an open alert also carries
+  # Acknowledge and Assign to me, which Microsoft delivers by calling this pod.
   #
   # You need, in the SAME Microsoft tenant as your Teams: a single-tenant app registration, an
   # Azure Bot resource (free tier) with the Teams channel on, and a Teams app that names the bot
@@ -416,6 +417,21 @@ notifications:
       # How many incidents the board lists before it says "and N more". At most 40. The board
       # also trims itself to 100 KB whatever this says, because a count is not a size.
       maxIncidents: 20
+    # Buttons that ACT on an alert: Acknowledge and Assign to me. Nothing else - close, approve
+    # and deny stay links into the console, because the click arrives as a Microsoft Entra
+    # identity and your approver role lives in auth.authority.
+    #
+    # Turning this on creates the ONE inbound route Microsoft calls: POST /api/teams/messages,
+    # on its own port and nowhere else, and nothing else answers on that port. Set your Azure
+    # Bot's messaging endpoint to https://<a host that reaches this port>/api/teams/messages.
+    # Every request must carry a Bot Framework token for this bot's app id, signed by a key
+    # endorsed for Teams, for this tenant, from somebody in the team - anything else changes
+    # nothing. The NetworkPolicy opens this port from anywhere: the token is its authentication,
+    # and Microsoft's addresses are not yours to list.
+    actions:
+      enabled: false
+      # Must differ from 8080 and from webhookPort.
+      port: 8082
 
   # Which events, at which severity, in which namespaces, go where. Additive only - there is
   # no deny rule, because a subtractive routing table is one nobody can reason about and the

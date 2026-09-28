@@ -98,6 +98,39 @@ refuses "a board larger than was ever measured"     "${BOT[@]}" --set notificati
 # The schema is closed, so the one way to put the credential in a values file does not exist.
 refuses "the teams bot's client secret as a value"  "${BOT[@]}" --set notifications.teamsBot.clientSecret=hunter2
 
+# Buttons that act (#124): the one inbound route Microsoft calls. It belongs to a bot, and its
+# port must be its own - exposing it must expose neither the console nor the webhook.
+refuses "buttons that act without a bot" --set notifications.teamsBot.actions.enabled=true
+refuses "buttons that act on the console's port" \
+    "${BOT[@]}" --set notifications.teamsBot.actions.enabled=true --set notifications.teamsBot.actions.port=8080
+refuses "buttons that act on the webhook's port" \
+    "${BOT[@]}" --set notifications.teamsBot.actions.enabled=true --set webhookPort=8081 --set notifications.teamsBot.actions.port=8081
+refuses "the actions switch set behind the chart's back" \
+    --set 'extraEnv[0].name=Notifications__TeamsBot__Actions__Enabled' --set 'extraEnv[0].value=true'
+
+OFF=$(helm template t "$CHART" --namespace hephaisto "${BOT[@]}" 2>&1)
+if grep -q 'teams-actions\|Notifications__TeamsBot__Actions' <<<"$OFF"; then
+    fail "with the buttons off, nothing of the inbound route is rendered"
+else
+    pass "with the buttons off, nothing of the inbound route is rendered"
+fi
+
+ON=$(helm template t "$CHART" --namespace hephaisto "${BOT[@]}" --set notifications.teamsBot.actions.enabled=true --set networkPolicy.enabled=true 2>&1)
+ACTION_RULE=$(printf '%s' "$ON" | python3 -c '
+import sys, yaml
+for doc in yaml.safe_load_all(sys.stdin):
+    if doc and doc.get("kind") == "NetworkPolicy" and doc["metadata"]["name"].endswith("-ingress"):
+        for rule in doc["spec"]["ingress"]:
+            ports = [p["port"] for p in rule.get("ports", [])]
+            if 8082 in ports:
+                print(",".join(str(p) for p in ports))
+')
+if [ "$ACTION_RULE" = "8082" ]; then
+    pass "the rule that opens the actions port opens nothing else"
+else
+    fail "the actions port must be opened by a rule of its own, found: '$ACTION_RULE'"
+fi
+
 # The routing vocabulary is closed in the schema, so a typo is refused at `helm template`
 # rather than becoming a rule that matches nothing and delivers nowhere - which is the exact
 # failure this whole feature exists to remove, and it looks identical to working.

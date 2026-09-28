@@ -362,6 +362,21 @@ both leave "This message has been deleted." behind, and nothing switches that of
 `ITeamsBotClient` has no delete, a closed incident leaves the board by being edited out, and an
 alert that is over is edited into its final state and left.
 
+**Two buttons act, and only when asked to.** With `Notifications:TeamsBot:Actions:Enabled` an open
+alert carries Acknowledge and Assign to me as `Action.Execute`, and Teams delivers the click as an
+`adaptiveCard/action` invoke to `POST /api/teams/messages`:
+
+```
+Teams --invoke + Bot Framework JWT--> :8082 /api/teams/messages   (nothing else answers on 8082)
+  scheme "BotFramework": issuer, audience = app id, signature, key ENDORSED for msteams
+  handler: serviceurl claim = activity.serviceUrl, tenant = ours, from.aadObjectId in the roster
+  --> IncidentQueries.Acknowledge/Assign as the roster names the person --> refreshed card
+```
+
+Every check fails closed before an incident is touched, and a roster nobody could read is a 503,
+not a yes. The actor is the member list's name for the object id, never the display name the
+activity carries. Close, approve and deny stay links (backlog #124).
+
 **An edit notifies nobody**, which is why an alert is a new message and why it goes to a personal
 chat: the channel holds one message, and a person's own chat with the bot is where a message per
 alert is a history rather than a flood.

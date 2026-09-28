@@ -106,12 +106,32 @@ Three of these are safety properties rather than settings:
 
 Every reserved name already has a value that sets it properly, so refusing costs nothing.
 */}}
+{{/*
+The Teams bot's buttons that act (#124): the port of the one inbound route Microsoft calls, or
+empty when there is none. Refused unless the bot itself is on, and unless the port is its own -
+the whole argument for the route is that exposing that port exposes nothing else.
+*/}}
+{{- define "hephaisto.teamsActionsPort" -}}
+{{- $actions := .Values.notifications.teamsBot.actions | default dict -}}
+{{- if $actions.enabled -}}
+  {{- if not .Values.notifications.teamsBot.enabled -}}
+    {{- fail "notifications.teamsBot.actions.enabled is refused without notifications.teamsBot.enabled: a button belongs to a bot." -}}
+  {{- end -}}
+  {{- $port := int $actions.port -}}
+  {{- if or (eq $port 8080) (and .Values.webhookPort (eq $port (int .Values.webhookPort))) -}}
+    {{- fail (printf "notifications.teamsBot.actions.port %d is refused: it must be a port of its own, not the console's (8080) or the webhook's, so that exposing it to Microsoft exposes nothing else." $port) -}}
+  {{- end -}}
+  {{- $port -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "hephaisto.validateExtraEnv" -}}
 {{- $reserved := list
       "GEMINI_API_KEY" "LLM_API_KEY" "HEPHAISTO_MODE" "HEPHAISTO_SWITCHES_DIR"
       "ConnectionStrings__hephaisto" "ASPNETCORE_URLS"
       "Grafana__McpUrl" "Grafana__ServiceAccountToken"
-      "Cluster__Name" "Web__WebhookToken" "Notifications__MaxPerChannelPerHour" -}}
+      "Cluster__Name" "Web__WebhookToken" "Notifications__MaxPerChannelPerHour"
+      "Notifications__TeamsBot__Actions__Enabled" "Notifications__TeamsBot__Actions__Port" -}}
 {{- /* The indexed entries the chart itself emits. Index 0 of DeniedNamespaces is what keeps the
        investigator's read tools out of the coder namespace; an extraEnv entry at the same index
        would silently replace it. Higher indices are the operator's and still work. */ -}}

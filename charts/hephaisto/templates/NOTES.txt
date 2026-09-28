@@ -104,6 +104,21 @@ Note: the outbound webhook is UNSIGNED. Your receiver cannot tell a delivery fro
 apart from anything else that can reach it. Set notifications.webhook.signed and create
 secrets.notificationWebhook to fix that.
 {{- end }}
+{{- with include "hephaisto.teamsActionsPort" . }}
+
+TEAMS BUTTONS THAT ACT ARE ON - port {{ . }}
+-------------------------------------------------------------------------------------------
+An open alert now carries Acknowledge and Assign to me. Microsoft delivers each click by
+calling this pod, so:
+
+  1. Route https://<your host>/api/teams/messages to port {{ . }} of the {{ include "hephaisto.fullname" $ }}
+     Service, and to nothing else on it. It is the ONLY inbound route Microsoft calls.
+  2. Set your Azure Bot's messaging endpoint to that URL.
+
+A click is believed only with a Bot Framework token for this bot's app id, signed by a key
+endorsed for Teams, from this tenant, by a member of the team - and is recorded as the
+member list names that person. Close, approve and deny remain links into the console.
+{{- end }}
 {{- if .Values.codeFix.enabled }}
 {{- $ns := .Values.codeFix.namespace }}
 {{- $sa := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "hephaisto.serviceAccountName" .) }}

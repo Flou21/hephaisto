@@ -146,6 +146,12 @@ spec:
               containerPort: {{ .Values.webhookPort }}
               protocol: TCP
             {{- end }}
+            {{- with include "hephaisto.teamsActionsPort" . }}
+            # The one route Microsoft calls when an alert's button acts. Nothing else answers here.
+            - name: teams-actions
+              containerPort: {{ . }}
+              protocol: TCP
+            {{- end }}
           env:
             # ---------------------------------------------------------------------------
             # Mode - the env arm of the kill switch
@@ -380,6 +386,12 @@ spec:
             {{- end }}
             - name: Notifications__TeamsBot__BoardMaxIncidents
               value: {{ .teamsBot.board.maxIncidents | quote }}
+            {{- with include "hephaisto.teamsActionsPort" $ }}
+            - name: Notifications__TeamsBot__Actions__Enabled
+              value: "true"
+            - name: Notifications__TeamsBot__Actions__Port
+              value: {{ . | quote }}
+            {{- end }}
             {{- range $r, $recipient := .teamsBot.recipients }}
             - name: Notifications__TeamsBot__Recipients__{{ $r }}
               value: {{ $recipient | quote }}
@@ -623,7 +635,7 @@ spec:
               value: /etc/hephaisto
 
             - name: ASPNETCORE_URLS
-              value: "http://0.0.0.0:8080{{ if .Values.webhookPort }};http://0.0.0.0:{{ .Values.webhookPort }}{{ end }}"
+              value: "http://0.0.0.0:8080{{ if .Values.webhookPort }};http://0.0.0.0:{{ .Values.webhookPort }}{{ end }}{{ with include "hephaisto.teamsActionsPort" . }};http://0.0.0.0:{{ . }}{{ end }}"
 
             {{- if .Values.auth.enabled }}
             # ---------------------------------------------------------------------------
