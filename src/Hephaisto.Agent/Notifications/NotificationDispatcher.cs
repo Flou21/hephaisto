@@ -194,6 +194,8 @@ public sealed class NotificationDispatcher : BackgroundService
                     : NotificationLinks.Incident(o.BaseUrl, delivery.IncidentId),
             GrafanaUrl = NotificationLinks.Grafana(o.GrafanaUrl, delivery.Snapshot),
             AlsoSuppressed = budget.SuppressedSinceLastDelivery,
+            Recipients = delivery.Recipients,
+            UsesChannelRecipients = delivery.UsesChannelRecipients,
         };
 
         using var activity = HephaistoMetrics.ActivitySource.StartActivity(

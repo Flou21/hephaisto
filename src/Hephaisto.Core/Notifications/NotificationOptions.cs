@@ -52,6 +52,44 @@ public sealed class NotificationRoute
     /// namespace to match.
     /// </summary>
     public List<string> Namespaces { get; set; } = [];
+
+    /// <summary>A name for the route, shown on every delivery it made. Unique when set.</summary>
+    public string? Name { get; set; }
+
+    /// <summary>
+    /// Label matchers, all of which must hold (#141). The alerts arriving are already labelled
+    /// for routing - by team, by product, by channel - and this is what reads that.
+    /// </summary>
+    public List<LabelMatcher> Matchers { get; set; } = [];
+
+    /// <summary>Clusters this route owns. Empty means any.</summary>
+    public List<string> Clusters { get; set; } = [];
+
+    /// <summary>Signal kinds this route owns. Empty means any.</summary>
+    public List<SignalKind> Kinds { get; set; } = [];
+
+    /// <summary>
+    /// Who this route tells, on a channel that tells people (#123). Empty means the channel's own
+    /// list - the Teams bot's <c>Recipients</c> - which is how every route behaved before.
+    /// </summary>
+    public List<string> Recipients { get; set; } = [];
+
+    /// <summary>
+    /// A fallback owns an incident no scoped route owns. Without one, a routing table scoped by
+    /// label tells nobody about an alert nobody labelled - quietly (#141).
+    /// </summary>
+    public bool Fallback { get; set; }
+
+    /// <summary>Whether this route owns only some incidents.</summary>
+    public bool IsScoped => Namespaces.Count > 0 || Matchers.Count > 0 || Clusters.Count > 0 || Kinds.Count > 0;
+}
+
+/// <summary>A label and the values it may have. It matches when the label is present with one of them.</summary>
+public sealed class LabelMatcher
+{
+    public string Label { get; set; } = string.Empty;
+
+    public List<string> Values { get; set; } = [];
 }
 
 /// <summary>

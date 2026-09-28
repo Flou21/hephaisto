@@ -62,6 +62,12 @@ the incident service and the pager that alerts go to today; this release is what
   rather than a Kubernetes object.
 
 ### Changed
+- **The right person** ([#141](docs/backlog.md#141), [#123](docs/backlog.md#123)). A route can
+  match the alert's labels, clusters and kinds, name its own recipients, and one route can be the
+  `fallback` for whatever no scoped route owns. Each delivery records who it was for and which
+  routes sent it. Existing routes behave as before.
+- A database migration, `IncidentLabelsAndRecipients`: `incidents.labels`, `incidents.alert_name`,
+  and `recipients`, `routes`, `uses_channel_recipients` on `notification_deliveries`.
 - **A person hears first, and the model second** ([#133](docs/backlog.md#133)). A new event,
   `IncidentOpened`, goes out when triage ends - before the investigation, or instead of one. The
   escalation that follows updates what was sent: the Teams bot edits the card of somebody already

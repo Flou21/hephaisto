@@ -100,7 +100,9 @@ public sealed class NotificationOutboxTests(PostgresFixture pg)
 
             // Value equality on the record, so a field silently dropped by the converter fails
             // here rather than showing up as a card with an empty line in it.
-            row.Snapshot.Should().Be(delivery.Snapshot);
+            // Equivalent, not Be: the snapshot carries the incident's labels (#141), and a record's
+            // generated equality compares a dictionary by reference.
+            row.Snapshot.Should().BeEquivalentTo(delivery.Snapshot);
         }
     }
 

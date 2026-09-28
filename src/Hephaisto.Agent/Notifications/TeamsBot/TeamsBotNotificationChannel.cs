@@ -76,7 +76,10 @@ public sealed class TeamsBotNotificationChannel(
             return DeliveryResult.Permanent("Notifications:TeamsBot is not configured");
         }
 
-        var recipients = bot.Recipients
+        // The routes' recipients, and the bot's own list when a matching route named nobody - which
+        // is every route written before routes could name anybody (#123).
+        var recipients = message.Recipients
+            .Concat(message.UsesChannelRecipients ? bot.Recipients : [])
             .Select(r => r.Trim())
             .Where(r => r.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase)

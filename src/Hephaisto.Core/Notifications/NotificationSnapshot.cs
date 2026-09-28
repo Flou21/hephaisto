@@ -62,6 +62,15 @@ public sealed record NotificationSnapshot
     /// <summary>The cluster the incident is about (#131). Empty for one from before v0.10.0.</summary>
     public string Cluster { get; init; } = string.Empty;
 
+    /// <summary>
+    /// The labels of the alert that opened the incident, less the scrape's - what a route's
+    /// matchers read (#141). Empty for an event that is not about an incident.
+    /// </summary>
+    public Dictionary<string, string> Labels { get; init; } = [];
+
+    /// <summary>The alert name that opened the incident, when an alert did.</summary>
+    public string? AlertName { get; init; }
+
     /// <summary>Human-readable <c>namespace/kind/name</c>, or empty when there is no target.</summary>
     public string Target { get; init; } = string.Empty;
 
@@ -113,4 +122,10 @@ public sealed record NotificationMessage
     /// human is already looking rather than only in a metric they would have to go and find.
     /// </summary>
     public int AlsoSuppressed { get; init; }
+
+    /// <summary>The people the matching routes named (#123). See <see cref="UsesChannelRecipients"/>.</summary>
+    public IReadOnlyList<string> Recipients { get; init; } = [];
+
+    /// <summary>Whether the channel's own recipients are to be told as well.</summary>
+    public bool UsesChannelRecipients { get; init; } = true;
 }

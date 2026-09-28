@@ -24,15 +24,18 @@ public static class NotificationEnqueue
         DateTimeOffset now)
     {
         var routing = NotificationRouter.Match(snapshot, options.Routes);
-        var deliveries = new List<NotificationDelivery>(routing.Channels.Count);
+        var deliveries = new List<NotificationDelivery>(routing.Matches.Count);
 
-        foreach (var channel in routing.Channels)
+        foreach (var match in routing.Matches)
         {
             deliveries.Add(new NotificationDelivery
             {
                 Event = snapshot.Event,
                 IncidentId = snapshot.IncidentId,
-                Channel = channel,
+                Channel = match.Channel,
+                Recipients = [.. match.Recipients],
+                UsesChannelRecipients = match.UsesChannelRecipients,
+                Routes = [.. match.Routes],
                 CorrelationKey = snapshot.CorrelationKey,
                 Status = DeliveryStatus.Pending,
                 Snapshot = snapshot,
@@ -111,6 +114,8 @@ public static class NotificationEnqueue
             EscalationReason = incident?.EscalationReason ?? EscalationReason.None,
             Namespace = incident?.Target?.Namespace ?? string.Empty,
             Cluster = incident?.Target?.Cluster ?? string.Empty,
+            Labels = incident?.Labels is { } labels ? new Dictionary<string, string>(labels, StringComparer.Ordinal) : [],
+            AlertName = incident?.AlertName,
             Target = Describe(incident),
             Summary = incident?.Resolution,
             Reason = transition.Reason,
