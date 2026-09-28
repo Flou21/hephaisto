@@ -429,7 +429,11 @@ if agent:
         chart_set.append('extraEnv[%d].name=Notifications__TeamsBot__Actions__OpenIdMetadataUrl' % (taken + 3))
         chart_set.append('extraEnv[%d].value=%s/teams/openid/.well-known/openidconfiguration' % (taken + 3, stand_in))
         chart_set.append('extraEnv[%d].name=Notifications__TeamsBot__Actions__RequireHttpsMetadata' % (taken + 4))
-        chart_set.append('extraEnv[%d].value=false' % (taken + 4))
+        # 'false ' with the space, and not a typo: `--set` - all Tilt's helm() has - types a bare
+        # false as a boolean, the chart's schema wants every env value a string and refuses the
+        # render, and Tilt then deploys nothing. Helm leaves the padded word a string, and .NET's
+        # bool parsing trims it. values-pager.yaml quotes it and never needed this.
+        chart_set.append("extraEnv[%d].value=false " % (taken + 4))
 
     if teams_bot == 'stand-in':
 
