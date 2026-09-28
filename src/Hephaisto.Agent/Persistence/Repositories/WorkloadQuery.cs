@@ -21,6 +21,15 @@ internal static class WorkloadQuery
     {
         var ns = target.Namespace;
 
+        // Per cluster (#131, #147): the same Deployment name in another cluster is another
+        // workload, and counting it here would let three clusters' alerts suppress the fourth's.
+        // An empty column is a row from before v0.10.0, which counts for every cluster.
+        var cluster = target.Cluster;
+        if (cluster.Length > 0)
+        {
+            source = source.Where(i => i.Target.Cluster == cluster || i.Target.Cluster == "");
+        }
+
         if (HasOwner(target))
         {
             var ownerKind = target.OwnerKind;

@@ -21,6 +21,12 @@ public enum TriageOutcome
 
     /// <summary>A new incident worth spending money on.</summary>
     Investigate,
+
+    /// <summary>A resolve: its alert instance is no longer firing, and nothing opened.</summary>
+    Cleared,
+
+    /// <summary>A resolve for an alert the agent has no incident for. Nothing happened.</summary>
+    Ignored,
 }
 
 public readonly record struct TriageResult(TriageOutcome Outcome, Guid IncidentId);
@@ -43,6 +49,13 @@ public sealed class IncidentTriage(
     public async Task<TriageResult> TriageAsync(Signal signal, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(signal);
+
+        // An alert has a lifecycle the Kubernetes watch does not: it resolves, it repeats on
+        // Alertmanager's timer, and it comes back. See TriageAlertAsync.
+        if (signal.Source == SignalSource.Alertmanager && signal.AlertKey is not null)
+        {
+            return await TriageAlertAsync(signal, ct).ConfigureAwait(false);
+        }
 
         var opts = options.CurrentValue;
         var now = clock.UtcNow;
@@ -141,6 +154,324 @@ public sealed class IncidentTriage(
         return new(TriageOutcome.Investigate, incident.Id);
     }
 
+    /// <summary>
+    /// One alert, for as long as it fires (#129, #130).
+    /// </summary>
+    /// <remarks>
+    /// <code>
+    /// RESOLVED  no matching row            -> Ignored, nothing opens
+    ///           row found                  -> row.Status = Resolved
+    ///           no other firing row on it  -> Acting|Verifying: left to the verifier
+    ///                                         AwaitingApproval: proposal expired, AlertCleared
+    ///                                         otherwise:        AlertCleared (-> Closed)
+    /// FIRING    open incident, row exists  -> absorbed, whatever its age
+    ///           open incident, no row      -> new row attached
+    ///           closed by a person, still  -> absorbed silently: no page per repeat
+    ///             firing since
+    ///           ended inside ReopenWindow  -> Reopen (-> Triaging), decided like a new one
+    ///           otherwise                  -> flap (per cluster) -> correlation -> open
+    /// </code>
+    /// <para>
+    /// One row per alert instance (<see cref="Signal.AlertKey"/>), updated in place. A repeat
+    /// used to be a new row every time, which is how "fired three times" became three rows and
+    /// "has everything on it cleared" became unanswerable.
+    /// </para>
+    /// <para>
+    /// <b>Never Suppressed.</b> An Alertmanager alert that flaps is escalated instead: grouping
+    /// a noisy alert is Alertmanager's job, and an incident suppressed here is a page nobody
+    /// receives (#147).
+    /// </para>
+    /// </remarks>
+    private async Task<TriageResult> TriageAlertAsync(Signal signal, CancellationToken ct)
+    {
+        var opts = options.CurrentValue;
+        var now = clock.UtcNow;
+        var key = signal.AlertKey!;
+
+        if (signal.Status == SignalStatus.Resolved)
+        {
+            return await ClearAsync(signal, key, now, ct).ConfigureAwait(false);
+        }
+
+        // 1. The same alert, still open: absorbed however long ago it last spoke. The burst and
+        //    correlation windows are for recognising different kinds of trouble on one workload,
+        //    not the same alert repeating on Alertmanager's timer.
+        var open = await incidents.FindOpenByFingerprintAsync(signal.Fingerprint, ct).ConfigureAwait(false);
+
+        if (open is not null)
+        {
+            await AbsorbAsync(open, signal, key, now, ct).ConfigureAwait(false);
+            await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
+            return new(TriageOutcome.Deduplicated, open.Id);
+        }
+
+        // 2. The same alert, ended.
+        var ended = await incidents.FindLastEndedByFingerprintAsync(signal.Fingerprint, ct).ConfigureAwait(false);
+
+        if (ended is not null)
+        {
+            var row = await incidents.FindAlertRowAsync(ended.Id, key, ct).ConfigureAwait(false);
+
+            // A person closed it while this alert was firing, and it has not stopped since. The
+            // repeat is Alertmanager restating what that person already decided about; paging
+            // them for it every repeat_interval is how a pager gets muted.
+            if (ended.State == IncidentState.Closed
+                && ended.ClosedBy != IncidentStateMachine.AlertmanagerActor
+                && row is { Status: SignalStatus.Firing })
+            {
+                Touch(row, signal, now);
+                await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
+                return new(TriageOutcome.Deduplicated, ended.Id);
+            }
+
+            var endedAt = ended.ClosedAt ?? ended.ResolvedAt;
+
+            if (endedAt is { } at && now - at <= opts.ReopenWindow)
+            {
+                return await ReopenAsync(ended, row, signal, key, now, ct).ConfigureAwait(false);
+            }
+        }
+
+        // 3. Flap detection, per cluster and never for an alert that names no object: its
+        //    "workload" is the rule, and every series of a rule would count against the others.
+        if (!signal.Target.IsAlertOnly)
+        {
+            var recent = await incidents
+                .CountRecentForWorkloadAsync(signal.Target, opts.FlapWindow, ct)
+                .ConfigureAwait(false);
+
+            if (recent >= opts.FlapThreshold)
+            {
+                var flapping = await OpenAlertIncidentAsync(signal, now, ct).ConfigureAwait(false);
+                stateMachine.Triage(flapping, "flap detection");
+                stateMachine.Escalate(flapping, EscalationReason.Quarantined,
+                    $"flapping: {recent} incidents for {signal.Target.WorkloadKey} in {opts.FlapWindow}");
+                flapping.QuarantinedUntil = now + opts.FlapCooldown;
+
+                await RecordOutcomeAsync(flapping, now, ct).ConfigureAwait(false);
+                EnlistAudit(flapping, "incident.escalated", "Flapping workload; not investigated");
+                await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
+
+                return new(TriageOutcome.Suppressed, flapping.Id);
+            }
+        }
+
+        // 4. Correlation, measured from when the related incident opened or reopened rather than
+        //    from its last signal: an alert that repeats must not keep a correlation window open
+        //    for ever.
+        var related = await incidents
+            .FindByCorrelationKeyAsync(SignalFingerprinter.CorrelationKey(signal), ct)
+            .ConfigureAwait(false);
+
+        if (related is not null
+            && related.IsOpen
+            && now - (related.ReopenedAt ?? related.OpenedAt) <= opts.CorrelationWindow)
+        {
+            Attach(related, signal, now);
+            await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
+            return new(TriageOutcome.Correlated, related.Id);
+        }
+
+        // 5. A new incident.
+        var incident = await OpenAlertIncidentAsync(signal, now, ct).ConfigureAwait(false);
+        stateMachine.Triage(incident, "new alert");
+
+        return await DecideAsync(incident, signal, now, ct).ConfigureAwait(false);
+    }
+
+    private async Task<Incident> OpenAlertIncidentAsync(Signal signal, DateTimeOffset now, CancellationToken ct)
+    {
+        var incident = OpenIncident(signal, now);
+        await incidents.AddAsync(incident, ct).ConfigureAwait(false);
+
+        metrics.IncidentOpened(incident.Kind, incident.Severity);
+        metrics.DetectionLatency(now - signal.FirstSeen);
+        await annotator.IncidentOpenedAsync(incident, ct).ConfigureAwait(false);
+
+        return incident;
+    }
+
+    /// <summary>The last step for a new or reopened incident: escalate a self-signal, else investigate.</summary>
+    /// <param name="trackFrom">
+    /// For an incident that already exists, the index of its first event appended in this unit of
+    /// work: those are new rows EF would otherwise state as updates matching nothing. See
+    /// <see cref="IIncidentRepository.TrackNewIncidentChildren"/>.
+    /// </param>
+    private async Task<TriageResult> DecideAsync(
+        Incident incident,
+        Signal signal,
+        DateTimeOffset now,
+        CancellationToken ct,
+        int? trackFrom = null)
+    {
+        if (IsSelfSignal(signal, options.CurrentValue))
+        {
+            stateMachine.Escalate(incident, EscalationReason.SelfSignal, "signal concerns Hephaisto's own namespace");
+            if (trackFrom is { } from) incidents.TrackNewIncidentChildren(incident, from);
+
+            await RecordOutcomeAsync(incident, now, ct).ConfigureAwait(false);
+            EnlistAudit(incident, "incident.escalated", "Self-signal");
+            await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
+
+            return new(TriageOutcome.Suppressed, incident.Id);
+        }
+
+        stateMachine.BeginInvestigation(incident, "triage complete");
+        if (trackFrom is { } start) incidents.TrackNewIncidentChildren(incident, start);
+        EnlistAudit(incident, "incident.opened", signal.Reason);
+        await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
+
+        return new(TriageOutcome.Investigate, incident.Id);
+    }
+
+    /// <summary>
+    /// The alert came back within the reopen window: the same incident, decided again.
+    /// </summary>
+    private async Task<TriageResult> ReopenAsync(
+        Incident incident,
+        Signal? row,
+        Signal signal,
+        string key,
+        DateTimeOffset now,
+        CancellationToken ct)
+    {
+        var opts = options.CurrentValue;
+        var eventsBefore = incident.Events.Count;
+
+        stateMachine.Reopen(incident, $"{signal.Reason} fired again");
+
+        if (row is not null)
+        {
+            Touch(row, signal, now);
+            incident.LastSignalAt = now;
+            RaiseSeverity(incident, signal);
+        }
+        else
+        {
+            Attach(incident, signal, now);
+        }
+
+        metrics.IncidentReopened(incident.Kind, incident.Severity);
+        EnlistAudit(incident, "incident.reopened", $"{signal.Reason} fired again");
+
+        // A reopen is news, and a person is told either way. Whether it is also worth another
+        // investigation depends on how often it has come back: at the flap threshold the answer
+        // is a person, not another model run on the same fault.
+        var reopens = await incidents.CountReopensAsync(incident.Id, now - opts.FlapWindow, ct).ConfigureAwait(false);
+
+        if (reopens + 1 >= opts.FlapThreshold)
+        {
+            stateMachine.Escalate(incident, EscalationReason.Quarantined,
+                $"flapping: reopened {reopens + 1} times in {opts.FlapWindow}");
+            incidents.TrackNewIncidentChildren(incident, eventsBefore);
+
+            await RecordOutcomeAsync(incident, now, ct).ConfigureAwait(false);
+            await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
+            return new(TriageOutcome.Suppressed, incident.Id);
+        }
+
+        return await DecideAsync(incident, signal, now, ct, trackFrom: eventsBefore).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// A resolve. It closes the incident once nothing on it still fires, and opens nothing.
+    /// </summary>
+    private async Task<TriageResult> ClearAsync(Signal signal, string key, DateTimeOffset now, CancellationToken ct)
+    {
+        var open = await incidents.FindOpenByFingerprintAsync(signal.Fingerprint, ct).ConfigureAwait(false);
+
+        var row = open is not null
+            ? await incidents.FindAlertRowAsync(open.Id, key, ct).ConfigureAwait(false)
+            : await incidents.FindLatestAlertRowAsync(signal.Fingerprint, key, ct).ConfigureAwait(false);
+
+        if (row is null)
+        {
+            // Resolved before it was ever seen - the agent was down, or installed after the alert
+            // fired. The fault going away is not something to tell anybody about.
+            metrics.SignalDropped(signal.Source, "resolved-unmatched");
+            return new(TriageOutcome.Ignored, Guid.Empty);
+        }
+
+        row.Status = SignalStatus.Resolved;
+        row.LastSeen = signal.LastSeen;
+
+        if (open is null)
+        {
+            await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
+            return new(TriageOutcome.Cleared, row.IncidentId ?? Guid.Empty);
+        }
+
+        if (await incidents.HasOtherFiringAlertsAsync(open.Id, row.Id, ct).ConfigureAwait(false))
+        {
+            await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
+            return new(TriageOutcome.Cleared, open.Id);
+        }
+
+        switch (open.State)
+        {
+            case IncidentState.Acting or IncidentState.Verifying:
+                // The verifier reads exactly this - the alert going away after the action - and
+                // decides. Closing underneath it would record a fix as an accident.
+                break;
+
+            default:
+                var eventsBefore = open.Events.Count;
+
+                if (open.State == IncidentState.AwaitingApproval)
+                {
+                    foreach (var action in open.Actions.Where(a => a.State == ActionState.AwaitingApproval))
+                    {
+                        action.State = ActionState.Expired;
+                        action.Error = "The alert cleared before anyone approved this.";
+                    }
+                }
+
+                stateMachine.AlertCleared(open, signal.Reason);
+                incidents.TrackNewIncidentChildren(open, eventsBefore);
+
+                await RecordOutcomeAsync(open, now, ct).ConfigureAwait(false);
+                EnlistAudit(open, "incident.cleared", $"{signal.Reason} resolved and nothing on the incident still fires");
+                break;
+        }
+
+        await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
+        return new(TriageOutcome.Cleared, open.Id);
+    }
+
+    /// <summary>A firing alert on its open incident: its row updated, or a row added.</summary>
+    private async Task AbsorbAsync(Incident incident, Signal signal, string key, DateTimeOffset now, CancellationToken ct)
+    {
+        var row = await incidents.FindAlertRowAsync(incident.Id, key, ct).ConfigureAwait(false);
+
+        if (row is null)
+        {
+            Attach(incident, signal, now);
+            return;
+        }
+
+        Touch(row, signal, now);
+        incident.LastSignalAt = now;
+        RaiseSeverity(incident, signal);
+    }
+
+    /// <summary>One more observation of an alert instance that already has its row.</summary>
+    private static void Touch(Signal row, Signal signal, DateTimeOffset now)
+    {
+        row.Count++;
+        row.LastSeen = now;
+        row.Status = SignalStatus.Firing;
+        row.Severity = signal.Severity > row.Severity ? signal.Severity : row.Severity;
+        row.Message = signal.Message;
+    }
+
+    private static void RaiseSeverity(Incident incident, Signal signal)
+    {
+        if (signal.Severity > incident.Severity)
+        {
+            incident.Severity = signal.Severity;
+        }
+    }
+
     /// <summary>Used by the storm circuit breaker, which decides to escalate after triage has finished.</summary>
     public async Task EscalateAsync(Guid incidentId, EscalationReason reason, CancellationToken ct)
     {
@@ -181,9 +512,11 @@ public sealed class IncidentTriage(
         await annotator.IncidentClosedAsync(incident, summary: null, ct).ConfigureAwait(false);
     }
 
+    // The agent's own namespaces only mean the agent in the agent's own cluster (#131): a
+    // namespace called "hephaisto" elsewhere is somebody else's workload.
     private static bool IsSelfSignal(Signal signal, IngestOptions opts) =>
         signal.Source == SignalSource.SelfMonitoring
-        || opts.SelfNamespaces.Contains(signal.Target.Namespace);
+        || (opts.SelfNamespaces.Contains(signal.Target.Namespace) && !signal.Target.IsForeignTo(opts.ClusterName));
 
     private void Attach(Incident incident, Signal signal, DateTimeOffset now)
     {
@@ -199,8 +532,7 @@ public sealed class IncidentTriage(
 
         // The incident carries the worst severity any of its signals reported. A warning that
         // later turns critical must not stay filed as a warning.
-        if (signal.Severity > incident.Severity)
-            incident.Severity = signal.Severity;
+        RaiseSeverity(incident, signal);
 
         Relabel(incident, signal);
     }

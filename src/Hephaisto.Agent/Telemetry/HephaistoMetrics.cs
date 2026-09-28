@@ -25,6 +25,7 @@ public sealed class HephaistoMetrics : IDisposable
     private readonly Counter<long> signalsReceived;
     private readonly Counter<long> signalsDropped;
     private readonly Counter<long> incidentsOpened;
+    private readonly Counter<long> incidentsReopened;
     private readonly Counter<long> incidentsClosed;
     private readonly UpDownCounter<long> incidentsOpen;
     private readonly Histogram<double> detectionLatency;
@@ -49,6 +50,7 @@ public sealed class HephaistoMetrics : IDisposable
         signalsReceived   = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.SignalsReceived);
         signalsDropped    = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.SignalsDropped);
         incidentsOpened   = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.IncidentsOpened);
+        incidentsReopened = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.IncidentsReopened);
         incidentsClosed   = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.IncidentsClosed);
 
         // UpDownCounter, per the dashboard's metric-spec table. A polled gauge over the
@@ -106,6 +108,20 @@ public sealed class HephaistoMetrics : IDisposable
     public void IncidentOpened(SignalKind kind, Severity severity)
     {
         incidentsOpened.Add(1,
+            new("kind", kind.ToString()),
+            new("severity", severity.ToString()));
+
+        incidentsOpen.Add(1, new KeyValuePair<string, object?>("kind", kind.ToString()));
+    }
+
+    /// <summary>
+    /// An ended incident open again. Counted apart from <see cref="IncidentOpened"/>, which would
+    /// otherwise read as a new fault, and moving the open gauge back up by the one its close took
+    /// away.
+    /// </summary>
+    public void IncidentReopened(SignalKind kind, Severity severity)
+    {
+        incidentsReopened.Add(1,
             new("kind", kind.ToString()),
             new("severity", severity.ToString()));
 

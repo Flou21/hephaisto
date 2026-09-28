@@ -68,6 +68,51 @@ public sealed class IncidentRepository(HephaistoDbContext db, IClock clock) : II
 
     public void AddSignal(Signal signal) => db.Signals.Add(signal);
 
+    public Task<Incident?> FindOpenByFingerprintAsync(string fingerprint, CancellationToken ct) =>
+        db.Incidents
+            .Include(i => i.Actions)
+            .Where(i => HephaistoDbContext.OpenStates.Contains(i.State)
+                && i.Signals.Any(s => s.Fingerprint == fingerprint))
+            .OrderByDescending(i => i.LastSignalAt)
+            .FirstOrDefaultAsync(ct);
+
+    public Task<Incident?> FindLastEndedByFingerprintAsync(string fingerprint, CancellationToken ct) =>
+        db.Incidents
+            .Where(i => (i.State == IncidentState.Closed || i.State == IncidentState.Resolved)
+                && i.Signals.Any(s => s.Fingerprint == fingerprint))
+            .OrderByDescending(i => i.ClosedAt ?? i.ResolvedAt ?? i.LastSignalAt)
+            .FirstOrDefaultAsync(ct);
+
+    public Task<Signal?> FindAlertRowAsync(Guid incidentId, string alertKey, CancellationToken ct) =>
+        db.Signals
+            .Where(s => s.IncidentId == incidentId && s.AlertKey == alertKey)
+            .OrderByDescending(s => s.LastSeen)
+            .FirstOrDefaultAsync(ct);
+
+    public Task<Signal?> FindLatestAlertRowAsync(string fingerprint, string alertKey, CancellationToken ct) =>
+        db.Signals
+            .Where(s => s.Fingerprint == fingerprint && s.AlertKey == alertKey && s.IncidentId != null)
+            .OrderByDescending(s => s.LastSeen)
+            .FirstOrDefaultAsync(ct);
+
+    // Alert rows only: a Kubernetes watch signal correlated onto the incident has no resolve, and
+    // counting it as still firing would keep every such incident open for good.
+    public Task<bool> HasOtherFiringAlertsAsync(Guid incidentId, Guid exceptSignalId, CancellationToken ct) =>
+        db.Signals.AnyAsync(
+            s => s.IncidentId == incidentId
+                && s.Id != exceptSignalId
+                && s.AlertKey != null
+                && s.Status == SignalStatus.Firing,
+            ct);
+
+    public Task<int> CountReopensAsync(Guid incidentId, DateTimeOffset since, CancellationToken ct) =>
+        db.IncidentEvents.CountAsync(
+            e => e.IncidentId == incidentId
+                && e.At >= since
+                && e.To == IncidentState.Triaging
+                && (e.From == IncidentState.Closed || e.From == IncidentState.Resolved),
+            ct);
+
     public void TrackNewIncidentChildren(
         Incident incident,
         int fromEventIndex = 0,

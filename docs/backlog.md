@@ -1924,7 +1924,13 @@ MTTR as the reason - which nothing computes from them.
 never opens one. **Decided 2026-09-28:** a resolve closes the incident, with the reason
 recorded, once no other alert instance on it still fires; a re-fire within 24 hours reopens it
 rather than opening a second one. An incident the agent is acting on is left to the verifier.
-**Size.** M. Open.
+**Size.** M. **Fixed in v0.10.0**: a signal carries its status and its alert instance
+(`AlertKey`), and `IncidentTriage.TriageAlertAsync` gives an alert a lifecycle. A resolve marks
+its row resolved and opens nothing; once no alert instance on the incident still fires it closes
+the incident as `hephaisto/alertmanager` (`IncidentStateMachine.AlertCleared`), expiring a pending
+proposal, and leaves one that is acting or verifying to the verifier. A re-fire within
+`Ingest:ReopenWindow` (24 hours) reopens the same incident to Triaging. Pager scenarios P05, P07,
+P08, P09.
 
 ### 130. A repeat notification opens a new incident
 
@@ -1941,7 +1947,12 @@ hour (`IngestOptions.cs:22-24`). A repeat every few hours never gets there.
 **What to do.** An open incident with the same identity absorbs the signal however old its last
 signal is; the windows are for correlating different kinds, not for recognising the same alert.
 An incident closed recently should be reopened rather than duplicated, which is the question
-[#109](#109) left open. **Size.** M. Open.
+[#109](#109) left open. **Size.** M. **Fixed in v0.10.0**: an open incident - Escalated included -
+absorbs its alert however old its last signal is, updating the alert instance's row in place
+(`Count`, `LastSeen`, `Status`) rather than adding one per repeat. An incident a person closed while
+its alert was firing absorbs the repeats silently for as long as it keeps firing. Correlation for
+an alert is measured from when the related incident opened or reopened, so a repeating alert no
+longer holds a correlation window open. Pager scenarios P06, P11.
 
 ### 131. The alert's `cluster` label is never read
 
@@ -2243,7 +2254,9 @@ alert shares the workload `Alert/<alertname>`.
 
 **What to do.** Count per cluster, skip label-only alerts, and never end an Alertmanager signal
 `Suppressed`: a flapping alert is Alertmanager's to group, and a person still needs to hear.
-**Size.** S. Open.
+**Size.** S. **Fixed in v0.10.0**: flap detection counts per cluster, is skipped for an alert that names
+no object, and an Alertmanager alert that flaps is escalated as `Quarantined` - a person is told -
+instead of suppressed. Pager scenario P10.
 
 ### 148. A warning that turns critical tells nobody
 
@@ -2261,7 +2274,8 @@ A route that wants criticals only never hears of an incident that opened as a wa
 incident ([#129](#129)), anything that stops at an acknowledgement ([#142](#142)) stops at one
 given for the previous outage.
 
-**What to do.** A reopen clears the acknowledgement and keeps the assignee. **Size.** S. Open.
+**What to do.** A reopen clears the acknowledgement and keeps the assignee. **Size.** S. **Fixed in v0.10.0**, exactly that: `Reopen` clears `AcknowledgedBy` and `AcknowledgedAt` and
+keeps `AssignedTo`.
 
 ### 150. The hourly channel cap drops an opening silently
 
@@ -2289,7 +2303,9 @@ Once an alert clearing can close an incident ([#129](#129)) while its investigat
 investigation's end escalates or resolves an incident that is already closed.
 
 **What to do.** Re-read the state before each transition; if it is no longer `Investigating`,
-keep the investigation and its usage, record why, and move nothing. **Size.** S. Open.
+keep the investigation and its usage, record why, and move nothing. **Size.** S. **Fixed in v0.10.0**: `InvestigationCoordinator` re-reads the incident's state before it
+transitions; if the incident is no longer Investigating, the investigation, its spend and its
+evidence are saved with an audit line saying why the outcome was not applied, and nothing moves.
 
 ### 153. With the agent `Off`, the webhook answers 200 and drops the alert
 
@@ -2307,7 +2323,7 @@ and the verifier. The console's close (`Web/IncidentQueries.cs:1100`) does not c
 incident a person closes while it is still in an open state - awaiting approval, say - leaves
 `hephaisto.incidents.open` one too high for good.
 
-**What to do.** One close metric recorded by every path that closes. **Size.** S. Open.
+**What to do.** One close metric recorded by every path that closes. **Size.** S. **Fixed in v0.10.0**: the console's close records `IncidentClosed` like every other path.
 
 ### 155. A lost resolve leaves an incident open
 
@@ -2317,7 +2333,7 @@ sweeper that would expire it is off by default.
 
 **What to do.** Accepted for v0.10.0: an open incident with a firing row is shown as such, and
 Alertmanager repeats a firing alert. A rule deleted while firing is a person's to close. **Size.**
-S. Open.
+S. **Accepted for v0.10.0**, as written above.
 
 
 ## Dead or unreachable code

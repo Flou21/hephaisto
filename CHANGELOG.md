@@ -56,6 +56,22 @@ the incident service and the pager that alerts go to today; this release is what
   rather than a Kubernetes object.
 
 ### Changed
+- **An alert is one incident for as long as it fires** ([#129](docs/backlog.md#129),
+  [#130](docs/backlog.md#130)). A repeat is absorbed however long after the first firing it
+  arrives, into the alert instance's own row. A resolve opens nothing; once nothing on the
+  incident still fires it closes the incident, recorded as closed by `hephaisto/alertmanager` -
+  not resolved, because the alert going away is not the agent fixing anything. An incident with an
+  action in flight is left to the verifier. The same alert firing again within
+  `Ingest:ReopenWindow` (24 hours) reopens its incident, which is then decided like a new one, and
+  the reopen clears the acknowledgement ([#149](docs/backlog.md#149)). A person who closed an
+  incident while its alert was still firing is not paged again by its repeats.
+- **A flapping alert is escalated, never suppressed**, and flap detection counts per cluster
+  ([#147](docs/backlog.md#147)).
+- An investigation that ends after its incident closed is kept and changes nothing
+  ([#152](docs/backlog.md#152)). The console's close now counts toward
+  `hephaisto.incidents.open` ([#154](docs/backlog.md#154)); a reopen is
+  `hephaisto.incidents.reopened`.
+- A database migration, `AlertLifecycle`: `incidents.reopened_at`.
 - **An alert's identity comes from its labels.** The `cluster` label is part of it, so the same
   workload in two clusters is two incidents ([#131](docs/backlog.md#131)); an alert that names no
   object is one incident per series of its rule, not one per rule, titled by what tells its series
