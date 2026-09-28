@@ -108,14 +108,14 @@ refuses "buttons that act on the webhook's port" \
 refuses "the actions switch set behind the chart's back" \
     --set 'extraEnv[0].name=Notifications__TeamsBot__Actions__Enabled' --set 'extraEnv[0].value=true'
 
-OFF=$(helm template t "$CHART" --namespace hephaisto "${BOT[@]}" 2>&1)
+OFF=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative "${BOT[@]}" 2>&1)
 if grep -q 'teams-actions\|Notifications__TeamsBot__Actions' <<<"$OFF"; then
     fail "with the buttons off, nothing of the inbound route is rendered"
 else
     pass "with the buttons off, nothing of the inbound route is rendered"
 fi
 
-ON=$(helm template t "$CHART" --namespace hephaisto "${BOT[@]}" --set notifications.teamsBot.actions.enabled=true --set networkPolicy.enabled=true 2>&1)
+ON=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative "${BOT[@]}" --set notifications.teamsBot.actions.enabled=true --set networkPolicy.enabled=true 2>&1)
 ACTION_RULE=$(printf '%s' "$ON" | python3 -c '
 import sys, yaml
 for doc in yaml.safe_load_all(sys.stdin):
