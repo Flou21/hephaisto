@@ -139,4 +139,96 @@ public sealed class NotificationOptionsBindingTests
                 .Should().Throw<OptionsValidationException>()
                 .WithMessage("*BaseUrl*");
     }
+
+    [Fact]
+    public void The_charts_teams_bot_key_shape_binds()
+    {
+        // Exactly what templates/deployment.yaml renders for notifications.teamsBot.
+        var options = Bind(
+            ("Notifications:BaseUrl", "https://hephaisto.example"),
+            ("Notifications:TeamsBot:TenantId", "f4447a03-0000-0000-0000-000000000000"),
+            ("Notifications:TeamsBot:AppId", "58b00500-0000-0000-0000-000000000000"),
+            ("Notifications:TeamsBot:ClientSecret", "s"),
+            ("Notifications:TeamsBot:ChannelId", "19:abc@thread.tacv2"),
+            ("Notifications:TeamsBot:TeamId", "11111111-0000-0000-0000-000000000000"),
+            ("Notifications:TeamsBot:Recipients:0", "it@true-relevance.example"),
+            ("Notifications:TeamsBot:Recipients:1", "dev@true-relevance.example"),
+            ("Notifications:TeamsBot:BoardMaxIncidents", "15"),
+            ("Notifications:Routes:0:Channel", "teamsBot"),
+            ("Notifications:Routes:0:Events:0", "IncidentEscalated"));
+
+        options.TeamsBot.IsConfigured.Should().BeTrue();
+        options.TeamsBot.ChannelId.Should().Be("19:abc@thread.tacv2");
+        options.TeamsBot.Recipients.Should().Equal("it@true-relevance.example", "dev@true-relevance.example");
+        options.TeamsBot.BoardMaxIncidents.Should().Be(15);
+        options.TeamsBot.ServiceUrl.Should().Be("https://smba.trafficmanager.net/teams");
+        options.ConfiguredChannels().Should().Equal(NotificationChannelNames.TeamsBot);
+        options.Routes[0].Channel.Should().Be("teamsBot");
+    }
+
+    [Fact]
+    public void Half_a_teams_bot_is_refused_at_startup()
+    {
+        // The channel would not be registered, nothing would be sent, and the values file
+        // would look as though it had been set up.
+        Refused(
+            "*partly configured*",
+            ("Notifications:TeamsBot:AppId", "58b00500-0000-0000-0000-000000000000"),
+            ("Notifications:TeamsBot:ChannelId", "19:abc@thread.tacv2"));
+    }
+
+    [Fact]
+    public void A_board_larger_than_was_measured_is_refused()
+    {
+        Refused(
+            "*BoardMaxIncidents*",
+            ("Notifications:TeamsBot:TenantId", "t"),
+            ("Notifications:TeamsBot:AppId", "a"),
+            ("Notifications:TeamsBot:ClientSecret", "s"),
+            ("Notifications:TeamsBot:ChannelId", "19:abc@thread.tacv2"),
+            ("Notifications:TeamsBot:BoardMaxIncidents", "41"));
+    }
+
+    [Fact]
+    public void The_bot_is_registered_only_when_it_is_configured()
+    {
+        Registered().Should().NotContain(t => t.Name.StartsWith("TeamsBo", StringComparison.Ordinal));
+
+        Registered(
+            ("Notifications:TeamsBot:TenantId", "t"),
+            ("Notifications:TeamsBot:AppId", "a"),
+            ("Notifications:TeamsBot:ClientSecret", "s"),
+            ("Notifications:TeamsBot:ChannelId", "19:abc@thread.tacv2"))
+            .Select(t => t.Name)
+            .Should().Contain(["TeamsBotNotificationChannel", "TeamsBoardReconciler", "TeamsBotTokenCache"]);
+
+        static List<Type> Registered(params (string Key, string Value)[] settings)
+        {
+            var configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(settings.Select(s => new KeyValuePair<string, string?>(s.Key, s.Value)))
+                .Build();
+
+            var services = new ServiceCollection();
+            services.AddHephaistoNotifications(configuration);
+
+            return [.. services
+                .Select(d => d.ImplementationType ?? d.ServiceType)
+                .Where(t => t.Namespace == "Hephaisto.Agent.Notifications.TeamsBot")];
+        }
+    }
+
+    private static void Refused(string because, params (string Key, string Value)[] settings)
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(settings.Select(s => new KeyValuePair<string, string?>(s.Key, s.Value)))
+            .Build();
+
+        var services = new ServiceCollection();
+        services.AddHephaistoNotifications(configuration);
+
+        services.BuildServiceProvider()
+            .Invoking(p => p.GetRequiredService<IOptionsMonitor<NotificationOptions>>().CurrentValue)
+            .Should().Throw<OptionsValidationException>()
+            .WithMessage(because);
+    }
 }

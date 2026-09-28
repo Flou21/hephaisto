@@ -192,3 +192,86 @@ public sealed class NotificationDelivery
     /// </summary>
     public string? LastError { get; set; }
 }
+
+public enum TeamsBotMessageKind
+{
+    /// <summary>Takes the zero value so a default-constructed row cannot claim to be a board.</summary>
+    Unspecified = 0,
+
+    /// <summary>The one message in the channel that lists every open incident.</summary>
+    Board = 1,
+
+    /// <summary>One incident, for one person, in their personal chat with the bot.</summary>
+    Alert = 2,
+}
+
+public enum TeamsBotMessageState
+{
+    Unspecified = 0,
+
+    /// <summary>Still compared with what it shows, and edited when that differs.</summary>
+    Live = 1,
+
+    /// <summary>A newer alert for the same incident was posted; this one is to be shrunk.</summary>
+    Superseded = 2,
+
+    /// <summary>Said its last word. Never edited again.</summary>
+    Final = 3,
+}
+
+/// <summary>
+/// A message the bot posted to Teams, and everything needed to edit it later.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Editing is the whole point of the bot, and editing needs the id Teams gave the message when it
+/// was posted. That id exists nowhere else, so losing it turns a living card into a permanent one
+/// that nothing can correct - which is why it is a row and not a field in memory.
+/// </para>
+/// <para>
+/// <b>There is no "deleted" state</b>, because nothing is ever deleted: Teams leaves a
+/// "This message has been deleted." line behind. A message that is over is <see
+/// cref="TeamsBotMessageState.Final"/>, still there, saying how it ended.
+/// </para>
+/// <para>
+/// No foreign key to incidents, matching <see cref="NotificationDelivery"/>: this is a record of
+/// what was said to somebody.
+/// </para>
+/// </remarks>
+public sealed class TeamsBotMessage
+{
+    public Guid Id { get; set; } = Guid.CreateVersion7();
+
+    public TeamsBotMessageKind Kind { get; set; }
+
+    public TeamsBotMessageState State { get; set; }
+
+    /// <summary>Null for the board, and for an alert about the agent rather than an incident.</summary>
+    public Guid? IncidentId { get; set; }
+
+    /// <summary>
+    /// For an alert, the address it went to. For the board, the channel it is in - so pointing
+    /// the configuration at another channel starts a new board rather than editing the old one.
+    /// </summary>
+    public string Recipient { get; set; } = string.Empty;
+
+    public string ConversationId { get; set; } = string.Empty;
+
+    public string ActivityId { get; set; } = string.Empty;
+
+    /// <summary>What was last sent, so an unchanged card is not sent again.</summary>
+    public string ContentHash { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The outbox row that caused an alert. With <see cref="Recipient"/> it is what makes a
+    /// retried delivery skip the people who were already told.
+    /// </summary>
+    public Guid? DeliveryId { get; set; }
+
+    public DateTimeOffset CreatedAt { get; set; }
+
+    public DateTimeOffset UpdatedAt { get; set; }
+
+    /// <summary>Why the last edit did not work, in the words Teams used. Truncated on the way in.</summary>
+    public string? LastError { get; set; }
+}

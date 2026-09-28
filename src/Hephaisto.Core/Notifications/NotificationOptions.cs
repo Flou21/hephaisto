@@ -10,6 +10,12 @@ public static class NotificationChannelNames
 {
     public const string Webhook = "webhook";
     public const string Teams = "teams";
+
+    /// <summary>
+    /// Microsoft Teams through a registered bot. Spelled as the chart spells the value, because
+    /// the same word is a routing key in a values file and a metric label here.
+    /// </summary>
+    public const string TeamsBot = "teamsBot";
 }
 
 /// <summary>
@@ -82,6 +88,80 @@ public sealed class TeamsChannelOptions
 }
 
 /// <summary>
+/// Microsoft Teams, through a registered bot speaking the Bot Connector REST API.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A different thing from <see cref="TeamsChannelOptions"/>, and it coexists with it. A Workflows
+/// trigger can post and nothing else; a bot can <b>edit what it posted</b>, which is what makes
+/// one living board possible instead of a card per event.
+/// </para>
+/// <para>
+/// <b>It never deletes.</b> Teams leaves "This message has been deleted." behind for a deleted
+/// channel post and for a deleted reply alike - measured against a real tenant on 2026-09-28 -
+/// so a closed incident is removed by editing the board, and an alert that is over is edited into
+/// its final state and left.
+/// </para>
+/// </remarks>
+public sealed class TeamsBotOptions
+{
+    /// <summary>The Microsoft Entra tenant the bot is registered in. Single-tenant, always.</summary>
+    public string? TenantId { get; set; }
+
+    /// <summary>The bot's Microsoft App ID. Not a secret: it is printed in the app manifest.</summary>
+    public string? AppId { get; set; }
+
+    /// <summary>The app registration's client secret. From a Secret, never a Helm value.</summary>
+    public string? ClientSecret { get; set; }
+
+    /// <summary>The channel holding the board, as <c>19:...@thread.tacv2</c>.</summary>
+    public string? ChannelId { get; set; }
+
+    /// <summary>
+    /// The team's Microsoft Entra group id. Optional: it is only what a link from an alert to the
+    /// board is built from, and an alert without that button is thinner, not broken.
+    /// </summary>
+    public string? TeamId { get; set; }
+
+    /// <summary>
+    /// Work email addresses that receive alerts as a personal chat message from the bot.
+    /// </summary>
+    /// <remarks>
+    /// A personal chat rather than the channel, because a channel post cannot be taken back and
+    /// an edit notifies nobody. Matched against the team's member list, which the bot may read
+    /// because it is installed there - so an address has to belong to a member, and no directory
+    /// permission is involved.
+    /// </remarks>
+    public List<string> Recipients { get; set; } = [];
+
+    /// <summary>
+    /// Where the Bot Connector lives. The global endpoint for the commercial cloud; overridden
+    /// by the e2e harness, which stands in for it.
+    /// </summary>
+    public string ServiceUrl { get; set; } = "https://smba.trafficmanager.net/teams";
+
+    /// <summary>Where tokens come from. Overridden by the e2e harness for the same reason.</summary>
+    public string LoginUrl { get; set; } = "https://login.microsoftonline.com";
+
+    /// <summary>
+    /// How many incidents the board lists before it says "and N more". Twenty measured at about
+    /// 58 KB and forty at 114 KB were both accepted, above either limit Microsoft documents - so
+    /// this is a readability ceiling, deliberately well inside a limit that is not written down.
+    /// </summary>
+    public int BoardMaxIncidents { get; set; } = 20;
+
+    /// <summary>How often the board and the live alerts are compared with the incidents they show.</summary>
+    public TimeSpan RefreshInterval { get; set; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>Everything a request needs. Anything less and the channel is not registered at all.</summary>
+    public bool IsConfigured =>
+        !string.IsNullOrWhiteSpace(TenantId)
+        && !string.IsNullOrWhiteSpace(AppId)
+        && !string.IsNullOrWhiteSpace(ClientSecret)
+        && !string.IsNullOrWhiteSpace(ChannelId);
+}
+
+/// <summary>
 /// Outbound delivery configuration.
 /// </summary>
 /// <remarks>
@@ -118,6 +198,8 @@ public sealed class NotificationOptions
 
     public TeamsChannelOptions Teams { get; set; } = new();
 
+    public TeamsBotOptions TeamsBot { get; set; } = new();
+
     /// <summary>
     /// Grafana's external base URL, used to put a "look at the graphs" link beside the
     /// diagnosis. Optional - a message without it is thinner, not broken.
@@ -139,6 +221,11 @@ public sealed class NotificationOptions
         if (!string.IsNullOrWhiteSpace(Teams.WorkflowUrl))
         {
             yield return NotificationChannelNames.Teams;
+        }
+
+        if (TeamsBot.IsConfigured)
+        {
+            yield return NotificationChannelNames.TeamsBot;
         }
     }
 

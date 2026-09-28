@@ -77,6 +77,8 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
 
     public DbSet<CodeFixAttempt> CodeFixAttempts => Set<CodeFixAttempt>();
 
+    public DbSet<TeamsBotMessage> TeamsBotMessages => Set<TeamsBotMessage>();
+
     /// <summary>
     /// Marks children created since <paramref name="fromEventIndex"/> / for a new
     /// investigation as Added, so they INSERT rather than UPDATE.
@@ -676,6 +678,31 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
                 .HasConversion(SnapshotConverter, SnapshotComparer);
 
             e.Property(d => d.LastError).HasMaxLength(MaxErrorLength);
+        });
+
+        b.Entity<TeamsBotMessage>(e =>
+        {
+            e.ToTable("teams_bot_messages");
+            e.HasKey(m => m.Id);
+
+            // The reconciler's only query: what is still being kept up to date.
+            e.HasIndex(m => new { m.Kind, m.State }).HasDatabaseName("ix_teams_bot_messages_kind_state");
+
+            // "Which card does this person have for this incident", asked before every alert.
+            e.HasIndex(m => new { m.IncidentId, m.Recipient }).HasDatabaseName("ix_teams_bot_messages_incident_recipient");
+
+            // A retried delivery must not tell the same person twice. Unique rather than checked
+            // in code, because the check and the post are not one transaction.
+            e.HasIndex(m => new { m.DeliveryId, m.Recipient })
+                .IsUnique()
+                .HasFilter("delivery_id IS NOT NULL")
+                .HasDatabaseName("ux_teams_bot_messages_delivery_recipient");
+
+            e.Property(m => m.Recipient).HasMaxLength(320);
+            e.Property(m => m.ConversationId).HasMaxLength(512);
+            e.Property(m => m.ActivityId).HasMaxLength(128);
+            e.Property(m => m.ContentHash).HasMaxLength(64);
+            e.Property(m => m.LastError).HasMaxLength(MaxErrorLength);
         });
     }
 
