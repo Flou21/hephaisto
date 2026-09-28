@@ -34,15 +34,20 @@ public static class ModeEndpoints
 
     private static async Task<Results<Ok<ReArmResponse>, Conflict<ReArmResponse>, ValidationProblem>> ReArmAsync(
         ReArmRequest request,
+        HttpContext http,
         IncidentQueries queries,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(http);
 
-        // Attribution, not authentication - the same trade the feedback and reinvestigate
-        // routes already make, and the same one ApprovedBy makes. It is worth demanding
-        // anyway: the audit row for "autonomy came back" should name somebody.
-        if (string.IsNullOrWhiteSpace(request.Actor))
+        // The token's name when there is one; the supplied one only when nobody is signed in.
+        // This route took the body's actor verbatim until 2026-09-28, which left the audit row
+        // for "autonomy came back" - the one that most needs to name a real person - as the
+        // only one an authenticated caller could still sign with somebody else's name.
+        var actor = ActorResolution.Resolve(http.User, request.Actor);
+
+        if (string.IsNullOrWhiteSpace(actor))
         {
             return TypedResults.ValidationProblem(new Dictionary<string, string[]>
             {
@@ -50,7 +55,7 @@ public static class ModeEndpoints
             });
         }
 
-        var result = await queries.ReArmAsync(request.Actor, ct);
+        var result = await queries.ReArmAsync(actor, ct);
 
         var response = new ReArmResponse
         {

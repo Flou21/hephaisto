@@ -1,6 +1,9 @@
 @page "/status"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
 @using Hephaisto.Agent.Observability
 @inject IncidentQueries Queries
+@inject IAuthorizationService Authorization
 @implements IDisposable
 
 <PageTitle>hephaisto — status</PageTitle>
@@ -109,12 +112,10 @@ else
                    cannot name a mode and cannot raise the ceiling, which is why it is a
                    button at all — setting the mode is a Helm value and a rollout. *@
                 <div class="hp-retry-controls">
-                    <input class="hp-retry-name" placeholder="your name" aria-label="your name"
-                           data-testid="re-arm-actor"
-                           @bind="_actor" @bind:event="oninput" />
+                    <ActorField Viewer="_viewer" @bind-Name="_actor" TestId="re-arm-actor" />
                     <button type="button" class="hp-submit"
                             data-testid="re-arm"
-                            disabled="@(_reArming || string.IsNullOrWhiteSpace(_actor))"
+                            disabled="@(_reArming || string.IsNullOrWhiteSpace(Actor))"
                             @onclick="ReArmAsync">
                         @(_reArming ? "clearing…" : "re-arm")
                     </button>
@@ -276,7 +277,18 @@ else
     private string? _error;
     private CancellationTokenSource? _cts;
 
-    private string? _actor;
+    private string _actor = string.Empty;
+
+    /// <summary>
+    /// Who is looking. Signed in, the name on the audit row for "autonomy came back" is the
+    /// token's and nothing can be typed over it - the row that most needs to name a real person.
+    /// </summary>
+    private ConsoleViewer _viewer = ConsoleViewer.Anonymous;
+
+    [Inject]
+    private AuthenticationStateProvider? AuthProvider { get; set; }
+
+    private string Actor => _viewer.Actor(_actor) ?? string.Empty;
     private bool _reArming;
     private string? _reArmError;
     private string? _reArmMessage;
@@ -286,6 +298,7 @@ else
     protected override async Task OnInitializedAsync()
     {
         _cts = new CancellationTokenSource();
+        _viewer = await ConsoleViewer.ResolveAsync(AuthProvider, Authorization);
         await LoadAsync();
         _ = TickAsync(_cts.Token);
     }
@@ -386,7 +399,7 @@ else
     /// </summary>
     private async Task ReArmAsync()
     {
-        if (string.IsNullOrWhiteSpace(_actor) || _reArming)
+        if (string.IsNullOrWhiteSpace(Actor) || _reArming)
         {
             return;
         }
@@ -397,7 +410,7 @@ else
 
         try
         {
-            var result = await Queries.ReArmAsync(_actor, _cts?.Token ?? CancellationToken.None);
+            var result = await Queries.ReArmAsync(Actor, _cts?.Token ?? CancellationToken.None);
 
             if (result.Accepted)
             {

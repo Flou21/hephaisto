@@ -1,5 +1,8 @@
 @page "/incidents/{Id:guid}"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
 @inject IncidentQueries Queries
+@inject IAuthorizationService Authorization
 @inject IIncidentNotifier Notifier
 @inject IJSRuntime Js
 @implements IAsyncDisposable
@@ -120,10 +123,9 @@ else
                     </div>
 
                     <div class="hp-retry-controls">
-                        <input class="hp-retry-name" placeholder="your name" aria-label="your name"
-                               @bind="_submittedBy" @bind:event="oninput" />
+                        <ActorField Viewer="_viewer" @bind-Name="_submittedBy" TestId="retry-actor" />
                         <button type="button" class="hp-submit"
-                                disabled="@(_retrying || string.IsNullOrWhiteSpace(_submittedBy))"
+                                disabled="@(_retrying || string.IsNullOrWhiteSpace(Actor))"
                                 @onclick="ReinvestigateAsync">
                             @(_retrying ? "queueing…" : "re-investigate")
                         </button>
@@ -183,15 +185,13 @@ else
                     </div>
 
                     <div class="hp-retry-controls">
-                        <input class="hp-retry-name" placeholder="your name" aria-label="your name"
-                               data-testid="lifecycle-actor"
-                               @bind="_submittedBy" @bind:event="oninput" />
+                        <ActorField Viewer="_viewer" @bind-Name="_submittedBy" TestId="lifecycle-actor" />
                         <input class="hp-retry-name" placeholder="reason (optional)" aria-label="closing reason"
                                data-testid="close-reason"
                                @bind="_closeReason" @bind:event="oninput" />
                         <button type="button" class="hp-submit"
                                 data-testid="acknowledge"
-                                disabled="@(_lifecycleBusy || string.IsNullOrWhiteSpace(_submittedBy))"
+                                disabled="@(_lifecycleBusy || string.IsNullOrWhiteSpace(Actor))"
                                 @onclick="AcknowledgeAsync">
                             @(_lifecycleBusy ? "…" : "acknowledge")
                         </button>
@@ -200,13 +200,14 @@ else
                                @bind="_assignee" @bind:event="oninput" />
                         <button type="button" class="hp-submit"
                                 data-testid="assign"
-                                disabled="@(_lifecycleBusy || string.IsNullOrWhiteSpace(_submittedBy))"
+                                disabled="@(_lifecycleBusy || string.IsNullOrWhiteSpace(Actor))"
                                 @onclick="AssignAsync">
                             @(_lifecycleBusy ? "…" : "assign")
                         </button>
                         <button type="button" class="hp-submit"
                                 data-testid="close"
-                                disabled="@(_lifecycleBusy || string.IsNullOrWhiteSpace(_submittedBy))"
+                                disabled="@(_lifecycleBusy || !_viewer.MayDecide || string.IsNullOrWhiteSpace(Actor))"
+                                title="@(_viewer.MayDecide ? null : NotAnApprover)"
                                 @onclick="CloseAsync">
                             @(_lifecycleBusy ? "…" : "close")
                         </button>
@@ -247,12 +248,10 @@ else
                     </div>
 
                     <div class="hp-retry-controls">
-                        <input class="hp-retry-name" placeholder="your name" aria-label="your name"
-                               data-testid="reopen-actor"
-                               @bind="_submittedBy" @bind:event="oninput" />
+                        <ActorField Viewer="_viewer" @bind-Name="_submittedBy" TestId="reopen-actor" />
                         <button type="button" class="hp-submit"
                                 data-testid="reopen"
-                                disabled="@(_retrying || string.IsNullOrWhiteSpace(_submittedBy))"
+                                disabled="@(_retrying || string.IsNullOrWhiteSpace(Actor))"
                                 @onclick="ReinvestigateAsync">
                             @(_retrying ? "queueing…" : "reopen")
                         </button>
@@ -932,19 +931,18 @@ else
                                                    and kill-switch checks and the INSERT are one
                                                    transaction, and this is the seam that respects it. *@
                                                 <div class="hp-retry-controls" data-testid="approval">
-                                                    <input class="hp-retry-name" placeholder="your name"
-                                                           aria-label="your name"
-                                                           data-testid="approval-actor"
-                                                           @bind="_approvalActor" @bind:event="oninput" />
+                                                    <ActorField Viewer="_viewer" @bind-Name="_approvalActor" TestId="approval-actor" />
                                                     <button type="button" class="hp-submit"
                                                             data-testid="approve"
-                                                            disabled="@(_deciding is not null || string.IsNullOrWhiteSpace(_approvalActor))"
+                                                            disabled="@(_deciding is not null || !_viewer.MayDecide || string.IsNullOrWhiteSpace(ApprovalActor))"
+                                                            title="@(_viewer.MayDecide ? null : NotAnApprover)"
                                                             @onclick="() => DecideAsync(action.Id, true)">
                                                         @(_deciding == action.Id ? "…" : "approve")
                                                     </button>
                                                     <button type="button" class="hp-submit"
                                                             data-testid="deny"
-                                                            disabled="@(_deciding is not null || string.IsNullOrWhiteSpace(_approvalActor))"
+                                                            disabled="@(_deciding is not null || !_viewer.MayDecide || string.IsNullOrWhiteSpace(ApprovalActor))"
+                                                            title="@(_viewer.MayDecide ? null : NotAnApprover)"
                                                             @onclick="() => DecideAsync(action.Id, false)">
                                                         deny
                                                     </button>
@@ -1055,10 +1053,19 @@ else
                    already OIDC-shaped, so the upgrade fills the same column from a verified
                    claim. If this ever runs where more than one person is on call, that
                    upgrade stops being a roadmap item. *@
-                <label class="hp-label" for="fb-name">your name <span class="hp-req">required</span></label>
-                <input id="fb-name" type="text" @bind="_submittedBy" @bind:event="oninput"
-                       placeholder="who is saying this" autocomplete="off" />
-                <span class="hp-muted">Attribution, not authentication — nothing checks this.</span>
+                @if (_viewer.Authenticated)
+                {
+                    @* Signed in: the name is the token's, and there is nothing to type. *@
+                    <span class="hp-label">your name</span>
+                    <ActorField Viewer="_viewer" TestId="feedback-actor" />
+                }
+                else
+                {
+                    <label class="hp-label" for="fb-name">your name <span class="hp-req">required</span></label>
+                    <input id="fb-name" type="text" @bind="_submittedBy" @bind:event="oninput"
+                           placeholder="who is saying this" autocomplete="off" />
+                    <span class="hp-muted">Attribution, not authentication — nothing checks this.</span>
+                }
             </div>
 
             <div class="hp-field">
@@ -1118,7 +1125,7 @@ else
     private string? _lifecycleError;
     private string? _lifecycleMessage;
 
-    private string? _approvalActor;
+    private string _approvalActor = string.Empty;
     private Guid? _deciding;
     private readonly Dictionary<Guid, (bool Ok, string Text)> _decisionMessages = [];
     private string? _retryError;
@@ -1126,7 +1133,49 @@ else
 
     private CancellationTokenSource? _cts;
 
-    private bool CanSubmit => _helpful is not null && !string.IsNullOrWhiteSpace(_submittedBy);
+    private const string NotAnApprover = "your account does not hold the approver role";
+
+    /// <summary>
+    /// Who is looking at this page. Anonymous when no identity provider is configured.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Until this existed the page did not know. Every control here took a typed name and
+    /// recorded it, signed in or not - so with OIDC on, a person who had just proved who they
+    /// were was still asked to type a name, and whatever they typed is what the audit trail
+    /// kept. The API never had that gap: <see cref="ActorResolution"/> ignores a supplied actor
+    /// on an authenticated request. The console calls <c>IncidentQueries</c> directly and so
+    /// went round it.
+    /// </para>
+    /// <para>
+    /// Closing and approving sit behind the approver policy on the API. They do here too now.
+    /// </para>
+    /// </remarks>
+    private ConsoleViewer _viewer = ConsoleViewer.Anonymous;
+
+    [Inject]
+    private AuthenticationStateProvider? AuthProvider { get; set; }
+
+    /// <summary>The actor to record: the token's when signed in, the typed name otherwise.</summary>
+    private string Actor => _viewer.Actor(_submittedBy) ?? string.Empty;
+
+    private string ApprovalActor => _viewer.Actor(_approvalActor) ?? string.Empty;
+
+    private bool CanSubmit => _helpful is not null && !string.IsNullOrWhiteSpace(Actor);
+
+    /// <summary>
+    /// Remembers a TYPED name, so nobody retypes it forty times. A signed-in viewer typed
+    /// nothing, and writing that over a remembered name would forget it for no reason.
+    /// </summary>
+    private async Task RememberNameAsync()
+    {
+        if (_viewer.Authenticated || string.IsNullOrWhiteSpace(_submittedBy))
+        {
+            return;
+        }
+
+        await Js.InvokeVoidAsync("hephaisto.storageSet", NameStorageKey, _submittedBy.Trim());
+    }
 
     protected override async Task OnParametersSetAsync()
     {
@@ -1143,6 +1192,8 @@ else
         _blobs.Clear();
         _feedbackSaved = false;
 
+        _viewer = await ConsoleViewer.ResolveAsync(AuthProvider, Authorization);
+
         await LoadAsync();
 
         _ = ListenAsync(_cts.Token);
@@ -1154,6 +1205,12 @@ else
     {
         if (!firstRender)
         {
+            return;
+        }
+
+        if (_viewer.Authenticated)
+        {
+            // The name is the token's. A remembered one would be shown nowhere and used nowhere.
             return;
         }
 
@@ -1317,7 +1374,7 @@ else
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(_submittedBy))
+        if (string.IsNullOrWhiteSpace(Actor))
         {
             _feedbackError = "A name is required.";
             return;
@@ -1331,7 +1388,7 @@ else
                 _rootCause switch { "yes" => true, "no" => false, _ => null },
                 _falsePositive,
                 _comment,
-                _submittedBy,
+                Actor,
                 _cts?.Token ?? CancellationToken.None);
 
             if (saved is null)
@@ -1347,7 +1404,7 @@ else
 
             try
             {
-                await Js.InvokeVoidAsync("hephaisto.storageSet", NameStorageKey, _submittedBy.Trim());
+                await RememberNameAsync();
             }
             catch (JSException)
             {
@@ -1397,7 +1454,7 @@ else
     /// </summary>
     private async Task AcknowledgeAsync() =>
         await RunLifecycleAsync(
-            () => Queries.AcknowledgeIncidentAsync(Id, _submittedBy, _cts?.Token ?? CancellationToken.None),
+            () => Queries.AcknowledgeIncidentAsync(Id, Actor, _cts?.Token ?? CancellationToken.None),
             "acknowledged — it will not be swept away while your name is on it.");
 
     /// <summary>
@@ -1409,16 +1466,25 @@ else
     /// </remarks>
     private async Task AssignAsync() =>
         await RunLifecycleAsync(
-            () => Queries.AssignIncidentAsync(Id, _assignee, _submittedBy, _cts?.Token ?? CancellationToken.None),
+            () => Queries.AssignIncidentAsync(Id, _assignee, Actor, _cts?.Token ?? CancellationToken.None),
             string.IsNullOrWhiteSpace(_assignee)
                 ? "unassigned — it is back in the pool."
                 : $"assigned to {_assignee.Trim()}.");
 
     /// <summary>Closing: the terminal exit a human has.</summary>
-    private async Task CloseAsync() =>
+    private async Task CloseAsync()
+    {
+        if (!_viewer.MayDecide)
+        {
+            // The button is disabled for this viewer. This is for the click that arrives anyway.
+            _lifecycleError = NotAnApprover;
+            return;
+        }
+
         await RunLifecycleAsync(
-            () => Queries.CloseIncidentAsync(Id, _submittedBy, _closeReason, _cts?.Token ?? CancellationToken.None),
+            () => Queries.CloseIncidentAsync(Id, Actor, _closeReason, _cts?.Token ?? CancellationToken.None),
             "closed — it is out of the open count.");
+    }
 
     /// <remarks>
     /// Shared because the two differ only in which call they make and what they say afterwards.
@@ -1427,7 +1493,7 @@ else
     /// </remarks>
     private async Task RunLifecycleAsync(Func<Task<LifecycleResult>> act, string success)
     {
-        if (_incident is null || string.IsNullOrWhiteSpace(_submittedBy))
+        if (_incident is null || string.IsNullOrWhiteSpace(Actor))
         {
             return;
         }
@@ -1446,7 +1512,7 @@ else
 
                 try
                 {
-                    await Js.InvokeVoidAsync("hephaisto.storageSet", NameStorageKey, _submittedBy.Trim());
+                    await RememberNameAsync();
                 }
                 catch (JSException)
                 {
@@ -1478,7 +1544,7 @@ else
 
     private async Task ReinvestigateAsync()
     {
-        if (_incident is null || string.IsNullOrWhiteSpace(_submittedBy))
+        if (_incident is null || string.IsNullOrWhiteSpace(Actor))
         {
             return;
         }
@@ -1491,7 +1557,7 @@ else
         {
             var result = await Queries.RequestReinvestigationAsync(
                 Id,
-                _submittedBy,
+                Actor,
                 _cts?.Token ?? CancellationToken.None);
 
             if (result.Accepted)
@@ -1500,7 +1566,7 @@ else
 
                 try
                 {
-                    await Js.InvokeVoidAsync("hephaisto.storageSet", NameStorageKey, _submittedBy.Trim());
+                    await RememberNameAsync();
                 }
                 catch (JSException)
                 {
@@ -1558,8 +1624,14 @@ else
     /// </remarks>
     private async Task DecideAsync(Guid actionId, bool approve)
     {
-        if (string.IsNullOrWhiteSpace(_approvalActor) || _deciding is not null)
+        if (string.IsNullOrWhiteSpace(ApprovalActor) || _deciding is not null)
         {
+            return;
+        }
+
+        if (!_viewer.MayDecide)
+        {
+            _decisionMessages[actionId] = (false, NotAnApprover);
             return;
         }
 
@@ -1569,12 +1641,16 @@ else
         try
         {
             var result = await Queries.DecideActionAsync(
-                Id, actionId, approve, _approvalActor, ApprovalSource.Ui,
+                Id, actionId, approve, ApprovalActor,
+                _viewer.Authenticated ? ApprovalSource.Oidc : ApprovalSource.Ui,
                 _cts?.Token ?? CancellationToken.None);
 
             _decisionMessages[actionId] = (result.Accepted, result.Detail ?? result.Outcome.ToString());
 
-            await Js.InvokeVoidAsync("hephaisto.storageSet", "hephaisto.name", _approvalActor);
+            if (!_viewer.Authenticated)
+            {
+                await Js.InvokeVoidAsync("hephaisto.storageSet", "hephaisto.name", _approvalActor);
+            }
             await LoadAsync();
         }
         catch (Exception ex)

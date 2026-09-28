@@ -10,7 +10,7 @@ broken, with the evidence for each.
 Versions are set by the git tag through MinVer; the chart version and the app version are always
 the same number.
 
-## v0.9.0 — unreleased (`v0.9.0-rc1` 2026-09-27, `v0.9.0-rc2`/`-rc3`/`-rc4` 2026-09-28)
+## v0.9.0 — unreleased (`v0.9.0-rc1` 2026-09-27, `v0.9.0-rc2` to `-rc5` 2026-09-28)
 
 **It proposes the fix, and a person opens the door.** Most real incidents on the cluster this runs
 against are code bugs, and v0.8.0's planner correctly declines to touch them - "a code problem a
@@ -82,6 +82,16 @@ started a code fix, but the mode is Off" before you turn anything on.
   ([#124](docs/backlog.md#124)); alert recipients are one list for every route
   ([#123](docs/backlog.md#123)).
 - A database migration, `TeamsBotMessages`. It adds one table and changes none.
+
+### Fixed in rc5
+- **Signed in, the console no longer asks for your name** ([#127](docs/backlog.md#127)). Every
+  control on the incident page and the re-arm control on the status page showed a "your name" box
+  and recorded whatever was typed, even with OIDC on. They now read "signed in as ..." and record
+  the token's name. Without an identity provider nothing changes: the name is typed, as before.
+- **Close, approve and deny need the approver role in the console too.** They always did on the
+  API.
+- `POST /api/mode/re-arm` and `POST /api/incidents/{id}/feedback` take the actor from the token
+  when there is one. The body's field is still required by the contract and is ignored.
 
 ### Changed
 - The headline invariant is re-scoped: **no model in this process ever holds a mutating handle to
