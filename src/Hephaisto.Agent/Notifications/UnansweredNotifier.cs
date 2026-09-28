@@ -74,9 +74,16 @@ public sealed class UnansweredNotifier(
 
         var now = clock.UtcNow;
 
+        // Only incidents recent enough to have a step due: the rest either had theirs or are past
+        // NotificationSteps.Grace. Newest first - an install carries every escalated incident
+        // nobody closed, and reading the oldest two hundred of those found nothing, every tick.
+        var oldest = NotificationSteps.OldestDue(o.Routes, now);
+
         var incidents = await db.Incidents
-            .Where(i => HephaistoDbContext.OpenStates.Contains(i.State) && i.AcknowledgedAt == null)
-            .OrderBy(i => i.OpenedAt)
+            .Where(i => HephaistoDbContext.OpenStates.Contains(i.State)
+                && i.AcknowledgedAt == null
+                && (i.ReopenedAt ?? i.OpenedAt) >= oldest)
+            .OrderByDescending(i => i.ReopenedAt ?? i.OpenedAt)
             .Take(Batch)
             .ToListAsync(ct)
             .ConfigureAwait(false);

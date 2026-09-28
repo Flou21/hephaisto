@@ -65,10 +65,19 @@ public sealed class NotificationStepsTests
     [Fact]
     public void A_step_can_want_a_higher_severity()
     {
-        NotificationSteps.Due(Facts(severity: Severity.Warning, fired: [NotificationSteps.Key("payments", 0)]), [Route()], Opened.AddHours(2))
+        NotificationSteps.Due(Facts(severity: Severity.Warning, fired: [NotificationSteps.Key("payments", 0)]), [Route()], Opened.AddMinutes(70))
             .Should().BeEmpty();
-        NotificationSteps.Due(Facts(fired: [NotificationSteps.Key("payments", 0)]), [Route()], Opened.AddHours(2))
+        NotificationSteps.Due(Facts(fired: [NotificationSteps.Key("payments", 0)]), [Route()], Opened.AddMinutes(70))
             .Should().ContainSingle().Which.Recipients.Should().Equal("head@example.com");
+    }
+
+    [Fact]
+    public void A_step_long_past_its_time_is_skipped_not_sent()
+    {
+        // The agent was down, or the step was added to the route after the incident opened. Three
+        // days late, "nobody answered for twenty minutes" is not news - and after an upgrade it
+        // would be sent for every old open incident at once.
+        NotificationSteps.Due(Facts(), [Route()], Opened.AddDays(3)).Should().BeEmpty();
     }
 
     [Fact]

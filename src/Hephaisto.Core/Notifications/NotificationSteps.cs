@@ -36,7 +36,22 @@ public sealed record DueStep(
 /// </remarks>
 public static class NotificationSteps
 {
+    /// <summary>
+    /// How long past its time a step may still fire. Longer than that - the agent was down, or the
+    /// step was added to a route after the incident opened - and it is skipped rather than sent:
+    /// "nobody answered for twenty minutes" is not news three days later, and without this an
+    /// upgrade would fire every step of every old open incident at once.
+    /// </summary>
+    public static readonly TimeSpan Grace = TimeSpan.FromHours(1);
+
     public static string Key(string route, int index) => $"{route}/{index}";
+
+    /// <summary>The oldest clock start that can still have a step due now.</summary>
+    public static DateTimeOffset OldestDue(IEnumerable<NotificationRoute> routes, DateTimeOffset now)
+    {
+        var longest = routes.SelectMany(r => r.Steps).Select(s => s.After).DefaultIfEmpty(TimeSpan.Zero).Max();
+        return now - longest - Grace;
+    }
 
     public static IReadOnlyList<DueStep> Due(
         UnansweredFacts facts,
@@ -61,7 +76,10 @@ public static class NotificationSteps
             {
                 var step = route.Steps[i];
 
-                if (now - facts.Since < step.After
+                var elapsed = now - facts.Since;
+
+                if (elapsed < step.After
+                    || elapsed >= step.After + Grace
                     || facts.Severity < step.MinSeverity
                     || facts.Fired.Contains(Key(name, i)))
                 {
