@@ -83,6 +83,10 @@ config.define_bool('local-llm',     args = False, usage = 'Investigate with the 
 #             (ignored by git; the ids and recipients) and the Secret
 #             hephaisto-notification-teams-bot in namespace hephaisto, both made by hand.
 config.define_string('teams-bot',   args = False, usage = 'Teams bot: off | stand-in | real (default off)')
+# The pager suite (scripts/e2e/pager-local.sh): the model and Teams become the stand-in and every
+# window a scenario waits out becomes seconds. It overrides local-llm and teams-bot, because the
+# suite needs both to be the stand-in; switch it off to get the dev agent back on the local model.
+config.define_bool('pager-e2e',     args = False, usage = 'Layer scripts/e2e/values-pager.yaml: stand-in model and Teams, short windows')
 cfg = config.parse()
 
 HOST    = cfg.get('host', 'localhost')
@@ -97,6 +101,10 @@ coder_mode    = cfg.get('coder-mode', 'plan')
 coder_sdk     = cfg.get('coder-sdk', 'fake')
 local_llm     = cfg.get('local-llm', coder)
 teams_bot     = cfg.get('teams-bot', 'off')
+pager_e2e     = cfg.get('pager-e2e', False)
+if pager_e2e:
+    local_llm = False
+    teams_bot = 'stand-in'
 
 if coder_mode not in ['off', 'plan', 'pr']:
     fail("coder-mode must be off, plan or pr - got '%s'" % coder_mode)
@@ -257,6 +265,7 @@ if chaos or teams_bot == 'stand-in':
         deps = [
             'infra/e2e/notification-receiver/Program.cs',
             'infra/e2e/notification-receiver/TeamsStandIn.cs',
+            'infra/e2e/notification-receiver/LlmStandIn.cs',
             'infra/e2e/notification-receiver/notification-receiver.csproj',
             'infra/e2e/notification-receiver/Dockerfile',
         ],
@@ -391,7 +400,13 @@ if agent:
     # should move where the bot's token comes from - so they go in as extraEnv. Helm replaces a
     # list rather than merging it and --set addresses one by position, so they are APPENDED after
     # whatever the values files already put there, counted rather than assumed.
-    if teams_bot == 'stand-in':
+    #
+    # The pager suite's values carry the whole stand-in configuration - the bot, its routes and
+    # its two addresses - so with pager-e2e on, nothing below is layered or appended.
+    if pager_e2e:
+        chart_values.append('scripts/e2e/values-pager.yaml')
+
+    if teams_bot == 'stand-in' and not pager_e2e:
         chart_values.append('charts/hephaisto/values-dev-teams-bot.yaml')
         chart_set.append('notifications.baseUrl=http://%s:8100' % HOST)
 
@@ -409,6 +424,8 @@ if agent:
         # Fast enough to watch. The default is sized for a channel people read.
         chart_set.append('extraEnv[%d].name=Notifications__TeamsBot__RefreshInterval' % (taken + 2))
         chart_set.append('extraEnv[%d].value=00:00:05' % (taken + 2))
+
+    if teams_bot == 'stand-in':
 
         k8s_yaml('infra/e2e/teams-stand-in.yaml')
         k8s_resource(

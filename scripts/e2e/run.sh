@@ -48,6 +48,7 @@ source "$E2E_DIR/lib/deploy.sh"
 source "$E2E_DIR/lib/chaos.sh"
 source "$E2E_DIR/lib/judge.sh"
 source "$E2E_DIR/lib/notify.sh"
+source "$E2E_DIR/lib/pagerphase.sh"
 source "$E2E_DIR/lib/report.sh"
 
 # ---------------------------------------------------------------------------------------
@@ -60,6 +61,7 @@ FULL=0
 KEEP_CLUSTER=0
 RUN_JUDGE=1
 RUN_UI=1
+RUN_PAGER=1
 CODEFIX=0
 E2E_HELM_EXTRA=()
 ASSUME_YES=0
@@ -98,6 +100,9 @@ Options:
                        executed. DryRun and Auto both add $ACT_FIXTURE (c13 by default) to
                        whatever fixtures were selected.
   --no-ui              skip the Playwright suite
+  --no-pager           skip the pager suite (scripts/e2e/pager.sh). It runs last because it
+                       reconfigures the agent with values-pager.yaml: a stand-in model, a
+                       stand-in Teams, and windows of seconds.
   --codefix            also run the code-fix tier (v0.9.0): installs the stage with the
                        published coder image, the fake SDK and an in-cluster git server,
                        then c15 end to end plus the forged-result, c13 and c19 negatives.
@@ -105,7 +110,7 @@ Options:
   --yes                do not prompt before pushing an rc tag
   -h, --help           this
 
-Phases: build, cluster, deps, deploy, chaos, validate, act, notify, codefix, ui, report
+Phases: build, cluster, deps, deploy, chaos, validate, act, notify, codefix, ui, pager, report
 
 A local model, which is free: set HEPHAISTO_LLM_PROVIDER=openai with an endpoint the CLUSTER
 can reach - not localhost, which from a pod is a different machine. See scripts/e2e/README.md.
@@ -130,6 +135,7 @@ while [ $# -gt 0 ]; do
         --keep-cluster) KEEP_CLUSTER=1; shift ;;
         --no-judge)     RUN_JUDGE=0; shift ;;
         --no-ui)        RUN_UI=0; shift ;;
+        --no-pager)     RUN_PAGER=0; shift ;;
         --codefix)      CODEFIX=1; shift ;;
         --mode)         E2E_MODE="${2:?--mode needs Observe|DryRun|Auto}"; shift 2 ;;
         --yes)          ASSUME_YES=1; shift ;;
@@ -196,7 +202,7 @@ trap teardown EXIT INT TERM
 # ---------------------------------------------------------------------------------------
 # Phase sequencing
 # ---------------------------------------------------------------------------------------
-PHASES=(build cluster deps deploy chaos validate act notify codefix ui report)
+PHASES=(build cluster deps deploy chaos validate act notify codefix ui pager report)
 
 should_run() {
     local p="$1"
@@ -450,6 +456,16 @@ if should_run ui && [ "$RUN_UI" = "1" ]; then
     fi
 elif should_run ui; then
     skip "playwright suite" "--no-ui"
+fi
+
+# --- pager --------------------------------------------------------------------------------
+# Last before the report, because it reconfigures the agent: see lib/pagerphase.sh.
+CURRENT_PHASE=pager
+if should_run pager && [ "$RUN_PAGER" = "1" ]; then
+    phase "7e. the pager suite"
+    pagerphase_run
+elif should_run pager; then
+    skip "pager suite" "--no-pager"
 fi
 
 # --- done ---------------------------------------------------------------------------------

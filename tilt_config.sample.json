@@ -8,6 +8,7 @@
   "coder-sdk": "fake",
   "local-llm": false,
   "teams-bot": "off",
+  "pager-e2e": false,
   "host": "localhost",
   "host-ip": "127.0.0.1"
 }

@@ -222,3 +222,27 @@ for what happens when it is not — and `HEPHAISTO_LLM_MAX_STEPS` overrides it e
 **A local model does not make the image local.** The harness installs the *published* artifact
 from GHCR by design, so `--nightly` still pushes the branch and builds it in Actions. What is
 local, and free, is the cluster and the model.
+
+## The pager suite (`pager.sh`), and the `pager` phase
+
+A second suite, about a different question: not "does the agent diagnose a real fault" but "is
+it a pager a person can rely on" - one incident per alert for as long as it fires, closed when
+it clears, a person told before the model answers, the right person, and somebody else when
+nobody answers. It is v0.10.0's acceptance test, one scenario per sentence of the milestone's
+"Done when" (`pager/P*.sh`; `pager.sh --list` prints them).
+
+The model and Teams are stand-ins (`infra/e2e/notification-receiver`: `LlmStandIn.cs`,
+`TeamsStandIn.cs`), which makes a run deterministic and free - and means this suite proves
+nothing about a diagnosis. The windows it waits out are seconds (`values-pager.yaml`).
+
+| Where | How | What it adds |
+|---|---|---|
+| CI | `e2e-pager` in `.github/workflows/ci.yml`, on every change | a standalone Alertmanager (`infra/e2e/alertmanager.yaml`) |
+| Dev cluster | `pager-local.sh`, with `"pager-e2e": true` in `tilt_config.json` | a real Prometheus, so P16 runs |
+| Release harness | the `pager` phase of `run.sh`, after `ui` | the published artifact |
+
+The phase runs last because it reconfigures the installed agent (`helm upgrade --reuse-values -f
+values-pager.yaml`). `--no-pager` skips it.
+
+`pager/KNOWN_RED` lists scenarios whose fix has not landed. A red one there is reported and does
+not fail; a green one there fails the run.

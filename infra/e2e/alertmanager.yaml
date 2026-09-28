@@ -1,0 +1,110 @@
+# An Alertmanager for the pager suite in CI, where there is no kube-prometheus-stack.
+#
+# Applied only by the e2e-pager job in .github/workflows/ci.yml. It exists so that the
+# scenarios which are about Alertmanager's own behaviour - a refused delivery retried until it
+# lands (P13), an alert posted to its API reaching the agent at all - run against the real thing
+# and not against the suite's idea of it. Everything else posts to the webhook directly.
+#
+# Timings are the suite's, not a production's: group_wait and group_interval of seconds so a
+# delivery happens while a scenario is still looking, and one group per alert (`group_by: [...]`)
+# so two scenarios never share a POST. repeat_interval is long on purpose - the suite sends its
+# own repeats when it wants them, and an unasked-for one would make "told once" flaky.
+#
+# The route labelled hephaisto_route=external goes to a receiver that is not the agent: the
+# path a person is told on when the agent itself is down. Nothing evaluates rules here, so
+# only a scenario posting such an alert by hand exercises it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pager-alertmanager
+  namespace: hephaisto-obs
+  labels:
+    app.kubernetes.io/part-of: hephaisto-e2e
+data:
+  alertmanager.yml: |
+    route:
+      receiver: hephaisto
+      group_by: ["..."]
+      group_wait: 1s
+      group_interval: 5s
+      repeat_interval: 4h
+      routes:
+        - receiver: external
+          matchers: ['hephaisto_route="external"']
+    receivers:
+      - name: hephaisto
+        webhook_configs:
+          - url: http://hephaisto.hephaisto:8080/webhooks/alertmanager
+            send_resolved: true
+            max_alerts: 0
+      - name: external
+        webhook_configs:
+          - url: http://teams-stand-in.hephaisto-obs:8080/hooks/external
+            send_resolved: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pager-alertmanager
+  namespace: hephaisto-obs
+  labels:
+    app.kubernetes.io/name: pager-alertmanager
+    app.kubernetes.io/part-of: hephaisto-e2e
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pager-alertmanager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pager-alertmanager
+    spec:
+      containers:
+        - name: alertmanager
+          image: quay.io/prometheus/alertmanager:v0.28.1
+          args:
+            - --config.file=/etc/alertmanager/alertmanager.yml
+            - --storage.path=/alertmanager
+            - --cluster.listen-address=
+          ports:
+            - containerPort: 9093
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            periodSeconds: 2
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager
+            - name: data
+              mountPath: /alertmanager
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: pager-alertmanager
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pager-alertmanager
+  namespace: hephaisto-obs
+spec:
+  selector:
+    app.kubernetes.io/name: pager-alertmanager
+  ports:
+    - name: http
+      port: 9093
+      targetPort: http
