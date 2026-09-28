@@ -1427,7 +1427,7 @@ address read a dashboard no longer lets it inject a forged alert. And both wrong
 corrected: `secrets.grafanaMcp` is the caller bearer rather than a Grafana credential, and
 `grafanaMcp.url` needs its `/mcp` path.
 
-**The getting-started guide is what remains, and it carries to v0.10.0** (renumbered from v0.9.0) with the rest of the
+**The getting-started guide is what remains, and it carries to v0.11.0** (renumbered from v0.9.0, then from v0.10.0) with the rest of the
 install-ergonomics work. Writing one was deferred deliberately rather than forgotten: v0.8.0's
 theme became operating the agent rather than installing it, on the grounds that installing is
 something you do once and had just been done.
@@ -1883,6 +1883,404 @@ ceiling, but it is what gives autonomy back after the agent was stopped for caus
 **Why it was not changed with [#127](#127).** That fix brought the console into line with rules
 the API already had. This would be a new rule, and who may give autonomy back is a decision
 rather than a correction. **Size.** S. Open.
+
+
+## As the only incident system
+
+Opened on 2026-09-28 by a decision, not by a failure. On the first production install Hephaisto
+is to **replace** the incident service and the paging service that alerts go to today, rather
+than sit beside them. Every alert rule then arrives at `/webhooks/alertmanager`: most of them are
+about a pipeline and not a workload, and they come from five clusters told apart by a `cluster`
+label.
+
+The entries below are what the code does when read against that job instead of the one it was
+built for. **All of them were found by reading, and none has been reproduced on a cluster.** Line
+numbers are from `b7bd6fe`. Scheduled in [roadmap v0.10.0](roadmap.md), together with
+[#123](#123), [#124](#124), [#125](#125) and [#126](#126), which were already open.
+
+### 129. A resolved alert is ingested as a firing one
+
+**Symptom.** `ReceiveAlertsAsync` submits every alert in a payload whatever its status
+(`Web/AlertmanagerEndpoints.cs:161`). `IsResolved` is read in one place, to choose `LastSeen`
+(`:227`), and `Signal` has no status at all. So a resolve is a signal like any other. Inside the
+burst and correlation windows it attaches to the incident and moves `LastSignalAt` forward - the
+alert clearing keeps the incident alive. Outside them it opens a new incident, which is
+investigated and escalated: a page for the fault having gone away.
+
+**What does not happen.** Nothing closes an incident because its alert cleared. `Resolved` is the
+verifier's to grant ([#11](#11)), so an incident the agent never acted on stays open until a
+person closes it or the sweeper expires it, and the sweeper is off by default
+(`appsettings.json:72-73`).
+
+**Evidence.** No test sends `status: resolved`. The dev stack has sent them since the receiver
+was written (`infra/observability/kube-prometheus-stack.values.yaml:286`), and its comment gives
+MTTR as the reason - which nothing computes from them.
+
+**What to do.** Carry the status on the signal. A resolve finds its open incident by identity and
+never opens one. **Decided 2026-09-28:** a resolve closes the incident, with the reason
+recorded, once no other alert instance on it still fires; a re-fire within 24 hours reopens it
+rather than opening a second one. An incident the agent is acting on is left to the verifier.
+**Size.** M. Open.
+
+### 130. A repeat notification opens a new incident
+
+**Symptom.** Dedup looks for the fingerprint on an open incident whose last signal is within
+`BurstWindow`, five minutes (`Persistence/Repositories/IncidentRepository.cs`,
+`FindByFingerprintAsync`; `Options/IngestOptions.cs:19`). Correlation allows ten
+(`Pipeline/IncidentTriage.cs:104`). Alertmanager repeats a firing alert on `repeat_interval`,
+which is hours. Every repeat therefore misses both windows while the first incident is still
+open, and becomes a second incident with its own investigation and its own message.
+
+**Why flap suppression does not catch it.** It needs three incidents for one workload inside an
+hour (`IngestOptions.cs:22-24`). A repeat every few hours never gets there.
+
+**What to do.** An open incident with the same identity absorbs the signal however old its last
+signal is; the windows are for correlating different kinds, not for recognising the same alert.
+An incident closed recently should be reopened rather than duplicated, which is the question
+[#109](#109) left open. **Size.** M. Open.
+
+### 131. The alert's `cluster` label is never read
+
+**Symptom.** The fingerprint takes its cluster from configuration
+(`Pipeline/SignalIngestPipeline.cs:142`), and the correlation key is `namespace/owner` with no
+cluster in it (`Core/Fingerprinting/SignalFingerprinter.cs:58-63`). An alert about another
+cluster is therefore the same incident as the same-named alert about this one, and it correlates
+with this cluster's own Kubernetes-watch signals.
+
+**What that does to an investigation.** The Kubernetes read tools, the rollout correlation and
+the watcher all read the cluster the agent runs in. For an incident about another cluster they
+return a same-named workload's pods, events and rollouts, and nothing marks them as being from
+somewhere else. The environment card names one cluster label for every query
+(`Investigation/PromptComposer.cs:161-163`). The cluster is on no title, card or board.
+
+**Why it is open.** The roadmap files multi-cluster as a product question that "deserves its own
+release". Sending every cluster's alerts to one agent answers the question without asking it.
+
+**What to do.** The smallest honest step: read `cluster` into the target, key identity on it, and
+show it. For an incident whose cluster is not the agent's own, withhold the Kubernetes tools and
+every action, and say so in the prompt - the metrics and logs are still reachable, because they
+are already in one place. **Size.** L. Open.
+
+### 132. Every series of one alert name is one incident
+
+**Symptom.** An alert with no pod, workload, PVC, node or `service` label gets the target
+`Alert/<alertname>` and an empty namespace (`Web/AlertmanagerEndpoints.cs:354`). Nothing else
+from the label set enters the fingerprint. A rule that fires once per provider and once per
+cluster is one incident, titled `Unknown on <alertname> ()`, and the second series to fire is a
+repeat of the first.
+
+**Why Alertmanager's fingerprint is not the answer as it stands.** It is deliberately unused
+(`:67-70`), because it includes the pod name and would defeat dedup across a restart. That
+reasoning holds for an alert about a workload. It does not hold for one that names no workload.
+
+**What to do.** When the target falls through to `Alert/<alertname>`, key identity on the label
+set with the scrape's own labels removed. **Size.** M. Open.
+
+### 133. Nobody is told that an incident opened
+
+**Symptom.** `NotificationEvent` has no member for it. `NotificationEnqueue.Classify` maps three
+states - `Escalated`, `AwaitingApproval`, `Resolved` - and returns null for the rest. In Observe
+both of the coordinator's exits escalate (`Pipeline/InvestigationCoordinator.cs:295`), so the
+first message about an incident is sent when its investigation ends: up to ten minutes of wall
+clock (`Llm/LlmOptions.cs:329`), behind a queue of 32 served by two workers
+(`Pipeline/InvestigationQueue.cs:26`, `Pipeline/InvestigationWorker.cs:24`).
+
+**Why it was right, and is not now.** The comment on `Classify` argues that a channel reporting
+the agent at work is a channel people mute. That is an argument about an agent beside a pager.
+As the pager, the delay sits between a fault and the first person to hear of it, and its length
+is set by a model.
+
+**What to do.** An `IncidentOpened` event, enqueued at triage and routed like the others. The
+escalation that follows updates what was sent rather than repeating it. **Size.** M. Open.
+
+### 134. Every incident is investigated, and there is no kind for a pipeline
+
+**Symptom.** Triage ends in `BeginInvestigation` for everything but a signal about the agent's
+own namespaces (`Pipeline/IncidentTriage.cs:137`). No setting turns that off by kind, severity or
+label. With every rule routed here, the number of investigations is the number of alerts.
+
+**And the investigation has nowhere to start.** All nineteen members of `SignalKind` name a
+workload, a node or the agent itself. "Too few articles in the last hour" is `Unknown`, gets
+`Runbooks/_Default.md`, and that runbook starts from a namespace and a pod the alert does not
+have. Some names are guessed wrong instead: the classifier matches substrings
+(`Core/Classification/AlertClassifier.cs:48-70`), so a name containing `Slow` is `HighLatency`
+for its `slo`, and one containing `pending`, `restart` or `replica` is a Kubernetes kind.
+
+**What to do.** A label on the rule that opens and notifies without investigating. A kind for
+pipeline alerts, with a runbook that starts from the rule's expression and its labels. Until
+both exist, a foreign rule should carry `hephaisto_kind` like the shipped ones do
+([#70](#70)). **Decided 2026-09-28:** everything is investigated unless the rule opts out with
+the label `hephaisto_investigate: "false"`; there is no mode that inverts the default.
+**Size.** L. Open.
+
+### 135. The model is never shown the alert's labels
+
+**Symptom.** The incident card is a title, a kind, a severity, a target, and one line per signal
+with its source, reason and message (`Investigation/PromptComposer.cs`, `## The incident`).
+`Signal.Labels` is stored and not rendered. The generator URL is kept as the label
+`hephaisto_generator_url` (`Web/AlertmanagerEndpoints.cs:246`) and goes the same way.
+
+**Why it matters now.** For an alert about a pod the target carries what the labels would have
+said. For an alert about a pipeline the labels are all there is: which provider, which cluster,
+and through the generator URL which expression.
+
+**What to do.** Render the labels on the signal line, minus the scrape's own. **Size.** S. Open.
+
+### 136. The webhook answers 200 before anything is written
+
+**Symptom.** `SubmitAsync` puts the signal on an in-memory channel of 1000 that drops the oldest
+when full (`Pipeline/SignalIngestPipeline.cs:34-36`), and the handler returns 200
+(`Web/AlertmanagerEndpoints.cs:173`). A restart loses what was queued. A signal that fails in
+ingest - the database being down is the likely one - is caught, counted as `ingest-error` and
+dropped (`SignalIngestPipeline.cs:96-102`). Alertmanager was told it arrived, so it does not
+retry.
+
+**The readiness probe does not help.** One health check is registered, `self`, and it returns
+healthy unconditionally (`Hephaisto.ServiceDefaults/Extensions.cs:146-147`). `/readyz` says
+ready with no database.
+
+**What to do.** Write before answering, or answer 503 when that is not possible, so that
+Alertmanager's retry is the queue. With [#130](#130) making a repeat idempotent, that needs no
+inbox table: the webhook runs triage itself, under the one gate the watcher's reader also takes,
+and answers after the commit. It therefore ships after [#129](#129) and [#130](#130). A database
+check on `/readyz`. **Size.** M. Open.
+
+### 137. Nothing tells a person that Hephaisto is down
+
+**Symptom.** `WatchdogMonitor` is a timestamp in memory (`Web/WatchdogMonitor.cs:28`), shown on
+the status page and nowhere else. It proves the path INTO the agent, to someone who is looking.
+
+**The rule that reads like the answer is not.** `HephaistoNotProcessingSignals` is
+`sum(increase(hephaisto_signals_received_total[15m])) == 0`
+(`charts/hephaisto/files/alerts/observability-selfcheck.yaml:310-317`). With the pod gone the
+series is gone, the expression returns nothing, and the rule never fires. It is the trap
+`no-traffic.yaml:38-41` describes in its own comment, in the file beside it.
+
+**And a rule that did fire would be delivered to Hephaisto.** Once it is the only receiver,
+every alert about the agent goes to the agent.
+
+**What to do.** An `absent()` rule on the agent's own series. A second receiver in the
+Alertmanager configuration, documented, that does not pass through Hephaisto and carries that
+alert and the watchdog's absence and nothing else. **Size.** S. Open.
+
+### 138. The webhook cannot check a credential
+
+**Symptom.** Both routes are anonymous (`Web/AlertmanagerEndpoints.cs:109`). The comment above
+gives the reason that Alertmanager cannot send one. It can - `http_config.authorization` and
+`basic_auth` both exist, and the dev stack's own values say so
+(`infra/observability/kube-prometheus-stack.values.yaml:270`). What is missing is the code to
+check one.
+
+**What protects it instead.** The NetworkPolicy, alone. And with `webhookPort: 0`, the default,
+`/webhooks` is served on the console's port, so an Ingress for the console is an Ingress for the
+webhook.
+
+**Why it matters more now.** A forged alert used to cost an investigation. As the pager it also
+sends a message to a person, in the agent's name.
+
+**What to do.** An optional bearer token, compared in constant time. With a token configured, a
+request without it is refused. **Size.** S. Open.
+
+### 139. The chart never names the cluster
+
+**Symptom.** `Ingest:ClusterName`, `Kubernetes:ClusterName` and
+`Investigation:Environment:ClusterName` are set to `studio-rancher-desktop` by
+`appsettings.json:10-16` and by `Investigation/EnvironmentCardOptions.cs:28` (the code default
+of `Kubernetes:ClusterName` is `default`; `appsettings.json` overrides it), and
+`InScopeNamespaces` to `["hephaisto-chaos"]` (`:31`). The chart sets none of the four. Every
+install that is not the development machine tells the model that its metrics carry
+`cluster=studio-rancher-desktop`, and that "a query without it may match another cluster"
+(`Investigation/PromptComposer.cs:161-163`). A query with it matches nothing.
+
+**The same family as** [#115](#115) and [#36](#36): a code default that is a fact about one
+machine.
+
+**What to do.** One required chart value feeding all three names, and a value for the in-scope
+namespaces. The code defaults become empty, and an empty cluster name refuses to start.
+**Size.** S. Open.
+
+### 140. A model without a price entry has no cost cap
+
+**Symptom.** A model id that is not in the price table bills as zero
+(`Llm/OpenAiChatClientFactory.cs:124-129`). The startup warning says so. Nothing else does: the
+hourly, daily and per-incident cost caps (`Persistence/LlmBudgetService.cs:66-72`) never bind,
+and the console reports 0.0% utilisation. A model served through a gateway under a name of the
+operator's choosing is in exactly this position. The token cap still applies, at fifty million
+an hour.
+
+**Why it matters now.** The caps are the only thing between the number of alerts and the bill
+([#134](#134)).
+
+**What to do.** Prices as a chart value rather than `extraEnv`. With a cost cap configured and
+no price for the configured model, refuse to start. **Size.** S. Open.
+
+### 141. A route cannot match a label
+
+**Symptom.** A route is a channel, a list of events, a minimum severity and a list of namespaces
+(`Core/Notifications/NotificationOptions.cs`, `NotificationRoute`). It cannot match a label, an
+alert name, a kind or a cluster. The alerts that arrive are already labelled for routing, by the
+team they belong to, and nothing can read that.
+
+**And the one scope that exists drops pipeline alerts.** A route with namespaces skips an
+incident whose namespace is empty (`Core/Notifications/NotificationRouter.cs:75-91`). If no
+other route matched, `SuppressedByUnknownNamespace` is set, which is a line in the log. Routing
+per team by namespace would therefore lose every alert that names no namespace, quietly.
+
+**What to do.** Label matchers on the route, and recipients on the route, which is
+[#123](#123). The two are one change. **Size.** M. Open.
+
+### 142. Nothing happens when nobody answers
+
+**Symptom.** No timer sends a second message. The only one that looks at an unanswered incident
+is the sweeper, which expires it after three days of silence
+(`Pipeline/IncidentSweeper.cs`, `ExpireUnansweredAsync`) - the opposite of escalating.
+`ApprovalTimeout` covers a proposal waiting for approval and nothing else.
+
+**What to do.** Steps on a route: unacknowledged after N minutes, notify a wider route; after M,
+the loud channel ([#143](#143)). An acknowledgement stops the steps. The state needed is one
+timestamp per step on the incident. **Size.** M. Open.
+
+### 143. Teams is the only way to reach a person
+
+**Symptom.** Three channels exist: `webhook`, `teams` and `teamsBot`
+(`Core/Notifications/NotificationOptions.cs:11-18`). None of them is a push notification, an
+SMS, a call or an email, and whether a personal chat from the bot rings a phone at all is
+unproven ([#125](#125)). The generic webhook takes one URL.
+
+**Why it is open.** The roadmap lists Slack, email and PagerDuty under "Later - a menu, not a
+queue", which was the right place for them while something else did the paging.
+
+**What to do.** Decide the loud channel first; the abstraction is there and a channel is a
+`Name`, a `Describe()` and a `SendAsync`. **Decided 2026-09-28:** SMS and voice through Twilio,
+in [roadmap v0.11.0](roadmap.md). v0.10.0 is Teams only. **Size.** L. Open.
+
+### 144. A rollout is an outage of the pager, and the chart calls that cheap
+
+**Symptom.** One replica, `strategy: Recreate`, and no `replicaCount` to change
+(`charts/hephaisto/templates/deployment.yaml:34-36`). The reason is sound and is about acting:
+two replicas race the cooldown, the budget and the kill switch. The comment then prices the
+downtime - "alerts that fire while the agent is down are re-sent by Alertmanager on its next
+repeat_interval" (`:20-23`). That interval is hours.
+
+**What to do.** Not a second replica; the argument against one stands. [#136](#136) turns
+Alertmanager's retry, which is minutes, into the cover for a restart, and [#137](#137) covers a
+restart that does not come back. With both in place this entry can be reclassified as a
+deliberate limitation, and the comment corrected. **Size.** S, after those two. Open.
+
+### 145. An alert name has nowhere to keep what people learned about it
+
+**Symptom.** A runbook belongs to a `SignalKind` and ships in the image
+(`src/Hephaisto.Agent/Runbooks/`). Feedback belongs to one incident
+(`POST /api/incidents/{id}/feedback`). Nothing belongs to an alert name: what it means, what was
+done the last three times, which dashboard to open. The service being replaced keeps exactly
+that, written by the people who were paged, and it is the part of it they would miss.
+
+**What to do.** A note per alert name, editable in the console, shown on the incident and given
+to the model beside the runbook. Importing the existing notes is a one-off and not part of the
+feature. **Size.** M. Open.
+
+
+### 146. Nothing tests paging end to end
+
+**Symptom.** No test, script or CI job ever posts an alert to the installed chart and looks at
+who was told. `e2e-kind` in CI installs the chart without Alertmanager or a model; the release
+harness needs a published artifact and a real model and takes most of an hour. Every entry in this
+section was found by reading, because nothing could have found it by running.
+
+**And nothing stands in for the model.** `FakeChatClient` exists inside the unit tests only. An
+installed agent cannot be given a deterministic, free investigation, so "a person was told before
+the model answered" cannot be asserted anywhere.
+
+**What to do.** A pager suite: alerts through a real Alertmanager into the installed chart, a
+model stand-in and the Teams stand-in, one scenario per sentence of the milestone's "Done when",
+run in CI on every change. A known-red list lets a scenario land before its fix. **Size.** M.
+Open.
+
+### 147. Flap suppression silences a page across clusters and label sets
+
+**Symptom.** Flap detection counts incidents per `WorkloadKey`, which has no cluster and no
+labels (`Pipeline/IncidentTriage.cs:63-83`). Once [#131](#131) and [#132](#132) make one rule
+several incidents, three clusters firing the same workload alert inside an hour suppress the
+fourth - an incident nobody is told about, for a reason that is not a flap. Every label-only
+alert shares the workload `Alert/<alertname>`.
+
+**What to do.** Count per cluster, skip label-only alerts, and never end an Alertmanager signal
+`Suppressed`: a flapping alert is Alertmanager's to group, and a person still needs to hear.
+**Size.** S. Open.
+
+### 148. A warning that turns critical tells nobody
+
+**Symptom.** A signal of higher severity attached to an open incident raises its severity
+(`Pipeline/IncidentTriage.cs:203`) and makes no transition, and notifications are enqueued only
+on transitions.
+A route that wants criticals only never hears of an incident that opened as a warning.
+
+**What to do.** A raise enlists a notification to the routes that now match and did not before.
+**Size.** S. Open.
+
+### 149. An acknowledgement survives a reopen
+
+**Symptom.** `Reopen` leaves `AcknowledgedBy` and `AcknowledgedAt` set. Once a re-fire reopens an
+incident ([#129](#129)), anything that stops at an acknowledgement ([#142](#142)) stops at one
+given for the previous outage.
+
+**What to do.** A reopen clears the acknowledgement and keeps the assignee. **Size.** S. Open.
+
+### 150. The hourly channel cap drops an opening silently
+
+**Symptom.** `NotificationRateLimit` refuses a delivery once a channel has sent
+`MaxPerChannelPerHour` messages in the hour (`Core/Notifications/NotificationRateLimit.cs:85`).
+The refusal is a skipped outbox row and a log line at Information. As the pager, the message
+refused is the first one about an incident. The cap is not a chart value.
+
+**What to do.** The cap as a chart value, and a refused opening or escalation step logged at
+Error. **Size.** S. Open.
+
+### 151. Any alert name containing "watchdog" is swallowed
+
+**Symptom.** `IsWatchdog` matches `name.Contains("watchdog")` (`Web/AlertmanagerEndpoints.cs:198-202`).
+An alert named, say, `ConsumerWatchdogStalled` is recorded as a heartbeat and never becomes an
+incident.
+
+**What to do.** Match the name `Watchdog` exactly, or the `hephaisto_kind` label. **Size.** S.
+Open.
+
+### 152. An investigation that ends after its incident closed still moves it
+
+**Symptom.** The coordinator transitions the incident it loaded when the investigation started.
+Once an alert clearing can close an incident ([#129](#129)) while its investigation runs, the
+investigation's end escalates or resolves an incident that is already closed.
+
+**What to do.** Re-read the state before each transition; if it is no longer `Investigating`,
+keep the investigation and its usage, record why, and move nothing. **Size.** S. Open.
+
+### 153. With the agent `Off`, the webhook answers 200 and drops the alert
+
+**Symptom.** The kill switch stops investigations and actions. Ingest still accepts, so as the
+pager `Off` reads as healthy to Alertmanager while - before [#133](#133) - nobody is told.
+
+**What to do.** Nothing once [#133](#133) ships: opening and telling a person is not the agent
+acting, and `Off` should not stop it. The entry exists so that stays a decision. **Size.** S.
+Open.
+
+### 154. The open-incidents gauge is never decremented by a human close
+
+**Symptom.** `HephaistoMetrics.IncidentClosed` is called by triage, the coordinator, the sweeper
+and the verifier. The console's close (`Web/IncidentQueries.cs:1100`) does not call it, so an
+incident a person closes while it is still in an open state - awaiting approval, say - leaves
+`hephaisto.incidents.open` one too high for good.
+
+**What to do.** One close metric recorded by every path that closes. **Size.** S. Open.
+
+### 155. A lost resolve leaves an incident open
+
+**Symptom.** Once a resolve closes an incident ([#129](#129)), a resolve that never arrives -
+Alertmanager restarted, the rule deleted, `send_resolved` off - leaves it open for good. The
+sweeper that would expire it is off by default.
+
+**What to do.** Accepted for v0.10.0: an open incident with a firing row is shown as such, and
+Alertmanager repeats a firing alert. A rule deleted while firing is a person's to close. **Size.**
+S. Open.
 
 
 ## Dead or unreachable code
