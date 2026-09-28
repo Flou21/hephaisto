@@ -10,7 +10,7 @@ broken, with the evidence for each.
 Versions are set by the git tag through MinVer; the chart version and the app version are always
 the same number.
 
-## v0.9.0 — unreleased (`v0.9.0-rc1`, 2026-09-27)
+## v0.9.0 — unreleased (`v0.9.0-rc1` 2026-09-27, `v0.9.0-rc2` 2026-09-28)
 
 **It proposes the fix, and a person opens the door.** Most real incidents on the cluster this runs
 against are code bugs, and v0.8.0's planner correctly declines to touch them - "a code problem a
@@ -48,6 +48,19 @@ started a code fix, but the mode is Off" before you turn anything on.
   the card; a Grafana annotation when a PR opens.
 - **Fixtures** c15 (a null dereference at startup) and c19 (c15 plus prompt-injection bait in the
   log), from `Flou21/hephaisto-fixture-dotnet`, and `scripts/e2e/codefix-local.sh`.
+
+### Added in rc2
+- **`codeFix.model`** - the Claude model the coder runs (`CODEFIX_MODEL`); empty keeps the CLI's
+  default. Measured on the fixture: Haiku 4.5 fixed c15 end to end for about $0.20.
+
+### Fixed in rc2
+- **An incident opened by an Alertmanager alert could never start a code fix.** An alert names
+  the bare pod and the repository mapping is keyed by workload, so it declined with
+  `NoRepositoryMapping`; the stage now resolves the pod's owner itself, through its ReplicaSet when
+  the named pod is already gone.
+- **A new coder pod's first clone is retried** - a NetworkPolicy controller admits a new pod's IP
+  a moment late, and the clone is the pod's first connection.
+- **A repository without tests can get a PR** - tests are required only when the plan promised them.
 
 ### Changed
 - The headline invariant is re-scoped: **no model in this process ever holds a mutating handle to
