@@ -1917,8 +1917,10 @@ was written (`infra/observability/kube-prometheus-stack.values.yaml:286`), and i
 MTTR as the reason - which nothing computes from them.
 
 **What to do.** Carry the status on the signal. A resolve finds its open incident by identity and
-never opens one. Whether it closes the incident, or marks it "alert cleared" for a person to
-confirm, is a decision to make before the code. **Size.** M. Open.
+never opens one. **Decided 2026-09-28:** a resolve closes the incident, with the reason
+recorded, once no other alert instance on it still fires; a re-fire within 24 hours reopens it
+rather than opening a second one. An incident the agent is acting on is left to the verifier.
+**Size.** M. Open.
 
 ### 130. A repeat notification opens a new incident
 
@@ -2007,7 +2009,9 @@ for its `slo`, and one containing `pending`, `restart` or `replica` is a Kuberne
 **What to do.** A label on the rule that opens and notifies without investigating. A kind for
 pipeline alerts, with a runbook that starts from the rule's expression and its labels. Until
 both exist, a foreign rule should carry `hephaisto_kind` like the shipped ones do
-([#70](#70)). **Size.** L. Open.
+([#70](#70)). **Decided 2026-09-28:** everything is investigated unless the rule opts out with
+the label `hephaisto_investigate: "false"`; there is no mode that inverts the default.
+**Size.** L. Open.
 
 ### 135. The model is never shown the alert's labels
 
@@ -2036,7 +2040,10 @@ healthy unconditionally (`Hephaisto.ServiceDefaults/Extensions.cs:146-147`). `/r
 ready with no database.
 
 **What to do.** Write before answering, or answer 503 when that is not possible, so that
-Alertmanager's retry is the queue. A database check on `/readyz`. **Size.** M. Open.
+Alertmanager's retry is the queue. With [#130](#130) making a repeat idempotent, that needs no
+inbox table: the webhook runs triage itself, under the one gate the watcher's reader also takes,
+and answers after the commit. It therefore ships after [#129](#129) and [#130](#130). A database
+check on `/readyz`. **Size.** M. Open.
 
 ### 137. Nothing tells a person that Hephaisto is down
 
@@ -2077,8 +2084,9 @@ request without it is refused. **Size.** S. Open.
 ### 139. The chart never names the cluster
 
 **Symptom.** `Ingest:ClusterName`, `Kubernetes:ClusterName` and
-`Investigation:Environment:ClusterName` all default to `studio-rancher-desktop`
-(`appsettings.json:10-16`, `Investigation/EnvironmentCardOptions.cs:28`), and
+`Investigation:Environment:ClusterName` are set to `studio-rancher-desktop` by
+`appsettings.json:10-16` and by `Investigation/EnvironmentCardOptions.cs:28` (the code default
+of `Kubernetes:ClusterName` is `default`; `appsettings.json` overrides it), and
 `InScopeNamespaces` to `["hephaisto-chaos"]` (`:31`). The chart sets none of the four. Every
 install that is not the development machine tells the model that its metrics carry
 `cluster=studio-rancher-desktop`, and that "a query without it may match another cluster"
@@ -2143,7 +2151,8 @@ unproven ([#125](#125)). The generic webhook takes one URL.
 queue", which was the right place for them while something else did the paging.
 
 **What to do.** Decide the loud channel first; the abstraction is there and a channel is a
-`Name`, a `Describe()` and a `SendAsync`. **Size.** L. Open.
+`Name`, a `Describe()` and a `SendAsync`. **Decided 2026-09-28:** SMS and voice through Twilio,
+in [roadmap v0.11.0](roadmap.md). v0.10.0 is Teams only. **Size.** L. Open.
 
 ### 144. A rollout is an outage of the pager, and the chart calls that cheap
 
@@ -2169,6 +2178,109 @@ that, written by the people who were paged, and it is the part of it they would 
 **What to do.** A note per alert name, editable in the console, shown on the incident and given
 to the model beside the runbook. Importing the existing notes is a one-off and not part of the
 feature. **Size.** M. Open.
+
+
+### 146. Nothing tests paging end to end
+
+**Symptom.** No test, script or CI job ever posts an alert to the installed chart and looks at
+who was told. `e2e-kind` in CI installs the chart without Alertmanager or a model; the release
+harness needs a published artifact and a real model and takes most of an hour. Every entry in this
+section was found by reading, because nothing could have found it by running.
+
+**And nothing stands in for the model.** `FakeChatClient` exists inside the unit tests only. An
+installed agent cannot be given a deterministic, free investigation, so "a person was told before
+the model answered" cannot be asserted anywhere.
+
+**What to do.** A pager suite: alerts through a real Alertmanager into the installed chart, a
+model stand-in and the Teams stand-in, one scenario per sentence of the milestone's "Done when",
+run in CI on every change. A known-red list lets a scenario land before its fix. **Size.** M.
+Open.
+
+### 147. Flap suppression silences a page across clusters and label sets
+
+**Symptom.** Flap detection counts incidents per `WorkloadKey`, which has no cluster and no
+labels (`Pipeline/IncidentTriage.cs:63-83`). Once [#131](#131) and [#132](#132) make one rule
+several incidents, three clusters firing the same workload alert inside an hour suppress the
+fourth - an incident nobody is told about, for a reason that is not a flap. Every label-only
+alert shares the workload `Alert/<alertname>`.
+
+**What to do.** Count per cluster, skip label-only alerts, and never end an Alertmanager signal
+`Suppressed`: a flapping alert is Alertmanager's to group, and a person still needs to hear.
+**Size.** S. Open.
+
+### 148. A warning that turns critical tells nobody
+
+**Symptom.** A signal of higher severity attached to an open incident raises its severity
+(`Pipeline/IncidentTriage.cs:203`) and makes no transition, and notifications are enqueued only
+on transitions.
+A route that wants criticals only never hears of an incident that opened as a warning.
+
+**What to do.** A raise enlists a notification to the routes that now match and did not before.
+**Size.** S. Open.
+
+### 149. An acknowledgement survives a reopen
+
+**Symptom.** `Reopen` leaves `AcknowledgedBy` and `AcknowledgedAt` set. Once a re-fire reopens an
+incident ([#129](#129)), anything that stops at an acknowledgement ([#142](#142)) stops at one
+given for the previous outage.
+
+**What to do.** A reopen clears the acknowledgement and keeps the assignee. **Size.** S. Open.
+
+### 150. The hourly channel cap drops an opening silently
+
+**Symptom.** `NotificationRateLimit` refuses a delivery once a channel has sent
+`MaxPerChannelPerHour` messages in the hour (`Core/Notifications/NotificationRateLimit.cs:85`).
+The refusal is a skipped outbox row and a log line at Information. As the pager, the message
+refused is the first one about an incident. The cap is not a chart value.
+
+**What to do.** The cap as a chart value, and a refused opening or escalation step logged at
+Error. **Size.** S. Open.
+
+### 151. Any alert name containing "watchdog" is swallowed
+
+**Symptom.** `IsWatchdog` matches `name.Contains("watchdog")` (`Web/AlertmanagerEndpoints.cs:198-202`).
+An alert named, say, `ConsumerWatchdogStalled` is recorded as a heartbeat and never becomes an
+incident.
+
+**What to do.** Match the name `Watchdog` exactly, or the `hephaisto_kind` label. **Size.** S.
+Open.
+
+### 152. An investigation that ends after its incident closed still moves it
+
+**Symptom.** The coordinator transitions the incident it loaded when the investigation started.
+Once an alert clearing can close an incident ([#129](#129)) while its investigation runs, the
+investigation's end escalates or resolves an incident that is already closed.
+
+**What to do.** Re-read the state before each transition; if it is no longer `Investigating`,
+keep the investigation and its usage, record why, and move nothing. **Size.** S. Open.
+
+### 153. With the agent `Off`, the webhook answers 200 and drops the alert
+
+**Symptom.** The kill switch stops investigations and actions. Ingest still accepts, so as the
+pager `Off` reads as healthy to Alertmanager while - before [#133](#133) - nobody is told.
+
+**What to do.** Nothing once [#133](#133) ships: opening and telling a person is not the agent
+acting, and `Off` should not stop it. The entry exists so that stays a decision. **Size.** S.
+Open.
+
+### 154. The open-incidents gauge is never decremented by a human close
+
+**Symptom.** `HephaistoMetrics.IncidentClosed` is called by triage, the coordinator, the sweeper
+and the verifier. The console's close (`Web/IncidentQueries.cs:1100`) does not call it, so an
+incident a person closes while it is still in an open state - awaiting approval, say - leaves
+`hephaisto.incidents.open` one too high for good.
+
+**What to do.** One close metric recorded by every path that closes. **Size.** S. Open.
+
+### 155. A lost resolve leaves an incident open
+
+**Symptom.** Once a resolve closes an incident ([#129](#129)), a resolve that never arrives -
+Alertmanager restarted, the rule deleted, `send_resolved` off - leaves it open for good. The
+sweeper that would expire it is off by default.
+
+**What to do.** Accepted for v0.10.0: an open incident with a firing row is shown as such, and
+Alertmanager repeats a firing alert. A rule deleted while firing is a person's to close. **Size.**
+S. Open.
 
 
 ## Dead or unreachable code
