@@ -17,6 +17,9 @@ the incident service and the pager that alerts go to today; this release is what
 `docs/roadmap.md`, v0.10.0.
 
 ### Upgrading
+- **Add `IncidentOpened` to the routes that should hear first.** It is a new event, and a route
+  only carries the events it names: without it an existing route stays silent until the
+  investigation ends, as before.
 - **Add a route for `hephaisto_route="external"` to a receiver that is not Hephaisto**, ahead of
   the route to Hephaisto. Without it the agent-presence alerts go to the agent, which is exactly
   the one place they cannot help.
@@ -59,6 +62,19 @@ the incident service and the pager that alerts go to today; this release is what
   rather than a Kubernetes object.
 
 ### Changed
+- **A person hears first, and the model second** ([#133](docs/backlog.md#133)). A new event,
+  `IncidentOpened`, goes out when triage ends - before the investigation, or instead of one. The
+  escalation that follows updates what was sent: the Teams bot edits the card of somebody already
+  told and rings only people who were not. The notification cooldown is per event.
+- **A rule can opt out of investigation** with `hephaisto_investigate: "false"`
+  ([#134](docs/backlog.md#134)): the incident opens, a person is told, the model is not asked.
+- **The model is shown the alert** ([#135](docs/backlog.md#135)): its labels less the scrape's,
+  its annotations and the rule's expression, quoted as data, at most twenty signals.
+- A Teams card for an alert that cleared says so - "Cleared - the alert stopped firing" - and never
+  "Resolved", which is the verifier's word for a fix. An alert that keeps coming back is escalated
+  as `Flapping`, with its own headline.
+- A database migration, `SignalAnnotations`: `signals.annotations`, and the notification cooldown's
+  index gains the event.
 - **The webhook answers after it has written, and 503 when it could not** ([#136](docs/backlog.md#136)).
   Alertmanager's retry is the queue: a delivery during a database outage or a pod restart is
   refused and re-sent, instead of acknowledged and lost. `/readyz` checks the database.

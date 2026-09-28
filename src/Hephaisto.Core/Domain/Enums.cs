@@ -169,6 +169,13 @@ public enum EscalationReason
     /// told; the model is never asked. Backlog #134.
     /// </summary>
     NotInvestigated = 14,
+
+    /// <summary>
+    /// The alert keeps coming back: its workload opened, or its incident reopened, as often as
+    /// Ingest:FlapThreshold allows inside Ingest:FlapWindow. A person is told; another model run
+    /// on the same fault is not worth it (#147).
+    /// </summary>
+    Flapping = 15,
 }
 
 /// <summary>Whether an alert instance is firing now. Backlog #129.</summary>

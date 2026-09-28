@@ -116,6 +116,23 @@ public sealed class TeamsBotNotificationChannel(
                 continue;
             }
 
+            // Somebody who already has a live card for this incident is not rung again for an
+            // update to it (#133). The reconciler edits their card to the present - and an edit
+            // notifies nobody, which is right for a person who already knows. Somebody who has
+            // no card for it yet is exactly who this message is for.
+            if (!Rings(message.Snapshot.Event) && incidentId is { } live
+                && await db.TeamsBotMessages.AnyAsync(
+                    m => m.Kind == TeamsBotMessageKind.Alert
+                        && m.State == TeamsBotMessageState.Live
+                        && m.IncidentId == live
+                        && m.Recipient == recipient,
+                    ct).ConfigureAwait(false))
+            {
+                told++;
+
+                continue;
+            }
+
             var chat = await ChatAsync(db, recipient, ct).ConfigureAwait(false);
 
             if (chat.Value is not { } conversation)
@@ -240,12 +257,24 @@ public sealed class TeamsBotNotificationChannel(
     }
 
     /// <summary>
+    /// Whether an event is always a new message, or an update to one already sent.
+    /// </summary>
+    /// <remarks>
+    /// The investigation ending and the incident being resolved update what a person was told
+    /// when it opened. Everything else asks something of somebody - look, approve, the fix did not
+    /// hold - and is its own message.
+    /// </remarks>
+    internal static bool Rings(NotificationEvent evt) =>
+        evt is not (NotificationEvent.IncidentEscalated or NotificationEvent.IncidentResolved);
+
+    /// <summary>
     /// What a lock screen shows: the event that happened, which is not always the state arrived at.
     /// </summary>
     private static string Announcement(NotificationMessage message, string title)
     {
         var what = message.Snapshot.Event switch
         {
+            NotificationEvent.IncidentOpened => "Opened",
             NotificationEvent.IncidentEscalated => "Escalated",
             NotificationEvent.ApprovalRequired => "Approval required",
             NotificationEvent.IncidentResolved => "Resolved",

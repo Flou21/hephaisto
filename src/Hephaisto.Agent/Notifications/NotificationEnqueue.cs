@@ -65,17 +65,24 @@ public static class NotificationEnqueue
     /// declined to try". Reading the state alone would collapse the two.
     /// </para>
     /// </remarks>
-    public static NotificationEvent? Classify(IncidentState to, EscalationReason reason) => to switch
-    {
-        IncidentState.Escalated when reason
-            is EscalationReason.VerificationFailed
-            or EscalationReason.RollbackPerformed
-            or EscalationReason.Quarantined => NotificationEvent.VerificationFailed,
-        IncidentState.Escalated => NotificationEvent.IncidentEscalated,
-        IncidentState.AwaitingApproval => NotificationEvent.ApprovalRequired,
-        IncidentState.Resolved => NotificationEvent.IncidentResolved,
-        _ => null,
-    };
+    public static NotificationEvent? Classify(IncidentState? from, IncidentState to, EscalationReason reason) =>
+        (from, to) switch
+        {
+            // The edge out of triage is the incident opening, whatever it opened into (#133):
+            // an investigation, or straight to a person - self-signal, flapping, not to be
+            // investigated. A human's Reinvestigate starts from Escalated or Closed, not from
+            // Triaging, so it opens nothing.
+            (IncidentState.Triaging, IncidentState.Investigating or IncidentState.Escalated or IncidentState.AwaitingApproval)
+                => NotificationEvent.IncidentOpened,
+            (_, IncidentState.Escalated) when reason
+                is EscalationReason.VerificationFailed
+                or EscalationReason.RollbackPerformed
+                or EscalationReason.Quarantined => NotificationEvent.VerificationFailed,
+            (_, IncidentState.Escalated) => NotificationEvent.IncidentEscalated,
+            (_, IncidentState.AwaitingApproval) => NotificationEvent.ApprovalRequired,
+            (_, IncidentState.Resolved) => NotificationEvent.IncidentResolved,
+            _ => null,
+        };
 
     /// <summary>
     /// Builds the frozen facts from the transition and the incident it belongs to.

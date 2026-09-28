@@ -54,6 +54,13 @@ public sealed class Signal
     /// <summary>Labels from Alertmanager or derived from the Kubernetes object. Stored as jsonb.</summary>
     public Dictionary<string, string> Labels { get; set; } = [];
 
+    /// <summary>
+    /// An alert's annotations - summary, description, runbook_url and whatever else the rule's
+    /// author wrote for a person. Stored as jsonb, and shown to the model as the rule's own words
+    /// (#135). Empty for a signal that is not an alert.
+    /// </summary>
+    public Dictionary<string, string> Annotations { get; set; } = [];
+
     /// <summary>The original payload, kept verbatim for the audit trail. Stored as jsonb.</summary>
     public string? RawPayload { get; set; }
 

@@ -109,6 +109,7 @@ public sealed class NotificationEnqueueInterceptor(
                     ?? incidents.Find(i => i.Id == transition.IncidentId);
 
                 var kind = NotificationEnqueue.Classify(
+                    transition.From,
                     transition.To,
                     incident?.EscalationReason ?? EscalationReason.None);
 

@@ -43,7 +43,12 @@ public interface INotificationOutbox
     /// <summary>Pending rows whose backoff has elapsed, oldest first.</summary>
     Task<IReadOnlyList<NotificationDelivery>> DueAsync(int limit, DateTimeOffset now, CancellationToken ct);
 
-    Task<OutboundBudget> BudgetAsync(string channel, string correlationKey, DateTimeOffset now, CancellationToken ct);
+    /// <remarks>
+    /// The cooldown is per event (#133): the incident opening and its investigation ending are two
+    /// different things to hear about the same workload, and a cooldown keyed on the workload alone
+    /// would drop the second - the diagnosis - because the first went out a minute earlier.
+    /// </remarks>
+    Task<OutboundBudget> BudgetAsync(string channel, string correlationKey, NotificationEvent evt, DateTimeOffset now, CancellationToken ct);
 
     Task MarkDeliveredAsync(NotificationDelivery delivery, CancellationToken ct);
 
@@ -81,6 +86,7 @@ public sealed class NotificationOutbox(HephaistoDbContext db, IClock clock) : IN
     public async Task<OutboundBudget> BudgetAsync(
         string channel,
         string correlationKey,
+        NotificationEvent evt,
         DateTimeOffset now,
         CancellationToken ct)
     {
@@ -104,6 +110,7 @@ public sealed class NotificationOutbox(HephaistoDbContext db, IClock clock) : IN
         var lastForKey = await db.NotificationDeliveries
             .Where(d => d.Channel == channel
                 && d.CorrelationKey == correlationKey
+                && d.Event == evt
                 && d.Status == DeliveryStatus.Delivered)
             .MaxAsync(d => (DateTimeOffset?)d.DeliveredAt, ct)
             .ConfigureAwait(false);
@@ -114,6 +121,7 @@ public sealed class NotificationOutbox(HephaistoDbContext db, IClock clock) : IN
             .CountAsync(
                 d => d.Channel == channel
                     && d.CorrelationKey == correlationKey
+                    && d.Event == evt
                     && d.Status == DeliveryStatus.Suppressed
                     && d.CreatedAt > since,
                 ct)

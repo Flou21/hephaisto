@@ -171,17 +171,25 @@ public sealed class NotificationOutboxTests(PostgresFixture pg)
             swallowed.Status = DeliveryStatus.Suppressed;
             swallowed.CreatedAt = Now.AddMinutes(-2);
 
-            db.NotificationDeliveries.AddRange(sent, stale, otherChannel, swallowed);
+            // The same workload, another event (#133): the incident opening does not hold back
+            // the diagnosis that follows it.
+            var opened = Delivery(incident.Id);
+            opened.Event = NotificationEvent.IncidentOpened;
+            opened.Status = DeliveryStatus.Delivered;
+            opened.DeliveredAt = Now.AddMinutes(-1);
+
+            db.NotificationDeliveries.AddRange(sent, stale, otherChannel, swallowed, opened);
             await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var db = pg.CreateContext())
         {
             var budget = await new NotificationOutbox(db, new FixedClock(Now))
-                .BudgetAsync("webhook", "hephaisto-chaos/Deployment/api", Now, TestContext.Current.CancellationToken);
+                .BudgetAsync("webhook", "hephaisto-chaos/Deployment/api", NotificationEvent.IncidentEscalated, Now, TestContext.Current.CancellationToken);
 
-            // The three-hour-old one is outside the window; the Teams one is another channel.
-            budget.DeliveredOnChannelLastHour.Should().Be(1);
+            // The three-hour-old one is outside the window; the Teams one is another channel; the
+            // opening counts toward the hourly cap and not toward the escalation's cooldown.
+            budget.DeliveredOnChannelLastHour.Should().Be(2);
             budget.LastDeliveryForKey.Should().Be(Now.AddMinutes(-5));
             budget.SuppressedSinceLastDelivery.Should().Be(1);
         }

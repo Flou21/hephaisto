@@ -84,9 +84,9 @@ notifications:
       maxIncidents: 40
   routes:
     - channel: teamsBot
-      events: [IncidentEscalated, ApprovalRequired, VerificationFailed, IncidentResolved]
+      events: [IncidentOpened, IncidentEscalated, ApprovalRequired, VerificationFailed, IncidentResolved]
     - channel: webhook
-      events: [IncidentEscalated, ApprovalRequired, VerificationFailed, IncidentResolved, ModeChanged]
+      events: [IncidentOpened, IncidentEscalated, ApprovalRequired, VerificationFailed, IncidentResolved, ModeChanged]
 
 secrets:
   notificationTeamsBot: hephaisto-notification-teams-bot-stand-in

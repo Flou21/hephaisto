@@ -77,4 +77,12 @@ public enum NotificationEvent
     /// working", which is the one wrong conclusion to leave someone with.
     /// </summary>
     CodeFixFailed = 9,
+
+    /// <summary>
+    /// Triage finished: the incident opened - or reopened - and is about to be investigated, or
+    /// was escalated without one. The first thing a person hears (#133), sent before the model
+    /// has said anything, because as the pager the delay between a fault and the first person to
+    /// hear of it must not be set by a model.
+    /// </summary>
+    IncidentOpened = 10,
 }

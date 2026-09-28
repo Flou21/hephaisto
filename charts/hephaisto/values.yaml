@@ -421,7 +421,7 @@ notifications:
   # no deny rule, because a subtractive routing table is one nobody can reason about and the
   # thing being routed is the message that says the agent needs help.
   #
-  # events: IncidentEscalated | ApprovalRequired | IncidentResolved | VerificationFailed |
+  # events: IncidentOpened | IncidentEscalated | ApprovalRequired | IncidentResolved | VerificationFailed |
   #         ModeChanged | PolicyChanged |
   #         CodeFixPlanReady | CodeFixPrOpened | CodeFixFailed      (see codeFix below)
   # minSeverity: Info | Warning | Critical   (inclusive; defaults to Info)
@@ -435,7 +435,7 @@ notifications:
   #
   # routes:
   #   - channel: teams
-  #     events: [IncidentEscalated, ApprovalRequired, VerificationFailed, ModeChanged]
+  #     events: [IncidentOpened, IncidentEscalated, ApprovalRequired, VerificationFailed, ModeChanged]
   #     minSeverity: Warning
   #     namespaces: []
   routes: []
