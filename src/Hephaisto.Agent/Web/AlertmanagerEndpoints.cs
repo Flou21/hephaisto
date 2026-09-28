@@ -118,19 +118,32 @@ public static class AlertmanagerEndpoints
     }
 
     /// <summary>
-    /// Maps each alert to a <see cref="Signal"/> and hands it to the sink.
+    /// Writes each alert, then answers: 200 when every one of them was committed, 503 when one
+    /// could not be.
     /// </summary>
     /// <remarks>
-    /// Returns 200 with a count and nothing else. Alertmanager retries on any non-2xx and
-    /// re-sends the whole group on its repeat interval, so a handler that waits for a
-    /// database is one slow query away from turning a single firing group into a delivery
-    /// storm - each retry arriving before the previous one committed, each looking like a
-    /// new observation. The sink's contract is to enqueue; see <see cref="ISignalSink"/>.
+    /// <para>
+    /// Until v0.10.0 this enqueued and answered 200 before anything was written (#136), on the
+    /// argument that a handler waiting for a database turns one slow query into a retry storm.
+    /// That argument held while a repeat was a new incident. Now a repeat is absorbed into the
+    /// incident it belongs to, so a retry is harmless, and Alertmanager's retry is the only queue
+    /// that survives this pod restarting - which the in-memory one did not.
+    /// </para>
+    /// <para>
+    /// The first failure to write stops the loop: the database being unreachable is the likely
+    /// cause, and every alert after it would fail the same way. Alertmanager re-sends the whole
+    /// group, and the ones written before the failure are absorbed as repeats.
+    /// </para>
+    /// <para>
+    /// A NUL in a label is removed rather than refused - Postgres cannot store one, and retrying
+    /// an alert that can never be written would block its group for ever.
+    /// </para>
     /// </remarks>
-    private static async Task<Ok<AlertIngestResult>> ReceiveAlertsAsync(
+    internal static async Task<Results<Ok<AlertIngestResult>, ProblemHttpResult>> ReceiveAlertsAsync(
         [FromBody] AlertmanagerWebhook payload,
         ISignalSink sink,
         WatchdogMonitor watchdog,
+        HephaistoMetrics metrics,
         ILoggerFactory loggerFactory,
         CancellationToken ct)
     {
@@ -158,12 +171,28 @@ public static class AlertmanagerEndpoints
                 continue;
             }
 
-            await sink.SubmitAsync(ToSignal(alert, payload), ct);
-            accepted++;
+            try
+            {
+                await sink.IngestAsync(ToSignal(alert, payload), ct);
+                accepted++;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                metrics.SignalDropped(SignalSource.Alertmanager, "ingest-failed");
+                logger.LogError(ex,
+                    "Could not write alert {AlertName} from group {GroupKey}; answering 503 so Alertmanager retries the group",
+                    Label(alert.Labels, "alertname"),
+                    payload.GroupKey);
+
+                return TypedResults.Problem(
+                    title: "The alert could not be written",
+                    detail: "Hephaisto could not persist this group. Alertmanager will retry it; alerts already written are absorbed as repeats.",
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
         }
 
         logger.LogInformation(
-            "Alertmanager group {GroupKey} ({Status}) from {Receiver}: {Accepted} signals accepted, watchdog={Watchdog}",
+            "Alertmanager group {GroupKey} ({Status}) from {Receiver}: {Accepted} signals written, watchdog={Watchdog}",
             payload.GroupKey,
             payload.Status,
             payload.Receiver,
@@ -211,6 +240,7 @@ public static class AlertmanagerEndpoints
 
     internal static Signal ToSignal(AlertmanagerAlert alert, AlertmanagerWebhook payload)
     {
+        alert = WithoutNuls(alert);
         var labels = alert.Labels;
         var alertName = Label(labels, "alertname") ?? "UnknownAlert";
 
@@ -449,6 +479,33 @@ public static class AlertmanagerEndpoints
         ("cronjob", "CronJob"),
         ("replicaset", "ReplicaSet"),
     ];
+
+    /// <summary>
+    /// The alert with every NUL removed from its labels and annotations. Postgres stores neither
+    /// text nor jsonb with one in it, so an alert carrying one could never be written - and a
+    /// write that can never succeed, answered with 503, would block its group for ever.
+    /// </summary>
+    private static AlertmanagerAlert WithoutNuls(AlertmanagerAlert alert)
+    {
+        static bool Has(Dictionary<string, string> d) =>
+            d.Any(kv => kv.Key.Contains('\0', StringComparison.Ordinal) || kv.Value.Contains('\0', StringComparison.Ordinal));
+
+        static Dictionary<string, string> Clean(Dictionary<string, string> d)
+        {
+            var clean = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var (key, value) in d)
+            {
+                clean[key.Replace("\0", string.Empty, StringComparison.Ordinal)] =
+                    value.Replace("\0", string.Empty, StringComparison.Ordinal);
+            }
+
+            return clean;
+        }
+
+        return Has(alert.Labels) || Has(alert.Annotations)
+            ? alert with { Labels = Clean(alert.Labels), Annotations = Clean(alert.Annotations) }
+            : alert;
+    }
 
     private static string? Label(IReadOnlyDictionary<string, string> labels, string key) =>
         labels.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value) ? value : null;

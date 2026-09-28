@@ -82,6 +82,36 @@ The agent binds far more configuration than the chart promotes to values: `Llm:M
 `Section__Key` environment variables through `extraEnv`. That is deliberate — mirroring every
 options class in YAML would duplicate them and drift the first time one is renamed.
 
+## Routing alerts to it (v0.10.0)
+
+Two routes, in this order, in the Alertmanager that sends to Hephaisto:
+
+```yaml
+route:
+  routes:
+    # The agent's own absence (alerts.agentPresence). An agent that is down cannot report
+    # being down, so these go to something that is not the agent.
+    - receiver: not-hephaisto
+      matchers: [ hephaisto_route = "external" ]
+      continue: false
+  receiver: hephaisto
+receivers:
+  - name: hephaisto
+    webhook_configs:
+      - url: http://hephaisto.hephaisto:8080/webhooks/alertmanager
+        send_resolved: true            # a resolve is what closes an incident
+        http_config:
+          authorization:
+            credentials_file: /etc/alertmanager/secrets/hephaisto-webhook-token/token
+  - name: not-hephaisto
+    webhook_configs:
+      - url: https://your-other-channel.example/hook
+```
+
+`send_resolved: true` is not optional any more: without it an incident closes only when a person
+closes it. The token is `secrets.webhookToken`. The webhook answers 503 when it cannot write, and
+Alertmanager retries - so a restart or a database outage costs minutes, not a lost alert.
+
 ## Code fixes (v0.9.0)
 
 When an investigation's grounded primary finding is a bug in application code, nothing in the

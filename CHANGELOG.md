@@ -17,6 +17,9 @@ the incident service and the pager that alerts go to today; this release is what
 `docs/roadmap.md`, v0.10.0.
 
 ### Upgrading
+- **Add a route for `hephaisto_route="external"` to a receiver that is not Hephaisto**, ahead of
+  the route to Hephaisto. Without it the agent-presence alerts go to the agent, which is exactly
+  the one place they cannot help.
 - **Incidents opened before the upgrade do not absorb the alerts after it.** The fingerprint and the
   correlation key now carry the cluster, so the first firing after the upgrade opens a new
   incident. Close the old ones.
@@ -56,6 +59,14 @@ the incident service and the pager that alerts go to today; this release is what
   rather than a Kubernetes object.
 
 ### Changed
+- **The webhook answers after it has written, and 503 when it could not** ([#136](docs/backlog.md#136)).
+  Alertmanager's retry is the queue: a delivery during a database outage or a pod restart is
+  refused and re-sent, instead of acknowledged and lost. `/readyz` checks the database.
+- **The agent's own absence reaches a person** ([#137](docs/backlog.md#137)): `HephaistoAbsent`,
+  `HephaistoAlertPathSilent` and `HephaistoIngestFailing` (`alerts.agentPresence`, on by default),
+  labelled `hephaisto_route: external`. **Route that label to a receiver that is not Hephaisto** -
+  see Upgrading. `HephaistoNotProcessingSignals` is removed: with the pod gone its series is gone,
+  and it could never fire.
 - **An alert is one incident for as long as it fires** ([#129](docs/backlog.md#129),
   [#130](docs/backlog.md#130)). A repeat is absorbed however long after the first firing it
   arrives, into the alert instance's own row. A resolve opens nothing; once nothing on the

@@ -265,6 +265,17 @@ alertmanager:
       receiver: hephaisto
 
       routes:
+        # The agent's own absence (charts/hephaisto/files/alerts/agent-presence.yaml, #137).
+        # Anything labelled hephaisto_route=external goes to a receiver that is NOT the agent,
+        # first, because an agent that is down cannot report being down. Here that receiver is
+        # the stand-in's /hooks/external (tilt_config.json "teams-bot": "stand-in" or
+        # "pager-e2e": true); without the stand-in the deliveries fail and Alertmanager logs it.
+        - receiver: not-hephaisto
+          matchers:
+            - hephaisto_route = "external"
+          group_wait: 10s
+          continue: false
+
         # The heartbeat. See alerts/watchdog.yaml -- this alert fires permanently and its
         # ONLY job is to prove the path Prometheus -> Alertmanager -> agent webhook is
         # alive. It gets its own receiver and a tighter repeat_interval so the agent's
@@ -301,6 +312,11 @@ alertmanager:
             # MTTR panel on the dashboard measures nothing.
             send_resolved: true
             max_alerts: 0
+
+      - name: not-hephaisto
+        webhook_configs:
+          - url: http://teams-stand-in.hephaisto-obs:8080/hooks/external
+            send_resolved: true
 
       - name: hephaisto-watchdog
         webhook_configs:

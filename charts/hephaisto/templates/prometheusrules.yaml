@@ -19,6 +19,7 @@ without those labels every rule is created successfully and never selected.
       "slo-rules.yaml"               $.Values.alerts.slo
       "no-traffic.yaml"              $.Values.alerts.noTraffic
       "watchdog.yaml"                $.Values.alerts.watchdog
+      "agent-presence.yaml"          $.Values.alerts.agentPresence
       "observability-selfcheck.yaml" $.Values.alerts.observabilitySelfcheck -}}
 {{- range $file, $enabled := $files }}
 {{- if $enabled }}

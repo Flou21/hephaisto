@@ -19,8 +19,12 @@ read the old value and proceeds. A kill switch a second replica can race is not 
 
 `strategy: Recreate` is the same argument at rollout time - RollingUpdate deliberately runs
 old and new pods simultaneously, which is the two-replica scenario arriving through the back
-door on every deploy. Downtime is cheap: alerts that fire while the agent is down are re-sent
-by Alertmanager on its next repeat_interval.
+door on every deploy. The downtime is a deliberate limitation, and what covers it (#144):
+the webhook answers only after it has written, so a delivery that arrives while the pod is
+replaced is refused and Alertmanager RETRIES it - minutes, not the hours of repeat_interval
+this comment used to price it at (#136). A restart that does not come back is reported by
+HephaistoAbsent in files/alerts/agent-presence.yaml, on a route that does not pass through
+the agent (#137).
 =========================================================================================
 */}}
 apiVersion: apps/v1
