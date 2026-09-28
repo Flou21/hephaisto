@@ -210,7 +210,7 @@ build_await_artifacts() {
     # asserts it about what is actually being installed.
     local named
     named=$(helm template hephaisto "$CHART_REPO/hephaisto" --version "$VERSION" \
-                --namespace "$APP_NS" 2>/dev/null \
+                --namespace "$APP_NS" --set cluster.name=kind-e2e 2>/dev/null \
             | sed 's/"//g' | grep -oE "image: $IMAGE_REPO:[^ ]+" | head -1 | awk '{print $2}')
     [ "$named" = "$IMAGE_REPO:$VERSION" ] \
         && pass "the published chart points at the published image" \

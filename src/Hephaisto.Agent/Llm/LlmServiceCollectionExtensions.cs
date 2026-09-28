@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Hephaisto.Agent.Investigations;
+using Hephaisto.Agent.Options;
 using Hephaisto.Agent.Persistence;
 using Hephaisto.Core.Abstractions;
 using Hephaisto.Core.Telemetry;
@@ -26,10 +27,30 @@ public static class LlmServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(configuration);
 
         services.Configure<LlmOptions>(configuration.GetSection(LlmOptions.SectionName));
+
+        // Operator prices, set as a list because a model id cannot be a configuration key
+        // (backlog #140). Merged last, so an entry replaces a built-in price of the same name.
+        services.PostConfigure<LlmOptions>(o =>
+        {
+            foreach (var entry in o.Prices.Where(e => !string.IsNullOrWhiteSpace(e.Model)))
+            {
+                o.Pricing[entry.Model.Trim()] = new ModelPrice
+                {
+                    InputPerMillionUsd = entry.InputPerMillionUsd,
+                    OutputPerMillionUsd = entry.OutputPerMillionUsd,
+                };
+            }
+        });
+
+        // Refuses to START with a cost cap and an unpriced model. Not a validator of LlmOptions:
+        // see LlmPricingCheck for why that would break every container that is not a host.
+        services.AddSingleton<IValidateOptions<LlmPricingCheck>, LlmPricingValidator>();
+        services.AddOptions<LlmPricingCheck>().ValidateOnStart();
         services.Configure<GrafanaOptions>(configuration.GetSection(GrafanaOptions.SectionName));
         services.Configure<InvestigationOptions>(configuration.GetSection(InvestigationOptions.SectionName));
         services.Configure<EnvironmentCardOptions>(
             configuration.GetSection(EnvironmentCardOptions.SectionName));
+        services.AddHephaistoCluster(configuration);
 
         // Another stream may already have registered the clock; there must be exactly one,
         // because every budget window in this layer is measured against it.

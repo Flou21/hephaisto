@@ -10,7 +10,12 @@ public sealed class IngestOptions
     /// Tempo's metrics-generator and the OTel collector. A mismatch does not error - it
     /// silently returns nothing from every correlation query that filters on cluster.
     /// </summary>
-    public string ClusterName { get; set; } = "studio-rancher-desktop";
+    /// <remarks>
+    /// Filled from <c>Cluster:Name</c> by <see cref="ClusterServiceCollectionExtensions.AddHephaistoCluster"/>
+    /// (backlog #139). Empty by default: it used to be the development machine's name, which
+    /// every other install then inherited.
+    /// </remarks>
+    public string ClusterName { get; set; } = string.Empty;
 
     /// <summary>
     /// Identical signals arriving inside this window are the same problem restated, not a

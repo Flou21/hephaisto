@@ -270,7 +270,30 @@ public sealed class LlmOptions
         // wall-clock budgets still do.
     };
 
+    /// <summary>
+    /// Prices set by the operator, as a list: the chart value <c>llm.pricing</c>, rendered to
+    /// <c>Llm__Prices__N__Model</c> and friends. Merged over <see cref="Pricing"/> at startup, an
+    /// entry here replacing a built-in one of the same name.
+    /// </summary>
+    /// <remarks>
+    /// A list rather than more <see cref="Pricing"/> keys because a model id is a poor
+    /// configuration KEY: <c>gpt-oss:120b</c> and <c>openai/gpt-oss-120b</c> carry characters
+    /// that an environment variable name cannot, so a price for a gateway's model name could not
+    /// be set from a chart at all (backlog #140). As a value it can be anything.
+    /// </remarks>
+    public List<ModelPriceEntry> Prices { get; set; } = [];
+
     public string PlanningModelId => string.IsNullOrWhiteSpace(PlanningModel) ? Model : PlanningModel;
+}
+
+/// <summary>One operator-supplied price. See <see cref="LlmOptions.Prices"/>.</summary>
+public sealed class ModelPriceEntry
+{
+    public string Model { get; set; } = string.Empty;
+
+    public decimal InputPerMillionUsd { get; set; }
+
+    public decimal OutputPerMillionUsd { get; set; }
 }
 
 /// <summary>How a provider is asked to constrain a structured response.</summary>

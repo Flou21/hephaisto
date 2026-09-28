@@ -25,17 +25,30 @@ public sealed class EnvironmentCardOptions
     /// The <c>cluster</c> label value carried by every metric and log line here. Without it
     /// the model writes label matchers that return nothing and reads that as "no data".
     /// </summary>
-    public string ClusterName { get; set; } = "studio-rancher-desktop";
+    /// <remarks>
+    /// Filled from <c>Cluster:Name</c> (backlog #139). It defaulted to the development machine's
+    /// name, so every other install told its model to filter on a label that matched nothing.
+    /// </remarks>
+    public string ClusterName { get; set; } = string.Empty;
 
-    /// <summary>Namespaces the agent may investigate at all.</summary>
-    public List<string> InScopeNamespaces { get; set; } = ["hephaisto-chaos"];
+    /// <summary>
+    /// Namespaces the agent may investigate at all. Chart value
+    /// <c>investigation.inScopeNamespaces</c>. Empty by default, and then the card says nothing
+    /// about scope rather than naming the development machine's chaos namespace.
+    /// </summary>
+    public List<string> InScopeNamespaces { get; set; } = [];
 
     /// <summary>
     /// Namespaces that are permanently off limits. Stated to the model so it does not spend
     /// steps on things the policy engine would refuse anyway - the enforcement is in the
     /// policy engine and RBAC, not here.
     /// </summary>
-    public List<string> ProtectedNamespaces { get; set; } = ["hephaisto", "hephaisto-obs", "kube-system"];
+    /// <remarks>
+    /// Empty by default. The card then names the policy engine's own protected namespaces
+    /// (<c>Policy:ProtectedNamespaces</c>), which is the list that is actually enforced - two
+    /// hand-kept copies of it could only ever disagree.
+    /// </remarks>
+    public List<string> ProtectedNamespaces { get; set; } = [];
 
     /// <summary>Datasource name to uid, as grafana-mcp expects them.</summary>
     public Dictionary<string, string> DatasourceUids { get; set; } = new(StringComparer.OrdinalIgnoreCase);

@@ -136,7 +136,7 @@ spec:
               containerPort: 8080
               protocol: TCP
             {{- if .Values.webhookPort }}
-            # The unauthenticated Alertmanager receiver, on its own port so a NetworkPolicy can
+            # The Alertmanager receiver, outside OIDC, on its own port so a NetworkPolicy can
             # protect it without also deciding who may read the console. See values.yaml.
             - name: webhook
               containerPort: {{ .Values.webhookPort }}
@@ -148,6 +148,16 @@ spec:
             # ---------------------------------------------------------------------------
             - name: HEPHAISTO_MODE
               value: {{ .Values.mode | quote }}
+
+            # ---------------------------------------------------------------------------
+            # The cluster - one name for the fingerprint, the watcher and the model (#139)
+            # ---------------------------------------------------------------------------
+            - name: Cluster__Name
+              value: {{ required "cluster.name is required: the value of the `cluster` label on this cluster's metrics and logs. It is in every signal fingerprint and every query the model writes, and no default can be right for a cluster the chart has never seen." .Values.cluster.name | quote }}
+            {{- range $i, $ns := .Values.investigation.inScopeNamespaces }}
+            - name: Investigation__Environment__InScopeNamespaces__{{ $i }}
+              value: {{ $ns | quote }}
+            {{- end }}
 
             {{- with .Values.sourceUrl }}
             # AGPL section 13: the source of the build these users are talking to.
@@ -415,6 +425,17 @@ spec:
                   key: LLM_API_KEY
                   optional: true
 
+            # Prices, as a list because a model id is not a valid env var NAME (#140). The agent
+            # refuses to start when a cost cap is set and the model it bills has no price.
+            {{- range $i, $p := .Values.llm.pricing }}
+            - name: Llm__Prices__{{ $i }}__Model
+              value: {{ required "every llm.pricing entry needs a model" $p.model | quote }}
+            - name: Llm__Prices__{{ $i }}__InputPerMillionUsd
+              value: {{ $p.inputPerMillionUsd | toString | quote }}
+            - name: Llm__Prices__{{ $i }}__OutputPerMillionUsd
+              value: {{ $p.outputPerMillionUsd | toString | quote }}
+            {{- end }}
+
             # ---------------------------------------------------------------------------
             # Self namespaces - the agent's own signals are escalated, never acted on
             # ---------------------------------------------------------------------------
@@ -576,6 +597,16 @@ spec:
                   # browser-facing client is public + PKCE, which this agent uses. Requiring one
                   # would make the common configuration impossible.
                   optional: true
+            {{- end }}
+
+            {{- with .Values.secrets.webhookToken }}
+            # The bearer token /webhooks requires (#138). A secretKeyRef and never a value, for the
+            # reason every credential in this chart is one.
+            - name: Web__WebhookToken
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: token
             {{- end }}
 
             {{- if .Values.webhookPort }}

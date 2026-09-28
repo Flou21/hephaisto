@@ -32,12 +32,6 @@ extraEnv:
     value: http://model-stand-in.hephaisto-obs:8080/v1
   - name: Llm__EmbeddingModel
     value: stand-in
-  # Priced at zero, explicitly: a cost cap with an unpriced model refuses to start (#140), and
-  # the stand-in costs nothing.
-  - name: Llm__Pricing__stand-in__InputPerMillionUsd
-    value: "0"
-  - name: Llm__Pricing__stand-in__OutputPerMillionUsd
-    value: "0"
   # 2. Teams, where the bot logs in and where it posts. No chart value on purpose: nobody but a
   # test harness should move these.
   - name: Notifications__TeamsBot__LoginUrl
@@ -63,6 +57,14 @@ extraEnv:
     value: "00:00:05"
   - name: Notifications__MaxPerChannelPerHour
     value: "1000"
+
+# Priced at zero, explicitly: a cost cap with an unpriced model refuses to start (#140), and the
+# stand-in costs nothing.
+llm:
+  pricing:
+    - model: stand-in
+      inputPerMillionUsd: 0
+      outputPerMillionUsd: 0
 
 notifications:
   # In-cluster, because nothing here is opened by a person. Links only have to be well-formed.

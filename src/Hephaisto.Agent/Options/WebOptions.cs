@@ -1,14 +1,15 @@
 namespace Hephaisto.Agent.Options;
 
 /// <summary>
-/// Which port the unauthenticated webhook answers on.
+/// Which port the webhook answers on, and the token it may require.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>The problem this solves (backlog #108).</b> The console, the JSON API and
 /// <c>/webhooks/alertmanager</c> all answered on one port, and the agent has no authentication of
-/// its own. The webhook cannot be authenticated either - Alertmanager has no field for a
-/// credential - so a NetworkPolicy is its entire protection. Sharing a port therefore forced a
+/// its own. The webhook was not authenticated either - the code believed Alertmanager had no field
+/// for a credential, which was wrong (<see cref="WebhookToken"/>, backlog #138) - so a
+/// NetworkPolicy was its entire protection. Sharing a port therefore forced a
 /// choice between two bad options on every install: leave the console unreachable except by
 /// port-forward, or widen the policy for the console and admit forged alerts with it.
 /// </para>
@@ -69,4 +70,16 @@ public sealed class WebOptions
     /// </para>
     /// </remarks>
     public bool TrustForwardedHeaders { get; set; }
+
+    /// <summary>
+    /// The bearer token <c>/webhooks/*</c> requires, or empty to require none. Chart value
+    /// <c>secrets.webhookToken</c>, a Secret with key <c>token</c>.
+    /// </summary>
+    /// <remarks>
+    /// Alertmanager sends it with <c>http_config.authorization.credentials_file</c> on the
+    /// receiver. Set both in one change: a token the receiver does not send refuses every alert.
+    /// At least <see cref="Web.WebhookTokenFilter.MinimumLength"/> characters, or the agent
+    /// refuses to start. See <see cref="Web.WebhookTokenFilter"/>.
+    /// </remarks>
+    public string? WebhookToken { get; set; }
 }

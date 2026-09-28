@@ -79,9 +79,8 @@ extraArgs:
 envValueFrom:
   # === Bearer-gated ===================================================================
   # MCP_GRAFANA_SERVER_TOKEN makes the MCP server require `Authorization: Bearer <token>`
-  # on every inbound call. Unlike Alertmanager's webhook (which physically cannot send a
-  # header -- see kube-prometheus-stack.values.yaml), the agent is our own code and can, so
-  # this endpoint IS token-gated rather than relying on network policy alone.
+  # on every inbound call, so this endpoint is token-gated rather than relying on network
+  # policy alone - as the agent's own webhook now is too (backlog #138).
   #
   # The same Secret is mounted into the agent Deployment as Grafana__ServiceAccountToken.
   # Create it once:

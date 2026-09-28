@@ -64,7 +64,7 @@ ingest configuration. The sink owns fingerprinting, dedup and correlation.
 
 | Route | Notes |
 |---|---|
-| `POST /webhooks/alertmanager` | v4 payload bound to records. **Unauthenticated on purpose** — Alertmanager cannot send a custom header. Protected by a NetworkPolicy restricting ingress to the observability namespace. Do not put an Ingress in front of `/webhooks`. |
+| `POST /webhooks/alertmanager` | v4 payload bound to records. **Outside OIDC** — Alertmanager cannot sign in. Requires `Authorization: Bearer` when `Web:WebhookToken` is set (Alertmanager sends it with `http_config.authorization`); protected by a NetworkPolicy restricting ingress to the observability namespace either way. Do not put an Ingress in front of `/webhooks`. |
 | `POST /webhooks/watchdog` | Records a timestamp, produces no signal. Absence is the signal. |
 | `GET /api/incidents?state=&kind=&namespace=&limit=` | No `state` means open only. `state=all` for everything. |
 | `GET /api/incidents/{id}` | Full detail: signals, transitions, investigations with steps/findings/evidence/plan, actions, feedback. |

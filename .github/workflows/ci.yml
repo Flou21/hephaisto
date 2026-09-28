@@ -313,7 +313,8 @@ jobs:
     #
     #   - kind's default CNI ACCEPTS NetworkPolicy objects and does not enforce them. This job
     #     validates their shape, not their effect - and their effect is the Alertmanager
-    #     webhook's entire authentication. That stays a manual acceptance step for 0.0.1.
+    #     webhook's entire protection when no webhook token is set. That stays a manual
+    #     acceptance step.
     #   - No Prometheus here, so the `release:` selector is only covered by the render-time
     #     grep in the chart job.
     #   - No real LLM key, so nothing exercises an investigation end to end.
@@ -391,6 +392,7 @@ jobs:
             --set image.pullPolicy=Never \
             --set postgres.embedded.enabled=true \
             --set 'policy.actionableNamespaces[0]=hephaisto-chaos' \
+            --set cluster.name=hephaisto-e2e \
             --set prometheusOperator.selectorLabels.release=kube-prometheus-stack \
             --set codeFix.enabled=true \
             --set codeFix.mode=plan \
@@ -574,6 +576,13 @@ jobs:
             --from-literal=POSTGRES_DB=hephaisto
           kubectl -n hephaisto create secret generic hephaisto-llm \
             --from-literal=LLM_API_KEY=the-stand-in-accepts-anything
+          # The webhook's bearer token (#138), in the agent's namespace for the chart and in the
+          # observability one for the Alertmanager that sends it. P01 needs one to exist.
+          TOKEN=$(openssl rand -hex 24)
+          echo "::add-mask::$TOKEN"
+          for ns in hephaisto hephaisto-obs; do
+            kubectl -n $ns create secret generic hephaisto-webhook-token --from-literal=token="$TOKEN"
+          done
 
       - uses: docker/setup-buildx-action@v4
 
@@ -610,6 +619,8 @@ jobs:
             "/tmp/chart/hephaisto-${{ needs.version.outputs.semver }}.tgz" \
             --namespace hephaisto \
             -f scripts/e2e/values-pager.yaml \
+            --set cluster.name=pager-e2e \
+            --set secrets.webhookToken=hephaisto-webhook-token \
             --set image.repository=hephaisto/agent \
             --set image.tag=e2e \
             --set image.pullPolicy=Never \
@@ -635,6 +646,8 @@ jobs:
           export PAGER_API=http://localhost:18080 PAGER_HOOK=http://localhost:18080
           export PAGER_STANDIN=http://localhost:18110 PAGER_AM=http://localhost:19093
           export PAGER_CAPS="am kubectl spare-agent"
+          PAGER_TOKEN=$(kubectl -n hephaisto get secret hephaisto-webhook-token -o jsonpath='{.data.token}' | base64 -d)
+          export PAGER_TOKEN
           export E2E_KUBECONFIG="$HOME/.kube/config" E2E_CONTEXT=kind-hephaisto-e2e
           scripts/e2e/pager.sh --results /tmp/pager-results
 

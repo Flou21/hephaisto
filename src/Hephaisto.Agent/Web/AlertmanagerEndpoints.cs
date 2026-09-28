@@ -92,20 +92,19 @@ public static class AlertmanagerEndpoints
         ArgumentNullException.ThrowIfNull(app);
 
         var group = app.MapGroup("/webhooks")
-            // SECURITY: both routes below are deliberately unauthenticated.
+            // SECURITY: outside OIDC, because Alertmanager cannot sign in.
             //
-            // Alertmanager's webhook_configs cannot send a custom header - there is no
-            // bearer token, no HMAC and no signature in the receiver config - so a check
-            // here would either reject every real delivery or be satisfied by anything that
-            // can reach the port. The control is therefore at the network layer: a
-            // NetworkPolicy admits ingress to these paths only from the observability
-            // namespace, and nothing else in the cluster can open the connection at all.
+            // Two controls instead. A bearer token, checked by WebhookTokenFilter when
+            // Web:WebhookToken is set (backlog #138): Alertmanager sends one with
+            // http_config.authorization on the receiver. This comment used to say it could
+            // not, and for five releases nothing checked a credential because of it. And the
+            // network: a NetworkPolicy admits ingress to these paths only from the
+            // observability namespace.
             //
-            // That means the NetworkPolicy is load-bearing, not defence in depth. If it is
-            // ever removed or the pod is exposed through an Ingress, anything on the network
-            // can inject signals - which is a way to make the agent investigate whatever an
-            // attacker names, and in a future non-observe mode, to steer what it acts on.
-            // Do not add an Ingress for /webhooks.
+            // Without a token the NetworkPolicy is the whole protection, not defence in depth.
+            // Anything that can reach these routes can inject signals - which makes the agent
+            // investigate whatever an attacker names and, as the only incident system, tell a
+            // person about it in the agent's name. Do not add an Ingress for /webhooks.
             .AllowAnonymous();
 
         group.MapPost("/alertmanager", ReceiveAlertsAsync)

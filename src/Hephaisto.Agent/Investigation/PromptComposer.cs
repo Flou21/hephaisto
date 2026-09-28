@@ -45,15 +45,24 @@ public sealed class PromptComposer
     private readonly string _promptsPath;
     private readonly string _runbooksPath;
     private readonly EnvironmentCardOptions _environment;
+    private readonly IReadOnlyList<string> _protectedNamespaces;
     private readonly ILogger<PromptComposer>? _logger;
 
     public PromptComposer(
         IOptions<EnvironmentCardOptions> environment,
         ILogger<PromptComposer>? logger = null,
-        string? contentRoot = null)
+        string? contentRoot = null,
+        IOptions<Hephaisto.Core.Policy.PolicyOptions>? policy = null)
     {
         _environment = environment.Value;
         _logger = logger;
+
+        // The card's own list when one is configured, otherwise the policy engine's - the list
+        // that is actually enforced. They used to be two hand-kept copies with different
+        // contents (backlog #139).
+        _protectedNamespaces = _environment.ProtectedNamespaces.Count > 0
+            ? _environment.ProtectedNamespaces
+            : [.. (policy?.Value.ProtectedNamespaces ?? []).Order(StringComparer.Ordinal)];
 
         var root = contentRoot ?? AppContext.BaseDirectory;
         _promptsPath = Path.Combine(root, "Prompts");
@@ -162,14 +171,19 @@ public sealed class PromptComposer
         sb.Append("- Cluster label: `cluster=").Append(_environment.ClusterName).Append("`. ")
             .Append("Every metric and log line here carries it; a query without it may match another cluster.\n");
 
-        sb.Append("- Namespaces in scope: ")
-            .Append(Join(_environment.InScopeNamespaces))
-            .Append('\n');
+        // Omitted rather than rendered empty: "Namespaces in scope: " followed by nothing reads
+        // as "none", which would tell the model not to look anywhere.
+        if (_environment.InScopeNamespaces.Count > 0)
+        {
+            sb.Append("- Namespaces in scope: ")
+                .Append(Join(_environment.InScopeNamespaces))
+                .Append('\n');
+        }
 
-        if (_environment.ProtectedNamespaces.Count > 0)
+        if (_protectedNamespaces.Count > 0)
         {
             sb.Append("- Permanently out of scope: ")
-                .Append(Join(_environment.ProtectedNamespaces))
+                .Append(Join(_protectedNamespaces))
                 .Append(". These are the agent itself and the stack it depends on to see anything. ")
                 .Append("Read them if a diagnosis genuinely needs it; never propose acting on them.\n");
         }

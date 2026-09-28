@@ -361,6 +361,7 @@ jobs:
           helm show chart '${{ env.CHART_REPO }}/hephaisto' --version "$V"
           helm template hephaisto '${{ env.CHART_REPO }}/hephaisto' --version "$V" \
             --namespace hephaisto \
+            --set cluster.name=release-check \
             --set prometheusOperator.selectorLabels.release=kube-prometheus-stack > /tmp/rendered.yaml
           sed 's/"//g' /tmp/rendered.yaml > /tmp/rendered.unquoted.yaml
           grep -qF "image: ${{ env.IMAGE }}:$V" /tmp/rendered.unquoted.yaml \
@@ -371,7 +372,7 @@ jobs:
             echo
             echo '```sh'
             echo "helm install hephaisto ${{ env.CHART_REPO }}/hephaisto --version $V \\"
-            echo "  --namespace hephaisto --create-namespace"
+            echo "  --namespace hephaisto --create-namespace --set cluster.name=YOUR-CLUSTER-LABEL"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 

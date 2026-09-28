@@ -9,8 +9,12 @@ verifies them, and reverts or escalates when they do not hold.
 
 ```sh
 helm install hephaisto oci://ghcr.io/flou21/charts/hephaisto \
-  --namespace hephaisto --create-namespace
+  --namespace hephaisto --create-namespace \
+  --set cluster.name=<the cluster label on this cluster's metrics>
 ```
+
+`cluster.name` is the one value with no default, and rendering fails without it: it is in every
+signal fingerprint and in every query the model writes.
 
 **Installed as it ships, the agent acts nowhere.** `policy.actionableNamespaces` is empty, so no
 write `Role` is rendered at all; `policy.autoEnabledActionTypes` is empty; and `mode` is
@@ -54,8 +58,15 @@ kubectl -n hephaisto create secret generic hephaisto-llm \
 
 helm install hephaisto oci://ghcr.io/flou21/charts/hephaisto \
   -n hephaisto \
+  --set cluster.name=<your-cluster-label> \
   --set prometheusOperator.selectorLabels.release=<your-kube-prometheus-stack-release>
 ```
+
+Two more are worth setting on day one. `secrets.webhookToken` names a Secret whose key `token`
+the Alertmanager webhook then requires as a bearer token - Alertmanager sends it with
+`http_config.authorization.credentials_file` on the receiver. And `llm.pricing`, if your model is
+not in the built-in price table: with a cost cap set (they all are, by default) the agent refuses
+to start on a model it cannot price, because an unpriced model bills as $0 and no cap would bind.
 
 That last `--set` matters more than it looks: if your Prometheus does not select the shipped
 `PrometheusRule`s, the agent detects nothing and reports itself perfectly healthy. `NOTES.txt`

@@ -37,6 +37,10 @@ data:
           - url: http://hephaisto.hephaisto:8080/webhooks/alertmanager
             send_resolved: true
             max_alerts: 0
+            # The webhook's bearer token (#138), from the Secret the job creates.
+            http_config:
+              authorization:
+                credentials_file: /etc/alertmanager/secrets/hephaisto-webhook-token/token
       - name: external
         webhook_configs:
           - url: http://teams-stand-in.hephaisto-obs:8080/hooks/external
@@ -82,6 +86,9 @@ spec:
               mountPath: /etc/alertmanager
             - name: data
               mountPath: /alertmanager
+            - name: webhook-token
+              mountPath: /etc/alertmanager/secrets/hephaisto-webhook-token
+              readOnly: true
           securityContext:
             runAsNonRoot: true
             runAsUser: 65534
@@ -95,6 +102,9 @@ spec:
             name: pager-alertmanager
         - name: data
           emptyDir: {}
+        - name: webhook-token
+          secret:
+            secretName: hephaisto-webhook-token
 ---
 apiVersion: v1
 kind: Service

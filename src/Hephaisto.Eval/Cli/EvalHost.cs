@@ -44,7 +44,8 @@ internal static class EvalHost
     public static IConfigurationRoot BuildConfiguration(IReadOnlyList<string> overrides)
     {
         // appsettings.Development.json is loaded unconditionally, which is only safe while it
-        // holds nothing the prompt or the budget reads - today it is RbacMode and a log level.
+        // holds nothing the prompt or the budget reads beyond what the dev pod also has - today
+        // RbacMode, a log level, and Cluster:Name, which is the dev pod's cluster.name too.
         // Anything under Llm: or Investigation: added there would make a local arm and the same
         // arm in the pod quietly different runs.
         var builder = new ConfigurationBuilder()

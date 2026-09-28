@@ -70,9 +70,8 @@ public sealed class HttpChannelOptions
 
     /// <summary>
     /// Shared secret for the <c>X-Hephaisto-Signature</c> HMAC. Optional, and worth setting:
-    /// Hephaisto's own inbound webhook cannot be authenticated at all - Alertmanager has no
-    /// field for a header - and is protected only by a NetworkPolicy. A receiver of ours does
-    /// not have to accept that trade.
+    /// an unauthenticated receiver accepts anything that can reach it, which is why
+    /// Hephaisto's own inbound webhook takes a bearer token too (<c>Web:WebhookToken</c>).
     /// </summary>
     public string? SigningSecret { get; set; }
 }

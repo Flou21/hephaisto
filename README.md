@@ -460,9 +460,10 @@ v0.9.0 added the code-fix rows, the first new inbound routes since v0.3.0 — al
 port, all behind the console's auth, and the two that write behind the approver policy. The coder
 itself calls none of them: it has no route in, by design. Teams cards still only link out.
 
-**The Alertmanager webhook is unauthenticated** (Alertmanager cannot authenticate to a
-receiver). It is protected by a NetworkPolicy, and that NetworkPolicy is therefore its
-*entire* authentication. If you deploy this, get that policy right.
+**The Alertmanager webhook is outside OIDC** (Alertmanager cannot sign in). It takes a bearer
+token instead, when `secrets.webhookToken` names one - Alertmanager sends it with
+`http_config.authorization` - and it is protected by a NetworkPolicy. Without a token that
+NetworkPolicy is its *entire* protection. Set the token, and get that policy right.
 
 ## Alert rules must declare a real `hephaisto_kind`
 

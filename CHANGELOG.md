@@ -12,7 +12,23 @@ the same number.
 
 ## v0.10.0 — unreleased
 
-**It is the only thing that tells a person.** See `docs/roadmap.md`.
+**It is the only thing that tells a person.** On its first production install Hephaisto replaces
+the incident service and the pager that alerts go to today; this release is what that needs. See
+`docs/roadmap.md`, v0.10.0.
+
+### Upgrading
+- **`cluster.name` is required, and rendering fails without it.** Set it to the value of the
+  `cluster` label on this cluster's metrics and logs. It replaces `Ingest:ClusterName`,
+  `Kubernetes:ClusterName` and `Investigation:Environment:ClusterName`, which the chart never set
+  and which defaulted to the development machine's name - so on any other install every
+  fingerprint carried somebody else's cluster, and the model was told to filter on a label that
+  matched nothing ([#139](docs/backlog.md#139)). `extraEnv` may no longer set the three old keys.
+  Changing the name re-keys every future signal: new alerts will not dedupe against incidents
+  opened before the upgrade.
+- **An unpriced model no longer starts.** With any cost cap set - they all are, by default - the
+  agent refuses to start when `Llm:Model` or `Llm:PlanningModel` has no price, because an unpriced
+  model bills as $0 and no cap binds ([#140](docs/backlog.md#140)). Add it to `llm.pricing`; a
+  price of 0 is accepted for a model that really is free.
 
 ### Added
 - **The pager suite** (`scripts/e2e/pager.sh`, [#146](docs/backlog.md#146)): alerts through a
@@ -22,6 +38,21 @@ the same number.
   deterministic and free. It gates every change in CI (`e2e-pager`), runs on the dev cluster
   (`scripts/e2e/pager-local.sh`) and is a phase of the release harness.
 - `GET /api/incidents` takes `state=any` and `alertname=`.
+- **`secrets.webhookToken`**: a Secret whose key `token` the Alertmanager webhook requires as a
+  bearer token ([#138](docs/backlog.md#138)). Alertmanager sends it with
+  `http_config.authorization.credentials_file`. Optional - without it nothing changes, and the
+  NetworkPolicy remains the webhook's whole protection - and a token under 16 characters refuses
+  to start. Set it and the receiver in the same change, or every alert is refused.
+- **`llm.pricing`**: prices as a list of `{model, inputPerMillionUsd, outputPerMillionUsd}`, so a
+  model behind a gateway, under a name no environment variable can carry, can be priced from the
+  chart. A response under a model id the gateway chose is priced as the configured model.
+- **`investigation.inScopeNamespaces`**: the namespaces the model is told are in scope. Empty, the
+  default, says nothing about scope instead of naming the development machine's chaos namespace.
+
+### Changed
+- The environment card names the policy engine's protected namespaces when it has no list of
+  its own, rather than a second, different copy.
+- Every comment and page that said Alertmanager cannot send a credential has been corrected.
 
 ## v0.9.0 — unreleased (`v0.9.0-rc1` 2026-09-27, `v0.9.0-rc2` to `-rc5` 2026-09-28)
 

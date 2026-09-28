@@ -1699,8 +1699,9 @@ the whole reason v0.3.0 linked out.
 does.
 
 This is the cheap option and it has one genuinely useful property: **unlike Alertmanager, a Power
-Automate HTTP action can set headers.** The whole reason `/webhooks` is unauthenticated is that
-Alertmanager cannot send a credential — that constraint simply does not apply here, so the new
+Automate HTTP action can set headers.** The reason `/webhooks` was unauthenticated was the belief
+that Alertmanager cannot send a credential — wrong, as [#138](backlog.md#138) found, but in any
+case not a constraint here, so the new
 route can require a bearer token from a Secret and be a normal authenticated endpoint rather than
 a second network-layer-only one. The exposure narrows to one authenticated path.
 

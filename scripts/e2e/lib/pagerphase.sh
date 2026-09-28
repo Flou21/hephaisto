@@ -39,7 +39,13 @@ pagerphase_run() {
     port_forward standin "$OBS_NS" svc/teams-stand-in "$PF_PORT_STANDIN" 8080 || true
     port_forward hephaisto "$APP_NS" svc/hephaisto "$PF_PORT_APP" 8080 || true
 
+    # The token deploy_install's values name (#138), which the observability stack's
+    # Alertmanager already sends.
+    local token
+    token=$(kc -n "$APP_NS" get secret hephaisto-webhook-token -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || true)
+
     local status=0
+    PAGER_TOKEN="$token" \
     PAGER_API="http://127.0.0.1:$PF_PORT_APP" \
     PAGER_HOOK="http://127.0.0.1:$PF_PORT_APP" \
     PAGER_STANDIN="http://127.0.0.1:$PF_PORT_STANDIN" \

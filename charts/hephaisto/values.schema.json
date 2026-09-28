@@ -190,6 +190,10 @@
         "codeFix": {
           "type": "string",
           "description": "Secret in codeFix.namespace (NOT the release namespace) with keys CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, GITHUB_TOKEN, NUGET_GITHUB_TOKEN, each optional. Required when codeFix.enabled. Hephaisto never reads it."
+        },
+        "webhookToken": {
+          "type": "string",
+          "description": "Secret holding the bearer token /webhooks requires, under key `token` (at least 16 characters). Empty requires none."
         }
       },
       "additionalProperties": false
@@ -943,6 +947,65 @@
           "description": "Empty means any authenticated user may approve a cluster change."
         }
       }
+    },
+    "cluster": {
+      "type": "object",
+      "description": "The cluster this agent runs in. cluster.name is required at render time: the value of the `cluster` label on this cluster's metrics and logs.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Required. In every signal fingerprint and every query the model writes."
+        }
+      },
+      "additionalProperties": false
+    },
+    "investigation": {
+      "type": "object",
+      "description": "What the model is told about this cluster.",
+      "properties": {
+        "inScopeNamespaces": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Namespaces worth investigating, stated on the environment card. Empty says nothing about scope."
+        }
+      },
+      "additionalProperties": false
+    },
+    "llm": {
+      "type": "object",
+      "description": "Model prices. The agent refuses to start when a cost cap is set and the model has no price.",
+      "properties": {
+        "pricing": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "model",
+              "inputPerMillionUsd",
+              "outputPerMillionUsd"
+            ],
+            "properties": {
+              "model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "inputPerMillionUsd": {
+                "type": "number",
+                "minimum": 0
+              },
+              "outputPerMillionUsd": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

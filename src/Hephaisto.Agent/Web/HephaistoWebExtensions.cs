@@ -33,6 +33,10 @@ public static class HephaistoWebExtensions
         // web surface is configured in one place.
         services.AddOptions<WebOptions>()
             .BindConfiguration(WebOptions.SectionName)
+            .Validate(
+                o => string.IsNullOrEmpty(o.WebhookToken) || o.WebhookToken.Trim().Length >= WebhookTokenFilter.MinimumLength,
+                $"Web:WebhookToken must be at least {WebhookTokenFilter.MinimumLength} characters. A short "
+                + "token is a placeholder, not a credential; generate one with `openssl rand -hex 32`.")
             .ValidateOnStart();
 
         services.TryAddSingleton<IIncidentNotifier, IncidentNotifier>();
@@ -91,9 +95,10 @@ public static class HephaistoWebExtensions
     {
         ArgumentNullException.ThrowIfNull(app);
 
-        // The webhook is the one unauthenticated surface, and with WebhookPort set it answers on
-        // its own port so a NetworkPolicy can protect it without also deciding who may read the
-        // console. See WebOptions for why they shared a port and what that cost.
+        // The webhook is the one surface OIDC does not cover - Alertmanager cannot sign in - and
+        // with WebhookPort set it answers on its own port so a NetworkPolicy can protect it
+        // without also deciding who may read the console. See WebOptions for why they shared a
+        // port and what that cost. Its credential is a bearer token of its own, when configured.
         var web = app.Services.GetRequiredService<IOptions<WebOptions>>().Value;
 
         // MapGroup("") adds no prefix and is both a route builder and a convention builder, so it
@@ -109,11 +114,24 @@ public static class HephaistoWebExtensions
         console.MapVersionEndpoints();
         CodeFix.CodeFixEndpoints.MapCodeFixEndpoints(console);
 
-        // Authentication (#110). The webhook group is the ONE surface that stays anonymous, and
-        // it has to: Alertmanager has no field for a credential, which is why it needs its own
-        // port and a NetworkPolicy in front of it. Everything else requires a signed-in user.
+        // Authentication (#110). The webhook group is the ONE surface outside OIDC: Alertmanager
+        // cannot sign in. It checks a bearer token of its own instead, when one is configured
+        // (#138) - Alertmanager sends one with http_config.authorization. Everything else
+        // requires a signed-in user.
         webhooks.AllowAnonymous();
         console.RequireAuthorization(AuthenticationExtensions.ReadPolicy);
+
+        if (!string.IsNullOrEmpty(web.WebhookToken))
+        {
+            webhooks.AddEndpointFilter(WebhookTokenFilter.Require(web.WebhookToken.Trim()));
+        }
+        else
+        {
+            app.Logger.LogWarning(
+                "Web:WebhookToken is not set, so /webhooks accepts any request that can reach it. "
+                + "Set the chart value secrets.webhookToken and send it from Alertmanager with "
+                + "http_config.authorization.credentials_file.");
+        }
 
         if (web.WebhookPortIsSeparate)
         {

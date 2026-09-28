@@ -47,9 +47,14 @@ WHAT IT CAN DO TO YOUR CLUSTER
 {{- if not .Values.networkPolicy.enabled }}
 
 !! networkPolicy.enabled is FALSE.
-   The Alertmanager webhook is unauthenticated - Alertmanager cannot send credentials - so the
-   NetworkPolicy is its ENTIRE authentication. With it off, anything that can reach port 8080
-   can create incidents, and in Auto mode cause the agent to act on them.
+   {{- if .Values.secrets.webhookToken }}
+   The Alertmanager webhook still requires its bearer token (secrets.webhookToken), but
+   nothing limits who may try one.
+   {{- else }}
+   The Alertmanager webhook checks no credential (secrets.webhookToken is empty), so the
+   NetworkPolicy was its ENTIRE protection. With it off, anything that can reach port 8080
+   can create incidents, tell a person about them, and in Auto mode cause the agent to act.
+   {{- end }}
 {{- end }}
 {{- if has "0.0.0.0/0" .Values.networkPolicy.extraIngressCIDRs }}
 

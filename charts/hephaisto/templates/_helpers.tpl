@@ -110,7 +110,8 @@ Every reserved name already has a value that sets it properly, so refusing costs
 {{- $reserved := list
       "GEMINI_API_KEY" "LLM_API_KEY" "HEPHAISTO_MODE" "HEPHAISTO_SWITCHES_DIR"
       "ConnectionStrings__hephaisto" "ASPNETCORE_URLS"
-      "Grafana__McpUrl" "Grafana__ServiceAccountToken" -}}
+      "Grafana__McpUrl" "Grafana__ServiceAccountToken"
+      "Cluster__Name" "Web__WebhookToken" -}}
 {{- /* The indexed entries the chart itself emits. Index 0 of DeniedNamespaces is what keeps the
        investigator's read tools out of the coder namespace; an extraEnv entry at the same index
        would silently replace it. Higher indices are the operator's and still work. */ -}}
@@ -129,6 +130,15 @@ Every reserved name already has a value that sets it properly, so refusing costs
   {{- end -}}
   {{- if hasPrefix "OTEL_" .name -}}
     {{- fail (printf "extraEnv may not set %q: the OTEL_* block is derived from otel.endpoint/protocol/environment, and a half-overridden set exports telemetry to two places or to none." .name) -}}
+  {{- end -}}
+  {{- if has .name (list "Ingest__ClusterName" "Kubernetes__ClusterName" "Investigation__Environment__ClusterName") -}}
+    {{- fail (printf "extraEnv may not set %q: the cluster is named once, by cluster.name, which fills all three of the settings that used to name it separately (backlog #139)." .name) -}}
+  {{- end -}}
+  {{- if hasPrefix "Llm__Prices__" .name -}}
+    {{- fail (printf "extraEnv may not set %q: prices are llm.pricing, and the chart numbers the entries - one set here would collide with index 0 of that list." .name) -}}
+  {{- end -}}
+  {{- if hasPrefix "Investigation__Environment__InScopeNamespaces__" .name -}}
+    {{- fail (printf "extraEnv may not set %q: use investigation.inScopeNamespaces." .name) -}}
   {{- end -}}
   {{- if hasPrefix "Policy__AllowedNamespaces" .name -}}
     {{- fail (printf "extraEnv may not set %q: the namespace allowlist is what the write Role is rendered from, so setting it here would let the agent believe it may act somewhere RBAC does not permit. Use policy.actionableNamespaces." .name) -}}

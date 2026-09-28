@@ -18,6 +18,19 @@
 #
 #   * extraEnv caps spend. Investigations here are real Gemini calls against a real key.
 
+# What scripts/e2e/lib/deps.sh sets as Prometheus's externalLabels.cluster on the kind cluster,
+# so the model is told the label this cluster's metrics actually carry.
+cluster:
+  name: kind-e2e
+
+investigation:
+  inScopeNamespaces: [hephaisto-chaos]
+
+# The bearer token /webhooks requires (backlog #138). scripts/bootstrap-secrets.sh, run by the deps phase, creates it here and in hephaisto-obs,
+# where Alertmanager reads it - the same values file the dev cluster uses.
+secrets:
+  webhookToken: hephaisto-webhook-token
+
 observabilityNamespace: hephaisto-obs
 
 # Must match the kube-prometheus-stack release name the harness installs (`hephaisto`), or

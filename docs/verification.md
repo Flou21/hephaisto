@@ -349,7 +349,8 @@ check the same thing about the *deployed pod*, which is the one place the harnes
 Three things it deliberately does **not** cover, and neither does anything else:
 
 - **NetworkPolicy enforcement (step 9's sibling).** kind's default CNI accepts the objects and
-  ignores them, and that policy is the webhook's entire authentication. Verify it by hand, on a
+  ignores them, and without `secrets.webhookToken` that policy is the webhook's entire
+  protection. Verify it by hand, on a
   cluster whose CNI enforces.
 - **The Teams channel.** It needs a Power Automate Workflows trigger, which needs a tenant. The
   card's shape and its credential handling are unit-tested; that Microsoft accepts the envelope
