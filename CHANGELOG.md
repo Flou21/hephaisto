@@ -10,7 +10,7 @@ broken, with the evidence for each.
 Versions are set by the git tag through MinVer; the chart version and the app version are always
 the same number.
 
-## v0.9.0 — unreleased (`v0.9.0-rc1` 2026-09-27, `v0.9.0-rc2` 2026-09-28)
+## v0.9.0 — unreleased (`v0.9.0-rc1` 2026-09-27, `v0.9.0-rc2`/`-rc3` 2026-09-28)
 
 **It proposes the fix, and a person opens the door.** Most real incidents on the cluster this runs
 against are code bugs, and v0.8.0's planner correctly declines to touch them - "a code problem a
@@ -61,6 +61,12 @@ started a code fix, but the mode is Off" before you turn anything on.
 - **A new coder pod's first clone is retried** - a NetworkPolicy controller admits a new pod's IP
   a moment late, and the clone is the pod's first connection.
 - **A repository without tests can get a PR** - tests are required only when the plan promised them.
+
+### Fixed in rc3
+- **OIDC login behind a TLS-terminating ingress.** The agent had no forwarded-headers handling, so
+  behind nginx/Cloudflare it sent the IdP an `http://` redirect URI and dropped its own sign-in
+  cookies: a login that loops. `Web:TrustForwardedHeaders` (off by default; set
+  `Web__TrustForwardedHeaders=true` when the console is reached only through the proxy).
 
 ### Changed
 - The headline invariant is re-scoped: **no model in this process ever holds a mutating handle to
