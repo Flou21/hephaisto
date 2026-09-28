@@ -179,6 +179,15 @@ record_json() { printf '%s\n' "$2" > "$RUN_DIR/$1.json"; }
 run_c15() {
     phase_start c15
 
+    # One workload holds at most one open attempt. A plan an earlier run left waiting (the stage
+    # does not cancel a plan when its incident is closed - a person may still want it) would make
+    # this run's escalation decline with WorkloadAttemptOpen, so clear it first.
+    local stale
+    stale=$(cf_get '/api/codefixes?state=PlanReady&limit=200' | jq -r '.[] | select(.workload | endswith("/Deployment/shop-api")) | "\(.incidentId) \(.id)"')
+    while read -r inc att; do
+        [ -n "$att" ] && cf_decide "$inc" "$att" deny "e2e: clearing a plan left by an earlier run" >/dev/null && say "denied a waiting plan left by an earlier run ($att)"
+    done <<<"$stale"
+
     local before
     before=$(cf_incident_for shop-api open || true)
 
