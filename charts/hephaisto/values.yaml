@@ -430,6 +430,28 @@ notifications:
   #
   # channel: webhook | teams | teamsBot
   #
+  # Since v0.10.0 a route can own only some incidents, and name who it tells:
+  #   name:       a label for the route, recorded on every delivery it made. Unique.
+  #   matchers:   [{label, values: [...]}] - all must hold. The alert's own labels, as the rule set
+  #               them (team, product, channel). An incident opened by a Kubernetes signal has none.
+  #   clusters:   the `cluster` label values this route owns. kinds: SignalKind names.
+  #   recipients: people on a channel that tells people (teamsBot). Empty means the channel's own.
+  #   fallback:   true - owns what no SCOPED route owns (namespaces, matchers, clusters, kinds), so
+  #               an alert nobody labelled still reaches somebody. A fallback has no scope itself.
+  # Ownership first, then events and minSeverity. An unscoped route hears everything.
+  #
+  # routes:
+  #   - name: payments
+  #     channel: teamsBot
+  #     events: [IncidentOpened, IncidentEscalated]
+  #     matchers: [{ label: team, values: [payments] }]
+  #     recipients: [payments-oncall@example.com]
+  #   - name: everything-else
+  #     channel: teamsBot
+  #     fallback: true
+  #     events: [IncidentOpened, IncidentEscalated]
+  #     recipients: [ops@example.com]
+  #
   # A route to teamsBot decides which events become a personal ALERT. The board needs no route:
   # it shows every open incident as soon as teamsBot is enabled.
   #

@@ -78,6 +78,17 @@ public sealed class OutboundStartupReport(
                 string.Join(", ", orphaned));
         }
 
+        // #141: scoped routes and no fallback is a table that tells nobody about an alert nobody
+        // labelled. A warning rather than a refusal, because namespace-scoped routes without a
+        // fallback were the only kind there was before v0.10.0.
+        if (o.Routes.Any(r => r.IsScoped) && !o.Routes.Any(r => r.Fallback))
+        {
+            logger.LogWarning(
+                "Some notification routes are scoped and none is a fallback: an incident no scoped "
+                    + "route owns reaches only the unscoped routes, and nobody at all if there are none. "
+                    + "Add a route with fallback: true.");
+        }
+
         logger.LogInformation(
             "Notifications are ON: {Routes} route(s) over {Channels}.",
             o.Routes.Count,

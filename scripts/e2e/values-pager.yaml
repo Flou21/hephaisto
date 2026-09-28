@@ -82,10 +82,39 @@ notifications:
       - oncall@example.com
     board:
       maxIncidents: 40
+  # The routing the scenarios read (P22-P25): team=pager-a and team=pager-b to oncall@, a
+  # critical from team=pager-b to lead@ as well, and everything no team owns to dev@ through the
+  # fallback. The webhook route is unscoped and hears everything.
   routes:
-    - channel: teamsBot
+    - name: team-a
+      channel: teamsBot
       events: [IncidentOpened, IncidentEscalated, ApprovalRequired, VerificationFailed, IncidentResolved]
-    - channel: webhook
+      matchers:
+        - label: team
+          values: [pager-a]
+      recipients: [oncall@example.com]
+    - name: team-b
+      channel: teamsBot
+      events: [IncidentOpened, IncidentEscalated, ApprovalRequired, VerificationFailed, IncidentResolved]
+      matchers:
+        - label: team
+          values: [pager-b]
+      recipients: [oncall@example.com]
+    - name: team-b-critical
+      channel: teamsBot
+      events: [IncidentOpened, IncidentEscalated, ApprovalRequired, VerificationFailed, IncidentResolved]
+      minSeverity: Critical
+      matchers:
+        - label: team
+          values: [pager-b]
+      recipients: [lead@example.com]
+    - name: nobody-else
+      channel: teamsBot
+      fallback: true
+      events: [IncidentOpened, IncidentEscalated, ApprovalRequired, VerificationFailed, IncidentResolved]
+      recipients: [dev@example.com]
+    - name: outbound
+      channel: webhook
       events: [IncidentOpened, IncidentEscalated, ApprovalRequired, VerificationFailed, IncidentResolved, ModeChanged]
 
 secrets:

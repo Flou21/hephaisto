@@ -166,6 +166,18 @@ public sealed class NotificationDelivery
     /// cooldown that had to deserialise every candidate row to find its key would be a
     /// sequential scan on the delivery path.
     /// </summary>
+    /// <summary>
+    /// The people the matching routes named. Empty with <see cref="UsesChannelRecipients"/> is
+    /// the channel's own list, which is how every delivery worked before routes had recipients.
+    /// </summary>
+    public List<string> Recipients { get; set; } = [];
+
+    /// <summary>Whether a matching route named nobody, and so asked for the channel's own list too.</summary>
+    public bool UsesChannelRecipients { get; set; } = true;
+
+    /// <summary>The routes that matched, by name.</summary>
+    public List<string> Routes { get; set; } = [];
+
     public string CorrelationKey { get; set; } = string.Empty;
 
     public DeliveryStatus Status { get; set; }

@@ -72,6 +72,15 @@ public sealed class Incident
     public DateTimeOffset? ReopenedAt { get; set; }
 
     /// <summary>
+    /// The labels of the alert that opened this incident, less the scrape's and the agent's own.
+    /// What a notification route's matchers read (#141). Stored as jsonb.
+    /// </summary>
+    public Dictionary<string, string> Labels { get; set; } = [];
+
+    /// <summary>The name of the alert that opened this incident, when an alert did.</summary>
+    public string? AlertName { get; set; }
+
+    /// <summary>
     /// Who has picked this up, and when. Deliberately NOT a state.
     /// </summary>
     /// <remarks>

@@ -641,6 +641,10 @@ public sealed class IncidentTriage(
         // Clone, never share: Target is an EF owned type on both entities, and one instance
         // attached to two owners breaks SaveChanges for every signal. See TargetRef.Clone.
         Target = signal.Target.Clone(),
+        Labels = signal.Labels
+            .Where(kv => !AlertIdentity.ScrapeLabels.Contains(kv.Key) && !AlertIdentity.IsAgentLabel(kv.Key))
+            .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal),
+        AlertName = signal.Source == SignalSource.Alertmanager ? signal.Reason : null,
         OpenedAt = now,
         LastSignalAt = now,
         Signals = [signal],

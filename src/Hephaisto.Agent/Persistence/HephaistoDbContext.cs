@@ -250,6 +250,12 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
             e.Property(i => i.CorrelationKey).IsRequired();
             e.Property(i => i.Title).IsRequired();
 
+            e.Property(i => i.Labels)
+                .HasConversion(StringMapConverter, StringMapComparer)
+                .HasColumnType("jsonb")
+                .HasDefaultValueSql("'{}'::jsonb")
+                .IsRequired();
+
             e.HasIndex(i => i.CorrelationKey);
             e.HasIndex(i => i.OpenedAt).IsDescending();
 
@@ -661,6 +667,20 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
         {
             e.ToTable("notification_deliveries");
             e.HasKey(d => d.Id);
+
+            // Who the routes named, and which routes: what a person asks when they want to know
+            // why they were - or were not - told (#123).
+            e.Property(d => d.Recipients)
+                .HasConversion(StringListConverter, StringListComparer)
+                .HasColumnType("jsonb")
+                .HasDefaultValueSql("'[]'::jsonb")
+                .IsRequired();
+
+            e.Property(d => d.Routes)
+                .HasConversion(StringListConverter, StringListComparer)
+                .HasColumnType("jsonb")
+                .HasDefaultValueSql("'[]'::jsonb")
+                .IsRequired();
 
             // The dispatcher's only query: due rows, oldest first. Exactly the shape of the
             // (DueAt, Outcome) index that VerificationScheduler runs on, for the same reason -

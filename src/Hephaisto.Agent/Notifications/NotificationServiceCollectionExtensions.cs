@@ -33,6 +33,28 @@ public static class NotificationServiceCollectionExtensions
                 o => o.Routes.TrueForAll(r => !string.IsNullOrWhiteSpace(r.Channel)),
                 "Notifications:Routes contains a route with no channel name.")
 
+            // #141. A route's name is what a delivery records as the reason it went out; two
+            // routes with one name make that record ambiguous.
+            .Validate(
+                o => o.Routes
+                    .Where(r => !string.IsNullOrWhiteSpace(r.Name))
+                    .GroupBy(r => r.Name!.Trim(), StringComparer.OrdinalIgnoreCase)
+                    .All(g => g.Count() == 1),
+                "Notifications:Routes has two routes with the same name.")
+
+            // A fallback owns what no scoped route owns. A fallback with a scope of its own is two
+            // ideas in one route, and whichever one a reader assumes, the other one bites.
+            .Validate(
+                o => o.Routes.TrueForAll(r => !(r.Fallback && r.IsScoped)),
+                "Notifications:Routes has a fallback route with namespaces, matchers, clusters or kinds. "
+                    + "A fallback owns whatever no scoped route owns; give it no scope.")
+
+            // A matcher with no values matches nothing, which reads like a working route.
+            .Validate(
+                o => o.Routes.TrueForAll(r => r.Matchers.TrueForAll(
+                    m => !string.IsNullOrWhiteSpace(m.Label) && m.Values.Count > 0)),
+                "Notifications:Routes has a label matcher without a label or without values.")
+
             // Every message this stream sends exists to make somebody open a link. Without a
             // base URL the pod cannot build one - it knows the address it binds, not the one a
             // person reaches it on - and the cards would ship with nothing to click.

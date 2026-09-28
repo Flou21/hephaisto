@@ -395,6 +395,34 @@ spec:
             - name: Notifications__Routes__{{ $i }}__Namespaces__{{ $k }}
               value: {{ $ns | quote }}
             {{- end }}
+            {{- if $route.name }}
+            - name: Notifications__Routes__{{ $i }}__Name
+              value: {{ $route.name | quote }}
+            {{- end }}
+            {{- range $m, $matcher := $route.matchers }}
+            - name: Notifications__Routes__{{ $i }}__Matchers__{{ $m }}__Label
+              value: {{ required "every notifications.routes[].matchers entry needs a label" $matcher.label | quote }}
+            {{- range $v, $value := $matcher.values }}
+            - name: Notifications__Routes__{{ $i }}__Matchers__{{ $m }}__Values__{{ $v }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- end }}
+            {{- range $c, $cluster := $route.clusters }}
+            - name: Notifications__Routes__{{ $i }}__Clusters__{{ $c }}
+              value: {{ $cluster | quote }}
+            {{- end }}
+            {{- range $k, $kind := $route.kinds }}
+            - name: Notifications__Routes__{{ $i }}__Kinds__{{ $k }}
+              value: {{ $kind | quote }}
+            {{- end }}
+            {{- range $r, $recipient := $route.recipients }}
+            - name: Notifications__Routes__{{ $i }}__Recipients__{{ $r }}
+              value: {{ $recipient | quote }}
+            {{- end }}
+            {{- if $route.fallback }}
+            - name: Notifications__Routes__{{ $i }}__Fallback
+              value: "true"
+            {{- end }}
             {{- end }}
             {{- end }}
 

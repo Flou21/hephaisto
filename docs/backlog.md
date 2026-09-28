@@ -1794,7 +1794,9 @@ still alerts everybody, and a code-fix plan for one repository goes to every rec
 **What to do.** Recipients on the route, beside `events` and `namespaces`; and an incident that has
 an assignee alerts the assignee only. The second half needs the assignee to be an address the bot
 can look up, which is only true once `AssignedTo` comes from a verified claim
-([#110](#110)). **Size.** M. Open.
+([#110](#110)). **Size.** M. **Fixed in v0.10.0** with #141: a route's `recipients`, carried on each delivery
+(`notification_deliveries.recipients`, and the routes that matched). A route that names nobody
+tells the bot's own list, as before.
 
 ### 124. Every button on a Teams card is a link
 
@@ -2192,7 +2194,10 @@ other route matched, `SuppressedByUnknownNamespace` is set, which is a line in t
 per team by namespace would therefore lose every alert that names no namespace, quietly.
 
 **What to do.** Label matchers on the route, and recipients on the route, which is
-[#123](#123). The two are one change. **Size.** M. Open.
+[#123](#123). The two are one change. **Size.** M. **Fixed in v0.10.0**: a route has `matchers` over the alert's labels (kept on the incident,
+`incidents.labels`), `clusters`, `kinds`, a `name`, `recipients`, and can be the `fallback` that
+owns whatever no scoped route owns. `NotificationRouter` decides ownership first, then event and
+severity. Scoped routes with no fallback log a warning at startup. Pager scenario P22.
 
 ### 142. Nothing happens when nobody answers
 
