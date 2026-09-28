@@ -432,10 +432,14 @@ that is later edited to say how the incident ended. Deleting is not used at all 
 "This message has been deleted." behind, for a post and for a reply alike, and nothing switches
 that off.
 
-**A Teams card carries a link, not an Approve button.** Approving in-card means accepting
-inbound calls on a service whose only inbound route is deliberately unauthenticated, which is a
-security change rather than a feature. The link goes to Hephaisto's own approval UI, where the
-audit row already lives.
+**A Teams card carries a link, not an Approve button.** Approving in-card means accepting a
+Microsoft Entra identity as an approver, whose role lives in your own identity provider. The link
+goes to Hephaisto's own approval UI, where the audit row already lives. Two buttons do act, when
+`notifications.teamsBot.actions.enabled` is set: **Acknowledge** and **Assign to me**, which are
+read-level acts in the console too. Microsoft delivers the click to `POST /api/teams/messages`,
+the one inbound route it calls, on a port of its own where nothing else answers; the request must
+carry a Bot Framework token for this bot, signed by a key endorsed for Teams, from this tenant, by
+a member of the team, and the click is recorded as the team's member list names that person.
 
 ### HTTP surface
 
@@ -454,11 +458,14 @@ audit row already lives.
 | `POST /api/incidents/{id}/codefix` | ask for a code fix (approver policy) |
 | `POST /api/incidents/{id}/codefix/{attemptId}/approve`, `/deny` | decide on a plan (approver policy; approve needs mode `Pr`) |
 | `GET /healthz`, `/readyz`, `/metrics` | health and Prometheus metrics |
+| `POST /api/teams/messages` | a click on a Teams alert's Acknowledge or Assign-to-me button; off by default, its own port, a Bot Framework token |
 | `/` | Blazor Server UI |
 
 v0.9.0 added the code-fix rows, the first new inbound routes since v0.3.0 — all on the console
 port, all behind the console's auth, and the two that write behind the approver policy. The coder
-itself calls none of them: it has no route in, by design. Teams cards still only link out.
+itself calls none of them: it has no route in, by design. v0.10.0 added the one route Microsoft
+calls, for the Teams buttons that act - off by default, on its own port, and authenticated by a
+Bot Framework token rather than by the console's identity provider.
 
 **The Alertmanager webhook is outside OIDC** (Alertmanager cannot sign in). It takes a bearer
 token instead, when `secrets.webhookToken` names one - Alertmanager sends it with

@@ -25,6 +25,12 @@ notifications:
       - stranger@elsewhere.example
     board:
       maxIncidents: 20
+    # The buttons that act, against the stand-in's own Bot Framework key document: its
+    # POST /teams/click signs a click the way Microsoft would and delivers it to port 8082. Where
+    # the key document lives is appended by the Tiltfile, like the bot's other two addresses.
+    actions:
+      enabled: true
+      port: 8082
   routes:
     - channel: teamsBot
       events: [IncidentOpened, IncidentEscalated, ApprovalRequired, VerificationFailed, IncidentResolved,

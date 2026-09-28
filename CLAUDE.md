@@ -323,9 +323,18 @@ itself to `studio-rancher-desktop` through a private kubeconfig. See `docs/verif
 - **A channel must be constructible by a singleton.** `NotificationChannelProbe` holds every
   channel for the life of the process, so a channel takes `IServiceScopeFactory`, never a
   `HephaistoDbContext` ([#121](docs/backlog.md#121)).
+- **There is exactly one inbound route from Microsoft**, and it is off by default:
+  `POST /api/teams/messages` for the Acknowledge / Assign-to-me buttons
+  (`notifications.teamsBot.actions`, #124). Its own port (8082) where nothing else answers, its own
+  `BotFramework` JWT scheme - never the console's - and a key endorsement check a stock validator
+  skips. Do not map anything else onto that port, and do not add a verb without a handler and a
+  test (`TeamsBotVerbs`).
 
 Locally: `tilt_config.json` `"teams-bot": "stand-in"` deploys `teams-stand-in` in `hephaisto-obs`
-and points the agent at it; `curl http://$H:8110/teams/messages` shows what Teams would show.
+and points the agent at it; `curl http://$H:8110/teams/messages` shows what Teams would show, and
+`curl -X POST http://$H:8110/teams/click -H 'content-type: application/json' -d '{"incidentId":"<id>","verb":"acknowledge","user":"oncall@example.com"}'`
+signs a click the way Microsoft would and delivers it to the agent's actions port (vary `appId`,
+`tenant`, `user` or `"endorse": false` to see each refusal).
 `"real"` needs `charts/hephaisto/values-dev-teams-bot.local.yaml` (ignored by git) and the Secret
 `hephaisto-notification-teams-bot`, both made by hand. **Do not test against a channel people
 read**: a test board cannot be removed afterwards.

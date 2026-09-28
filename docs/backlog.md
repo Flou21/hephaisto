@@ -1810,7 +1810,27 @@ production install is Keycloak.
 **What to do.** In this order: the inbound route with the low-risk verbs (acknowledge, assign to
 me, close, reinvestigate); an explicit map from Entra object ids to the approver role; approve last,
 behind its own flag. `Nothing_in_any_card_can_need_an_inbound_route` is what keeps this from
-arriving as a detail. **Size.** L. Open.
+arriving as a detail. **Size.** L.
+
+**First cut, 2026-09-28: acknowledge and assign to me.** `notifications.teamsBot.actions.enabled`
+(off by default) draws both as `Action.Execute` on an open alert and serves
+`POST /api/teams/messages` on a port of its own (8082), where nothing else answers and which
+answers nowhere else. The route has its own scheme, `BotFramework`: issuer
+`https://api.botframework.com`, audience the bot's app id, a key from Microsoft's published set -
+and that key **endorsed for `msteams`**, which a generic JWT validator does not check and a key
+shared with every other Bot Framework channel would otherwise pass. The handler then requires the
+token's `serviceurl` to name the activity's `serviceUrl`, the activity's tenant to be the bot's,
+and `from.aadObjectId` to be in the team's roster; the click is recorded as the roster names that
+person, never as the activity's display name. Each refusal changes nothing and logs a line; a
+roster nobody could read is a 503, not a yes. It calls the console's own acknowledge and assign,
+so the forbidden-actor rule and the audit row are the same, and answers with the refreshed card.
+The card test became three: no acting button with the flag off, exactly the two verbs with it on,
+and every verb drawn has a handler. The Teams stand-in publishes a key document with one key
+endorsed for Teams and one that is not, and `POST /teams/click` signs and delivers a click - for
+this bot or another, this tenant or another, a member or an outsider.
+
+**Still open:** close and reinvestigate; approve and deny, which need the Entra-to-approver map;
+and all of it against a real tenant ([#125](#125)). Open.
 
 ### 125. The agent has never talked to Teams itself
 
@@ -1826,6 +1846,13 @@ written from memory.
 
 **What would close it.** `"teams-bot": "real"` on the dev cluster, or the first production
 delivery. **Size.** S. Open.
+
+**Added by [#124](#124)'s first cut.** That Microsoft's signing keys carry `endorsements` in the
+shape the agent reads (verified against the documented format and a stand-in, not the live
+document); that a real click's token carries `serviceurl` and its activity `from.aadObjectId`
+matching the roster's `aadObjectId`; that Teams renders the refreshed card the invoke answers
+with; and that the messaging endpoint, routed to the actions port through an ingress, is
+reachable from the Bot Connector at all.
 
 ### 126. An incident from a kube-state-metrics alert names the exporter's pod as its target
 

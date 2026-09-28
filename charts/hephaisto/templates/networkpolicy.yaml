@@ -78,6 +78,16 @@ spec:
         - protocol: TCP
           port: 5432
 
+    {{- with include "hephaisto.teamsActionsPort" . }}
+    # The Teams bot's buttons (#124). From ANYWHERE, and that is deliberate: Microsoft's Bot
+    # Connector reaches this through whatever ingress you point the bot at, from addresses that
+    # are not yours to list. The Bot Framework token is this port's authentication, and nothing
+    # but POST /api/teams/messages answers on it - not the console, not the API, not /webhooks.
+    - ports:
+        - protocol: TCP
+          port: {{ . }}
+    {{- end }}
+
     {{- if .Values.networkPolicy.extraIngressCIDRs }}
     # Kubelet probes arrive from the NODE's address, which no namespaceSelector can match, so
     # on some clusters the liveness probe fails without an entry here and the pod is killed in

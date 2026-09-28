@@ -248,6 +248,7 @@ public sealed class TeamsBotNotificationChannel(
                     BaseUrl = o.BaseUrl,
                     GrafanaUrl = o.GrafanaUrl,
                     BoardUrl = TeamsBotLinks.Board(o.TeamsBot, board),
+                    Actions = o.TeamsBot.Actions.Enabled,
                 };
 
                 var card = TeamsBotCards.Alert(incident, links);

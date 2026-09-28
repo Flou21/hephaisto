@@ -100,10 +100,10 @@ public sealed class TeamsBotCardsTests
     }
 
     [Fact]
-    public void Nothing_in_any_card_can_need_an_inbound_route()
+    public void With_the_actions_off_nothing_in_any_card_can_need_an_inbound_route()
     {
-        // A button that acts means Microsoft calls this process. That is a reviewed step of its
-        // own, and this is what keeps it from arriving as a detail.
+        // A button that acts means Microsoft calls this process. With Notifications:TeamsBot:Actions
+        // off - the default - no card may carry one, because nothing would answer it.
         var incident = Incident(state: IncidentState.AwaitingApproval, codeFix: CodeFixState.PrOpened, pr: "https://github.com/o/r/pull/7");
 
         var everything = string.Concat(
@@ -116,6 +116,52 @@ public sealed class TeamsBotCardsTests
         var kinds = Actions(TeamsBotCards.Alert(incident, Links)).Select(a => a.GetProperty("type").GetString());
 
         kinds.Should().OnlyContain(k => k == "Action.OpenUrl");
+    }
+
+    [Fact]
+    public void With_the_actions_on_only_an_open_alert_carries_the_two_verbs()
+    {
+        var acting = Links with { Actions = true };
+        var open = Incident(state: IncidentState.AwaitingApproval, codeFix: CodeFixState.PrOpened, pr: "https://github.com/o/r/pull/7");
+
+        var executes = Actions(TeamsBotCards.Alert(open, acting))
+            .Where(a => a.GetProperty("type").GetString() == "Action.Execute")
+            .ToList();
+
+        executes.Select(a => a.GetProperty("verb").GetString())
+            .Should().BeEquivalentTo([TeamsBotVerbs.Acknowledge, TeamsBotVerbs.AssignToMe]);
+        executes.Should().OnlyContain(a => a.GetProperty("data").GetProperty("incidentId").GetString() == open.Id.ToString());
+
+        // Nothing else acts: not the board, not a superseded alert, not a closed one, and no
+        // other kind of acting button anywhere.
+        var elsewhere = string.Concat(
+            TeamsBotCards.Board([open], 1, acting, Now).ToJsonString(),
+            TeamsBotCards.Superseded(open, acting).ToJsonString(),
+            TeamsBotCards.Alert(open with { State = IncidentState.Closed }, acting).ToJsonString());
+
+        elsewhere.Should().NotContain("Action.Execute");
+        TeamsBotCards.Alert(open, acting).ToJsonString().Should().NotContain("Action.Submit").And.NotContain("Action.Http");
+
+        // Acknowledged once, it does not ask again; taking it over still can.
+        Actions(TeamsBotCards.Alert(open with { AcknowledgedBy = "oncall@example.com" }, acting))
+            .Where(a => a.GetProperty("type").GetString() == "Action.Execute")
+            .Select(a => a.GetProperty("verb").GetString())
+            .Should().Equal(TeamsBotVerbs.AssignToMe);
+    }
+
+    [Fact]
+    public void Every_verb_a_button_can_send_has_a_handler()
+    {
+        // A button whose verb the route does not know would be a click that does nothing. The
+        // handler answers exactly TeamsBotVerbs.All, so every verb drawn must be in it.
+        var acting = Links with { Actions = true };
+
+        var drawn = Actions(TeamsBotCards.Alert(Incident(), acting))
+            .Where(a => a.GetProperty("type").GetString() == "Action.Execute")
+            .Select(a => a.GetProperty("verb").GetString());
+
+        drawn.Should().NotBeEmpty().And.OnlyContain(v => TeamsBotVerbs.All.Contains(v!));
+        TeamsBotVerbs.All.Should().BeEquivalentTo([TeamsBotVerbs.Acknowledge, TeamsBotVerbs.AssignToMe]);
     }
 
     [Fact]

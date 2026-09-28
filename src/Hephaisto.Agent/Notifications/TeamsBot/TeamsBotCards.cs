@@ -68,6 +68,29 @@ public sealed record TeamsCardLinks
 
     /// <summary>A link into Teams that opens the board. Null until the board exists.</summary>
     public string? BoardUrl { get; init; }
+
+    /// <summary>
+    /// Whether an open alert carries the buttons that act (<c>Notifications:TeamsBot:Actions</c>).
+    /// Not an address, but it lives here because it is the other thing a card needs to know about
+    /// where it will be read: with it off no card can need Microsoft to call this process.
+    /// </summary>
+    public bool Actions { get; init; }
+}
+
+/// <summary>
+/// The verbs a button can send, which are the only ones the inbound route answers.
+/// </summary>
+/// <remarks>
+/// Both are read-level acts in the console: saying you have seen something, and saying it is
+/// yours. Closing, approving and denying stay links (backlog #124).
+/// </remarks>
+public static class TeamsBotVerbs
+{
+    public const string Acknowledge = "acknowledge";
+
+    public const string AssignToMe = "assignToMe";
+
+    public static readonly IReadOnlyList<string> All = [Acknowledge, AssignToMe];
 }
 
 /// <summary>
@@ -75,10 +98,11 @@ public sealed record TeamsCardLinks
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Every button is an <c>Action.OpenUrl</c>.</b> A button that acts needs Microsoft to call
-/// this process, which means an authenticated inbound route on a service whose only other one is
-/// deliberately unauthenticated. That is a separate, reviewed step; a test asserts that nothing
-/// here can need it.
+/// <b>Every button is an <c>Action.OpenUrl</c>, unless <see cref="TeamsCardLinks.Actions"/>.</b> A
+/// button that acts needs Microsoft to call this process, through the one authenticated route on
+/// its own port (<c>TeamsBotActions</c>). With it off, a test asserts that nothing here can need
+/// that route; with it on, that only an open alert carries the two verbs in
+/// <see cref="TeamsBotVerbs"/>, and nothing else.
 /// </para>
 /// <para>
 /// Times are absolute. "Open for 20 min" would change every minute and turn a board that is
@@ -265,7 +289,24 @@ public static class TeamsBotCards
         }
 
         var card = Card(body);
-        var actions = Links(incident, links);
+        var actions = new JsonArray();
+
+        if (links.Actions && incident.IsOpen)
+        {
+            // First, because they are what the person holding the phone came to do. An incident
+            // somebody already acknowledged does not ask again; taking it over is still possible.
+            if (string.IsNullOrWhiteSpace(incident.AcknowledgedBy))
+            {
+                actions.Add(Execute("Acknowledge", TeamsBotVerbs.Acknowledge, incident.Id));
+            }
+
+            actions.Add(Execute("Assign to me", TeamsBotVerbs.AssignToMe, incident.Id));
+        }
+
+        foreach (var link in Links(incident, links).ToArray())
+        {
+            actions.Add(link!.DeepClone());
+        }
 
         if (!string.IsNullOrWhiteSpace(links.BoardUrl))
         {
@@ -645,6 +686,19 @@ public static class TeamsBotCards
         ["type"] = "Column",
         ["width"] = width,
         ["items"] = new JsonArray(item),
+    };
+
+    /// <summary>
+    /// A button Teams delivers to <c>POST /api/teams/messages</c> as an <c>adaptiveCard/action</c>
+    /// invoke. The incident id is the only data it carries; who clicked comes from the token and
+    /// the team's roster, never from the card.
+    /// </summary>
+    private static JsonObject Execute(string title, string verb, Guid incidentId) => new()
+    {
+        ["type"] = "Action.Execute",
+        ["title"] = title,
+        ["verb"] = verb,
+        ["data"] = new JsonObject { ["incidentId"] = incidentId.ToString() },
     };
 
     private static JsonObject OpenUrl(string title, string url) => new()

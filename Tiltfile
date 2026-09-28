@@ -424,6 +424,16 @@ if agent:
         # Fast enough to watch. The default is sized for a channel people read.
         chart_set.append('extraEnv[%d].name=Notifications__TeamsBot__RefreshInterval' % (taken + 2))
         chart_set.append('extraEnv[%d].value=00:00:05' % (taken + 2))
+        # The buttons that act (#124): the stand-in's Bot Framework key document, served over
+        # plain http inside the cluster - which is the one reason RequireHttpsMetadata is off here.
+        chart_set.append('extraEnv[%d].name=Notifications__TeamsBot__Actions__OpenIdMetadataUrl' % (taken + 3))
+        chart_set.append('extraEnv[%d].value=%s/teams/openid/.well-known/openidconfiguration' % (taken + 3, stand_in))
+        chart_set.append('extraEnv[%d].name=Notifications__TeamsBot__Actions__RequireHttpsMetadata' % (taken + 4))
+        # 'false ' with the space, and not a typo: `--set` - all Tilt's helm() has - types a bare
+        # false as a boolean, the chart's schema wants every env value a string and refuses the
+        # render, and Tilt then deploys nothing. Helm leaves the padded word a string, and .NET's
+        # bool parsing trims it. values-pager.yaml quotes it and never needed this.
+        chart_set.append("extraEnv[%d].value=false " % (taken + 4))
 
     if teams_bot == 'stand-in':
 

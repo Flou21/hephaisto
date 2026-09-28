@@ -31,6 +31,19 @@ public readonly record struct TeamsBotResult<T>(HttpStatusCode? Status, T? Value
 /// <summary>A message in a channel, as Teams names it.</summary>
 public readonly record struct TeamsPosted(string ConversationId, string ActivityId);
 
+/// <summary>A member of the team, as the roster names them.</summary>
+/// <param name="Id">The Teams user id, <c>29:...</c>.</param>
+/// <param name="AadObjectId">The Microsoft Entra object id: what a click carries in <c>from.aadObjectId</c>.</param>
+public sealed record TeamsMember(string Id, string? AadObjectId, string? Name, string? Email, string? UserPrincipalName)
+{
+    /// <summary>
+    /// Who a click is recorded as: the login name, then the mailbox, then the display name. Read
+    /// from the roster, never from the click - the click says who it claims to be, the roster says
+    /// who that is.
+    /// </summary>
+    public string Actor => UserPrincipalName ?? Email ?? Name ?? Id;
+}
+
 /// <summary>
 /// What the bot can do in Teams.
 /// </summary>
@@ -50,6 +63,12 @@ public interface ITeamsBotClient
     /// with a null value means Teams answered and the person is not in the team.
     /// </summary>
     Task<TeamsBotResult<string>> FindMemberAsync(string email, CancellationToken ct);
+
+    /// <summary>
+    /// A member of the team, found by Microsoft Entra object id. A successful result with a null
+    /// value means Teams answered and nobody in the team has that id.
+    /// </summary>
+    Task<TeamsBotResult<TeamsMember>> FindMemberByObjectIdAsync(string aadObjectId, CancellationToken ct);
 
     /// <summary>The bot's personal chat with a user. Asking twice returns the same chat.</summary>
     Task<TeamsBotResult<string>> OpenChatAsync(string userId, CancellationToken ct);
@@ -176,6 +195,28 @@ public sealed class TeamsBotClient(
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(email);
 
+        var found = await SearchRosterAsync(
+            m => Same(Text(m, "email"), email) || Same(Text(m, "userPrincipalName"), email), ct).ConfigureAwait(false);
+
+        return found.Ok && found.Value is null
+            ? new TeamsBotResult<string>(HttpStatusCode.OK, null, $"{email} is not a member of the team")
+            : new TeamsBotResult<string>(found.Status, found.Value?.Id, found.Detail);
+    }
+
+    public async Task<TeamsBotResult<TeamsMember>> FindMemberByObjectIdAsync(string aadObjectId, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(aadObjectId);
+
+        var found = await SearchRosterAsync(m => Same(Text(m, "aadObjectId"), aadObjectId), ct).ConfigureAwait(false);
+
+        return found.Ok && found.Value is null
+            ? new TeamsBotResult<TeamsMember>(HttpStatusCode.OK, null, "nobody in the team has that object id")
+            : found;
+    }
+
+    /// <summary>The first member of the team the predicate accepts, paging through the roster.</summary>
+    private async Task<TeamsBotResult<TeamsMember>> SearchRosterAsync(Func<JsonNode, bool> match, CancellationToken ct)
+    {
         var roster = $"v3/conversations/{Uri.EscapeDataString(Bot.ChannelId ?? string.Empty)}/pagedmembers";
         string? continuation = null;
 
@@ -189,14 +230,22 @@ public sealed class TeamsBotClient(
 
             if (!answer.Ok)
             {
-                return new TeamsBotResult<string>(answer.Status, null, answer.Detail);
+                return new TeamsBotResult<TeamsMember>(answer.Status, null, answer.Detail);
             }
 
             foreach (var member in answer.Value?["members"]?.AsArray() ?? [])
             {
-                if (Same(Text(member, "email"), email) || Same(Text(member, "userPrincipalName"), email))
+                if (member is not null && match(member) && Text(member, "id") is { } id)
                 {
-                    return new TeamsBotResult<string>(answer.Status, Text(member, "id"), null);
+                    return new TeamsBotResult<TeamsMember>(
+                        answer.Status,
+                        new TeamsMember(
+                            id,
+                            Text(member, "aadObjectId"),
+                            Text(member, "name"),
+                            Text(member, "email"),
+                            Text(member, "userPrincipalName")),
+                        null);
                 }
             }
 
@@ -209,7 +258,7 @@ public sealed class TeamsBotClient(
         }
 
         // Teams answered, and the person is not a member. Not an error of the transport.
-        return new TeamsBotResult<string>(HttpStatusCode.OK, null, $"{email} is not a member of the team");
+        return new TeamsBotResult<TeamsMember>(HttpStatusCode.OK, null, null);
     }
 
     public async Task<TeamsBotResult<string>> OpenChatAsync(string userId, CancellationToken ct)

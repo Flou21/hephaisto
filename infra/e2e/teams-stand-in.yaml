@@ -44,6 +44,14 @@ spec:
             # routes to all three: oncall@ by label, dev@ as the fallback, lead@ as a step.
             - name: TEAMS_MEMBERS
               value: "oncall@example.com,dev@example.com,lead@example.com"
+            # The ids values-dev-teams-bot.yaml gives the bot, and where a signed click is
+            # delivered: POST /teams/click builds one and posts it to the agent's actions port.
+            - name: TEAMS_APP_ID
+              value: "00000000-0000-0000-0000-0000000000d2"
+            - name: TEAMS_TENANT_ID
+              value: "00000000-0000-0000-0000-0000000000d1"
+            - name: AGENT_ACTIONS_URL
+              value: "http://hephaisto.hephaisto:8082/api/teams/messages"
           ports:
             - containerPort: 8080
               name: http

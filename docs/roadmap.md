@@ -1753,6 +1753,25 @@ vehicle for anything that needs a person: that has to be a new message.
 The inbound half - buttons that act - is [#124](backlog.md#124), and the ordering below still
 holds for it.
 
+#### What was built, and what it cost (v0.10.0)
+
+Mechanism B's inbound half, for the two read-level verbs only: **Acknowledge** and **Assign to
+me**. The price above turned out to be what was paid, and no more:
+
+- **One route, on a port of its own.** `POST /api/teams/messages` answers only on
+  `notifications.teamsBot.actions.port`, and nothing else answers there, so the NetworkPolicy can
+  open that port to the internet without opening the console or the receiver. The webhook's
+  posture is unchanged.
+- **Its own authentication scheme**, not the console's: a Bot Framework token for this bot's app
+  id, signed by a key endorsed for `msteams`, whose `serviceurl` names the activity's service,
+  from this tenant, by a member of the team. The actor is the roster's name for the clicker.
+- **Stale cards need nothing new.** The invoke answers with the refreshed card, and the
+  reconciler's comparison already edits every copy.
+
+Approve and deny are still links, for the reason in the section above: a Teams click is an Entra
+identity, and the approver role lives in whatever `auth.authority` names. That map is the next
+step, behind its own flag. Whether any of it works against a real tenant is [#125](backlog.md#125).
+
 #### Ordering, if this is ever picked up
 
 1. **[#44](backlog.md#44-nothing-sweeps-awaitingapproval-so-approvaltimedout-has-no-producer)

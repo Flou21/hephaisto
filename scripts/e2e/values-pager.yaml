@@ -40,6 +40,11 @@ extraEnv:
     value: http://teams-stand-in.hephaisto-obs:8080/teams
   - name: Notifications__TeamsBot__RefreshInterval
     value: "00:00:05"
+  # P26: the buttons trust the stand-in's published keys instead of Microsoft's, over plain HTTP.
+  - name: Notifications__TeamsBot__Actions__OpenIdMetadataUrl
+    value: http://teams-stand-in.hephaisto-obs:8080/teams/openid/.well-known/openidconfiguration
+  - name: Notifications__TeamsBot__Actions__RequireHttpsMetadata
+    value: "false"
   # 3. The windows.
   - name: Ingest__BurstWindow
     value: "00:00:20"
@@ -83,6 +88,8 @@ notifications:
       - oncall@example.com
     board:
       maxIncidents: 40
+    actions:
+      enabled: true
   # The routing the scenarios read (P22-P25): team=pager-a and team=pager-b to oncall@, a
   # critical from team=pager-b to lead@ as well, and everything no team owns to dev@ through the
   # fallback. The webhook route is unscoped and hears everything.

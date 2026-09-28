@@ -23,3 +23,11 @@ spec:
       targetPort: webhook
       protocol: TCP
     {{- end }}
+    {{- with include "hephaisto.teamsActionsPort" . }}
+    # Microsoft posts clicks here, authenticated by a Bot Framework token. Point the Azure Bot's
+    # messaging endpoint at an ingress for THIS port only.
+    - name: teams-actions
+      port: {{ . }}
+      targetPort: teams-actions
+      protocol: TCP
+    {{- end }}

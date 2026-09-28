@@ -67,6 +67,15 @@ the incident service and the pager that alerts go to today; this release is what
 - `notifications.maxPerChannelPerHour`; a message the cap holds back that a person needed is
   logged at Error ([#150](docs/backlog.md#150)).
 - A database migration, `NotificationSteps`: `notification_deliveries.step`.
+- **Teams buttons that act, first cut** ([#124](docs/backlog.md#124)):
+  `notifications.teamsBot.actions.enabled` (off by default) puts **Acknowledge** and **Assign to
+  me** on an open alert. Microsoft delivers the click to `POST /api/teams/messages`, the one
+  inbound route it calls, served on `notifications.teamsBot.actions.port` (8082) and nowhere else,
+  with nothing else answering on that port. A click needs a Bot Framework token for this bot's
+  app id, signed by a key endorsed for Teams, whose `serviceurl` matches the activity, from this
+  tenant, by a member of the team; it is recorded as the team's member list names that person.
+  Close, approve and deny are still links. Set the Azure Bot's messaging endpoint to
+  `https://<your host>/api/teams/messages`, routed to that port only.
 
 ### Changed
 - **The right person** ([#141](docs/backlog.md#141), [#123](docs/backlog.md#123)). A route can
@@ -132,6 +141,10 @@ the incident service and the pager that alerts go to today; this release is what
 - The environment card names the policy engine's protected namespaces when it has no list of
   its own, rather than a second, different copy.
 - Every comment and page that said Alertmanager cannot send a credential has been corrected.
+
+### Known
+- The buttons have run against the Teams stand-in and not against Teams
+  ([#125](docs/backlog.md#125)).
 
 ## v0.9.0 — unreleased (`v0.9.0-rc1` 2026-09-27, `v0.9.0-rc2` to `-rc5` 2026-09-28)
 
