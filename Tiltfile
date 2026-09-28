@@ -320,8 +320,10 @@ if agent:
         chart_values.append('charts/hephaisto/values-dev-coder.yaml')
         chart_set.append('codeFix.mode=%s' % coder_mode)
         chart_set.append('codeFix.sdk=%s' % coder_sdk)
-        if coder_sdk == 'fake':
-            chart_set.append('codeFix.gh=shim')
+        # The shim follows where the repositories live, not which SDK runs: every dev mapping points
+        # at the in-cluster git server, which real gh refuses, so a real-model run would push its
+        # branch and then fail at `gh pr create`.
+        chart_set.append('codeFix.gh=shim')
 
         local_resource(
             'coder-image',
