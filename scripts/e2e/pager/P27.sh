@@ -25,6 +25,6 @@ scenario() {
 
     deadline=$(( SECONDS + 60 ))
     while [ "$SECONDS" -lt "$deadline" ] && [ "$(pager_alerts_sent "$id")" -lt 1 ]; do sleep 3; done
-    pager_teams "$id" | jq -r '.[].text' | grep -q "widget queue" && pass "the card shows it" \
+    pager_teams "$id" | jq -r '.[].text' | grep -c "widget queue" >/dev/null && pass "the card shows it" \
         || fail "the card shows it"
 }
