@@ -112,6 +112,7 @@ public static class HephaistoWebExtensions
         console.MapStatusEndpoints();
         console.MapModeEndpoints();
         console.MapVersionEndpoints();
+        console.MapAlertNoteEndpoints();
         CodeFix.CodeFixEndpoints.MapCodeFixEndpoints(console);
 
         // Authentication (#110). The webhook group is the ONE surface outside OIDC: Alertmanager

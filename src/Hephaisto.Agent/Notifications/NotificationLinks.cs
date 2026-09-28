@@ -24,6 +24,17 @@ public static class NotificationLinks
         return $"{baseUrl.TrimEnd('/')}/incidents/{id}";
     }
 
+    /// <summary>The note people keep for an alert name (#145), in the console.</summary>
+    public static string? AlertNote(string? baseUrl, string? alertName)
+    {
+        if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(alertName))
+        {
+            return null;
+        }
+
+        return $"{baseUrl.TrimEnd('/')}/alerts/{Uri.EscapeDataString(alertName)}";
+    }
+
     /// <summary>
     /// Grafana, scoped to the hour around the event.
     /// </summary>

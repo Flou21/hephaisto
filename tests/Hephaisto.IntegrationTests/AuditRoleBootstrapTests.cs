@@ -99,6 +99,24 @@ public sealed class AuditRoleBootstrapTests(PostgresFixture pg)
     }
 
     /// <summary>
+    /// What was done about an alert (#145) is history too: the serving role may add a line and
+    /// may not edit or remove one, while the curated note above it stays editable.
+    /// </summary>
+    [Fact]
+    public async Task Alert_note_entries_are_append_only_and_the_note_is_not()
+    {
+        await RunBootstrapAsync();
+
+        var schema = Quote(await pg.SchemaAsync());
+
+        (await PrivilegeAsync("INSERT", $"{schema}.alert_note_entries")).Should().BeTrue();
+        (await PrivilegeAsync("UPDATE", $"{schema}.alert_note_entries")).Should().BeFalse();
+        (await PrivilegeAsync("DELETE", $"{schema}.alert_note_entries")).Should().BeFalse();
+
+        (await PrivilegeAsync("UPDATE", $"{schema}.alert_notes")).Should().BeTrue();
+    }
+
+    /// <summary>
     /// The role's <c>search_path</c> is set, or every query it makes fails.
     /// </summary>
     /// <remarks>

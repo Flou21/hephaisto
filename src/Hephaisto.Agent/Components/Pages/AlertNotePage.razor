@@ -1,0 +1,24 @@
+@page "/alerts/{Name}"
+
+@*
+    One alert name's note on its own (#145) - what a Teams card's "Alert note" button opens, and
+    where somebody writes the note before the alert has ever fired.
+*@
+
+<PageTitle>hephaisto — @Name</PageTitle>
+
+<h1>alert <span class="mono">@Name</span></h1>
+
+@if (AlertNote.NormaliseName(Name) is { } name)
+{
+    <AlertNoteSection AlertName="@name" Standalone="true" />
+}
+else
+{
+    <p class="hp-muted">'@Name' is not an alert name.</p>
+}
+
+@code {
+    [Parameter]
+    public string Name { get; set; } = string.Empty;
+}

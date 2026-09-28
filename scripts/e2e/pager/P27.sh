@@ -10,7 +10,7 @@ scenario() {
 
     code=$(_pager_curl -o /dev/null -w '%{http_code}' -X PUT "$PAGER_API/api/alerts/$n/note" \
         -H 'Content-Type: application/json' \
-        --data '{"body":"Check the widget queue depth first; restarting the consumer has never helped.","actor":"pager-suite"}')
+        --data '{"body":"Check the widget queue depth first; restarting the consumer has never helped.","updatedBy":"pager-suite"}')
     want "the note was saved" "$code" -lt 300
 
     pager_fire "$n" provider=kappa

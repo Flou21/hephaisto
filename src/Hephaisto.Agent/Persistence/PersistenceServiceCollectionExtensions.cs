@@ -373,7 +373,10 @@ public static class PersistenceHostExtensions
                 (2, format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO %I', @schema, @role)),
                 (3, format('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %I TO %I', @schema, @role)),
                 (4, format('ALTER ROLE %I SET search_path = %I, public', @role, @schema)),
-                (5, format('REVOKE UPDATE, DELETE, TRUNCATE ON %I.audit_events FROM %I', @schema, @role))
+                (5, format('REVOKE UPDATE, DELETE, TRUNCATE ON %I.audit_events FROM %I', @schema, @role)),
+                -- What was done about an alert (#145) is history for the same reason: an entry
+                -- that could be edited afterwards is a record somebody can tidy.
+                (6, format('REVOKE UPDATE, DELETE, TRUNCATE ON %I.alert_note_entries FROM %I', @schema, @role))
             ) AS t(ord, stmt)
             """,
             ct,
@@ -383,8 +386,8 @@ public static class PersistenceHostExtensions
         await Execute(connection, grantDdl, ct);
 
         logger.LogInformation(
-            "Serving as {Role} on schema {Schema}; audit_events is append-only for it "
-            + "(UPDATE, DELETE and TRUNCATE revoked).",
+            "Serving as {Role} on schema {Schema}; audit_events and alert_note_entries are "
+            + "append-only for it (UPDATE, DELETE and TRUNCATE revoked).",
             app.Username,
             schema);
     }

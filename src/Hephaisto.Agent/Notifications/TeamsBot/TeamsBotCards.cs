@@ -51,6 +51,12 @@ public sealed record TeamsIncident
 
     public string? PullRequestUrl { get; init; }
 
+    /// <summary>The alert name the incident was opened by, when an alert opened it.</summary>
+    public string? AlertName { get; init; }
+
+    /// <summary>The start of what people wrote about that alert (#145), when they wrote something.</summary>
+    public string? NoteExcerpt { get; init; }
+
     public bool IsOpen => State is not (
         IncidentState.Resolved
         or IncidentState.Expired
@@ -288,6 +294,19 @@ public static class TeamsBotCards
             });
         }
 
+        if (!string.IsNullOrWhiteSpace(incident.NoteExcerpt))
+        {
+            // What the team wrote about this alert, before the person opens anything. The start of
+            // it only: a card read on a lock screen is not where a page of notes goes.
+            body.Add(new JsonObject
+            {
+                ["type"] = "TextBlock",
+                ["text"] = $"Team note: {incident.NoteExcerpt}",
+                ["wrap"] = true,
+                ["isSubtle"] = true,
+            });
+        }
+
         var card = Card(body);
         var actions = new JsonArray();
 
@@ -306,6 +325,12 @@ public static class TeamsBotCards
         foreach (var link in Links(incident, links).ToArray())
         {
             actions.Add(link!.DeepClone());
+        }
+
+        if (!string.IsNullOrWhiteSpace(incident.NoteExcerpt)
+            && NotificationLinks.AlertNote(links.BaseUrl, incident.AlertName) is { } noteUrl)
+        {
+            actions.Add(OpenUrl("Alert note", noteUrl));
         }
 
         if (!string.IsNullOrWhiteSpace(links.BoardUrl))

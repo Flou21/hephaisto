@@ -1,0 +1,252 @@
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@inject IncidentQueries Queries
+@inject IAuthorizationService Authorization
+
+@*
+    What the people paged for one alert name have learned about it (#145): the curated note, and
+    the lines people added each time it fired. On the incident page for an incident an alert
+    opened, and on /alerts/{name} alone.
+
+    Adding a line is open to anybody who can read the console - the person who was paged is who
+    knows what was done. Rewriting the note is an approver's, because the note is also what the
+    model is shown beside its runbook.
+
+    Its own component rather than more of IncidentDetail, because it is about the rule and not
+    the incident: the same section appears on every incident that rule ever opens.
+*@
+
+<section class="hp-section" id="alert-note" data-testid="alert-note">
+    <h2>
+        what we know about <span class="mono">@AlertName</span>
+        <span class="hp-count">@(_note?.EntryCount ?? 0)</span>
+    </h2>
+
+    @if (_note is null)
+    {
+        <p class="hp-muted">@(_error ?? "loading…")</p>
+    }
+    else
+    {
+        var note = _note;
+
+        @if (note.Body is { Length: > 0 } body)
+        {
+            <div class="hp-note hp-digest" data-testid="alert-note-body">@body</div>
+            <p class="hp-muted mono">
+                written by @note.UpdatedBy · @(note.UpdatedAt is { } at ? Display.Timestamp(at) : "—")
+                @if (!Standalone)
+                {
+                    <text> · </text><a href="@($"alerts/{Uri.EscapeDataString(note.AlertName)}")">the whole note</a>
+                }
+            </p>
+        }
+        else
+        {
+            <p class="hp-muted" data-testid="alert-note-empty">
+                Nobody has written about this alert yet. What it means, what to look at first and
+                which dashboard to open go here - and the agent reads it beside its runbook.
+            </p>
+        }
+
+        @if (note.Entries.Count > 0)
+        {
+            <ul class="hp-feedback-list" data-testid="alert-note-entries">
+                @foreach (var entry in note.Entries)
+                {
+                    <li @key="entry.Id">
+                        <span class="mono hp-muted">@entry.Author · @Display.Timestamp(entry.CreatedAt)</span>
+                        @if (entry.IncidentId is { } incidentId && incidentId != IncidentId)
+                        {
+                            <a class="mono" href="@($"incidents/{incidentId}")">that incident</a>
+                        }
+                        <p class="hp-comment">@entry.Text</p>
+                    </li>
+                }
+            </ul>
+
+            @if (note.EntryCount > note.Entries.Count)
+            {
+                <p class="hp-muted">and @(note.EntryCount - note.Entries.Count) older, not shown.</p>
+            }
+        }
+
+        <div class="hp-feedback-form">
+            <div class="hp-field">
+                <label class="hp-label" for="alert-note-entry">what was done this time</label>
+                <textarea id="alert-note-entry" rows="2" data-testid="alert-note-entry-text"
+                          @bind="_entry" @bind:event="oninput"
+                          placeholder="e.g. the upstream feed was late; it recovered on its own"></textarea>
+            </div>
+
+            <div class="hp-field">
+                <ActorField Viewer="_viewer" @bind-Name="_typedName" TestId="alert-note-actor" />
+                <button type="button" class="hp-submit" data-testid="alert-note-add"
+                        disabled="@(_busy || string.IsNullOrWhiteSpace(_entry) || string.IsNullOrWhiteSpace(Actor))"
+                        @onclick="AddEntryAsync">
+                    @(_busy ? "…" : "add")
+                </button>
+            </div>
+
+            @if (_viewer.MayDecide)
+            {
+                @if (_editing)
+                {
+                    <div class="hp-field">
+                        <label class="hp-label" for="alert-note-body">the note</label>
+                        <textarea id="alert-note-body" rows="8" data-testid="alert-note-body-edit"
+                                  maxlength="@AlertNote.MaxBodyLength"
+                                  @bind="_body" @bind:event="oninput"></textarea>
+                    </div>
+                    <div class="hp-field">
+                        <button type="button" class="hp-submit" data-testid="alert-note-save"
+                                disabled="@(_busy || string.IsNullOrWhiteSpace(Actor))"
+                                @onclick="SaveBodyAsync">
+                            @(_busy ? "…" : "save the note")
+                        </button>
+                        <button type="button" data-testid="alert-note-cancel" @onclick="() => _editing = false">cancel</button>
+                    </div>
+                }
+                else
+                {
+                    <div class="hp-field">
+                        <button type="button" data-testid="alert-note-edit" @onclick="StartEditing">
+                            @(note.Body.Length > 0 ? "rewrite the note" : "write the note")
+                        </button>
+                    </div>
+                }
+            }
+
+            @if (_error is { Length: > 0 })
+            {
+                <span class="hp-error" data-testid="alert-note-error"><span class="glyph">!!</span> @_error</span>
+            }
+            else if (_message is { Length: > 0 })
+            {
+                <span class="hp-yes" data-testid="alert-note-ok"><span class="glyph">+</span> @_message</span>
+            }
+        </div>
+    }
+</section>
+
+@code {
+    /// <summary>The alert name. Already normalised by the caller.</summary>
+    [Parameter, EditorRequired]
+    public string AlertName { get; set; } = string.Empty;
+
+    /// <summary>The incident the section is shown on, which an added line is attributed to.</summary>
+    [Parameter]
+    public Guid? IncidentId { get; set; }
+
+    /// <summary>On /alerts/{name} itself, where a link to the whole note would point at this page.</summary>
+    [Parameter]
+    public bool Standalone { get; set; }
+
+    [Inject]
+    private AuthenticationStateProvider? AuthProvider { get; set; }
+
+    private ConsoleViewer _viewer = ConsoleViewer.Anonymous;
+    private AlertNoteView? _note;
+    private string _entry = string.Empty;
+    private string _body = string.Empty;
+    private string _typedName = string.Empty;
+    private bool _editing;
+    private bool _busy;
+    private string? _error;
+    private string? _message;
+    private string? _loadedFor;
+
+    /// <summary>The token's name when signed in, the typed one otherwise.</summary>
+    private string Actor => _viewer.Actor(_typedName) ?? string.Empty;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Only when the name changes: the incident page re-renders every few seconds, and a
+        // reload here on each one would throw away a line somebody is halfway through typing.
+        if (_loadedFor == AlertName)
+        {
+            return;
+        }
+
+        _loadedFor = AlertName;
+        _viewer = await ConsoleViewer.ResolveAsync(AuthProvider, Authorization);
+        _editing = false;
+        _message = null;
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _note = await Queries.GetAlertNoteAsync(AlertName, CancellationToken.None);
+            _error = _note is null ? $"'{AlertName}' is not an alert name." : null;
+        }
+        catch (Exception ex)
+        {
+            _error = $"could not load the note: {ex.Message}";
+        }
+    }
+
+    private void StartEditing()
+    {
+        _body = _note?.Body ?? string.Empty;
+        _editing = true;
+        _message = null;
+    }
+
+    private async Task AddEntryAsync()
+    {
+        await RunAsync(
+            () => Queries.AddAlertNoteEntryAsync(AlertName, _entry, IncidentId, Actor, CancellationToken.None),
+            "added.",
+            () => _entry = string.Empty);
+    }
+
+    private async Task SaveBodyAsync()
+    {
+        if (!_viewer.MayDecide)
+        {
+            // The control is not rendered for this viewer. This is for the click that arrives anyway.
+            _error = "your account does not hold the approver role";
+            return;
+        }
+
+        await RunAsync(
+            () => Queries.SaveAlertNoteBodyAsync(AlertName, _body, Actor, CancellationToken.None),
+            "saved. The next investigation of this alert reads it.",
+            () => _editing = false);
+    }
+
+    private async Task RunAsync(Func<Task<AlertNoteResult>> act, string ok, Action onApplied)
+    {
+        _busy = true;
+        _error = null;
+        _message = null;
+
+        try
+        {
+            var result = await act();
+
+            if (result.Outcome == AlertNoteOutcome.Applied)
+            {
+                _note = result.Note ?? _note;
+                _message = ok;
+                onApplied();
+            }
+            else
+            {
+                _error = result.Detail ?? result.Outcome.ToString();
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

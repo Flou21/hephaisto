@@ -82,10 +82,15 @@ public sealed class InvestigationRunner(
     /// cassette, where there is no cluster to ask. A caller with a cluster supplies it; replay
     /// supplies null and the incident card simply goes without the line.
     /// </param>
+    /// <param name="note">
+    /// What people wrote about this alert name (#145), when they have. Passed in for the same
+    /// reason as <paramref name="rollout"/>: replay has no database to read it from.
+    /// </param>
     public async Task<InvestigationOutcome> RunAsync(
         Incident incident,
         CancellationToken ct,
-        RolloutCorrelation? rollout = null)
+        RolloutCorrelation? rollout = null,
+        AlertNote? note = null)
     {
         ArgumentNullException.ThrowIfNull(incident);
 
@@ -153,7 +158,7 @@ public sealed class InvestigationRunner(
         try
         {
             termination = await InvestigateAsync(
-                incident, opts, llm, recorder, budget, conclusion, rollout, ct).ConfigureAwait(false);
+                incident, opts, llm, recorder, budget, conclusion, rollout, note, ct).ConfigureAwait(false);
         }
         catch (BudgetExhaustedException ex)
         {
@@ -269,6 +274,7 @@ public sealed class InvestigationRunner(
         InvestigationBudget budget,
         ConclusionHolder conclusion,
         RolloutCorrelation? rollout,
+        AlertNote? note,
         CancellationToken ct)
     {
         var tools = await BuildToolsAsync(llm, budget, recorder, conclusion, incident, ct).ConfigureAwait(false);
@@ -286,7 +292,7 @@ public sealed class InvestigationRunner(
 
         var messages = new List<ChatMessage>
         {
-            new(ChatRole.System, prompts.ComposeInvestigationPrompt(incident, rollout: rollout)),
+            new(ChatRole.System, prompts.ComposeInvestigationPrompt(incident, rollout: rollout, note: note)),
             new(ChatRole.User, opts.OpeningMessage),
         };
 

@@ -2280,7 +2280,24 @@ that, written by the people who were paged, and it is the part of it they would 
 
 **What to do.** A note per alert name, editable in the console, shown on the incident and given
 to the model beside the runbook. Importing the existing notes is a one-off and not part of the
-feature. **Size.** M. Open.
+feature.
+
+**Fix.** `alert_notes`, keyed by the alert name, holds a curated body (16 KB at most); under it,
+`alert_note_entries` holds one line per "what was done this time" (4 KB each), which the serving
+role may insert and may not update or delete - the same REVOKE that makes `audit_events`
+append-only. `GET /api/alerts/{name}/note` and `POST .../entries` are at the read policy, because
+the person who was paged is who knows what was done; `PUT` of the body is at the approver policy,
+because the body is also what the model reads. Both writers take the actor from the token like
+every other route, and the agent's own identities are refused as authors. The incident page shows
+the note for the alert that opened the incident, `/alerts/{name}` shows it alone, and a Teams alert
+carries its first 200 characters and a link. In the prompt it follows the runbook, every line
+quoted with `> ` and framed as operator-written reference with no authority that cannot be cited;
+the body is capped at 4000 characters and the five newest entries at 300 each.
+
+**Verified** by unit tests (caps, the alert an incident is about, the framing and order in the
+prompt, the card) and by integration tests against Postgres (round trip, newest first, the count
+past the cap, the audit rows, the append-only grant). **Not verified** on a cluster or in a
+browser. **Size.** M. **Fixed in v0.10.0.**
 
 
 ### 146. Nothing tests paging end to end

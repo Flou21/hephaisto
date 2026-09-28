@@ -104,7 +104,8 @@ public sealed class TeamsBotCardsTests
     {
         // A button that acts means Microsoft calls this process. With Notifications:TeamsBot:Actions
         // off - the default - no card may carry one, because nothing would answer it.
-        var incident = Incident(state: IncidentState.AwaitingApproval, codeFix: CodeFixState.PrOpened, pr: "https://github.com/o/r/pull/7");
+        var incident = Incident(state: IncidentState.AwaitingApproval, codeFix: CodeFixState.PrOpened, pr: "https://github.com/o/r/pull/7")
+            with { AlertName = "ConsumerLagHigh", NoteExcerpt = "Check the upstream feed first." };
 
         var everything = string.Concat(
             TeamsBotCards.Board([incident], 1, Links, Now).ToJsonString(),
@@ -162,6 +163,31 @@ public sealed class TeamsBotCardsTests
 
         drawn.Should().NotBeEmpty().And.OnlyContain(v => TeamsBotVerbs.All.Contains(v!));
         TeamsBotVerbs.All.Should().BeEquivalentTo([TeamsBotVerbs.Acknowledge, TeamsBotVerbs.AssignToMe]);
+    }
+
+    [Fact]
+    public void An_alert_carries_the_start_of_the_team_note_and_a_link_to_all_of_it()
+    {
+        // #145: what the team wrote about this alert, before the person opens anything.
+        var incident = Incident() with { AlertName = "Consumer Lag/High", NoteExcerpt = "Check the upstream feed first." };
+
+        var alert = TeamsBotCards.Alert(incident, Links);
+
+        Card(alert).ToString().Should().Contain("Team note: Check the upstream feed first.");
+
+        var link = Actions(alert).Single(a => a.GetProperty("title").GetString() == "Alert note");
+
+        link.GetProperty("type").GetString().Should().Be("Action.OpenUrl");
+        link.GetProperty("url").GetString().Should().Be("https://hephaisto.example/alerts/Consumer%20Lag%2FHigh");
+    }
+
+    [Fact]
+    public void An_alert_without_a_note_carries_neither_line_nor_link()
+    {
+        var alert = TeamsBotCards.Alert(Incident() with { AlertName = "ConsumerLagHigh" }, Links);
+
+        Card(alert).ToString().Should().NotContain("Team note");
+        Actions(alert).Select(a => a.GetProperty("title").GetString()).Should().NotContain("Alert note");
     }
 
     [Fact]

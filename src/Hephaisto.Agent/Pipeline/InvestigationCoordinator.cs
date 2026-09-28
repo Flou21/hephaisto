@@ -55,6 +55,47 @@ public sealed class InvestigationCoordinator(
     CodeFix.CodeFixCoordinator codeFix,
     ILogger<InvestigationCoordinator> logger) : IIncidentInvestigator
 {
+    /// <summary>
+    /// The note for the alert that opened this incident, with its newest entries; null when the
+    /// incident was not opened by an alert or nobody has written about it.
+    /// </summary>
+    /// <remarks>
+    /// Never throws. A note is context, and an investigation must not fail for want of it.
+    /// </remarks>
+    private async Task<AlertNote?> AlertNoteAsync(Incident incident, CancellationToken ct)
+    {
+        if (AlertNote.AlertNameOf(incident.Signals) is not { } name)
+        {
+            return null;
+        }
+
+        try
+        {
+            var note = await db.AlertNotes.AsNoTracking()
+                .FirstOrDefaultAsync(n => n.AlertName == name, ct)
+                .ConfigureAwait(false);
+
+            if (note is null)
+            {
+                return null;
+            }
+
+            note.Entries = await db.AlertNoteEntries.AsNoTracking()
+                .Where(e => e.AlertName == name)
+                .OrderByDescending(e => e.CreatedAt)
+                .Take(PromptComposer.MaxNoteEntries)
+                .ToListAsync(ct)
+                .ConfigureAwait(false);
+
+            return note;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Could not read the alert note for {AlertName}; investigating without it.", name);
+            return null;
+        }
+    }
+
     public async Task InvestigateAsync(Guid incidentId, CancellationToken ct)
     {
         var incident = await incidents.GetWithDetailAsync(incidentId, ct).ConfigureAwait(false);
@@ -110,7 +151,11 @@ public sealed class InvestigationCoordinator(
             // accuracy. Never throws; a null just means the card goes without the line.
             var rollout = await facts.RecentRolloutAsync(incident, ct).ConfigureAwait(false);
 
-            outcome = await runner.RunAsync(incident, ct, rollout).ConfigureAwait(false);
+            // What people wrote about this alert name (#145), beside the runbook. Read here and
+            // passed in, like the rollout, because the runner also replays without a database.
+            var note = await AlertNoteAsync(incident, ct).ConfigureAwait(false);
+
+            outcome = await runner.RunAsync(incident, ct, rollout, note).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

@@ -356,6 +356,15 @@ else
     </section>
 
     @* ---------------------------------------------------------------
+       2b. What people know about the alert (#145) — beside the signals
+       it explains, and before the agent's own account of them.
+       --------------------------------------------------------------- *@
+    @if (AlertNameOf(incident) is { } alertName)
+    {
+        <AlertNoteSection AlertName="@alertName" IncidentId="incident.Id" />
+    }
+
+    @* ---------------------------------------------------------------
        3. Investigation trace — the reason this page exists.
 
        Everything else here can be reconstructed from Postgres by hand. This cannot: it is
@@ -1094,6 +1103,17 @@ else
 @code {
     [Parameter]
     public Guid Id { get; set; }
+
+    /// <summary>
+    /// The alert that opened this incident, when one did - the same rule as
+    /// <see cref="AlertNote.AlertNameOf"/>, over the view rather than the entity.
+    /// </summary>
+    private static string? AlertNameOf(IncidentDetailView incident) =>
+        incident.Signals
+            .Where(s => s.Source == SignalSource.Alertmanager)
+            .OrderBy(s => s.FirstSeen)
+            .Select(s => AlertNote.NormaliseName(s.Labels.TryGetValue("alertname", out var n) ? n : s.Reason))
+            .FirstOrDefault();
 
     private IncidentDetailView? _incident;
     private DateTimeOffset _now = DateTimeOffset.UtcNow;
