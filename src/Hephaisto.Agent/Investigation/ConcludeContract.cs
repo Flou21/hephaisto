@@ -153,26 +153,41 @@ internal static class ConcludeMapper
     {
         var findings = new List<Finding>();
 
-        foreach (var draft in request.Findings)
+        // A model's JSON null beats the empty list each property starts as: gpt-oss:120b sent
+        // `"evidence": null` on the v0.10.0-rc1 release gate, and the foreach below threw - an
+        // investigation that had concluded, lost to a NullReferenceException and escalated as
+        // InvestigationFailed an hour later. Null is read as "none" at every level, so a finding
+        // without citations reaches the grounding verifier and is rejected there, by name.
+        foreach (var draft in request.Findings ?? [])
         {
+            if (draft is null)
+            {
+                continue;
+            }
+
             var finding = new Finding
             {
                 InvestigationId = investigationId,
                 Category = string.IsNullOrWhiteSpace(draft.Category) ? "unknown" : draft.Category,
-                Hypothesis = draft.Hypothesis,
+                Hypothesis = draft.Hypothesis ?? string.Empty,
                 Confidence = Math.Clamp(draft.Confidence ?? request.Confidence ?? 0, 0, 1),
                 IsPrimary = draft.Primary,
             };
 
-            foreach (var evidence in draft.Evidence)
+            foreach (var evidence in draft.Evidence ?? [])
             {
+                if (evidence is null)
+                {
+                    continue;
+                }
+
                 var stepId = ResolveStepId(evidence.StepId, steps);
 
                 finding.Evidence.Add(new Evidence
                 {
                     FindingId = finding.Id,
                     StepId = stepId,
-                    Excerpt = evidence.Excerpt,
+                    Excerpt = evidence.Excerpt ?? string.Empty,
 
                     // Clickable provenance for the UI. Points at the step, which owns the raw
                     // blob, so a human can read the untruncated original the digest came from.

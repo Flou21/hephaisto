@@ -151,7 +151,7 @@ judge_run() {
         local late
         late=$(jq -r --arg t "$(fixture_target "$f")" \
             '.[]? | select((.targetName // "") | . == $t or startswith($t + "-")) | .id' \
-            <<<"$(api "/api/incidents?limit=100" || echo '[]')" 2>/dev/null || true)
+            <<<"$(api "/api/incidents?state=any&limit=200" || echo '[]')" 2>/dev/null || true)
 
         ids=$(printf '%s\n%s\n' "$ids" "$late" | awk 'NF && !seen[$0]++')
 
