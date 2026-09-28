@@ -271,7 +271,7 @@ public sealed class InvestigationRunner(
         RolloutCorrelation? rollout,
         CancellationToken ct)
     {
-        var tools = await BuildToolsAsync(llm, budget, recorder, conclusion, ct).ConfigureAwait(false);
+        var tools = await BuildToolsAsync(llm, budget, recorder, conclusion, incident, ct).ConfigureAwait(false);
 
         using var chat = clients.CreateInvestigationClient(budget, recorder, incident.Id);
 
@@ -393,6 +393,7 @@ public sealed class InvestigationRunner(
         InvestigationBudget budget,
         InvestigationRecorder recorder,
         ConclusionHolder conclusion,
+        Incident incident,
         CancellationToken ct)
     {
         var tools = new List<AIFunction>();
@@ -400,8 +401,16 @@ public sealed class InvestigationRunner(
         // Kubernetes tools arrive from DI as plain AIFunctions. This layer deliberately knows
         // nothing about how they are implemented - it depends on the abstraction so that the
         // stream that owns them can change them freely.
-        tools.AddRange(SafeToolDecorator.WrapAll(
-            clusterTools, "kubernetes", llm.Tools, budget, recorder));
+        //
+        // Not for an incident about another cluster (#131). They read the cluster the agent runs
+        // in, and for another cluster's incident they would return a same-named workload's pods,
+        // events and rollouts with nothing marking them as being from somewhere else. The model
+        // is told so in the environment card; metrics and logs are central and stay.
+        if (!incident.Target.IsForeignTo(prompts.AgentCluster))
+        {
+            tools.AddRange(SafeToolDecorator.WrapAll(
+                clusterTools, "kubernetes", llm.Tools, budget, recorder));
+        }
 
         var grafanaTools = await grafana.GetToolsAsync(ct).ConfigureAwait(false);
 

@@ -78,6 +78,11 @@ the incident service and the pager that alerts go to today; this release is what
   apart ([#132](docs/backlog.md#132)); a kube-state-metrics alert about a deployment is about the
   deployment, not the exporter's pod ([#126](docs/backlog.md#126)). Each alert instance has an
   `AlertKey`, and a signal row has a status, for the lifecycle that follows.
+- **An incident about another cluster is honest about it** ([#131](docs/backlog.md#131)). It is
+  offered no Kubernetes tool - those read this cluster, where a same-named workload is a
+  different one - gets no rollout lookup, and the model is told which cluster it is about and to
+  filter every query on it. The policy engine refuses any action on another cluster's target
+  (`ForeignCluster`, checked first). The outbound webhook's payload carries `incident.cluster`.
 - **Only the rule named `Watchdog` is the watchdog** ([#151](docs/backlog.md#151)). Before, any
   alert whose name contained the word was swallowed as a heartbeat.
 - The kind classifier matches keywords as words ([#134](docs/backlog.md#134)).

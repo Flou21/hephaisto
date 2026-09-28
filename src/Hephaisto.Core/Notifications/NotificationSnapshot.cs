@@ -59,6 +59,9 @@ public sealed record NotificationSnapshot
     /// </summary>
     public string Namespace { get; init; } = string.Empty;
 
+    /// <summary>The cluster the incident is about (#131). Empty for one from before v0.10.0.</summary>
+    public string Cluster { get; init; } = string.Empty;
+
     /// <summary>Human-readable <c>namespace/kind/name</c>, or empty when there is no target.</summary>
     public string Target { get; init; } = string.Empty;
 

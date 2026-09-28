@@ -2,7 +2,6 @@
 # stage of the v0.10.0 plan that turns it green. A red scenario listed here is reported and does
 # not fail the run; a GREEN one listed here fails it - so a fix and its removal from this list
 # land in the same commit. Empty when v0.10.0 is done: a unit test holds that from 0.11 on.
-P12
 P13
 P16
 P17

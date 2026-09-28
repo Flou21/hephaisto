@@ -184,12 +184,23 @@ public sealed class ClusterFactsRulesTests
             new KubernetesApi(client),
             actions,
             new PolicyStub(Given.Options()),
+            new KubernetesStub(new Hephaisto.Agent.Kubernetes.KubernetesOptions()),
             Given.Clock(),
             NullLogger<ClusterFactsGatherer>.Instance);
 
         var act = async () => await gatherer.GatherAsync(Given.Incident(), AgentMode.Auto, CancellationToken.None);
 
         await act.Should().ThrowAsync<ClusterFactsUnavailableException>();
+    }
+
+    private sealed class KubernetesStub(Hephaisto.Agent.Kubernetes.KubernetesOptions value)
+        : Microsoft.Extensions.Options.IOptionsMonitor<Hephaisto.Agent.Kubernetes.KubernetesOptions>
+    {
+        public Hephaisto.Agent.Kubernetes.KubernetesOptions CurrentValue => value;
+
+        public Hephaisto.Agent.Kubernetes.KubernetesOptions Get(string? name) => value;
+
+        public IDisposable? OnChange(Action<Hephaisto.Agent.Kubernetes.KubernetesOptions, string?> listener) => null;
     }
 
     private sealed class PolicyStub(Hephaisto.Core.Policy.PolicyOptions value)

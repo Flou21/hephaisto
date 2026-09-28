@@ -108,6 +108,19 @@ public static class PolicyEngine
         var ns = target.Namespace;
         var workload = facts.Workload;
 
+        // 0. Another cluster (#131). First, because every gate below reads facts about the
+        //    agent's own cluster, and for another cluster's target each of them would be judging
+        //    a same-named stranger. An empty target cluster is a row from before v0.10.0, which
+        //    is this one; a target that names a cluster while the agent does not know its own
+        //    cannot be shown to be local, and is refused for the same reason.
+        if (target.Cluster.Length > 0
+            && !string.Equals(target.Cluster, facts.AgentCluster, StringComparison.Ordinal))
+        {
+            Deny(PolicyReasonCode.ForeignCluster,
+                $"the target is in cluster '{target.Cluster}', and the agent can act only in "
+                + $"'{(facts.AgentCluster.Length > 0 ? facts.AgentCluster : "its own")}'");
+        }
+
         // 1. Never approvable. Checked before anything else, including IsRollback: there is no
         //    signal, no evidence and no human who can make deleting a PVC the agent's business,
         //    and a protected namespace is where the agent and its own observability live - an

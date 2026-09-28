@@ -50,15 +50,27 @@ public sealed class ClusterFactsGatherer(
     KubernetesApi api,
     IActionRepository actions,
     Microsoft.Extensions.Options.IOptionsMonitor<PolicyOptions> policyOptions,
+    Microsoft.Extensions.Options.IOptionsMonitor<KubernetesOptions> kubernetes,
     IClock clock,
     ILogger<ClusterFactsGatherer> logger)
 {
+    /// <summary>The cluster this agent's RBAC reaches.</summary>
+    private string AgentCluster => kubernetes.CurrentValue.ClusterName;
+
     public async Task<ClusterFacts> GatherAsync(Incident incident, AgentMode mode, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(incident);
 
         var target = incident.Target;
         var now = clock.UtcNow;
+
+        // Another cluster's target (#131): nothing here can be read about it - every call below
+        // would describe a same-named object in THIS cluster. The engine's first gate refuses it
+        // on AgentCluster alone.
+        if (target.IsForeignTo(AgentCluster))
+        {
+            return new ClusterFacts { Now = now, Mode = mode, AgentCluster = AgentCluster };
+        }
 
         try
         {
@@ -77,6 +89,7 @@ public sealed class ClusterFactsGatherer(
             {
                 Now = now,
                 Mode = mode,
+                AgentCluster = AgentCluster,
                 Workload = workload,
                 Node = node,
                 TargetLabels = targetLabels,
@@ -299,6 +312,12 @@ public sealed class ClusterFactsGatherer(
     public async Task<RolloutCorrelation?> RecentRolloutAsync(Incident incident, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(incident);
+
+        // A rollout of a same-named Deployment in this cluster says nothing about another's (#131).
+        if (incident.Target.IsForeignTo(AgentCluster))
+        {
+            return null;
+        }
 
         var target = incident.Target;
         var kind = target.OwnerKind is { Length: > 0 } ok ? ok : target.Kind;

@@ -51,7 +51,8 @@ public class InvestigationRunnerTests
         IEnumerable<AIFunction>? tools = null,
         LlmOptions? llm = null,
         InvestigationOptions? investigation = null,
-        IGlobalLlmBudget? globalBudget = null)
+        IGlobalLlmBudget? globalBudget = null,
+        string agentCluster = "")
     {
         var clock = new TestClock();
 
@@ -62,7 +63,7 @@ public class InvestigationRunnerTests
 
         return new InvestigationRunner(
             factory,
-            new PromptComposer(Options.Create(new EnvironmentCardOptions())),
+            new PromptComposer(Options.Create(new EnvironmentCardOptions { ClusterName = agentCluster })),
             tools ?? [LogsTool()],
             grafana,
             globalBudget ?? new NullGlobalLlmBudget(),
@@ -508,6 +509,36 @@ public class InvestigationRunnerTests
         // Every tool, without exception, is wrapped. A limit that holds for the tools we wrote
         // and not for the ones a remote MCP server exposes is not a limit.
         tools.Should().AllBeOfType<SafeToolDecorator>();
+    }
+
+    /// <summary>
+    /// #131. The Kubernetes tools read the cluster the agent runs in; for another cluster's
+    /// incident they would describe a same-named stranger.
+    /// </summary>
+    [Fact]
+    public async Task An_incident_about_another_cluster_is_offered_no_Kubernetes_tool()
+    {
+        var investigation = new FakeChatClient((_, _) => FakeChatClient.Text("Thinking."));
+        var incident = NewIncident();
+        incident.Target.Cluster = "elsewhere";
+
+        await Runner(new FakeChatClientFactory(FreePricing, investigation), agentCluster: "here")
+            .RunAsync(incident, CancellationToken.None);
+
+        investigation.ReceivedOptions[0]!.Tools!.Select(t => t.Name).Should().BeEquivalentTo(["conclude"]);
+    }
+
+    [Fact]
+    public async Task An_incident_about_this_cluster_still_gets_them()
+    {
+        var investigation = new FakeChatClient((_, _) => FakeChatClient.Text("Thinking."));
+        var incident = NewIncident();
+        incident.Target.Cluster = "here";
+
+        await Runner(new FakeChatClientFactory(FreePricing, investigation), agentCluster: "here")
+            .RunAsync(incident, CancellationToken.None);
+
+        investigation.ReceivedOptions[0]!.Tools!.Select(t => t.Name).Should().Contain("get_pod_logs");
     }
 
     [Fact]

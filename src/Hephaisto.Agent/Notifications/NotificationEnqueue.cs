@@ -103,6 +103,7 @@ public static class NotificationEnqueue
             PreviousState = transition.From,
             EscalationReason = incident?.EscalationReason ?? EscalationReason.None,
             Namespace = incident?.Target?.Namespace ?? string.Empty,
+            Cluster = incident?.Target?.Cluster ?? string.Empty,
             Target = Describe(incident),
             Summary = incident?.Resolution,
             Reason = transition.Reason,

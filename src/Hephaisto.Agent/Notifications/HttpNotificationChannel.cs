@@ -193,6 +193,7 @@ public sealed class HttpNotificationChannel(
                         PreviousState = s.PreviousState?.ToString(),
                         EscalationReason = s.EscalationReason.ToString(),
                         Namespace = s.Namespace,
+                        Cluster = s.Cluster,
                         Target = s.Target,
                         Summary = s.Summary,
                         CorrelationKey = s.CorrelationKey,
@@ -240,6 +241,10 @@ public sealed class HttpNotificationChannel(
 
         [JsonPropertyName("namespace")]
         public required string Namespace { get; init; }
+
+        // Empty for an incident from before v0.10.0, which is the agent's own cluster (#131).
+        [JsonPropertyName("cluster")]
+        public required string Cluster { get; init; }
 
         [JsonPropertyName("target")]
         public required string Target { get; init; }
