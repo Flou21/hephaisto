@@ -1,0 +1,94 @@
+# A stand-in for Microsoft Teams, as the bot sees it.
+#
+# Applied by Tilt when tilt_config.json says "teams-bot": "stand-in", and never by the chart. It
+# is the notification receiver's binary (see infra/e2e/notification-receiver/TeamsStandIn.cs):
+# it answers the token request and the Bot Connector calls, keeps every message it is given,
+# and serves what a person looking at Teams would see now on GET /teams/messages.
+#
+# It exists so the board and the alerts can be exercised on this cluster without a tenant, and
+# without a test run editing a channel real people read. What it copies from Teams are the two
+# behaviours the agent's design rests on: an id has to arrive percent-encoded, and a DELETE is
+# refused and counted - the count being zero is the assertion.
+#
+# In hephaisto-obs beside the notification receiver, for that receiver's reason: nothing here
+# is meant to break. Single replica, in-memory, Recreate: two pods would split the messages.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: teams-stand-in
+  namespace: hephaisto-obs
+  labels:
+    app.kubernetes.io/name: teams-stand-in
+    app.kubernetes.io/part-of: hephaisto-e2e
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: teams-stand-in
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: teams-stand-in
+    spec:
+      containers:
+        - name: receiver
+          image: hephaisto/notification-receiver:dev
+          # Built into this node's docker by Tilt. Never pulls.
+          imagePullPolicy: IfNotPresent
+          env:
+            # Who is "in the team". values-dev-teams-bot.yaml names one of these as a
+            # recipient and one address that is not here, so both paths run.
+            - name: TEAMS_MEMBERS
+              value: "oncall@example.com,dev@example.com"
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: teams-stand-in
+  namespace: hephaisto-obs
+  labels:
+    app.kubernetes.io/name: teams-stand-in
+spec:
+  selector:
+    app.kubernetes.io/name: teams-stand-in
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+# Not a credential. The stand-in accepts any client secret that is not empty, and the chart
+# refuses to render the bot without a Secret to name. Its own name, so that switching
+# "teams-bot" to "real" can never be answered with this one.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hephaisto-notification-teams-bot-stand-in
+  namespace: hephaisto
+  labels:
+    app.kubernetes.io/part-of: hephaisto-e2e
+type: Opaque
+stringData:
+  clientSecret: stand-in-accepts-anything

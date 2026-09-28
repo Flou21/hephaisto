@@ -1,3 +1,4 @@
+using Hephaisto.Agent.Notifications.TeamsBot;
 using Hephaisto.Agent.Observability;
 using Hephaisto.Core.Notifications;
 using Microsoft.Extensions.Configuration;
@@ -56,7 +57,22 @@ public static class NotificationServiceCollectionExtensions
                     return o.Routes.TrueForAll(r => configured.Contains(r.Channel));
                 },
                 "Notifications:Routes names a channel that is not configured. Set "
-                    + "Notifications:Webhook:Url or Notifications:Teams:WorkflowUrl, or remove the route.")
+                    + "Notifications:Webhook:Url, Notifications:Teams:WorkflowUrl or the four "
+                    + "Notifications:TeamsBot settings, or remove the route.")
+
+            // Half a bot is the worst configuration: the channel is not registered, so nothing
+            // is sent, and the values file looks as though it had been set up.
+            .Validate(
+                o => o.TeamsBot.IsConfigured || !HasAny(o.TeamsBot),
+                "Notifications:TeamsBot is partly configured. It needs TenantId, AppId, ClientSecret "
+                    + "and ChannelId together, or none of them.")
+            .Validate(
+                o => o.TeamsBot.BoardMaxIncidents is > 0 and <= 40,
+                "Notifications:TeamsBot:BoardMaxIncidents must be between 1 and 40. Forty is the "
+                    + "largest board that was measured against Teams.")
+            .Validate(
+                o => o.TeamsBot.RefreshInterval >= TimeSpan.FromSeconds(5),
+                "Notifications:TeamsBot:RefreshInterval must be at least 5 seconds.")
             .ValidateOnStart();
 
         var configured = configuration.GetSection(NotificationOptions.SectionName).Get<NotificationOptions>()
@@ -94,6 +110,23 @@ public static class NotificationServiceCollectionExtensions
 #pragma warning restore EXTEXP0001
 
             services.AddTransient<INotificationChannel>(sp => sp.GetRequiredService<TeamsNotificationChannel>());
+        }
+
+        if (configured.TeamsBot.IsConfigured)
+        {
+            services.AddSingleton<TeamsBotTokenCache>();
+
+#pragma warning disable EXTEXP0001
+            services.AddHttpClient<ITeamsBotClient, TeamsBotClient>()
+                .RemoveAllResilienceHandlers();
+#pragma warning restore EXTEXP0001
+
+            services.AddScoped<TeamsBotIncidents>();
+            services.AddTransient<INotificationChannel, TeamsBotNotificationChannel>();
+
+            // Registered with the channel and not unconditionally like the dispatcher: without
+            // a bot there is no board to keep, and nothing it posted earlier could be edited.
+            services.AddHostedService<TeamsBoardReconciler>();
         }
 
         services.AddScoped<IAgentEventNotifier, AgentEventNotifier>();
@@ -143,4 +176,10 @@ public static class NotificationServiceCollectionExtensions
 
         return services;
     }
+
+    private static bool HasAny(TeamsBotOptions bot) =>
+        !string.IsNullOrWhiteSpace(bot.TenantId)
+        || !string.IsNullOrWhiteSpace(bot.AppId)
+        || !string.IsNullOrWhiteSpace(bot.ClientSecret)
+        || !string.IsNullOrWhiteSpace(bot.ChannelId);
 }

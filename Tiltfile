@@ -76,6 +76,13 @@ config.define_string('coder-sdk',   args = False, usage = 'codeFix.sdk: fake ($0
 # The agent's own model. Defaults to whatever `coder` is, because a code-fix run is an
 # investigation first, and this project's dev cluster does not investigate with Gemini.
 config.define_bool('local-llm',     args = False, usage = 'Investigate with the local Ollama (gpt-oss:120b) at host-ip:11434')
+# The Teams bot: one board in a channel, edited in place, and alerts by personal chat.
+#   off       (default)
+#   stand-in  against infra/e2e/teams-stand-in.yaml - no tenant, nothing leaves the cluster
+#   real      against Microsoft Teams. Needs charts/hephaisto/values-dev-teams-bot.local.yaml
+#             (ignored by git; the ids and recipients) and the Secret
+#             hephaisto-notification-teams-bot in namespace hephaisto, both made by hand.
+config.define_string('teams-bot',   args = False, usage = 'Teams bot: off | stand-in | real (default off)')
 cfg = config.parse()
 
 HOST    = cfg.get('host', 'localhost')
@@ -89,9 +96,12 @@ coder         = cfg.get('coder', False)
 coder_mode    = cfg.get('coder-mode', 'plan')
 coder_sdk     = cfg.get('coder-sdk', 'fake')
 local_llm     = cfg.get('local-llm', coder)
+teams_bot     = cfg.get('teams-bot', 'off')
 
 if coder_mode not in ['off', 'plan', 'pr']:
     fail("coder-mode must be off, plan or pr - got '%s'" % coder_mode)
+if teams_bot not in ['off', 'stand-in', 'real']:
+    fail('teams-bot must be off, stand-in or real, not %r' % teams_bot)
 if coder_sdk not in ['fake', 'real']:
     fail("coder-sdk must be fake or real - got '%s'" % coder_sdk)
 
@@ -238,6 +248,21 @@ if tracing:
 
 # --- the agent ----------------------------------------------------------------------------
 
+# One binary, two jobs: the c19 egress canary and the Teams stand-in. Built once, here, so
+# that neither depends on the other being switched on.
+if chaos or teams_bot == 'stand-in':
+    local_resource(
+        'notification-receiver-image',
+        cmd = 'docker build -q -f infra/e2e/notification-receiver/Dockerfile -t hephaisto/notification-receiver:dev .',
+        deps = [
+            'infra/e2e/notification-receiver/Program.cs',
+            'infra/e2e/notification-receiver/TeamsStandIn.cs',
+            'infra/e2e/notification-receiver/notification-receiver.csproj',
+            'infra/e2e/notification-receiver/Dockerfile',
+        ],
+        labels = ['e2e'],
+    )
+
 if agent:
 
     # disable_push=True builds straight into this node's docker daemon. tilt_config.json in
@@ -359,6 +384,47 @@ if agent:
             ],
             labels = ['coder'],
         )
+
+    # --- the Teams bot -----------------------------------------------------------------------
+    #
+    # The stand-in's two addresses have no chart value on purpose - nobody but a test harness
+    # should move where the bot's token comes from - so they go in as extraEnv. Helm replaces a
+    # list rather than merging it and --set addresses one by position, so they are APPENDED after
+    # whatever the values files already put there, counted rather than assumed.
+    if teams_bot == 'stand-in':
+        chart_values.append('charts/hephaisto/values-dev-teams-bot.yaml')
+        chart_set.append('notifications.baseUrl=http://%s:8100' % HOST)
+
+        taken = 0
+        for f in chart_values:
+            layer = read_yaml(f)
+            if 'extraEnv' in layer:
+                taken = len(layer['extraEnv'])
+
+        stand_in = 'http://teams-stand-in.hephaisto-obs:8080'
+        chart_set.append('extraEnv[%d].name=Notifications__TeamsBot__LoginUrl' % taken)
+        chart_set.append('extraEnv[%d].value=%s' % (taken, stand_in))
+        chart_set.append('extraEnv[%d].name=Notifications__TeamsBot__ServiceUrl' % (taken + 1))
+        chart_set.append('extraEnv[%d].value=%s/teams' % (taken + 1, stand_in))
+        # Fast enough to watch. The default is sized for a channel people read.
+        chart_set.append('extraEnv[%d].name=Notifications__TeamsBot__RefreshInterval' % (taken + 2))
+        chart_set.append('extraEnv[%d].value=00:00:05' % (taken + 2))
+
+        k8s_yaml('infra/e2e/teams-stand-in.yaml')
+        k8s_resource(
+            'teams-stand-in',
+            objects = ['hephaisto-notification-teams-bot-stand-in:secret'],
+            resource_deps = ['notification-receiver-image'],
+            port_forwards = [tailnet(8110, 8080)],
+            labels = ['agent'],
+        )
+
+    if teams_bot == 'real':
+        real_values = 'charts/hephaisto/values-dev-teams-bot.local.yaml'
+        if not os.path.exists(real_values):
+            fail(('teams-bot=real needs %s: notifications.baseUrl, notifications.teamsBot and '
+                  + 'notifications.routes for YOUR tenant. It is ignored by git.') % real_values)
+        chart_values.append(real_values)
 
     k8s_yaml(helm(
         'charts/hephaisto',
@@ -496,17 +562,7 @@ if chaos:
 
     # The c19 injection canary: a second notification-receiver that counts anything reaching
     # it. The injected log lines tell the coder to `curl` it; a non-zero count means a command
-    # from a log line ran.
-    local_resource(
-        'notification-receiver-image',
-        cmd = 'docker build -q -f infra/e2e/notification-receiver/Dockerfile -t hephaisto/notification-receiver:dev .',
-        deps = [
-            'infra/e2e/notification-receiver/Program.cs',
-            'infra/e2e/notification-receiver/notification-receiver.csproj',
-            'infra/e2e/notification-receiver/Dockerfile',
-        ],
-        labels = ['chaos'],
-    )
+    # from a log line ran. Its image is built above, because the Teams stand-in runs it too.
     k8s_yaml('infra/e2e/egress-canary.yaml')
     k8s_resource(
         'egress-canary',

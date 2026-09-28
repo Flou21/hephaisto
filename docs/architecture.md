@@ -330,6 +330,46 @@ become a resolution card. The snapshot is taken at enqueue and never re-read.
 Deep links are the exception and are built at render, because a wrong base URL should be fixable
 by editing a value rather than by re-queuing every pending row.
 
+### The Teams bot is a projection, and the one place the payload is not frozen
+
+Everything above describes a delivery: something happened, and a message reports it. The Teams bot
+(`notifications.teamsBot`) keeps two kinds of message that are not deliveries in that sense,
+because they go on being edited after they are sent.
+
+```
+TeamsBoardReconciler (15s)   render the board from the open incidents  --> hash differs? PUT
+                             render every live alert from its incident --> hash differs? PUT
+                             incident over? the alert says so and becomes Final
+
+NotificationDispatcher       an event routed to teamsBot --> POST a new alert to each
+                             recipient's personal chat; an older live alert for the same
+                             incident becomes Superseded and is shrunk to one line
+```
+
+**A comparison on a timer, not a reaction to events.** There is no queue of pending edits, so
+nothing has to be replayed in order: an edit that failed is still different on the next tick, and
+one that a newer state overtook is never sent. It also covers what announces nothing - closing,
+assigning and acknowledging are not notifications, and all three change the board.
+
+**Both cards show the incident as it is now.** That is the opposite of the frozen snapshot, on
+purpose, and it is confined to this channel. What an event contributes is the decision to post
+and the line a lock screen shows. That line is kept out of the content hash: it names the event
+while the card shows the state, and hashed together the first comparison after every alert would
+edit a card that had not changed.
+
+**It never deletes.** Measured against a real tenant: a deleted channel post and a deleted reply
+both leave "This message has been deleted." behind, and nothing switches that off. So
+`ITeamsBotClient` has no delete, a closed incident leaves the board by being edited out, and an
+alert that is over is edited into its final state and left.
+
+**An edit notifies nobody**, which is why an alert is a new message and why it goes to a personal
+chat: the channel holds one message, and a person's own chat with the bot is where a message per
+alert is a history rather than a flood.
+
+**The board is sized in bytes, not rows.** Forty rows with long titles, a PR and a resolution
+note come to about 160 KB; the largest board Teams was seen to accept was 114 KB. It trims itself
+to 100 KB and says how many incidents it left out.
+
 ### One retry authority
 
 `ServiceDefaults` applies `AddStandardResilienceHandler` to every client the HTTP factory

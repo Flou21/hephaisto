@@ -1752,6 +1752,92 @@ class already defaults both to empty, and the chart always emits them when the s
 beside both values. **Size.** S. **Fixed in v0.9.0**: both lists are gone from `appsettings.json`, so
 the chart's values are the whole list.
 
+### 121. The agent would not start with the Teams bot on, and every test was green
+
+**Symptom.** With `notifications.teamsBot.enabled` the pod crash-looped at startup:
+`Cannot consume scoped service 'INotificationChannel' from singleton 'IConnectionProbe'`.
+`TeamsBotNotificationChannel` took a `HephaistoDbContext` in its constructor, and
+`NotificationChannelProbe` - a singleton - takes every channel.
+
+**Why nothing caught it.** No test builds the container the way the host does. The unit tests
+construct a channel by hand, the integration tests hand it a context, and both were green. With
+scope validation off, as in a Release build, it would have been worse: the agent starts and one
+context lives for ever.
+
+**How it was found.** On the dev cluster, against the Teams stand-in, on the first start.
+
+**Fix.** The channel takes `IServiceScopeFactory` and opens a scope per send.
+`Every_channel_can_be_held_by_a_singleton` resolves every channel from the root provider with
+`ValidateScopes` on; reverting the fix fails it. **Size.** S. **Fixed in v0.9.0-rc4**, before it
+was tagged.
+
+### 122. A board that was posted and not recorded can never be edited
+
+**Symptom.** The board's id exists in one place: the `teams_bot_messages` row written after Teams
+answers the post. A crash between the answer and the commit leaves a board in the channel that
+nothing knows about. The next start posts a second one and keeps that up to date; the first stays
+as it was, for ever, because it cannot be deleted without leaving "This message has been
+deleted." behind and cannot be edited without its id.
+
+**How likely.** One post per channel per install, and a window of one database round trip.
+
+**What would close it.** Nothing clean. Teams has no "list the bot's messages in this channel", so
+the id cannot be recovered. Writing the row first and the id second narrows the window to the same
+size from the other side. **Size.** S. Open, and accepted.
+
+### 123. Everybody on the Teams recipient list is told about everything
+
+**Symptom.** `notifications.teamsBot.recipients` is one list for the whole channel. A route decides
+WHICH events become an alert; it cannot decide WHO gets one. An incident assigned to one person
+still alerts everybody, and a code-fix plan for one repository goes to every recipient.
+
+**What to do.** Recipients on the route, beside `events` and `namespaces`; and an incident that has
+an assignee alerts the assignee only. The second half needs the assignee to be an address the bot
+can look up, which is only true once `AssignedTo` comes from a verified claim
+([#110](#110)). **Size.** M. Open.
+
+### 124. Every button on a Teams card is a link
+
+**Symptom.** Acknowledge, assign, close and approve all mean opening the console. A button that
+acts (`Action.Execute`) makes Microsoft call this process, which needs a route that validates a
+Bot Framework token - issuer, audience, signing key, `serviceUrl` claim, tenant - on a service whose
+other inbound route is unauthenticated by necessity. The click also arrives as a Microsoft Entra
+identity while the approver role lives in whatever `auth.authority` names, which for the first
+production install is Keycloak.
+
+**What to do.** In this order: the inbound route with the low-risk verbs (acknowledge, assign to
+me, close, reinvestigate); an explicit map from Entra object ids to the approver role; approve last,
+behind its own flag. `Nothing_in_any_card_can_need_an_inbound_route` is what keeps this from
+arriving as a detail. **Size.** L. Open.
+
+### 125. The agent has never talked to Teams itself
+
+**Symptom.** Every behaviour the bot's design rests on was measured against a real tenant on
+2026-09-28 - by `curl`, with the bot's credentials, before the code was written: a post, an edit, a
+delete and the line it leaves, a personal chat, boards of 58 KB and 114 KB. The agent has run only
+against the stand-in (`infra/e2e/teams-stand-in.yaml`), which checks the shape of a request and not
+the identity behind it.
+
+**What is therefore unproven.** That Teams renders the cards as designed; that a personal alert
+rings a phone when the AGENT sends it; and the link from an alert to the board, whose format was
+written from memory.
+
+**What would close it.** `"teams-bot": "real"` on the dev cluster, or the first production
+delivery. **Size.** S. Open.
+
+### 126. An incident from a kube-state-metrics alert names the exporter's pod as its target
+
+**Symptom.** Seen on the first board rendered on the dev cluster: an incident titled
+`ReplicaMismatch on shop-api (hephaisto-chaos)` with the target
+`hephaisto-chaos/Pod/hephaisto-kube-state-metrics-b785b8f46-jx2f2`. The title is right. The target
+is the pod that EXPORTED the metric - the alert's `pod` label belongs to the scrape, not to the
+workload the rule is about.
+
+**Why it matters more than a label.** The target is what the cooldown, the oscillation detector
+and the code-fix repository mapping are keyed on.
+
+**Not investigated.** Read off one board; the ingest path was not opened. **Size.** S. Open.
+
 
 ## Dead or unreachable code
 

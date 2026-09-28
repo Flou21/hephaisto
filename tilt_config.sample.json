@@ -7,6 +7,7 @@
   "coder-mode": "plan",
   "coder-sdk": "fake",
   "local-llm": false,
+  "teams-bot": "off",
   "host": "localhost",
   "host-ip": "127.0.0.1"
 }

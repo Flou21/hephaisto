@@ -240,6 +240,10 @@ secrets:
   # value because the URL *is* the credential - its `sig` query parameter is the entire
   # authentication - so it must never reach `helm get values` or a git repo.
   notificationTeams: hephaisto-notification-teams
+  # The Teams bot's client secret: key `clientSecret`. Only referenced when
+  # notifications.teamsBot.enabled is true. It expires - an app registration's secret lasts two
+  # years at most - so whoever creates it owns a date in a calendar.
+  notificationTeamsBot: hephaisto-notification-teams-bot
   # The code-fix coder's credentials. Only referenced when codeFix.enabled is true, and never
   # read by Hephaisto at all: the Secret lives in codeFix.namespace - NOT in this release's
   # namespace - and each coder Job receives it by secretKeyRef. Hephaisto can name it and holds
@@ -313,6 +317,43 @@ notifications:
   teams:
     enabled: false
 
+  # Microsoft Teams, through a registered BOT. A different thing from `teams` above, and the
+  # two can run side by side. A Workflows trigger can post and nothing else; a bot can EDIT
+  # what it posted, which is what makes one living board possible instead of a card per event.
+  #
+  #   - The CHANNEL holds one message: a board of every open incident, edited in place. An
+  #     incident that is closed disappears from it.
+  #   - An ALERT goes to each recipient as a personal chat message from the bot, and is edited
+  #     to say how the incident ended.
+  #   - NOTHING IS EVER DELETED. Teams leaves "This message has been deleted." behind, for a
+  #     channel post and for a reply alike, and there is no setting that stops it.
+  #
+  # Every button is a link. A button that acts would need Microsoft to call this pod.
+  #
+  # You need, in the SAME Microsoft tenant as your Teams: a single-tenant app registration, an
+  # Azure Bot resource (free tier) with the Teams channel on, and a Teams app that names the bot
+  # with scopes `team` and `personal`, installed in the team and for each recipient. The client
+  # secret comes from secrets.notificationTeamsBot.
+  teamsBot:
+    enabled: false
+    # The Microsoft Entra tenant id, and the bot's Microsoft App ID. Neither is a secret - the
+    # app id is printed in the Teams app manifest.
+    tenantId: ""
+    appId: ""
+    # The channel that holds the board, as `19:...@thread.tacv2`. Take it from "Get link to
+    # channel" and URL-decode it.
+    channelId: ""
+    # The team's group id, the `groupId=` value of that same link. Optional: it is what the
+    # "Open the board" button on an alert is built from.
+    teamId: ""
+    # Work email addresses that receive alerts. Each must belong to a member of the team and
+    # have the Teams app installed for themselves, or the bot may not write to them.
+    recipients: []
+    board:
+      # How many incidents the board lists before it says "and N more". At most 40. The board
+      # also trims itself to 100 KB whatever this says, because a count is not a size.
+      maxIncidents: 20
+
   # Which events, at which severity, in which namespaces, go where. Additive only - there is
   # no deny rule, because a subtractive routing table is one nobody can reason about and the
   # thing being routed is the message that says the agent needs help.
@@ -323,6 +364,11 @@ notifications:
   # minSeverity: Info | Warning | Critical   (inclusive; defaults to Info)
   # namespaces: empty means "not scoped by namespace", which is the only way a route can carry
   #             ModeChanged or PolicyChanged - those are about the agent and have no namespace.
+  #
+  # channel: webhook | teams | teamsBot
+  #
+  # A route to teamsBot decides which events become a personal ALERT. The board needs no route:
+  # it shows every open incident as soon as teamsBot is enabled.
   #
   # routes:
   #   - channel: teams

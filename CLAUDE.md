@@ -307,6 +307,29 @@ Locally: `tilt_config.json` `"coder": true` builds the coder image and an in-clu
 (`gpt-oss:120b`) - never Gemini. The end-to-end check is `scripts/e2e/codefix-local.sh`, which pins
 itself to `studio-rancher-desktop` through a private kubeconfig. See `docs/verification.md`.
 
+## The Teams bot, as of v0.9.0-rc4
+
+`notifications.teamsBot`: one board in a channel, edited in place, and alerts by personal chat.
+`src/Hephaisto.Agent/Notifications/TeamsBot/`. Four things to know before touching it:
+
+- **It must never delete.** Teams leaves "This message has been deleted." behind for a channel
+  post and for a reply alike. `ITeamsBotClient` has no delete and a test asserts it stays that
+  way. A message goes away by being edited into something smaller.
+- **An edit notifies nobody.** Anything that needs a person is a NEW message, to their personal
+  chat with the bot. Do not "simplify" an alert into an edit of the board.
+- **Its cards show the present, not a snapshot** - the one channel where that is true. The
+  reconciler compares on a timer; there is no queue of edits. What a lock screen announces is
+  kept out of the content hash, and hashing it back in edits every alert once for no reason.
+- **A channel must be constructible by a singleton.** `NotificationChannelProbe` holds every
+  channel for the life of the process, so a channel takes `IServiceScopeFactory`, never a
+  `HephaistoDbContext` ([#121](docs/backlog.md#121)).
+
+Locally: `tilt_config.json` `"teams-bot": "stand-in"` deploys `teams-stand-in` in `hephaisto-obs`
+and points the agent at it; `curl http://$H:8110/teams/messages` shows what Teams would show.
+`"real"` needs `charts/hephaisto/values-dev-teams-bot.local.yaml` (ignored by git) and the Secret
+`hephaisto-notification-teams-bot`, both made by hand. **Do not test against a channel people
+read**: a test board cannot be removed afterwards.
+
 ## The console has a design language, as of v0.4.0
 
 **Read [`docs/design.md`](docs/design.md) before changing any CSS.** Four rules there are enforced

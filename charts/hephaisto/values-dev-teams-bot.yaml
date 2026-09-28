@@ -1,0 +1,34 @@
+# The Teams bot against the stand-in, layered over values-dev.yaml when tilt_config.json says
+# "teams-bot": "stand-in".
+#
+# Every id here is made up. The stand-in (infra/e2e/teams-stand-in.yaml) checks the SHAPE of
+# what it is sent and not the identity behind it, which is the point: this exercises the
+# agent's half - one board, edited in place, alerts by personal chat, nothing deleted -
+# without a tenant and without a test editing a channel real people read.
+#
+# Where the bot's two addresses point is NOT in this file. They have no chart value on
+# purpose, so the Tiltfile appends them to extraEnv by position, after whatever is already
+# there.
+notifications:
+  # Overwritten by the Tiltfile with the address this machine's port-forwards bind to.
+  baseUrl: http://set-by-the-tiltfile:8100
+  teamsBot:
+    enabled: true
+    tenantId: 00000000-0000-0000-0000-0000000000d1
+    appId: 00000000-0000-0000-0000-0000000000d2
+    channelId: "19:dev-stand-in@thread.tacv2"
+    teamId: 00000000-0000-0000-0000-0000000000d3
+    # One member of the stand-in's team, and one address that is not: a recipient who cannot
+    # be reached must not stop the one who can.
+    recipients:
+      - oncall@example.com
+      - stranger@elsewhere.example
+    board:
+      maxIncidents: 20
+  routes:
+    - channel: teamsBot
+      events: [IncidentEscalated, ApprovalRequired, VerificationFailed, IncidentResolved,
+               CodeFixPlanReady, CodeFixPrOpened, CodeFixFailed, ModeChanged]
+
+secrets:
+  notificationTeamsBot: hephaisto-notification-teams-bot-stand-in
