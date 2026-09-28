@@ -2019,7 +2019,11 @@ As the pager, the delay sits between a fault and the first person to hear of it,
 is set by a model.
 
 **What to do.** An `IncidentOpened` event, enqueued at triage and routed like the others. The
-escalation that follows updates what was sent rather than repeating it. **Size.** M. Open.
+escalation that follows updates what was sent rather than repeating it. **Size.** M. **Fixed in v0.10.0**: `NotificationEvent.IncidentOpened`, classified from the edge out of
+Triaging - into an investigation, or straight to a person. The escalation that follows is an
+update: on the Teams bot it rings only somebody who has no live card for the incident, and
+everybody else's card is edited. The cooldown is per event, so the opening does not hold back the
+diagnosis. A route has to name the event - see the upgrade note. Pager scenarios P17, P18, P21.
 
 ### 134. Every incident is investigated, and there is no kind for a pipeline
 
@@ -2042,7 +2046,10 @@ the label `hephaisto_investigate: "false"`; there is no mode that inverts the de
 **Size.** L. **Half fixed in v0.10.0**: the kind and runbook. An alert that names no object and
 states no `hephaisto_kind` is `Pipeline`, whose runbook starts from the expression and the labels.
 The classifier matches keywords at word starts, and three-letter ones as whole words, so
-`FeedIngestSlow` is no longer a latency fault. The opt-out label is stage 7.
+`FeedIngestSlow` is no longer a latency fault. The opt-out label is fixed too:
+`hephaisto_investigate: "false"` on a rule opens the incident, tells a person, and escalates it as
+`NotInvestigated` without asking the model (`Core/Classification/InvestigationPolicy.cs`). Pager
+scenario P19.
 
 ### 135. The model is never shown the alert's labels
 
@@ -2055,7 +2062,11 @@ with its source, reason and message (`Investigation/PromptComposer.cs`, `## The 
 said. For an alert about a pipeline the labels are all there is: which provider, which cluster,
 and through the generator URL which expression.
 
-**What to do.** Render the labels on the signal line, minus the scrape's own. **Size.** S. Open.
+**What to do.** Render the labels on the signal line, minus the scrape's own. **Size.** S. **Fixed in v0.10.0**: each alert signal's line in the incident card carries its labels less the
+scrape's and the agent's, its annotations (stored now, `signals.annotations`) and the rule's
+expression recovered from the generator URL (`AlertExpression`), each as a quoted, capped span
+under a line telling the model they are data. At most twenty signals are shown. Pager scenario
+P20.
 
 ### 136. The webhook answers 200 before anything is written
 
@@ -2328,7 +2339,8 @@ pager `Off` reads as healthy to Alertmanager while - before [#133](#133) - nobod
 
 **What to do.** Nothing once [#133](#133) ships: opening and telling a person is not the agent
 acting, and `Off` should not stop it. The entry exists so that stays a decision. **Size.** S.
-Open.
+**Decided in v0.10.0, as written above**: `IncidentOpened` is enqueued at triage, before and
+independently of the kill switch's investigation gate.
 
 ### 154. The open-incidents gauge is never decremented by a human close
 

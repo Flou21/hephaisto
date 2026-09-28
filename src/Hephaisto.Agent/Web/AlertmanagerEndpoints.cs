@@ -270,6 +270,7 @@ public static class AlertmanagerEndpoints
                 : DateTimeOffset.UtcNow,
 
             Labels = new Dictionary<string, string>(labels, StringComparer.Ordinal),
+            Annotations = new Dictionary<string, string>(alert.Annotations, StringComparer.Ordinal),
             RawPayload = JsonSerializer.Serialize(alert, RawPayloadJson),
         };
 

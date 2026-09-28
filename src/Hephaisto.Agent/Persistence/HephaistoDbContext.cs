@@ -335,6 +335,12 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
                 .HasColumnType("jsonb")
                 .IsRequired();
 
+            e.Property(s => s.Annotations)
+                .HasConversion(StringMapConverter, StringMapComparer)
+                .HasColumnType("jsonb")
+                .HasDefaultValueSql("'{}'::jsonb")
+                .IsRequired();
+
             // The verbatim source payload. jsonb rather than text so a "what did
             // Alertmanager actually send" query can reach into it without a parse step.
             e.Property(s => s.RawPayload).HasColumnType("jsonb");
@@ -667,7 +673,7 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
 
             // The per-workload cooldown, and the "N more suppressed" count that rides on the
             // next message out.
-            e.HasIndex(d => new { d.Channel, d.CorrelationKey, d.DeliveredAt });
+            e.HasIndex(d => new { d.Channel, d.CorrelationKey, d.Event, d.DeliveredAt });
 
             // "What was sent about this incident", which is the question an operator asks when
             // they were told and want to know what else was.

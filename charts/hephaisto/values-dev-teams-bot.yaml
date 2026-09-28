@@ -27,7 +27,7 @@ notifications:
       maxIncidents: 20
   routes:
     - channel: teamsBot
-      events: [IncidentEscalated, ApprovalRequired, VerificationFailed, IncidentResolved,
+      events: [IncidentOpened, IncidentEscalated, ApprovalRequired, VerificationFailed, IncidentResolved,
                CodeFixPlanReady, CodeFixPrOpened, CodeFixFailed, ModeChanged]
 
 secrets:

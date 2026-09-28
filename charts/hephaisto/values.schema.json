@@ -330,6 +330,7 @@
                 "items": {
                   "type": "string",
                   "enum": [
+                    "IncidentOpened",
                     "IncidentEscalated",
                     "ApprovalRequired",
                     "IncidentResolved",

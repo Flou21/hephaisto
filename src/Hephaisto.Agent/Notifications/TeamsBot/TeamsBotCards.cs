@@ -423,9 +423,17 @@ public static class TeamsBotCards
             "Code fix planned - a plan is waiting for a developer",
         IncidentState.Escalated when incident.CodeFix is CodeFixState.PrOpened =>
             "Draft PR opened - a code fix is ready for review",
+        IncidentState.Escalated when incident.EscalationReason is EscalationReason.NotInvestigated =>
+            "Opened - this rule is not investigated; it is yours",
+        IncidentState.Escalated when incident.EscalationReason is EscalationReason.Flapping =>
+            "Flapping - this alert keeps coming back",
         IncidentState.Escalated => "Escalated - Hephaisto needs a human",
         IncidentState.AwaitingApproval => "Approval required - an action is waiting",
         IncidentState.Resolved => "Resolved - Hephaisto fixed it",
+        // The alert stopped firing, which is not the same as anybody fixing it - least of all
+        // the agent. Saying "Resolved" here would credit it with a fix it never made (#129).
+        IncidentState.Closed when incident.ClosedBy == Hephaisto.Core.IncidentStateMachine.AlertmanagerActor =>
+            "Cleared - the alert stopped firing",
         IncidentState.Closed when !string.IsNullOrWhiteSpace(incident.ClosedBy) => $"Closed by {incident.ClosedBy}",
         IncidentState.Closed => "Closed",
         IncidentState.Expired => "Expired - the signal stopped and nobody answered",

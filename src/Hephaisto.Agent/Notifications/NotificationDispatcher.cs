@@ -156,7 +156,7 @@ public sealed class NotificationDispatcher : BackgroundService
         var now = clock.UtcNow;
 
         var budget = await outbox
-            .BudgetAsync(delivery.Channel, delivery.CorrelationKey, now, ct)
+            .BudgetAsync(delivery.Channel, delivery.CorrelationKey, delivery.Event, now, ct)
             .ConfigureAwait(false);
 
         var rate = NotificationRateLimit.Evaluate(

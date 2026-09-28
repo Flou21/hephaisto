@@ -244,7 +244,7 @@ public sealed class IncidentTriage(
             {
                 var flapping = await OpenAlertIncidentAsync(signal, now, ct).ConfigureAwait(false);
                 stateMachine.Triage(flapping, "flap detection");
-                stateMachine.Escalate(flapping, EscalationReason.Quarantined,
+                stateMachine.Escalate(flapping, EscalationReason.Flapping,
                     $"flapping: {recent} incidents for {signal.Target.WorkloadKey} in {opts.FlapWindow}");
                 flapping.QuarantinedUntil = now + opts.FlapCooldown;
 
@@ -316,6 +316,20 @@ public sealed class IncidentTriage(
             return new(TriageOutcome.Suppressed, incident.Id);
         }
 
+        // The rule said not to investigate (#134). Opened and told, never asked.
+        if (!InvestigationPolicy.ShouldInvestigate(signal.Labels))
+        {
+            stateMachine.Escalate(incident, EscalationReason.NotInvestigated,
+                $"the rule is labelled {InvestigationPolicy.Label}=false");
+            if (trackFrom is { } from2) incidents.TrackNewIncidentChildren(incident, from2);
+
+            await RecordOutcomeAsync(incident, now, ct).ConfigureAwait(false);
+            EnlistAudit(incident, "incident.opened", $"{signal.Reason}; not investigated by the rule's choice");
+            await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
+
+            return new(TriageOutcome.Suppressed, incident.Id);
+        }
+
         stateMachine.BeginInvestigation(incident, "triage complete");
         if (trackFrom is { } start) incidents.TrackNewIncidentChildren(incident, start);
         EnlistAudit(incident, "incident.opened", signal.Reason);
@@ -361,7 +375,7 @@ public sealed class IncidentTriage(
 
         if (reopens + 1 >= opts.FlapThreshold)
         {
-            stateMachine.Escalate(incident, EscalationReason.Quarantined,
+            stateMachine.Escalate(incident, EscalationReason.Flapping,
                 $"flapping: reopened {reopens + 1} times in {opts.FlapWindow}");
             incidents.TrackNewIncidentChildren(incident, eventsBefore);
 
