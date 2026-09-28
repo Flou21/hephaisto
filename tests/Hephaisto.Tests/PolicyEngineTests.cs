@@ -43,6 +43,42 @@ public sealed class PolicyEngineTests
         result.DowngradedFrom.Should().BeNull();
     }
 
+    // --- another cluster (#131) ------------------------------------------------------------
+
+    [Fact]
+    public void A_target_in_another_cluster_is_denied_first()
+    {
+        var request = Given.Request() with { Target = Given.Target() };
+        request.Target.Cluster = "elsewhere";
+
+        var result = PolicyEngine.Evaluate(request, Given.Facts() with { AgentCluster = "here" }, Given.Options());
+
+        result.Decision.Should().Be(PolicyDecision.Deny);
+        result.Codes[0].Should().Be(PolicyReasonCode.ForeignCluster);
+    }
+
+    [Fact]
+    public void A_target_that_names_a_cluster_is_denied_when_the_agent_does_not_know_its_own()
+    {
+        var request = Given.Request() with { Target = Given.Target() };
+        request.Target.Cluster = "here";
+
+        PolicyEngine.Evaluate(request, Given.Facts(), Given.Options())
+            .Codes.Should().Contain(PolicyReasonCode.ForeignCluster);
+    }
+
+    [Fact]
+    public void A_target_in_this_cluster_or_from_before_clusters_is_judged_as_before()
+    {
+        var local = Given.Request() with { Target = Given.Target() };
+        local.Target.Cluster = "here";
+
+        PolicyEngine.Evaluate(local, Given.Facts() with { AgentCluster = "here" }, Given.Options())
+            .Decision.Should().Be(PolicyDecision.Allow);
+        PolicyEngine.Evaluate(Given.Request(), Given.Facts() with { AgentCluster = "here" }, Given.Options())
+            .Decision.Should().Be(PolicyDecision.Allow, "an empty cluster is a row from before v0.10.0: this one");
+    }
+
     // --- hard denials -------------------------------------------------------------------
 
     [Theory]

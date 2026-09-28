@@ -117,6 +117,30 @@ public class PromptComposerTests
     }
 
     [Fact]
+    public void An_incident_about_another_cluster_is_told_so_and_what_it_loses()
+    {
+        var incident = new Incident { Title = "t", Target = new TargetRef { Cluster = "eu-west", Namespace = "shop", Kind = "Deployment", Name = "api" } };
+
+        var card = Composer(new EnvironmentCardOptions { ClusterName = "studio-rancher-desktop" })
+            .ComposeEnvironmentCard(incident);
+
+        card.Should().Contain("## Another cluster");
+        card.Should().Contain("`eu-west`");
+        card.Should().Contain("no Kubernetes tools");
+        card.Should().Contain("cluster=\"eu-west\"");
+    }
+
+    [Fact]
+    public void An_incident_about_this_cluster_gets_no_such_section()
+    {
+        var incident = new Incident { Title = "t", Target = new TargetRef { Cluster = "studio-rancher-desktop", Namespace = "shop", Kind = "Pod", Name = "p" } };
+
+        Composer(new EnvironmentCardOptions { ClusterName = "studio-rancher-desktop" })
+            .ComposeEnvironmentCard(incident)
+            .Should().NotContain("Another cluster");
+    }
+
+    [Fact]
     public void Environment_card_carries_the_cluster_label_and_namespaces()
     {
         var card = Composer(new EnvironmentCardOptions

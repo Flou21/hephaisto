@@ -1977,8 +1977,12 @@ every action, and say so in the prompt - the metrics and logs are still reachabl
 are already in one place. **Size.** L. **The first half fixed in v0.10.0**: the `cluster` label is
 read into `TargetRef.Cluster` (empty means the agent's own, and ingest fills that in), it is part
 of the fingerprint and the correlation key, the API shows it, and an incident about another cluster
-says so in its title. The second half - no Kubernetes tools, no rollout lookup and no actions for
-such an incident - is stage 5 of the milestone and keeps this entry open.
+says so in its title. **The second half fixed in v0.10.0 as well**: such an incident is offered
+no Kubernetes tool, gets no rollout lookup and no cluster facts, the environment card tells the
+model which cluster it is about and to filter every query on it, and the policy engine's first
+gate (`ForeignCluster`) refuses any action whose target names a cluster that is not the agent's.
+The cluster is on the incident page, in the outbound webhook's payload and in the title. Acting
+on another cluster is still its own release. Pager scenario P12.
 
 ### 132. Every series of one alert name is one incident
 

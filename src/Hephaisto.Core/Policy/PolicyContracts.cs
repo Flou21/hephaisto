@@ -37,6 +37,12 @@ public sealed record ClusterFacts
 {
     public required DateTimeOffset Now { get; init; }
 
+    /// <summary>
+    /// The cluster the agent runs in, which is the only one its RBAC reaches. Empty means not
+    /// known, which the engine treats as "cannot show the target is local" (#131).
+    /// </summary>
+    public string AgentCluster { get; init; } = string.Empty;
+
     public required AgentMode Mode { get; init; }
 
     public WorkloadFacts? Workload { get; init; }
@@ -187,6 +193,12 @@ public enum PolicyReasonCode
     LastReadyReplica = 16,
     WorkloadCooldown = 17,
     NoRoutingRule = 18,
+
+    /// <summary>
+    /// The target is in a cluster the agent does not run in (#131). Its RBAC reaches one cluster;
+    /// an action "on" a same-named workload here would change the wrong thing.
+    /// </summary>
+    ForeignCluster = 19,
 
     // --- downgrades: allow-eligible, but not unattended ---
     NotAllowEligible = 30,

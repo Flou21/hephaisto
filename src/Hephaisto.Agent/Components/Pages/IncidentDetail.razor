@@ -40,6 +40,12 @@ else
         </div>
 
         <dl class="hp-kv">
+            @if (incident.Target.Cluster is { Length: > 0 })
+            {
+                <dt title="The cluster the alert came from. Kubernetes tools and actions reach only the agent's own">cluster</dt>
+                <dd class="mono">@incident.Target.Cluster</dd>
+            }
+
             <dt>target</dt>
             <dd class="mono">@incident.Target.Namespace/@incident.Target.Kind/@incident.Target.Name</dd>
 

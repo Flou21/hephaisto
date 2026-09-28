@@ -144,6 +144,11 @@ public static class ActionPlanDraftMapper
                 Type = action.Type,
                 Target = new TargetRef
                 {
+                    // Every action is in the incident's cluster: the model names an object, never
+                    // a cluster, and the policy engine's first gate refuses one that is not the
+                    // agent's own (#131). Empty for a plan with no incident target, which is this
+                    // cluster.
+                    Cluster = incidentTarget?.Cluster ?? string.Empty,
                     Namespace = action.Namespace,
                     Kind = action.Kind,
                     Name = action.Name,

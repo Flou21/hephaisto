@@ -80,7 +80,7 @@ public sealed class PromptComposer
         var sb = new StringBuilder();
 
         Append(sb, ReadFragment(RoleFragment));
-        Append(sb, ComposeEnvironmentCard());
+        Append(sb, ComposeEnvironmentCard(incident));
         Append(sb, ComposeIncidentCard(incident, signals ?? incident.Signals, rollout));
         Append(sb, ReadFragment(ToolContractFragment));
         Append(sb, ReadFragment(OutputContractFragment));
@@ -106,7 +106,7 @@ public sealed class PromptComposer
 
         Append(sb, ReadFragment(PlanningFragment));
         Append(sb, ComposeActionVocabulary());
-        Append(sb, ComposeEnvironmentCard());
+        Append(sb, ComposeEnvironmentCard(incident));
         Append(sb, ComposeIncidentCard(incident, incident.Signals));
         Append(sb, ComposeFindingsCard(groundedFindings, investigationSummary));
 
@@ -163,9 +163,30 @@ public sealed class PromptComposer
     // Generated cards
     // ------------------------------------------------------------------
 
-    public string ComposeEnvironmentCard()
+    /// <summary>The cluster the agent runs in, which is the one its Kubernetes tools read.</summary>
+    public string AgentCluster => _environment.ClusterName;
+
+    /// <param name="incident">
+    /// The incident, when there is one: an incident about another cluster gets a section saying
+    /// so, and what that takes away (#131).
+    /// </param>
+    public string ComposeEnvironmentCard(Incident? incident = null)
     {
         var sb = new StringBuilder();
+
+        if (incident is not null && incident.Target.IsForeignTo(_environment.ClusterName))
+        {
+            var other = incident.Target.Cluster;
+
+            sb.Append("## Another cluster\n\n");
+            sb.Append("This incident is about cluster `").Append(other)
+                .Append("`, not the one you run in (`").Append(_environment.ClusterName).Append("`).\n\n");
+            sb.Append("- You have **no Kubernetes tools** for it. They read the cluster you run in, where a ")
+                .Append("same-named workload is a different one, so they were not offered.\n");
+            sb.Append("- Metrics and logs are central: filter **every** query on `cluster=\"")
+                .Append(other).Append("\"`. A query without it answers for the wrong cluster.\n");
+            sb.Append("- No action will be taken on it; say what a person should do there.\n\n");
+        }
 
         sb.Append("## This cluster\n\n");
         sb.Append("- Cluster label: `cluster=").Append(_environment.ClusterName).Append("`. ")
