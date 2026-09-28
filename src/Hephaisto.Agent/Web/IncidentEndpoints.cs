@@ -197,14 +197,20 @@ public static class IncidentEndpoints
     private static async Task<Results<Ok<FeedbackView>, NotFound, ValidationProblem>> SubmitFeedbackAsync(
         Guid id,
         [FromBody] FeedbackRequest request,
+        HttpContext http,
         IncidentQueries queries,
         CancellationToken ct)
     {
-        // SubmittedBy is required and non-empty. It is attribution, not authentication -
-        // nothing verifies it - but an unattributed verdict is worse than useless: the false
-        // positive rate is the only quality number here that is not self-assessed, and one
-        // whose entries cannot be traced to a person cannot be questioned or corrected.
-        if (string.IsNullOrWhiteSpace(request.SubmittedBy))
+        ArgumentNullException.ThrowIfNull(http);
+
+        // Required and non-empty. Signed in, it is the token's name and the body's is ignored;
+        // otherwise it is attribution, not authentication. Either way an unattributed verdict is
+        // worse than useless: the false positive rate is the only quality number here that is
+        // not self-assessed, and one whose entries cannot be traced to a person cannot be
+        // questioned or corrected.
+        var submittedBy = ActorResolution.Resolve(http.User, request.SubmittedBy);
+
+        if (string.IsNullOrWhiteSpace(submittedBy))
         {
             return TypedResults.ValidationProblem(new Dictionary<string, string[]>
             {
@@ -218,7 +224,7 @@ public static class IncidentEndpoints
             request.RootCauseCorrect,
             request.FalsePositive,
             request.Comment,
-            request.SubmittedBy,
+            submittedBy,
             ct);
 
         return feedback is null ? TypedResults.NotFound() : TypedResults.Ok(feedback);

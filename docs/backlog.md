@@ -1838,6 +1838,52 @@ and the code-fix repository mapping are keyed on.
 
 **Not investigated.** Read off one board; the ingest path was not opened. **Size.** S. Open.
 
+### 127. Signed in, the console still asked for a name, and recorded whatever was typed
+
+**Symptom.** With `auth.enabled`, the incident page showed a "your name" box on every control -
+acknowledge, assign, close, re-investigate, reopen, approve, deny, feedback - and the status page
+showed one on re-arm. The buttons stayed disabled until something was typed, and what was typed
+is what went into `audit_events`. A person who had just proved who they were could close an
+incident as anybody.
+
+**Why the API was fine and the console was not.** `ActorResolution` ignores a supplied actor on
+an authenticated request, and every incident route has gone through it since OIDC shipped
+([#110](#110)). The console calls `IncidentQueries` directly, with no HTTP request in between, so
+nothing resolved anything. The code-fix section, written later, did it properly through
+`ConsoleViewer` and `ActorField`; the page it sits on was never brought along.
+
+**The same hole, twice more.** Two API routes took the body's actor verbatim: `POST
+/api/incidents/{id}/feedback` and `POST /api/mode/re-arm`. The second is the audit row for
+"autonomy came back", which is the one that most needs to name a real person.
+
+**And one permission.** Closing and approving sit behind the approver policy on the API. In the
+console a signed-in reader could do both.
+
+**How it was found.** On the first production install with OIDC connected, by the person closing
+an incident, who asked why the name was not filled in.
+
+**Fix.** Both pages resolve a `ConsoleViewer` and use `ActorField`: signed in, it reads "signed in
+as ..." and nothing can be typed. Every query is handed `Actor`. Close, approve and deny are
+disabled without the approver role, and refused if the click arrives anyway; an approval made
+signed in is recorded as `ApprovalSource.Oidc`. The two routes go through `ActorResolution`.
+`ConsoleActorTests` holds the pages and the endpoints to it by reading them, with a control that
+proves the patterns match what they are for; putting the old page back fails two of them.
+
+**Verified** in a browser on the dev cluster, signed OUT: the buttons are disabled without a name
+and enabled with one, and an acknowledgement is recorded and reaches the Teams board. **Not
+verified in a browser signed IN** - the dev cluster has no identity provider wired to Hephaisto.
+**Size.** S. **Fixed in v0.9.0-rc5.**
+
+### 128. Anybody who can read the console can re-arm the agent
+
+**Symptom.** `POST /api/mode/re-arm` and the button on the status page need no role beyond being
+signed in. Re-arming clears the runaway latch - it cannot name a mode and cannot raise the
+ceiling, but it is what gives autonomy back after the agent was stopped for cause.
+
+**Why it was not changed with [#127](#127).** That fix brought the console into line with rules
+the API already had. This would be a new rule, and who may give autonomy back is a decision
+rather than a correction. **Size.** S. Open.
+
 
 ## Dead or unreachable code
 
