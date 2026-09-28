@@ -1,0 +1,90 @@
+# The agent as the pager suite runs it (scripts/e2e/pager.sh).
+#
+# Layered over the install's own values: values-dev.yaml on the dev cluster (tilt_config.json
+# "pager-e2e": true), the CI job's --set lines on kind, values-e2e.yaml in the release harness.
+# It changes three things and nothing else:
+#
+#   1. The model is the stand-in (infra/e2e/notification-receiver/LlmStandIn.cs): every
+#      investigation concludes at once, the same way, for $0 - or when a scenario says so.
+#   2. Teams is the stand-in, and so is the outbound webhook's receiver: what a person would have
+#      seen is read back from GET /teams/messages and GET /received.
+#   3. Every window a scenario has to wait out is seconds: a repeat past the burst and
+#      correlation windows, a re-fire past the reopen window, a step nobody answered.
+#
+# Hours in production and seconds here is a real difference, and the suite relies on nothing
+# but the ordering of the windows: repeat > correlation > burst, reopen > everything a scenario
+# does inside it.
+#
+# extraEnv is the WHOLE list - Helm replaces lists - so anything a lower layer put there is gone.
+# The Tiltfile knows, and neither layers values-dev-local-llm.yaml nor appends the Teams
+# stand-in's addresses when this file is in play: both are here.
+extraEnv:
+  # 1. The model.
+  - name: Llm__Provider
+    value: openai
+  - name: Llm__Endpoint
+    value: http://model-stand-in.hephaisto-obs:8080/v1
+  - name: Llm__Model
+    value: stand-in
+  - name: Llm__EmbeddingProvider
+    value: openai
+  - name: Llm__EmbeddingEndpoint
+    value: http://model-stand-in.hephaisto-obs:8080/v1
+  - name: Llm__EmbeddingModel
+    value: stand-in
+  # Priced at zero, explicitly: a cost cap with an unpriced model refuses to start (#140), and
+  # the stand-in costs nothing.
+  - name: Llm__Pricing__stand-in__InputPerMillionUsd
+    value: "0"
+  - name: Llm__Pricing__stand-in__OutputPerMillionUsd
+    value: "0"
+  # 2. Teams, where the bot logs in and where it posts. No chart value on purpose: nobody but a
+  # test harness should move these.
+  - name: Notifications__TeamsBot__LoginUrl
+    value: http://teams-stand-in.hephaisto-obs:8080
+  - name: Notifications__TeamsBot__ServiceUrl
+    value: http://teams-stand-in.hephaisto-obs:8080/teams
+  - name: Notifications__TeamsBot__RefreshInterval
+    value: "00:00:05"
+  # 3. The windows.
+  - name: Ingest__BurstWindow
+    value: "00:00:20"
+  - name: Ingest__CorrelationWindow
+    value: "00:00:30"
+  - name: Ingest__FlapWindow
+    value: "00:03:00"
+  - name: Ingest__ReopenWindow
+    value: "00:02:00"
+  - name: Notifications__CorrelationCooldown
+    value: "00:00:20"
+  - name: Notifications__DispatchInterval
+    value: "00:00:02"
+  - name: Notifications__FirstRetryDelay
+    value: "00:00:05"
+  - name: Notifications__MaxPerChannelPerHour
+    value: "1000"
+
+notifications:
+  # In-cluster, because nothing here is opened by a person. Links only have to be well-formed.
+  baseUrl: http://hephaisto.hephaisto:8080
+  webhook:
+    url: http://teams-stand-in.hephaisto-obs:8080/hooks/hephaisto
+  teamsBot:
+    enabled: true
+    # Made up, like every id in the stand-in: it checks the shape of a request, not who sent it.
+    tenantId: 00000000-0000-0000-0000-0000000000d1
+    appId: 00000000-0000-0000-0000-0000000000d2
+    channelId: "19:pager-suite@thread.tacv2"
+    teamId: 00000000-0000-0000-0000-0000000000d3
+    recipients:
+      - oncall@example.com
+    board:
+      maxIncidents: 40
+  routes:
+    - channel: teamsBot
+      events: [IncidentEscalated, ApprovalRequired, VerificationFailed, IncidentResolved]
+    - channel: webhook
+      events: [IncidentEscalated, ApprovalRequired, VerificationFailed, IncidentResolved, ModeChanged]
+
+secrets:
+  notificationTeamsBot: hephaisto-notification-teams-bot-stand-in

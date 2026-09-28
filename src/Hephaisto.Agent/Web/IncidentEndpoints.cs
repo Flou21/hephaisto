@@ -82,12 +82,20 @@ public static class IncidentEndpoints
     }
 
     /// <summary>
-    /// <c>GET /api/incidents?state=&amp;kind=&amp;namespace=&amp;limit=</c>
+    /// <c>GET /api/incidents?state=&amp;kind=&amp;namespace=&amp;alertname=&amp;limit=</c>
     /// </summary>
     /// <remarks>
+    /// <para>
     /// No <c>state</c> means open incidents only, not everything. The default view of an
     /// incident console is "what is wrong now"; defaulting to all history would make the
-    /// first page of a busy cluster useless and get slower every week.
+    /// first page of a busy cluster useless and get slower every week. <c>state=any</c> asks
+    /// for every state explicitly, newest first, still bounded by <c>limit</c>.
+    /// </para>
+    /// <para>
+    /// <c>alertname</c> matches an incident with any signal whose reason is that name, which
+    /// for an Alertmanager signal is its <c>alertname</c>. The pager suite finds its own
+    /// incidents this way: an alert that names no workload has no namespace to filter on.
+    /// </para>
     /// </remarks>
     private static async Task<Results<Ok<IReadOnlyList<IncidentListItem>>, ValidationProblem>> ListAsync(
         IncidentQueries queries,
@@ -99,13 +107,15 @@ public static class IncidentEndpoints
         // "me" resolves to the signed-in user, so the console's filter needs no knowledge of who
         // that is and a bookmarked URL keeps working for whoever opens it.
         [FromQuery] string? assignedTo = null,
+        [FromQuery] string? alertname = null,
         [FromQuery] int? limit = null)
     {
         var errors = new Dictionary<string, string[]>();
 
         IncidentState? parsedState = null;
+        var anyState = string.Equals(state, "any", StringComparison.OrdinalIgnoreCase);
 
-        if (!string.IsNullOrWhiteSpace(state) && !string.Equals(state, "open", StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(state) && !anyState && !string.Equals(state, "open", StringComparison.OrdinalIgnoreCase))
         {
             if (Enum.TryParse<IncidentState>(state, ignoreCase: true, out var s))
             {
@@ -113,7 +123,7 @@ public static class IncidentEndpoints
             }
             else
             {
-                errors["state"] = [$"'{state}' is not an IncidentState. Use one of: {Names<IncidentState>()}, or 'open'."];
+                errors["state"] = [$"'{state}' is not an IncidentState. Use one of: {Names<IncidentState>()}, 'open' or 'any'."];
             }
         }
 
@@ -140,10 +150,11 @@ public static class IncidentEndpoints
             new IncidentListQuery
             {
                 State = parsedState,
-                OpenOnly = parsedState is null,
+                OpenOnly = parsedState is null && !anyState,
                 Kind = parsedKind,
                 Namespace = ns,
                 AssignedTo = ResolveAssignee(assignedTo, http),
+                AlertName = string.IsNullOrWhiteSpace(alertname) ? null : alertname.Trim(),
                 Limit = limit ?? 100,
             },
             ct);

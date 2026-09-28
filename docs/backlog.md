@@ -2194,7 +2194,14 @@ the model answered" cannot be asserted anywhere.
 **What to do.** A pager suite: alerts through a real Alertmanager into the installed chart, a
 model stand-in and the Teams stand-in, one scenario per sentence of the milestone's "Done when",
 run in CI on every change. A known-red list lets a scenario land before its fix. **Size.** M.
-Open.
+
+**Fixed 2026-09-28.** `scripts/e2e/pager.sh` and 29 scenarios under `scripts/e2e/pager/`, one
+per sentence of the milestone's "Done when" plus one per entry above. The model stand-in is
+`infra/e2e/notification-receiver/LlmStandIn.cs`, in the binary that already stood in for Teams.
+It runs in three places: `e2e-pager` in CI on kind, `scripts/e2e/pager-local.sh` on the dev
+cluster (`"pager-e2e": true`), and the release harness's `pager` phase. The first run against
+the code as it was found P00 and P14 green and every other scenario red for the reason its
+entry gives - which is the listing in `scripts/e2e/pager/KNOWN_RED`.
 
 ### 147. Flap suppression silences a page across clusters and label sets
 

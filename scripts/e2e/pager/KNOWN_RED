@@ -1,0 +1,31 @@
+# Scenarios of scripts/e2e/pager/ that are known not to pass yet, one id per line, with the
+# stage of the v0.10.0 plan that turns it green. A red scenario listed here is reported and does
+# not fail the run; a GREEN one listed here fails it - so a fix and its removal from this list
+# land in the same commit. Empty when v0.10.0 is done: a unit test holds that from 0.11 on.
+P01
+P02
+P03
+P04
+P05
+P06
+P07
+P08
+P09
+P10
+P11
+P12
+P13
+P15
+P16
+P17
+P18
+P19
+P20
+P21
+P22
+P23
+P24
+P25
+P26
+P27
+P28

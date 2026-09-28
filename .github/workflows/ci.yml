@@ -523,6 +523,137 @@ jobs:
           kubectl -n hephaisto describe pods
           kubectl -n hephaisto logs -l app.kubernetes.io/name=hephaisto --tail=200 --all-containers || true
 
+  # The pager suite (scripts/e2e/pager.sh): is Hephaisto a pager a person can rely on?
+  #
+  # Alerts go through a real Alertmanager - or straight to the webhook - into the installed chart,
+  # and the assertions are about what a person would have seen: which incidents exist, in which
+  # state, which Teams messages were sent and edited, what the model was asked. The model and
+  # Teams are the stand-in (infra/e2e/notification-receiver), so this is deterministic and free.
+  #
+  # A scenario may land before the code that turns it green: scripts/e2e/pager/KNOWN_RED lists
+  # those, a red one there does not fail this job, and a GREEN one there does.
+  #
+  # HONEST LIMITS: no Prometheus, so P16 (the agent's own absence, told by a path the agent is
+  # not on) is skipped here and runs on the dev cluster and in the release harness. The windows
+  # are seconds where production's are hours - the suite relies on their order, not their size.
+  e2e-pager:
+    runs-on: ubuntu-latest
+    needs: [version, chart]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.16.4
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: chart-package
+          path: /tmp/chart
+
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: hephaisto-e2e
+
+      - name: Install the Prometheus Operator CRDs
+        run: |
+          BASE=https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.78.2/example/prometheus-operator-crd
+          for crd in monitoring.coreos.com_podmonitors monitoring.coreos.com_prometheusrules monitoring.coreos.com_prometheuses; do
+            kubectl apply --server-side -f "$BASE/${crd}.yaml"
+          done
+
+      - name: Create the namespaces and dummy secrets
+        run: |
+          kubectl create namespace hephaisto
+          kubectl create namespace hephaisto-chaos
+          kubectl create namespace hephaisto-obs
+          kubectl -n hephaisto create secret generic hephaisto-postgres \
+            --from-literal=POSTGRES_USER=hephaisto \
+            --from-literal=POSTGRES_PASSWORD=ci-not-a-real-password \
+            --from-literal=POSTGRES_DB=hephaisto
+          kubectl -n hephaisto create secret generic hephaisto-llm \
+            --from-literal=LLM_API_KEY=the-stand-in-accepts-anything
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build the agent image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          tags: hephaisto/agent:e2e
+          load: true
+          build-args: |
+            VERSION=${{ needs.version.outputs.semver }}
+            COMMIT=${{ github.sha }}
+          cache-from: type=gha,scope=linux/amd64
+
+      - name: Build the stand-in image
+        run: docker build -q -f infra/e2e/notification-receiver/Dockerfile -t hephaisto/notification-receiver:dev .
+
+      - name: Load both into kind
+        run: |
+          kind load docker-image hephaisto/agent:e2e --name hephaisto-e2e
+          kind load docker-image hephaisto/notification-receiver:dev --name hephaisto-e2e
+
+      - name: The stand-in and an Alertmanager
+        run: |
+          kubectl apply -f infra/e2e/teams-stand-in.yaml
+          kubectl apply -f infra/e2e/alertmanager.yaml
+          kubectl -n hephaisto-obs rollout status deploy/teams-stand-in --timeout=120s
+          kubectl -n hephaisto-obs rollout status deploy/pager-alertmanager --timeout=120s
+
+      - name: helm install, as the pager suite runs it
+        run: |
+          helm install hephaisto \
+            "/tmp/chart/hephaisto-${{ needs.version.outputs.semver }}.tgz" \
+            --namespace hephaisto \
+            -f scripts/e2e/values-pager.yaml \
+            --set image.repository=hephaisto/agent \
+            --set image.tag=e2e \
+            --set image.pullPolicy=Never \
+            --set postgres.embedded.enabled=true \
+            --set prometheusOperator.selectorLabels.release=kube-prometheus-stack \
+            --wait --timeout 6m
+
+      - name: The pager suite
+        run: |
+          set -uo pipefail
+          kubectl -n hephaisto port-forward svc/hephaisto 18080:8080 >/tmp/pf-agent.log 2>&1 &
+          kubectl -n hephaisto-obs port-forward svc/teams-stand-in 18110:8080 >/tmp/pf-standin.log 2>&1 &
+          kubectl -n hephaisto-obs port-forward svc/pager-alertmanager 19093:9093 >/tmp/pf-am.log 2>&1 &
+          for i in $(seq 1 30); do
+            sleep 2
+            curl -sf localhost:18080/healthz >/dev/null && curl -sf localhost:18110/healthz >/dev/null && break
+          done
+          # A pod the suite deletes (P15) takes its port-forward with it; this keeps one open.
+          ( while sleep 5; do
+              curl -sf --max-time 3 localhost:18080/healthz >/dev/null \
+                || kubectl -n hephaisto port-forward svc/hephaisto 18080:8080 >>/tmp/pf-agent.log 2>&1 &
+            done ) &
+          export PAGER_API=http://localhost:18080 PAGER_HOOK=http://localhost:18080
+          export PAGER_STANDIN=http://localhost:18110 PAGER_AM=http://localhost:19093
+          export PAGER_CAPS="am kubectl spare-agent"
+          export E2E_KUBECONFIG="$HOME/.kube/config" E2E_CONTEXT=kind-hephaisto-e2e
+          scripts/e2e/pager.sh --results /tmp/pager-results
+
+      - name: The suite's results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pager-results
+          path: /tmp/pager-results
+          if-no-files-found: ignore
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n hephaisto get all
+          kubectl -n hephaisto logs -l app.kubernetes.io/name=hephaisto --tail=300 --all-containers || true
+          kubectl -n hephaisto-obs logs deploy/teams-stand-in --tail=200 || true
+          kubectl -n hephaisto-obs logs deploy/pager-alertmanager --tail=100 || true
+
   # The safety net for the stylesheet. Nothing else in this workflow can see a visual
   # regression: the console suite asserts behaviour against a live agent, and every one of its
   # Both generated sites must still build.

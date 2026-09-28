@@ -853,3 +853,18 @@ failure), and a green-build rule that demanded tests from repositories that have
   exercised - but a pass rate needs repeats (`codefix run`, deferred to v0.9.x).
 - **NetworkPolicy enforcement.** The dev CNI may accept and ignore it; the egress proxy's log and the
   guard's denials are the instruments, not the policy.
+
+## The v0.10.0 acceptance test — it is the only thing that tells a person
+
+Automated, because nobody can check paging by hand at every change: `scripts/e2e/pager.sh`
+(`scripts/e2e/README.md`, "The pager suite"). On this machine:
+
+```sh
+# tilt_config.json: "pager-e2e": true
+scripts/e2e/pager-local.sh
+```
+
+Green means every scenario passed or is listed in `scripts/e2e/pager/KNOWN_RED`, and v0.10.0 is
+done when that list is empty. What it cannot show, and each PR of the milestone says so: real
+multi-cluster label sets, Microsoft's real signing keys, whether a personal chat rings a phone
+([#125](backlog.md#125)), webhook latency at production volume.

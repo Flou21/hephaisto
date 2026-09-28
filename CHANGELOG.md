@@ -10,6 +10,19 @@ broken, with the evidence for each.
 Versions are set by the git tag through MinVer; the chart version and the app version are always
 the same number.
 
+## v0.10.0 — unreleased
+
+**It is the only thing that tells a person.** See `docs/roadmap.md`.
+
+### Added
+- **The pager suite** (`scripts/e2e/pager.sh`, [#146](docs/backlog.md#146)): alerts through a
+  real Alertmanager or straight to the webhook, into the installed chart, and assertions about
+  what a person would have seen - which incidents, in which state, which Teams messages were
+  sent and edited, what the model was asked. A stand-in answers as the model, so a run is
+  deterministic and free. It gates every change in CI (`e2e-pager`), runs on the dev cluster
+  (`scripts/e2e/pager-local.sh`) and is a phase of the release harness.
+- `GET /api/incidents` takes `state=any` and `alertname=`.
+
 ## v0.9.0 — unreleased (`v0.9.0-rc1` 2026-09-27, `v0.9.0-rc2` to `-rc5` 2026-09-28)
 
 **It proposes the fix, and a person opens the door.** Most real incidents on the cluster this runs

@@ -41,6 +41,12 @@ public sealed record IncidentListQuery
     /// </remarks>
     public string? AssignedTo { get; init; }
 
+    /// <summary>
+    /// Only incidents with a signal whose reason is this name - the <c>alertname</c> of an
+    /// Alertmanager signal.
+    /// </summary>
+    public string? AlertName { get; init; }
+
     public int Limit { get; init; } = 100;
 }
 
@@ -114,6 +120,11 @@ public sealed class IncidentQueries(
         {
             var ns = query.Namespace.Trim();
             incidents = incidents.Where(i => i.Target.Namespace == ns);
+        }
+
+        if (query.AlertName is { } alertName)
+        {
+            incidents = incidents.Where(i => i.Signals.Any(s => s.Reason == alertName));
         }
 
         var limit = Math.Clamp(query.Limit, 1, 500);

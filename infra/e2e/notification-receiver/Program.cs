@@ -36,7 +36,10 @@ var app = builder.Build();
 
 app.MapGet("/healthz", () => Results.Ok("ok"));
 
-app.MapPost("/hooks/hephaisto", async (HttpContext ctx) =>
+// /hooks/hephaisto is the agent's outbound channel. Any other name is a receiver that is NOT the
+// agent - the pager suite routes the chart's agent-presence alerts to /hooks/external, which is
+// the path a person is told on when the agent itself is down.
+app.MapPost("/hooks/{hook}", async (string hook, HttpContext ctx) =>
 {
     using var reader = new StreamReader(ctx.Request.Body);
     var body = await reader.ReadToEndAsync();
@@ -51,6 +54,7 @@ app.MapPost("/hooks/hephaisto", async (HttpContext ctx) =>
 
     var entry = new JsonObject
     {
+        ["hook"] = hook,
         ["deliveryId"] = Header(ctx, "X-Hephaisto-Delivery-Id"),
         ["event"] = Header(ctx, "X-Hephaisto-Event"),
         ["signature"] = Header(ctx, "X-Hephaisto-Signature"),
@@ -104,6 +108,9 @@ else
     // Microsoft Teams as the bot sees it. Not in canary mode: the canary serves nothing, so that
     // anything reaching it is a finding.
     NotificationReceiver.TeamsStandIn.Map(app, builder.Configuration);
+
+    // The model, for the pager suite: every investigation concludes at once, or when told to.
+    NotificationReceiver.LlmStandIn.Map(app);
 
     app.MapDelete("/received", () =>
     {

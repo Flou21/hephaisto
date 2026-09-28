@@ -330,6 +330,32 @@ and points the agent at it; `curl http://$H:8110/teams/messages` shows what Team
 `hephaisto-notification-teams-bot`, both made by hand. **Do not test against a channel people
 read**: a test board cannot be removed afterwards.
 
+## The pager suite, as of v0.10.0
+
+`scripts/e2e/pager.sh` is how a change to anything between an alert arriving and a person being
+told is accepted. **A change there is not done when its unit tests pass; it is done when its
+scenarios are green here and in CI.** Nobody verifies paging by hand at every change, and before
+this suite nothing could.
+
+```sh
+# tilt_config.json: "pager-e2e": true (overrides local-llm and teams-bot), then
+scripts/e2e/pager-local.sh                  # every scenario, about 15 minutes
+scripts/e2e/pager-local.sh --only P05,P09   # some
+scripts/e2e/pager-local.sh --list           # what exists, and what is known red
+```
+
+- **The model is a stand-in** (`LlmStandIn.cs`, in the receiver's binary, Service
+  `model-stand-in`): every investigation concludes at once with one ungrounded finding, so every
+  incident escalates. `POST /llm/hold` makes it wait; `GET /llm/requests` is what it was asked.
+- **`scripts/e2e/pager/KNOWN_RED`** lists scenarios that land before their fix. Green and still
+  listed fails the run, so the fix and the removal land in one commit.
+- **Windows are seconds** (`scripts/e2e/values-pager.yaml`). The suite relies on their order,
+  never their size. A scenario gets its own alert names (`pager_name`), so nothing it asserts
+  depends on another scenario or an earlier run.
+- **The stand-in's image is a fixed tag.** After changing `infra/e2e/notification-receiver`,
+  `kubectl -n hephaisto-obs rollout restart deploy/teams-stand-in`; pager-local.sh refuses a
+  stand-in that predates the model.
+
 ## The console has a design language, as of v0.4.0
 
 **Read [`docs/design.md`](docs/design.md) before changing any CSS.** Four rules there are enforced

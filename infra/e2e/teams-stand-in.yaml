@@ -1,4 +1,5 @@
-# A stand-in for Microsoft Teams, as the bot sees it.
+# A stand-in for Microsoft Teams, as the bot sees it - and for the model, as the pager suite
+# needs it.
 #
 # Applied by Tilt when tilt_config.json says "teams-bot": "stand-in", and never by the chart. It
 # is the notification receiver's binary (see infra/e2e/notification-receiver/TeamsStandIn.cs):
@@ -39,9 +40,10 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             # Who is "in the team". values-dev-teams-bot.yaml names one of these as a
-            # recipient and one address that is not here, so both paths run.
+            # recipient and one address that is not here, so both paths run. The pager suite
+            # routes to all three: oncall@ by label, dev@ as the fallback, lead@ as a step.
             - name: TEAMS_MEMBERS
-              value: "oncall@example.com,dev@example.com"
+              value: "oncall@example.com,dev@example.com,lead@example.com"
           ports:
             - containerPort: 8080
               name: http
@@ -56,7 +58,9 @@ spec:
               cpu: 10m
               memory: 32Mi
             limits:
-              memory: 128Mi
+              # The model stand-in keeps the last 500 prompts it was sent, for the pager suite
+              # to read back.
+              memory: 256Mi
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
@@ -71,6 +75,23 @@ metadata:
   namespace: hephaisto-obs
   labels:
     app.kubernetes.io/name: teams-stand-in
+spec:
+  selector:
+    app.kubernetes.io/name: teams-stand-in
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+# The same pod, as the model. The pager suite points Llm__Endpoint here
+# (scripts/e2e/values-pager.yaml); a name of its own so that reads as what it is.
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-stand-in
+  namespace: hephaisto-obs
+  labels:
+    app.kubernetes.io/name: model-stand-in
 spec:
   selector:
     app.kubernetes.io/name: teams-stand-in
