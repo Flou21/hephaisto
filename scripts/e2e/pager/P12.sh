@@ -16,7 +16,7 @@ scenario() {
     pager_wait_settled "$id" 120 || true
 
     want "the incident names its cluster" "$(pager_incident "$id" | jq -r '.target.cluster // empty')" = pager-elsewhere
-    pager_incident "$id" | jq -r '.title' | grep -q pager-elsewhere && pass "so does its title" \
+    pager_incident "$id" | jq -r '.title' | grep -c pager-elsewhere >/dev/null && pass "so does its title" \
         || fail "so does its title" "$(pager_incident "$id" | jq -r '.title')"
 
     local asked offered
@@ -24,6 +24,6 @@ scenario() {
     want "the model was asked" "$asked" -ge 1
     offered=$(pager_llm "$n" | jq --argjson k "$K8S_TOOLS" '[.[].tools[] | select(. as $t | $k | index($t))] | unique | length')
     want "no Kubernetes tool was offered" "$offered" -eq 0
-    pager_llm "$n" | jq -r '.[0].text' | grep -q pager-elsewhere && pass "the prompt names the other cluster" \
+    pager_llm "$n" | jq -r '.[0].text' | grep -c pager-elsewhere >/dev/null && pass "the prompt names the other cluster" \
         || fail "the prompt names the other cluster"
 }

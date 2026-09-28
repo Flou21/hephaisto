@@ -248,8 +248,9 @@ What the agent is told about *your* cluster.
 | `TrustForwardedHeaders` | bool | `false` |
 | `WebhookToken` | string? | `null` — chart value `secrets.webhookToken`; at least 16 characters |
 
-With `WebhookToken` set, `/webhooks/*` answers 401 to a request without `Authorization: Bearer
-<token>`. Alertmanager sends it with `http_config.authorization.credentials_file`.
+With `WebhookToken` set, `/webhooks/*` answers 401 to a request without
+`Authorization: Bearer <token>`. Alertmanager sends it with
+`http_config.authorization.credentials_file`.
 
 ## `Notifications`
 
