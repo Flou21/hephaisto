@@ -766,6 +766,11 @@ alerts:
   # The dead-man's switch. An always-firing alert whose ABSENCE is the signal: if it stops
   # arriving, the whole alert path between Prometheus and the agent is broken. Leave it on.
   watchdog: true
+  # The agent's own absence: not running, alerts not reaching it, or unable to write what
+  # arrives (files/alerts/agent-presence.yaml). Every rule carries hephaisto_route=external, and
+  # your Alertmanager must route that label to a receiver that is NOT this agent - an agent that
+  # is down cannot report being down. Leave it on, and add that route.
+  agentPresence: true
   # OFF by default, and it should stay off unless you run this repo's exact collector
   # topology. Its alerts assert facts about OUR pipeline; on a different stack they fire
   # permanently - and are then fed to the agent as incidents, which is worse than useless.

@@ -1,0 +1,83 @@
+# The agent's own absence, told by a path the agent is not on (#137)
+# ---------------------------------------------------------------------------------------
+# Once Hephaisto is the only receiver of alerts, every alert about Hephaisto goes to Hephaisto -
+# and an agent that is down, blind or unable to write cannot tell anyone that it is. Every rule
+# here therefore carries `hephaisto_route: external`, and the Alertmanager configuration must
+# route that label to a receiver that is NOT this agent, ahead of its route to the agent:
+#
+#     route:
+#       routes:
+#         - receiver: not-hephaisto          # a Teams workflow, an email, a pager - anything else
+#           matchers: [ hephaisto_route = "external" ]
+#           continue: false
+#
+# Without that route these rules still fire, and go to the agent, and say nothing to anyone
+# when it matters. The chart cannot check your Alertmanager; the install guide says so.
+#
+# Why not HephaistoNotProcessingSignals, which this replaces: its expression was
+# `sum(increase(hephaisto_signals_received_total[15m])) == 0`, and with the pod gone the series
+# is gone, the expression returns nothing, and the rule never fires - the trap no-traffic.yaml
+# describes in its own comment. absent() is the shape that survives the series disappearing.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: hephaisto-agent-presence
+  namespace: hephaisto-obs
+  labels:
+    release: hephaisto
+    app.kubernetes.io/part-of: hephaisto
+spec:
+  groups:
+    - name: hephaisto.agent-presence
+      interval: 30s
+      rules:
+        - alert: HephaistoAbsent
+          # hephaisto_build_info is published for as long as the process runs and by nothing
+          # else, so its absence is the process's. Expect it about seven minutes after the pod
+          # goes when the agent's metrics also reach Prometheus through an OTel collector: the
+          # series stays for Prometheus's five-minute staleness, and then this waits two more.
+          expr: absent(hephaisto_build_info)
+          for: 2m
+          labels:
+            severity: critical
+            hephaisto_kind: ObservabilityDegraded
+            hephaisto_route: external
+          annotations:
+            summary: 'Hephaisto is not running'
+            description: >-
+              No Hephaisto process has been scraped for two minutes. Alerts sent to it are
+              being retried by Alertmanager and nobody is being told about them. Check the
+              hephaisto Deployment and its events.
+
+        - alert: HephaistoAlertPathSilent
+          # The heartbeat (watchdog.yaml) has not reached the agent for fifteen minutes: one of
+          # Prometheus, the rule, Alertmanager's route, the token, the NetworkPolicy or the
+          # webhook is broken, and alerts are not arriving either.
+          expr: max(hephaisto_watchdog_age_seconds) > 900
+          for: 5m
+          labels:
+            severity: critical
+            hephaisto_kind: ObservabilityDegraded
+            hephaisto_route: external
+          annotations:
+            summary: 'Hephaisto is running but alerts are not reaching it'
+            description: >-
+              The AgentWatchdog heartbeat last reached Hephaisto {{ $value | humanizeDuration }}
+              ago. Every other alert travels the same path. Check the Alertmanager route, the
+              webhook token and the NetworkPolicy.
+
+        - alert: HephaistoIngestFailing
+          # The webhook is refusing deliveries it cannot write (#136). Alertmanager retries
+          # them, so nothing is lost yet - but nothing is being told to anyone either.
+          expr: sum(increase(hephaisto_signals_dropped_total{reason="ingest-failed"}[10m])) > 0
+          for: 5m
+          labels:
+            severity: critical
+            hephaisto_kind: ObservabilityDegraded
+            hephaisto_route: external
+          annotations:
+            summary: 'Hephaisto cannot write the alerts it receives'
+            description: >-
+              The webhook has been answering 503 for five minutes, almost always because its
+              database is unreachable. Alertmanager is retrying; nobody is being told.

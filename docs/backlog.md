@@ -2074,7 +2074,11 @@ ready with no database.
 Alertmanager's retry is the queue. With [#130](#130) making a repeat idempotent, that needs no
 inbox table: the webhook runs triage itself, under the one gate the watcher's reader also takes,
 and answers after the commit. It therefore ships after [#129](#129) and [#130](#130). A database
-check on `/readyz`. **Size.** M. Open.
+check on `/readyz`. **Size.** M. **Fixed in v0.10.0**: `ISignalSink.IngestAsync` triages and commits under one gate the watcher's
+reader also takes, and the webhook answers after it - 200 when every alert was written, 503 at the
+first that was not, so Alertmanager retries the group and the ones already written are absorbed
+as repeats. A NUL in a label is removed rather than refused. `/readyz` includes a two-second
+database check (`PostgresReadinessCheck`); `/healthz` does not. Pager scenarios P13 and P15.
 
 ### 137. Nothing tells a person that Hephaisto is down
 
@@ -2092,7 +2096,12 @@ every alert about the agent goes to the agent.
 
 **What to do.** An `absent()` rule on the agent's own series. A second receiver in the
 Alertmanager configuration, documented, that does not pass through Hephaisto and carries that
-alert and the watchdog's absence and nothing else. **Size.** S. Open.
+alert and the watchdog's absence and nothing else. **Size.** S. **Fixed in v0.10.0**: `files/alerts/agent-presence.yaml` (on by default, `alerts.agentPresence`)
+ships `HephaistoAbsent` (`absent(hephaisto_build_info)`), `HephaistoAlertPathSilent` (the new
+`hephaisto_watchdog_age_seconds` gauge over fifteen minutes) and `HephaistoIngestFailing`, all
+labelled `hephaisto_route: external`, and the chart's documentation says the Alertmanager must
+route that label to a receiver that is not the agent. The dev stack does. `HephaistoNotProcessingSignals`
+is removed. Pager scenario P16.
 
 ### 138. The webhook cannot check a credential
 
@@ -2210,7 +2219,8 @@ repeat_interval" (`:20-23`). That interval is hours.
 **What to do.** Not a second replica; the argument against one stands. [#136](#136) turns
 Alertmanager's retry, which is minutes, into the cover for a restart, and [#137](#137) covers a
 restart that does not come back. With both in place this entry can be reclassified as a
-deliberate limitation, and the comment corrected. **Size.** S, after those two. Open.
+deliberate limitation, and the comment corrected. **Size.** S, after those two. **Reclassified in v0.10.0 as a deliberate limitation**, with #136 and #137 fixed; the
+comment in `deployment.yaml` now says what covers the downtime.
 
 ### 145. An alert name has nowhere to keep what people learned about it
 

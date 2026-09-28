@@ -22,6 +22,9 @@ public static class PersistenceServiceCollectionExtensions
         IConfiguration configuration)
     {
         services.Configure<PersistenceOptions>(configuration.GetSection(PersistenceOptions.SectionName));
+
+        // /readyz, not /healthz - see PostgresReadinessCheck.
+        services.AddHealthChecks().AddCheck<PostgresReadinessCheck>("postgres", tags: ["ready"]);
         services.Configure<LlmBudgetOptions>(configuration.GetSection(LlmBudgetOptions.SectionName));
 
         var persistence = configuration.GetSection(PersistenceOptions.SectionName).Get<PersistenceOptions>()

@@ -513,6 +513,7 @@ if agent:
                 'hephaisto-kubernetes-rules:prometheusrule',
                 'hephaisto-slo-rules:prometheusrule',
                 'hephaisto-watchdog:prometheusrule',
+                'hephaisto-agent-presence:prometheusrule',
                 'hephaisto-observability-selfcheck:prometheusrule',
                 'hephaisto:podmonitor',
                 'hephaisto-dashboard:configmap',

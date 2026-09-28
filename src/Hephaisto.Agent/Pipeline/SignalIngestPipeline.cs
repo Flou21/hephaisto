@@ -38,6 +38,13 @@ public sealed class SignalIngestPipeline : BackgroundService, ISignalSink
             SingleWriter = false,
         });
 
+    /// <summary>
+    /// One triage at a time, whichever door the signal came through. Dedup, absorb and reopen
+    /// all read-then-write; two of them interleaved for one alert would each find no incident
+    /// and open one apiece.
+    /// </summary>
+    private readonly SemaphoreSlim gate = new(1, 1);
+
     private readonly IServiceScopeFactory scopeFactory;
     private readonly InvestigationQueue investigationQueue;
     private readonly IClock clock;
@@ -81,6 +88,31 @@ public sealed class SignalIngestPipeline : BackgroundService, ISignalSink
         return ValueTask.CompletedTask;
     }
 
+    /// <summary>
+    /// Triage now and commit, under the gate. Throws when the signal could not be written, so the
+    /// webhook can refuse rather than claim a delivery that did not happen (#136).
+    /// </summary>
+    public async Task IngestAsync(Signal signal, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(signal);
+
+        await gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await IngestCoreAsync(signal, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    public override void Dispose()
+    {
+        gate.Dispose();
+        base.Dispose();
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await foreach (var signal in channel.Reader.ReadAllAsync(stoppingToken).ConfigureAwait(false))
@@ -104,7 +136,7 @@ public sealed class SignalIngestPipeline : BackgroundService, ISignalSink
         }
     }
 
-    private async Task IngestAsync(Signal signal, CancellationToken ct)
+    private async Task IngestCoreAsync(Signal signal, CancellationToken ct)
     {
         // AgentMode.Off is documented as "ingest nothing, investigate nothing. Full stop."
         // This is where the first half of that promise is kept. Every producer funnels through

@@ -1,4 +1,7 @@
+using System.Diagnostics.Metrics;
+
 using Hephaisto.Core.Abstractions;
+using Hephaisto.Core.Telemetry;
 
 namespace Hephaisto.Agent.Web;
 
@@ -23,10 +26,34 @@ namespace Hephaisto.Agent.Web;
 /// scrape interval, while a fresh-looking one hides a dead alert path indefinitely.
 /// </para>
 /// </remarks>
-public sealed class WatchdogMonitor(IClock clock)
+public sealed class WatchdogMonitor
 {
+    private readonly IClock clock;
     private long _lastSeenTicks;
     private long _receiptCount;
+
+    public WatchdogMonitor(IClock clock)
+        : this(clock, null)
+    {
+    }
+
+    /// <param name="meters">
+    /// When given, the age of the last delivery is published as
+    /// <c>hephaisto_watchdog_age_seconds</c> (#137). The status page is read by somebody who is
+    /// already looking; the chart's <c>HephaistoAlertPathSilent</c> rule reads this, and is routed
+    /// around the agent, so a silent alert path reaches a person who is not.
+    /// </param>
+    public WatchdogMonitor(IClock clock, IMeterFactory? meters)
+    {
+        this.clock = clock;
+        StartedAt = clock.UtcNow;
+
+        meters?.Create(HephaistoTelemetry.MeterName).CreateObservableGauge(
+            HephaistoTelemetry.Metrics.WatchdogAge,
+            () => (Age ?? clock.UtcNow - StartedAt).TotalSeconds,
+            unit: "s",
+            description: "Seconds since the AgentWatchdog alert last reached the agent, or since start if it never has.");
+    }
 
     /// <summary>
     /// How long the alert may be absent before the path is considered broken. Alertmanager's
@@ -35,7 +62,7 @@ public sealed class WatchdogMonitor(IClock clock)
     /// </summary>
     public static readonly TimeSpan StaleAfter = TimeSpan.FromMinutes(5);
 
-    public DateTimeOffset StartedAt { get; } = clock.UtcNow;
+    public DateTimeOffset StartedAt { get; }
 
     public DateTimeOffset? LastSeenAt
     {

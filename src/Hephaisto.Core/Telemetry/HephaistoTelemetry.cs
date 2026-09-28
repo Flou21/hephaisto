@@ -41,6 +41,9 @@ public static class HephaistoTelemetry
 
         /// <summary>An ended incident whose alert fired again inside the reopen window (#129).</summary>
         public const string IncidentsReopened = "hephaisto.incidents.reopened";
+
+        /// <summary>Seconds since the watchdog last arrived (#137). A gauge.</summary>
+        public const string WatchdogAge = "hephaisto.watchdog.age";
         public const string IncidentsClosed = "hephaisto.incidents.closed";
         public const string IncidentsOpen = "hephaisto.incidents.open";
 

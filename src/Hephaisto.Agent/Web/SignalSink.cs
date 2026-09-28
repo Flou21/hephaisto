@@ -3,16 +3,22 @@ using Hephaisto.Core.Domain;
 namespace Hephaisto.Agent.Web;
 
 /// <summary>
-/// The seam between "something posted a webhook" and "the ingest pipeline owns it now".
+/// The seam between "something arrived" and "the ingest pipeline owns it now".
 /// </summary>
 /// <remarks>
 /// <para>
-/// The webhook handler is the one place in the system that is on somebody else's retry
-/// timer. Alertmanager re-POSTs a group every <c>repeat_interval</c> and treats any slow or
-/// failed response as "did not arrive", so a handler that does fingerprinting, dedup, a
-/// correlation lookup and an INSERT before replying turns one slow database into a
-/// self-inflicted duplicate storm. Implementations must therefore <b>enqueue and return</b>;
-/// anything that opens a connection belongs on the consumer side of the queue, not here.
+/// Two doors, for two kinds of producer. <see cref="IngestAsync"/> is for the Alertmanager
+/// webhook: it returns once the signal is <b>committed</b> and throws when it could not be, so the
+/// webhook answers only after the write and answers 503 when there was none - which makes
+/// Alertmanager's own retry the queue (#136). Until v0.10.0 the webhook used the other door,
+/// answered 200 before anything was written, and a database outage dropped every alert that
+/// arrived during it, told to Alertmanager as delivered.
+/// </para>
+/// <para>
+/// <see cref="SubmitAsync"/> enqueues and returns, for the Kubernetes watcher, which has no one to
+/// answer and no retry of its own. Both doors pass through one gate, so a webhook and the watcher
+/// never triage at the same moment. That is what makes a retried alert safe: it arrives, finds its
+/// own incident, and is absorbed.
 /// </para>
 /// <para>
 /// <see cref="Signal.Fingerprint"/> is deliberately left empty by the webhook. Computing it
@@ -23,6 +29,9 @@ namespace Hephaisto.Agent.Web;
 public interface ISignalSink
 {
     ValueTask SubmitAsync(Signal signal, CancellationToken ct);
+
+    /// <summary>Triage the signal and commit the result, or throw.</summary>
+    Task IngestAsync(Signal signal, CancellationToken ct);
 }
 
 /// <summary>
@@ -36,6 +45,8 @@ public interface ISignalSink
 /// </remarks>
 internal sealed class LoggingSignalSink(ILogger<LoggingSignalSink> logger) : ISignalSink
 {
+    public Task IngestAsync(Signal signal, CancellationToken ct) => SubmitAsync(signal, ct).AsTask();
+
     public ValueTask SubmitAsync(Signal signal, CancellationToken ct)
     {
         logger.LogInformation(

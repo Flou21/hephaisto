@@ -751,6 +751,9 @@
         "watchdog": {
           "type": "boolean"
         },
+        "agentPresence": {
+          "type": "boolean"
+        },
         "observabilitySelfcheck": {
           "type": "boolean"
         }
