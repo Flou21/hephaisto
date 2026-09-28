@@ -64,7 +64,10 @@ public static class SignalKindSpecificity
             or SignalKind.NodePressure
             or SignalKind.PvcNearlyFull
             or SignalKind.HighErrorRate
-            or SignalKind.HighLatency => 2,
+            or SignalKind.HighLatency
+            // An alert about a pipeline rather than an object: no other kind can describe it
+            // better, and none shares its correlation key anyway (#132).
+            or SignalKind.Pipeline => 2,
 
         // Self-monitoring kinds are ranked with the specific ones, but ShouldReplace never
         // compares them against a workload kind at all - see IsAboutHephaistoItself.

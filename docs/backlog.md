@@ -1836,7 +1836,11 @@ workload the rule is about.
 **Why it matters more than a label.** The target is what the cooldown, the oscillation detector
 and the code-fix repository mapping are keyed on.
 
-**Not investigated.** Read off one board; the ingest path was not opened. **Size.** S. Open.
+**Not investigated.** Read off one board; the ingest path was not opened. **Size.** S.
+**Fixed in v0.10.0**: on a kube-state-metrics series (its `job`, `container` or `service` says so)
+the `pod` label is kept only when it looks like a pod of the workload the series is about -
+`{workload}-` as a prefix - or when the series names no workload and the pod is not the exporter.
+Any other source is believed. Pager scenario P04.
 
 ### 127. Signed in, the console still asked for a name, and recorded whatever was typed
 
@@ -1959,7 +1963,11 @@ release". Sending every cluster's alerts to one agent answers the question witho
 **What to do.** The smallest honest step: read `cluster` into the target, key identity on it, and
 show it. For an incident whose cluster is not the agent's own, withhold the Kubernetes tools and
 every action, and say so in the prompt - the metrics and logs are still reachable, because they
-are already in one place. **Size.** L. Open.
+are already in one place. **Size.** L. **The first half fixed in v0.10.0**: the `cluster` label is
+read into `TargetRef.Cluster` (empty means the agent's own, and ingest fills that in), it is part
+of the fingerprint and the correlation key, the API shows it, and an incident about another cluster
+says so in its title. The second half - no Kubernetes tools, no rollout lookup and no actions for
+such an incident - is stage 5 of the milestone and keeps this entry open.
 
 ### 132. Every series of one alert name is one incident
 
@@ -1974,7 +1982,12 @@ repeat of the first.
 reasoning holds for an alert about a workload. It does not hold for one that names no workload.
 
 **What to do.** When the target falls through to `Alert/<alertname>`, key identity on the label
-set with the scrape's own labels removed. **Size.** M. Open.
+set with the scrape's own labels removed. **Size.** M. **Fixed in v0.10.0**:
+`Core/Fingerprinting/AlertIdentity.cs`. For such an alert the fingerprint and the correlation key
+carry a hash of the label set less the scrape's labels, the agent's and the ones that are not
+identity (name, severity, cluster, namespace, scrape job) - so a warning that turns critical is
+still the same incident - and its title names the labels that tell its series apart. Its kind is
+the new `Pipeline`, with a runbook that starts from the expression (#134's second half).
 
 ### 133. Nobody is told that an incident opened
 
@@ -2011,7 +2024,10 @@ pipeline alerts, with a runbook that starts from the rule's expression and its l
 both exist, a foreign rule should carry `hephaisto_kind` like the shipped ones do
 ([#70](#70)). **Decided 2026-09-28:** everything is investigated unless the rule opts out with
 the label `hephaisto_investigate: "false"`; there is no mode that inverts the default.
-**Size.** L. Open.
+**Size.** L. **Half fixed in v0.10.0**: the kind and runbook. An alert that names no object and
+states no `hephaisto_kind` is `Pipeline`, whose runbook starts from the expression and the labels.
+The classifier matches keywords at word starts, and three-letter ones as whole words, so
+`FeedIngestSlow` is no longer a latency fault. The opt-out label is stage 7.
 
 ### 135. The model is never shown the alert's labels
 
@@ -2259,12 +2275,12 @@ Error. **Size.** S. Open.
 
 ### 151. Any alert name containing "watchdog" is swallowed
 
-**Symptom.** `IsWatchdog` matches `name.Contains("watchdog")` (`Web/AlertmanagerEndpoints.cs:198-202`).
+**Symptom.** `IsWatchdog` matched `name.Contains("watchdog")` (`Web/AlertmanagerEndpoints.cs:198-202`).
 An alert named, say, `ConsumerWatchdogStalled` is recorded as a heartbeat and never becomes an
 incident.
 
 **What to do.** Match the name `Watchdog` exactly, or the `hephaisto_kind` label. **Size.** S.
-Open.
+**Fixed in v0.10.0**, exactly that. Pager scenario P28.
 
 ### 152. An investigation that ends after its incident closed still moves it
 

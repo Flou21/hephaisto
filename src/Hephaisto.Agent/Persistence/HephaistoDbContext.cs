@@ -343,6 +343,9 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
             // answers both halves.
             e.HasIndex(s => new { s.Fingerprint, s.LastSeen }).IsDescending(false, true);
 
+            // A resolve finds the row it clears by alert instance, within its incident (#129).
+            e.HasIndex(s => new { s.IncidentId, s.AlertKey });
+
             // Signals arrive with arbitrary Alertmanager labels and are searched by them
             // ("everything carrying team=payments"). GIN is the only index shape that can
             // answer a containment query against a column whose keys are not known.
@@ -967,6 +970,8 @@ internal static class TargetRefMapping
     {
         builder.OwnsOne(navigation, t =>
         {
+            // Empty on rows from before v0.10.0, which is the agent's own cluster (#131).
+            t.Property(p => p.Cluster).HasColumnName("target_cluster").IsRequired().HasDefaultValue(string.Empty);
             t.Property(p => p.Namespace).HasColumnName("target_namespace").IsRequired();
             t.Property(p => p.Kind).HasColumnName("target_kind").IsRequired();
             t.Property(p => p.Name).HasColumnName("target_name").IsRequired();

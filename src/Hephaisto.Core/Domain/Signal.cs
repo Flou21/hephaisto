@@ -35,6 +35,22 @@ public sealed class Signal
     /// <summary>How many raw observations this row represents after burst collapse.</summary>
     public int Count { get; set; } = 1;
 
+    /// <summary>Firing or resolved, as the source last said. Backlog #129.</summary>
+    public SignalStatus Status { get; set; }
+
+    /// <summary>
+    /// Which alert INSTANCE this is: a hash of the whole label set, less the scrape's own labels.
+    /// Null for a signal that is not an alert.
+    /// </summary>
+    /// <remarks>
+    /// Two keys, two questions. <see cref="Fingerprint"/> answers "which incident" and leaves the
+    /// pod out on purpose; this one answers "what has cleared". Two pods of one Deployment firing
+    /// the same rule are one incident and two alert instances, and the incident is not over until
+    /// both have resolved. One row per alert instance, updated in place. See
+    /// <c>AlertIdentity.AlertKey</c>.
+    /// </remarks>
+    public string? AlertKey { get; set; }
+
     /// <summary>Labels from Alertmanager or derived from the Kubernetes object. Stored as jsonb.</summary>
     public Dictionary<string, string> Labels { get; set; } = [];
 

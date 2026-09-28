@@ -299,49 +299,6 @@ public static class SignalMapper
             cluster);
     }
 
-    /// <summary>
-    /// An alert, from any source that has already parsed one into labels and annotations.
-    /// </summary>
-    /// <remarks>
-    /// The Alertmanager webhook in <c>Web/AlertmanagerEndpoints</c> binds the HTTP payload
-    /// and builds its own signal, deliberately leaving the fingerprint empty for the ingest
-    /// pipeline to stamp. This overload serves the callers that are not that webhook - the
-    /// PromQL sweep, and any test that wants an alert-shaped signal - and it does stamp the
-    /// fingerprint, because those callers have the cluster name in hand and no pipeline
-    /// behind them. The alertname vocabulary must stay in step between the two.
-    /// </remarks>
-    public static Signal FromAlert(
-        string alertName,
-        IReadOnlyDictionary<string, string> labels,
-        IReadOnlyDictionary<string, string> annotations,
-        DateTimeOffset firstSeen,
-        DateTimeOffset lastSeen,
-        string cluster)
-    {
-        ArgumentNullException.ThrowIfNull(labels);
-        ArgumentNullException.ThrowIfNull(annotations);
-
-        var kind = AlertKind(alertName, labels);
-
-        return Finish(
-            new Signal
-            {
-                Source = SignalSource.Alertmanager,
-                Kind = kind,
-                Severity = AlertSeverity(labels, kind),
-                Target = AlertTarget(labels),
-                Reason = alertName,
-                Message = Value(annotations, "description")
-                    ?? Value(annotations, "summary")
-                    ?? Value(annotations, "message")
-                    ?? alertName,
-                FirstSeen = firstSeen,
-                LastSeen = lastSeen,
-                Labels = new Dictionary<string, string>(labels, StringComparer.Ordinal),
-            },
-            cluster);
-    }
-
     // ------------------------------------------------------------------
     // Pod classification
     // ------------------------------------------------------------------
@@ -617,73 +574,6 @@ public static class SignalMapper
         _ => null,
     };
 
-    // Shared with Web/AlertmanagerEndpoints via Hephaisto.Core.Classification.AlertClassifier.
-    // Both paths carried a byte-identical copy of this table; since SignalKind selects the
-    // runbook, a divergence between them would silently hand an investigation the wrong
-    // instructions depending on which door the alert arrived through.
-    private static SignalKind AlertKind(string alertName, IReadOnlyDictionary<string, string> labels) =>
-        AlertClassifier.Kind(alertName, labels);
-
-    private static Severity AlertSeverity(IReadOnlyDictionary<string, string> labels, SignalKind kind) =>
-        AlertClassifier.SeverityOf(labels, kind);
-
-    private static TargetRef AlertTarget(IReadOnlyDictionary<string, string> labels)
-    {
-        var target = new TargetRef
-        {
-            Namespace = Value(labels, "namespace") ?? Value(labels, "exported_namespace") ?? string.Empty,
-            NodeName = Value(labels, "node"),
-            Uid = Value(labels, "uid"),
-        };
-
-        (target.Kind, target.Name) = labels switch
-        {
-            _ when Value(labels, "pod") is { } pod => ("Pod", pod),
-            _ when Value(labels, "deployment") is { } d => ("Deployment", d),
-            _ when Value(labels, "statefulset") is { } s => ("StatefulSet", s),
-            _ when Value(labels, "daemonset") is { } ds => ("DaemonSet", ds),
-
-            // "job_name" and not "job": every Prometheus series carries a "job" label naming
-            // the scrape job, so treating it as a Kubernetes Job would mislabel almost
-            // everything in the cluster.
-            _ when Value(labels, "job_name") is { } j => ("Job", j),
-            _ when Value(labels, "persistentvolumeclaim") is { } p => ("PersistentVolumeClaim", p),
-            _ when Value(labels, "node") is { } n => ("Node", n),
-            _ when Value(labels, "service") is { } svc => ("Service", svc),
-            _ => ("Alert", Value(labels, "alertname") ?? "unknown"),
-        };
-
-        foreach (var (label, kind) in AlertWorkloadLabels)
-        {
-            if (Value(labels, label) is not { } name)
-            {
-                continue;
-            }
-
-            // When the object already IS the controller, leaving the owner null keeps
-            // WorkloadKey from being derived from the same name twice over.
-            if (!string.Equals(target.Kind, kind, StringComparison.Ordinal))
-            {
-                target.OwnerKind = kind;
-                target.OwnerName = name;
-            }
-
-            break;
-        }
-
-        return target;
-    }
-
-    private static readonly (string Label, string Kind)[] AlertWorkloadLabels =
-    [
-        ("deployment", "Deployment"),
-        ("statefulset", "StatefulSet"),
-        ("daemonset", "DaemonSet"),
-        ("job_name", "Job"),
-        ("cronjob", "CronJob"),
-        ("replicaset", "ReplicaSet"),
-    ];
-
     // ------------------------------------------------------------------
     // Shared
     // ------------------------------------------------------------------
@@ -709,6 +599,8 @@ public static class SignalMapper
 
     private static Signal Finish(Signal signal, string cluster)
     {
+        // The watcher only ever sees the cluster it runs in.
+        signal.Target.Cluster = cluster;
         signal.Fingerprint = SignalFingerprinter.Compute(signal, cluster);
         return signal;
     }
@@ -723,7 +615,4 @@ public static class SignalMapper
     /// </summary>
     private static DateTimeOffset? Timestamp(DateTime? value) =>
         value is null ? null : new DateTimeOffset(DateTime.SpecifyKind(value.Value, DateTimeKind.Utc));
-
-    private static string? Value(IReadOnlyDictionary<string, string> map, string key) =>
-        map.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value) ? value : null;
 }

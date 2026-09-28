@@ -66,6 +66,20 @@ public enum SignalKind
     /// </para>
     /// </remarks>
     PodNotReady = 18,
+
+    /// <summary>
+    /// An alert about something that is not a Kubernetes object: a feed that stopped, a queue
+    /// that grew, an export that produced too few rows. It names no pod, workload, node or
+    /// service - its label set is all there is - so every Kubernetes runbook would start from
+    /// an object it does not have.
+    /// </summary>
+    /// <remarks>
+    /// Assigned to an alert that names no object and does not state its kind with
+    /// <c>hephaisto_kind</c>, rather than guessed from its name: backlog #134 found names like
+    /// "TooFewArticlesSlow" classified as a latency fault for the <c>slo</c> in them. The kind is
+    /// part of the fingerprint, which is why it arrived with alert identity (#132) and not later.
+    /// </remarks>
+    Pipeline = 19,
 }
 
 public enum Severity
@@ -149,6 +163,23 @@ public enum EscalationReason
     GroundingRejected = 11,
     InvestigationFailed = 12,
     StormCircuitBreaker = 13,
+
+    /// <summary>
+    /// The rule said not to investigate (<c>hephaisto_investigate: "false"</c>). A person is
+    /// told; the model is never asked. Backlog #134.
+    /// </summary>
+    NotInvestigated = 14,
+}
+
+/// <summary>Whether an alert instance is firing now. Backlog #129.</summary>
+/// <remarks>
+/// Only an Alertmanager signal has one; a Kubernetes watch signal is always
+/// <see cref="Firing"/>, because nothing ever tells the watcher a fault went away.
+/// </remarks>
+public enum SignalStatus
+{
+    Firing = 0,
+    Resolved = 1,
 }
 
 /// <summary>Why an investigation loop stopped.</summary>

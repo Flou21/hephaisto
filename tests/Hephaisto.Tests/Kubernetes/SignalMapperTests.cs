@@ -444,50 +444,6 @@ public class SignalMapperTests
         SignalMapper.FromEvent(kubeEvent, K8sFixtures.Cluster)!.Count.Should().Be(214);
     }
 
-    [Fact]
-    public void An_alert_maps_to_an_Alertmanager_sourced_signal()
-    {
-        var signal = SignalMapper.FromAlert(
-            "KubePodCrashLooping",
-            new Dictionary<string, string>
-            {
-                ["alertname"] = "KubePodCrashLooping",
-                ["namespace"] = "prod",
-                ["pod"] = "api-7d4c9f8b6-x2k9p",
-                ["deployment"] = "api",
-                ["severity"] = "critical",
-            },
-            new Dictionary<string, string> { ["description"] = "pod is restarting" },
-            K8sFixtures.Now.AddMinutes(-10),
-            K8sFixtures.Now,
-            K8sFixtures.Cluster);
-
-        signal.Source.Should().Be(SignalSource.Alertmanager);
-        signal.Kind.Should().Be(SignalKind.CrashLoopBackOff);
-        signal.Severity.Should().Be(Severity.Critical);
-        signal.Target.OwnerKind.Should().Be("Deployment");
-        signal.Target.OwnerName.Should().Be("api");
-        signal.Fingerprint.Should().NotBeNullOrEmpty();
-    }
-
-    [Fact]
-    public void An_explicit_hephaisto_kind_label_overrides_the_alertname()
-    {
-        var signal = SignalMapper.FromAlert(
-            "SomeoneElsesRuleName",
-            new Dictionary<string, string>
-            {
-                ["alertname"] = "SomeoneElsesRuleName",
-                ["hephaisto_kind"] = "PvcNearlyFull",
-            },
-            new Dictionary<string, string>(),
-            K8sFixtures.Now,
-            K8sFixtures.Now,
-            K8sFixtures.Cluster);
-
-        signal.Kind.Should().Be(SignalKind.PvcNearlyFull);
-    }
-
     // ---------------------------------------------------------------------------------
     // A readiness probe failing once is a pod starting, not a pod flapping.
     // ---------------------------------------------------------------------------------

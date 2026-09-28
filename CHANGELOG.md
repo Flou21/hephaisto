@@ -17,6 +17,9 @@ the incident service and the pager that alerts go to today; this release is what
 `docs/roadmap.md`, v0.10.0.
 
 ### Upgrading
+- **Incidents opened before the upgrade do not absorb the alerts after it.** The fingerprint and the
+  correlation key now carry the cluster, so the first firing after the upgrade opens a new
+  incident. Close the old ones.
 - **`cluster.name` is required, and rendering fails without it.** Set it to the value of the
   `cluster` label on this cluster's metrics and logs. It replaces `Ingest:ClusterName`,
   `Kubernetes:ClusterName` and `Investigation:Environment:ClusterName`, which the chart never set
@@ -49,7 +52,22 @@ the incident service and the pager that alerts go to today; this release is what
 - **`investigation.inScopeNamespaces`**: the namespaces the model is told are in scope. Empty, the
   default, says nothing about scope instead of naming the development machine's chaos namespace.
 
+- **`SignalKind.Pipeline`** and its runbook, for an alert about a feed, a queue or an export
+  rather than a Kubernetes object.
+
 ### Changed
+- **An alert's identity comes from its labels.** The `cluster` label is part of it, so the same
+  workload in two clusters is two incidents ([#131](docs/backlog.md#131)); an alert that names no
+  object is one incident per series of its rule, not one per rule, titled by what tells its series
+  apart ([#132](docs/backlog.md#132)); a kube-state-metrics alert about a deployment is about the
+  deployment, not the exporter's pod ([#126](docs/backlog.md#126)). Each alert instance has an
+  `AlertKey`, and a signal row has a status, for the lifecycle that follows.
+- **Only the rule named `Watchdog` is the watchdog** ([#151](docs/backlog.md#151)). Before, any
+  alert whose name contained the word was swallowed as a heartbeat.
+- The kind classifier matches keywords as words ([#134](docs/backlog.md#134)).
+- A database migration, `AlertIdentity`: `signals.status`, `signals.alert_key`, and
+  `target_cluster` on `incidents`, `signals` and `agent_actions`. Adds only; existing rows read
+  as firing, in this cluster.
 - The environment card names the policy engine's protected namespaces when it has no list of
   its own, rather than a second, different copy.
 - Every comment and page that said Alertmanager cannot send a credential has been corrected.
