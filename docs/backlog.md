@@ -2437,6 +2437,13 @@ incidents only. Since #129 an incident whose alert cleared is closed, so c5's in
 incident dropped off the list and the wait for "every fixture concluded" ran to its deadline.
 The fixture checks read every state now.
 
+**And the pager suite lost an alert to its own port-forward.** In the release harness the agent
+is reached through a kubectl port-forward, which dies with the pod it picked. P16 scales the
+agent to zero and back; P17's alert, posted before the forward reconnected, got an empty reply
+and never arrived, so P17 failed with the feature working (it passed on CI and the dev cluster,
+where the address does not depend on a pod). Every exclusive scenario now waits for the agent to
+answer on both addresses before it starts.
+
 ## Dead or unreachable code
 
 ### 27. `AddHephaistoLlmWithoutPersistence` has no call sites

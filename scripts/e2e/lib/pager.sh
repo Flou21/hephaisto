@@ -149,12 +149,34 @@ pager_open()    { pager_incidents "$1" | jq '[.[] | select(.state | IN("Closed",
 pager_incident() { _pager_curl "$PAGER_API/api/incidents/$1"; }
 pager_state()    { pager_incident "$1" | jq -r '.state'; }
 
-# Waits until pager_count <alertname> reaches at least <n>. Returns non-zero on timeout.
-pager_wait_count() {
-    local name="$1" n="$2" timeout="${3:-60}"
+# Waits until both of the agent's addresses answer again. The release harness reaches the agent
+# through a kubectl port-forward, which dies with the pod it picked: after a scenario that
+# restarts or scales the agent, a webhook posted before the forward reconnects gets an empty
+# reply and the alert is lost - v0.10.0-rc1's release gate failed P17 on exactly that, one
+# scenario after P16. Any HTTP status from the hook will do; 000 means nothing answered.
+pager_wait_agent() {
+    local timeout="${1:-180}" code
     local deadline=$(( SECONDS + timeout ))
     while [ "$SECONDS" -lt "$deadline" ]; do
-        [ "$(pager_count "$name" 2>/dev/null || echo 0)" -ge "$n" ] && return 0
+        code=$(curl -s -o /dev/null --max-time 5 -w '%{http_code}' "$PAGER_HOOK/webhooks/alertmanager" || true)
+        if [ "${code:-000}" != "000" ] \
+            && [ "$(pager_incidents "$(pager_name probe)" 2>/dev/null | jq -r type 2>/dev/null)" = "array" ]; then
+            return 0
+        fi
+        sleep 3
+    done
+    return 1
+}
+
+# Waits until pager_count <alertname> reaches at least <n>. Returns non-zero on timeout.
+pager_wait_count() {
+    local name="$1" n="$2" timeout="${3:-60}" c
+    local deadline=$(( SECONDS + timeout ))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        # Not `$(pager_count ...) || echo 0`: under pipefail a failed read prints jq's 0 AND the
+        # fallback's, and `[` chokes on "0<newline>0".
+        c=$(pager_count "$name" 2>/dev/null) || c=0
+        [ "${c:-0}" -ge "$n" ] && return 0
         sleep 2
     done
     return 1
