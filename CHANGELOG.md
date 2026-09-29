@@ -10,6 +10,47 @@ broken, with the evidence for each.
 Versions are set by the git tag through MinVer; the chart version and the app version are always
 the same number.
 
+## v0.11.0 — unreleased (`v0.11.0-rc1` 2026-09-29)
+
+**An agent can ask it.** An MCP endpoint over the incidents, their investigations and their
+history ([#157](docs/backlog.md#157)), for coding agents and for an MCP gateway in front of them.
+See `docs/roadmap.md`, v0.11.0.
+
+### New
+- **`/mcp`, on a port of its own (8083), off by default** (`mcp.enabled`). Stateless streamable
+  HTTP. Nothing else answers on that port, and `/mcp` answers on no other.
+- **23 tools.** Find incidents (`search_incidents`, `count_incidents`, `lookup_incident_filters`),
+  read one (`get_incident`, its signals, timeline, notifications, findings with their evidence,
+  investigation, raw blobs, actions), its history (`get_incident_history`), the alert's note,
+  code fixes, the agent's status, and who the caller is. Six changes: acknowledge, assign, a note
+  entry, feedback - and with the approver role, close and re-investigate. **No tool approves,
+  denies, re-arms or sets a mode.**
+- **Tokens.** `mcp.tokens` names each consumer; values come from the Secret `secrets.mcp`, one key
+  per name, at least 32 characters. A `shared` token (a gateway's) acts as `mcp/<name>`; a
+  `person` token as its subject. With `auth.enabled`, the identity provider's tokens are
+  accepted too; a signed-in user is an approver only if `auth.approverRole` is set and held.
+- **The audit trail says where a change came from**: `origin` in the audit detail. A shared token
+  must name the person it acknowledges for; the name is stored as a claim, shown in the console
+  and on Teams cards as "an agent (litellm), for flo - unverified".
+- **Untrusted text arrives as data**: redacted, escaped and inside `<untrusted-evidence>`; every
+  answer stays under 32,000 characters and says what it cut.
+
+### Upgrading
+- **Nothing changes until `mcp.enabled` is set.** An install that does not set it has no port, no
+  Service port and no NetworkPolicy rule for it, and `/mcp` is a 404.
+- **Two migrations run at startup**: `McpReadSurface` (an index on `alert_name, opened_at`, and
+  `alert_name` filled in for incidents that predate it) and `McpWrites` (three nullable
+  `*_claimed_by` columns on `incidents`, `relayed_by_agent` on `alert_note_entries`).
+- **Admit the gateway to the port**: `mcp.networkPolicy.fromNamespaces` with its namespace. The
+  chart refuses the coder's namespace there.
+- **Registering it in an MCP gateway** is an HTTP server with the token as a bearer:
+  `url: http://<release>.<namespace>:8083/mcp`, `transport: http`, `auth_type: bearer_token`.
+- `extraEnv` may not set `Mcp__*`.
+
+### Fixed
+- **Re-investigating as the model** is refused with a reason (403), where it used to surface as an
+  unhandled exception. **Feedback** refuses the model as its author.
+
 ## v0.10.0 — unreleased (`v0.10.0-rc1` 2026-09-28)
 
 ### Fixed in rc2

@@ -153,6 +153,7 @@ Being precise about this matters, because the difference is the whole safety arg
 | `RollbackDeployment`, `PatchResources` | not built — refused, not attempted |
 | Runbook memory, OIDC approval identity, in-card approval | not built |
 | A written design language, one token set, visual regression baselines | **works** |
+| An MCP endpoint a coding agent or an MCP gateway can ask about incidents | **works**, against a gateway with tool search and a real model locally |
 
 **The wording of each row is chosen, not casual.** Detection, investigation and diagnosis are
 measured against a real cluster over ten seeded scenarios. The delivery path was measured in

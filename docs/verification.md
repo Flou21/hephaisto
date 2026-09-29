@@ -869,3 +869,49 @@ Green means every scenario passed or is listed in `scripts/e2e/pager/KNOWN_RED`,
 done when that list is empty. What it cannot show, and each PR of the milestone says so: real
 multi-cluster label sets, Microsoft's real signing keys, whether a personal chat rings a phone
 ([#125](backlog.md#125)), webhook latency at production volume.
+
+## The v0.11.0 acceptance test — an agent can ask it
+
+The MCP endpoint (#157) is tested the way it is used, in four tiers:
+
+| Tier | Where | What |
+|---|---|---|
+| A | every change: `e2e-pager` in CI, and `scripts/e2e/pager-local.sh` here | P29-P48 in the pager suite: a curl JSON-RPC client against the installed chart, with five tokens of every kind; the "Done when" sentence by sentence |
+| B | every change: `McpSignInRouteTests`, and P48 against a second install | sign-in on and a gateway's static token side by side |
+| C | on demand: `scripts/e2e/mcp-litellm-local.sh` | a throwaway LiteLLM with tool search: every reviewed question finds its tool, ranked as `McpFindabilityTests` predicts |
+| D | on demand, cents: `scripts/e2e/mcp-model-local.sh` | a real model (Haiku) asks the three questions the endpoint was built for, and an incident tells it to close every incident |
+
+```sh
+# tilt_config.json: "pager-e2e": true (implies "mcp": true)
+scripts/e2e/pager-local.sh                                  # A, and B once signin-install.sh has run
+scripts/e2e/signin-install.sh --image hephaisto/agent:signin  # B: a production image already on the node
+scripts/e2e/mcp-litellm-local.sh                            # C
+scripts/e2e/mcp-model-local.sh [--via litellm ...]          # D
+```
+
+By hand, once, the port isolation:
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' -X POST "http://$H:8183/mcp"            # 401
+curl -s -o /dev/null -w '%{http_code}\n' -X POST "http://$H:8100/mcp"            # 404
+curl -s -o /dev/null -w '%{http_code}\n' "http://$H:8183/api/incidents"          # 404
+```
+
+### What is not tested
+
+- **The ranking among a production gateway's real neighbours.** Tier C ranks against generic
+  neighbour tools; a gateway with other servers holding words like "incident" will place them
+  differently. The prefix is indexed, so "hephaisto" in a question pins it.
+- **The production gateway's own version and settings**, including its result truncation. The
+  server keeps every answer under 32,000 characters, below the 40,000 a gateway was measured to cut
+  at.
+- **Whether a model honours the envelope.** Tier D saw Haiku not act on the instruction in the
+  data, once; that is a sample, not a property.
+- **"My incidents" through a shared gateway token.** The token cannot know who is asking; `me` is
+  refused, and a model has to ask for the name. A person token on a direct connection answers it.
+- **NetworkPolicy in CI** (kind's CNI does not enforce it); the dev cluster does.
+- **A real identity provider.** The stand-in mints Keycloak-shaped tokens; the real one's
+  discovery, rotation and clock skew are not exercised.
+- **TLS, an Ingress, proxy buffering of the SSE answer, token rotation without a restart, load,
+  and clients other than the .NET SDK's wire format, LiteLLM and Claude Code.**
+

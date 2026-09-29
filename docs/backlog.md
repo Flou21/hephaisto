@@ -2581,7 +2581,8 @@ a token it is refused; with the reader role it cannot close; and no tool approve
   token cannot know who is asking, `me` is refused, and a model has to ask for a name - a person
   token for a direct connection is the way to "my".
 
-**Size.** L. Open. [Roadmap v0.11.0](roadmap.md).
+**Size.** L. Done in v0.11.0-rc1: every "Done when" sentence is a green scenario, and the
+known-red list is empty. [Roadmap v0.11.0](roadmap.md).
 
 ## Dead or unreachable code
 
