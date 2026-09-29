@@ -30,7 +30,8 @@ public sealed class UntrustedTextTests
     [Fact]
     public void Credentials_are_redacted_before_they_leave()
     {
-        var wrapped = UntrustedText.Wrap("password=hunter2 Authorization: Bearer abcdefghijklmnop postgres://app:s3cret@db:5432", 500);
+        // Split, like CodeFixRequestBuilderTests: a scanner reads a whole literal as a credential.
+        var wrapped = UntrustedText.Wrap("password=hunter2 Authorization: Bearer " + "abcdefgh" + "ijklmnop postgres://app:s3cret@db:5432", 500);
 
         wrapped.Should().NotContain("hunter2").And.NotContain("abcdefghijklmnop").And.NotContain("s3cret");
     }
