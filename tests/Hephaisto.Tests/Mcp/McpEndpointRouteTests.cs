@@ -108,8 +108,10 @@ public sealed class McpEndpointRouteTests : IAsyncLifetime
     public async Task A_right_token_lists_the_tools_in_catalogue_order()
     {
         var tools = await Tools(Reader);
+        var order = McpCatalogue.Tools.Select(t => t.Name).ToList();
 
-        tools.Should().Equal("get_status", "get_caller_identity");
+        tools.Should().Contain(["search_incidents", "get_incident", "get_status", "get_caller_identity"]);
+        tools.Select(t => order.IndexOf(t)).Should().BeInAscendingOrder("a gateway's tool search breaks ties by this order");
     }
 
     [Fact]

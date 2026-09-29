@@ -8,18 +8,14 @@
 # the entry is stale and a unit test fails (PagerSuiteTests). pager.sh --strict, the release
 # gate, fails every entry.
 P30 0.11 stage 6 (F5): the live tool list is compared to the reviewed one; no endpoint before stage 2
-P31 0.11 stage 3 (F2a): search_incidents and count_incidents
-P32 0.11 stage 3 (F2a): get_incident, get_incident_timeline, list_incident_notifications
 P33 0.11 stage 4 (F2b): get_incident_findings, fetch_evidence_blob
 P34 0.11 stage 4 (F2b): get_incident_history
-P35 0.11 stage 3 (F2a): search_incidents with assignedTo me
 P36 0.11 stage 5 (F4): the writes
 P37 0.11 stage 5 (F4): close_incident and the audit origin
 P39 0.11 stage 5 (F4): onBehalfOf and the claimed-by columns
 P40 0.11 stage 5 (F4): mayWrite
 P41 0.11 stage 4 (F2b): the envelope over findings, investigation and blobs
 P42 0.11 stage 6 (F5): the doors, asserted against the live list
-P43 0.11 stage 3 (F3): the response budget
 P44 0.11 stage 4 (F2b): get_code_fix, list_code_fixes
 P47 0.11 stage 5 (F4): reinvestigate_incident
 P48 0.11 stage 7: the sign-in install
