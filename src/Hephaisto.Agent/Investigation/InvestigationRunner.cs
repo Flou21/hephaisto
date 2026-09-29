@@ -159,6 +159,7 @@ public sealed class InvestigationRunner(
         var termination = TerminationReason.Faulted;
         string? error = null;
         int? jobTurns = null;
+        JobLoopOutcome? jobResult = null;
 
         try
         {
@@ -176,9 +177,9 @@ public sealed class InvestigationRunner(
 
                 var tools = await BuildToolsAsync(
                     llm, new InvestigationBudget(jobLoop!.BudgetFor(llm.Investigation), clock),
-                    recorder, conclusion, incident, ct).ConfigureAwait(false);
+                    recorder, conclusion, incident, ct, forJob: true).ConfigureAwait(false);
 
-                job = await jobLoop.RunAsync(new JobLoopContext
+                jobResult = job = await jobLoop.RunAsync(new JobLoopContext
                 {
                     Incident = incident,
                     InvestigationId = investigation.Id,
@@ -275,6 +276,11 @@ public sealed class InvestigationRunner(
         RecordRejections(grounding.Rejections);
 
         investigation.Findings = [.. grounding.Findings];
+
+        if (jobResult is { FellBack: false, CodeRefs.Count: > 0 } withRefs && conclusion.Value is { } concluded)
+        {
+            AttachCodeRefs(investigation.Findings, concluded, withRefs);
+        }
         investigation.Confidence = grounding.Findings.FirstOrDefault(f => f.IsPrimary)?.Confidence;
 
         activity?.SetTag("investigation.findings", grounding.Findings.Count);
@@ -461,7 +467,8 @@ public sealed class InvestigationRunner(
         InvestigationRecorder recorder,
         ConclusionHolder conclusion,
         Incident incident,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool forJob = false)
     {
         var tools = new List<AIFunction>();
 
@@ -492,7 +499,8 @@ public sealed class InvestigationRunner(
         // exhausted is told to conclude with what it has, and a `conclude` that the same
         // budget then refuses would leave it no way to say anything at all.
         tools.Add(new SafeToolDecorator(
-            CreateConcludeTool(conclusion), "internal", llm.Tools, budget: null, recorder));
+            forJob ? CreateJobConcludeTool(conclusion) : CreateConcludeTool(conclusion),
+            "internal", llm.Tools, budget: null, recorder));
 
         return tools;
     }
@@ -558,6 +566,89 @@ public sealed class InvestigationRunner(
                     BindParameter = BindConcludeParameter,
                 },
             });
+
+    /// <summary>
+    /// The <c>conclude</c> a Job sees (v0.12.0 F5): the same, plus <c>code_refs</c> - where in the
+    /// running revision's source each finding points. A separate function, so the in-process tool's
+    /// schema, and with it every cassette's prompt fingerprint, does not change.
+    /// </summary>
+    /// <remarks>
+    /// The references are not kept from here. The investigator's runner reads them off this call,
+    /// keeps only those whose file and line exist in its checkout, and reports those; the runner
+    /// here attaches the reported ones. Recorded in the step's arguments either way.
+    /// </remarks>
+    internal static AIFunction CreateJobConcludeTool(ConclusionHolder holder) =>
+        AIFunctionFactory.Create(
+            (
+                [System.ComponentModel.Description(
+                    "One or more hypotheses. Exactly one must have primary set to true.")]
+                List<FindingDraft>? findings,
+                [System.ComponentModel.Description(
+                    "A short paragraph an on-call engineer can read in ten seconds and act on.")]
+                string? summary,
+                [System.ComponentModel.Description(
+                    "Your confidence in the primary finding, 0.0 to 1.0. Be calibrated; this is "
+                    + "scored against human feedback.")]
+                double confidence,
+                [System.ComponentModel.Description(
+                    "Optional, only when you read the workload's source: where each finding points in "
+                    + "it. finding is the index into findings; path is relative to the repository "
+                    + "root. These are pointers for a human and a code fix, never evidence - cite "
+                    + "tool steps as evidence.")]
+                List<CodeRefDraft>? code_refs) =>
+            {
+                holder.Value = new ConcludeRequest
+                {
+                    Findings = findings ?? [],
+                    Summary = summary ?? string.Empty,
+                    Confidence = confidence,
+                };
+
+                return "Conclusion recorded. Your citations are now checked against what the tools "
+                    + "actually returned; any that do not match are discarded. Stop here.";
+            },
+            new AIFunctionFactoryOptions
+            {
+                Name = "conclude",
+                Description =
+                    "Ends the investigation and records your findings. Call this when you have "
+                    + "enough to state a cause, or enough to be sure you cannot. Do not simply "
+                    + "stop talking.",
+                ConfigureParameterBinding = _ => new AIFunctionFactoryOptions.ParameterBindingOptions
+                {
+                    BindParameter = BindConcludeParameter,
+                },
+            });
+
+    /// <summary>
+    /// Attaches the Job's confirmed code references to the findings that survived grounding. A
+    /// reference names a finding by its index in the conclude call; it is matched to the grounded
+    /// finding with that hypothesis, and dropped with its finding.
+    /// </summary>
+    private static void AttachCodeRefs(
+        IReadOnlyList<Finding> grounded, ConcludeRequest concluded, JobLoopOutcome job)
+    {
+        var drafts = concluded.Findings ?? [];
+
+        foreach (var reference in job.CodeRefs)
+        {
+            if (reference.Finding < 0 || reference.Finding >= drafts.Count || drafts[reference.Finding] is not { } draft)
+                continue;
+
+            var finding = grounded.FirstOrDefault(f =>
+                string.Equals(f.Hypothesis, draft.Hypothesis ?? string.Empty, StringComparison.Ordinal));
+
+            finding?.CodeRefs.Add(new CodeRef
+            {
+                Repository = job.Repository ?? string.Empty,
+                Ref = job.AnalysedRef,
+                Path = reference.Path,
+                Line = reference.Line,
+                EndLine = reference.EndLine,
+                Note = reference.Note,
+            });
+        }
+    }
 
     /// <summary>
     /// Reads one <c>conclude</c> parameter out of whatever shape the model sent.

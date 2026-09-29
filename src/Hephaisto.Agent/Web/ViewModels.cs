@@ -235,6 +235,9 @@ public sealed record FindingView
     public bool IsPrimary { get; init; }
 
     public IReadOnlyList<EvidenceView> Evidence { get; init; } = [];
+
+    /// <summary>Where it points in the running revision's source (v0.12.0 F5). Never evidence.</summary>
+    public IReadOnlyList<CodeRef> CodeRefs { get; init; } = [];
 }
 
 /// <summary>

@@ -21,6 +21,25 @@ namespace Hephaisto.Agent.Investigations;
 /// change anything.
 /// </para>
 /// </remarks>
+/// <summary>One code reference as a Job's model sends it in <c>conclude</c> (v0.12.0 F5).</summary>
+public sealed class CodeRefDraft
+{
+    [System.Text.Json.Serialization.JsonPropertyName("finding")]
+    public int Finding { get; set; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("path")]
+    public string? Path { get; set; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("line")]
+    public int Line { get; set; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("end_line")]
+    public int? EndLine { get; set; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("note")]
+    public string? Note { get; set; }
+}
+
 public sealed class ConcludeRequest
 {
     [JsonPropertyName("summary")]

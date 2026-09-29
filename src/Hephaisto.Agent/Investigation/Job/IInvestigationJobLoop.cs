@@ -54,6 +54,18 @@ public sealed record JobLoopOutcome
 
     public string? Error { get; init; }
 
+    /// <summary>
+    /// The conclude call's code references the runner confirmed in its checkout, keyed by the index
+    /// of the finding in that call. Empty without source access.
+    /// </summary>
+    public IReadOnlyList<CodeFix.Contract.InvestigateCodeRef> CodeRefs { get; init; } = [];
+
+    /// <summary>The repository the investigator read, when it read one.</summary>
+    public string? Repository { get; init; }
+
+    /// <summary>The commit it read.</summary>
+    public string? AnalysedRef { get; init; }
+
     public static JobLoopOutcome Fallback(string reason) => new() { FellBack = true, FallbackReason = reason };
 }
 

@@ -53,7 +53,7 @@ public sealed class CodeFixRequestBuilder(IOptionsMonitor<CodeFixOptions> option
                 Primary = f.IsPrimary,
                 Category = Cap(f.Category, 64),
                 Confidence = Math.Clamp(f.Confidence, 0, 1),
-                Hypothesis = Cap(Redact(f.Hypothesis), MaxHypothesisChars),
+                Hypothesis = Cap(Redact(WithCodeRefs(f)), MaxHypothesisChars),
                 Evidence = f.Evidence
                     .Take(MaxEvidencePerFinding)
                     .Select(e => new CodeFixEvidence(
@@ -94,6 +94,24 @@ public sealed class CodeFixRequestBuilder(IOptionsMonitor<CodeFixOptions> option
             InvestigationSummary = string.IsNullOrWhiteSpace(summary) ? null : Cap(Redact(summary), MaxSummaryChars),
             Plan = plan,
         };
+    }
+
+    /// <summary>
+    /// The hypothesis, followed by where an investigator with source access said it points (v0.12.0
+    /// F5), so the plan starts from the file and line. Inside the hypothesis rather than a new field:
+    /// it is model-written text like the rest of it, and the contract stays as it is.
+    /// </summary>
+    internal static string WithCodeRefs(Finding f)
+    {
+        if (f.CodeRefs.Count == 0)
+            return f.Hypothesis;
+
+        var lines = f.CodeRefs.Take(10).Select(c =>
+            $"- {c.Path}:{c.Line}{(c.EndLine is { } end ? $"-{end}" : string.Empty)}"
+            + (c.Ref is { Length: > 0 } sha ? $" at {sha}" : string.Empty)
+            + (c.Note is { Length: > 0 } note ? $" ({note})" : string.Empty));
+
+        return $"{f.Hypothesis}\n\nWhere the investigator, reading the running revision, says it points:\n{string.Join("\n", lines)}";
     }
 
     private static string BindingPath(CodeFixOptions o, CodeFixAttempt attempt) =>
