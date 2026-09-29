@@ -77,12 +77,18 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Only coder pods. Anything else in the cluster using this proxy would be borrowing an
-    # egress path that was sized, allowlisted and audited for coders alone.
+    # Only coder pods - and investigator pods (v0.12.0 F5), which need it for the model's API and,
+    # with source access, GitHub. Anything else in the cluster using this proxy would be borrowing
+    # an egress path that was sized, allowlisted and audited for these two alone.
     - from:
         - podSelector:
             matchLabels:
               {{- include "hephaisto.codeFixPodSelector" . | nindent 14 }}
+        {{- if include "hephaisto.investigatorPort" . }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: hephaisto-investigator
+        {{- end }}
       ports:
         - protocol: TCP
           port: 3128
@@ -103,5 +109,63 @@ spec:
           port: 443
         - protocol: TCP
           port: 80
+{{- end }}
+{{- with include "hephaisto.investigatorPort" . }}
+---
+{{/*
+The investigator's network (v0.12.0 F5): the coder's, plus exactly one destination - the
+agent's investigator port, where it calls the run's own tools with the run's own token.
+
+  investigator pods  ingress: none.
+                     egress:  DNS; the proxy on 3128 (the model's API, and GitHub with source
+                              access); and the agent's pods on the investigator port. Not the
+                              API server, not Postgres, not the console, not the MCP port.
+
+A separate policy on a separate label, so opening the agent for investigators opens nothing for
+coders. The agent's side admits the same label on the same port (templates/networkpolicy.yaml).
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "hephaisto.fullname" $ }}-investigator
+  namespace: {{ include "hephaisto.codeFixNamespace" $ }}
+  labels:
+    {{- include "hephaisto.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: hephaisto-investigator
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "hephaisto.codeFixEgressSelector" $ | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 3128
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Release.Namespace }}
+          podSelector:
+            matchLabels:
+              {{- include "hephaisto.selectorLabels" $ | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ . }}
 {{- end }}
 {{- end }}
