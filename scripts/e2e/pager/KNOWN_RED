@@ -7,6 +7,4 @@
 # version whose release needs the scenario green: once Directory.Build.props' floor passes it,
 # the entry is stale and a unit test fails (PagerSuiteTests). pager.sh --strict, the release
 # gate, fails every entry.
-P30 0.11 stage 6 (F5): the live tool list is compared to the reviewed one; no endpoint before stage 2
-P42 0.11 stage 6 (F5): the doors, asserted against the live list
 P48 0.11 stage 7: the sign-in install
