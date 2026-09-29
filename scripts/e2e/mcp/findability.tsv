@@ -1,0 +1,40 @@
+# query<TAB>tool the gateway's tool search must rank in its top 5 (default top_k).
+# A gateway indexes '<server>-<tool> <description>' and scores a tool by how many of the query's
+# lowercase words occur in it as substrings; ties keep registry order. McpFindabilityTests runs
+# every row alone and with neighbour-tools.json first; tier C checks the real gateway agrees.
+incident just happened check it	get_incident
+check incident 0199a1b2	get_incident
+latest open incidents grouped by severity	count_incidents
+open incidents by severity	count_incidents
+my open incidents	search_incidents
+my latest closed incidents	search_incidents
+incidents assigned to me	search_incidents
+search incidents	search_incidents
+hephaisto incidents	search_incidents
+how many incidents are open	count_incidents
+root cause of the incident	get_incident_findings
+evidence for the finding	get_incident_findings
+investigation steps and tool calls	get_investigation
+raw pod logs of an investigation step	fetch_evidence_blob
+has this alert happened before	get_incident_history
+is this alert flapping or recurring	get_incident_history
+alert labels and annotations	get_incident_signals
+who acknowledged the incident	get_incident_timeline
+audit trail of an incident	get_incident_timeline
+who was paged or notified	list_incident_notifications
+teams notifications sent	list_incident_notifications
+runbook note for an alert	get_alert_note
+code fixes pull requests	list_code_fixes
+code fix plan of an incident	get_code_fix
+agent status budget kill switch	get_status
+which namespaces have incidents	lookup_incident_filters
+spelling of an alert name	lookup_incident_filters
+whoami	get_caller_identity
+acknowledge incident	acknowledge_incident
+ack the incident	acknowledge_incident
+assign incident to me	assign_incident
+close incident	close_incident
+add a note entry for the alert	add_alert_note_entry
+feedback on the diagnosis	submit_incident_feedback
+reinvestigate incident	reinvestigate_incident
+remediation actions proposed	get_incident_actions

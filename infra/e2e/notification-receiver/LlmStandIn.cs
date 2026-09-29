@@ -26,13 +26,17 @@ namespace NotificationReceiver;
 //   POST   /llm/delay/{ms}            answer after ms milliseconds (0 = at once)
 //   POST   /llm/hold                  answer nothing until /llm/release, capped at five minutes
 //   POST   /llm/release               answer everything held, and stop holding
-public static class LlmStandIn
+//   POST   /llm/script                investigate for real where the prompt contains `match`:
+//                                     {match, tool, arguments, excerpt} - see Scripted
+//   DELETE /llm/script                forget every script
+public static partial class LlmStandIn
 {
     private const int Kept = 500;
 
     public static void Map(WebApplication app)
     {
         var requests = new ConcurrentQueue<JsonObject>();
+        var scripts = new ConcurrentQueue<JsonObject>();
         var delayMs = 0;
         var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         held.SetResult();
@@ -83,7 +87,29 @@ public static class LlmStandIn
 
             Console.WriteLine($"LLM answered a request offering {tools.Length} tools");
 
-            return Results.Json(Answer(body, tools));
+            var text = record["text"]!.GetValue<string>();
+            var script = scripts.FirstOrDefault(s => text.Contains(s["match"]!.GetValue<string>(), StringComparison.Ordinal));
+
+            return Results.Json(script is null ? Answer(body, tools) : Scripted(body, tools, script));
+        });
+
+        app.MapPost("/llm/script", async (HttpContext ctx) =>
+        {
+            if (await ReadAsync(ctx) is not JsonObject script
+                || script["match"] is null || script["tool"] is null || script["excerpt"] is null)
+            {
+                return Results.BadRequest(new { error = "a script needs match, tool, arguments and excerpt" });
+            }
+
+            scripts.Enqueue(script);
+            Console.WriteLine($"LLM scripted: {script["tool"]} for prompts containing {script["match"]}");
+            return Results.Ok(new { scripts = scripts.Count });
+        });
+
+        app.MapDelete("/llm/script", () =>
+        {
+            scripts.Clear();
+            return Results.NoContent();
         });
 
         app.MapPost("/v1/embeddings", async (HttpContext ctx) =>
@@ -225,6 +251,101 @@ public static class LlmStandIn
             usage = new { prompt_tokens = 1000, completion_tokens = 100, total_tokens = 1100 },
         };
     }
+
+    /// <summary>
+    /// An investigation that reads one thing and cites it: the script's tool first, then a
+    /// <c>conclude</c> whose evidence names the step the agent reported and quotes the script's
+    /// excerpt. Without it no finding in the suite ever survives grounding, and nothing that
+    /// reads a finding's evidence (the MCP tools, P33 and P41) has anything to read.
+    /// </summary>
+    /// <remarks>
+    /// The step id comes from the <c>[step …]</c> header the agent puts in front of every tool
+    /// result, so the citation is as honest as a model's: if the agent stops recording steps or
+    /// the excerpt is not in what the tool returned, grounding discards the finding and the
+    /// scenario reading it fails - which is the point of citing rather than asserting.
+    /// </remarks>
+    private static object Scripted(JsonNode? body, string?[] tools, JsonObject script)
+    {
+        var messages = body?["messages"] as JsonArray ?? [];
+        var tool = script["tool"]!.GetValue<string>();
+
+        bool Called(string name) => messages.Any(m => (m?["tool_calls"] as JsonArray ?? [])
+            .Any(c => c?["function"]?["name"]?.GetValue<string>() == name));
+
+        if (!tools.Contains("conclude") || Called("conclude") || (!Called(tool) && !tools.Contains(tool)))
+        {
+            return Answer(body, tools);
+        }
+
+        if (!Called(tool))
+        {
+            return Call(body, tool, script["arguments"]?.DeepClone() as JsonObject ?? []);
+        }
+
+        var step = messages
+            .Where(m => m?["role"]?.GetValue<string>() == "tool")
+            .Select(m => StepHeader().Match(Content(m?["content"])))
+            .LastOrDefault(m => m.Success)?.Groups[1].Value ?? "unknown";
+
+        return Call(body, "conclude", new JsonObject
+        {
+            ["summary"] = "The workload logs a payment failure. Concluded by the pager suite's script.",
+            ["confidence"] = 0.8,
+            ["findings"] = new JsonArray(new JsonObject
+            {
+                ["category"] = "application",
+                ["hypothesis"] = "The workload's payment call fails, as its own log says.",
+                ["confidence"] = 0.8,
+                ["primary"] = true,
+                ["evidence"] = new JsonArray(new JsonObject
+                {
+                    ["step_id"] = step,
+                    ["excerpt"] = script["excerpt"]!.GetValue<string>(),
+                }),
+            }),
+        });
+    }
+
+    private static object Call(JsonNode? body, string name, JsonObject arguments) => new
+    {
+        id = "chatcmpl-" + Guid.NewGuid().ToString("N")[..16],
+        @object = "chat.completion",
+        created = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        model = body?["model"]?.ToString() ?? "stand-in",
+        choices = new[]
+        {
+            new
+            {
+                index = 0,
+                message = new
+                {
+                    role = "assistant",
+                    content = (string?)null,
+                    tool_calls = new[]
+                    {
+                        new
+                        {
+                            id = "call_" + Guid.NewGuid().ToString("N")[..12],
+                            type = "function",
+                            function = new { name, arguments = arguments.ToJsonString() },
+                        },
+                    },
+                },
+                finish_reason = "tool_calls",
+            },
+        },
+        usage = new { prompt_tokens = 1000, completion_tokens = 100, total_tokens = 1100 },
+    };
+
+    private static string Content(JsonNode? content) => content switch
+    {
+        JsonValue v when v.TryGetValue<string>(out var s) => s,
+        JsonArray parts => string.Concat(parts.Select(p => p?["text"]?.ToString())),
+        _ => string.Empty,
+    };
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\[step ([0-9a-fA-F-]{36})\]")]
+    private static partial System.Text.RegularExpressions.Regex StepHeader();
 
     /// <summary>Every string content in the conversation, joined, so an assertion can be a grep.</summary>
     private static string Text(JsonNode? messages)

@@ -20,7 +20,9 @@
 #   scripts/e2e/run.sh              the `pager` phase of the release harness
 #
 # Usage:
-#   scripts/e2e/pager.sh [--only P05,P09] [--serial] [--list] [--results DIR]
+#   scripts/e2e/pager.sh [--only P05,P09] [--serial] [--list] [--strict] [--results DIR]
+#
+# --strict fails every scenario still on KNOWN_RED, red or not: the release gate's mode.
 #
 # Capabilities a caller grants through PAGER_CAPS (space-separated). A scenario that needs one
 # that is missing is skipped, and says so:
@@ -28,6 +30,9 @@
 #   kubectl      pager_kc runs kubectl against the agent's cluster, and only that cluster
 #   prometheus   a Prometheus evaluates the chart's rules and routes to PAGER_AM
 #   spare-agent  a second copy of the agent may be started briefly (production image only)
+#   mcp          PAGER_MCP is the agent's MCP endpoint and PAGER_MCP_TOKEN_* its five tokens
+#                (lib/mcp.sh, scripts/e2e/mcp-secrets.sh)
+#   signin       a second install with sign-in on and the identity-provider stand-in (P48)
 #
 # Exit status: the number of scenarios that failed, plus any green scenario still on KNOWN_RED.
 
@@ -47,10 +52,13 @@ source "$HERE/lib/common.sh"
 [ -n "$_pinned_context" ] && E2E_CONTEXT="$_pinned_context"
 # shellcheck source=lib/pager.sh
 source "$HERE/lib/pager.sh"
+# shellcheck source=lib/mcp.sh
+source "$HERE/lib/mcp.sh"
 
 ONLY=""
 SERIAL=false
 LIST=false
+STRICT=false
 OUT=""
 
 while [ $# -gt 0 ]; do
@@ -58,8 +66,9 @@ while [ $# -gt 0 ]; do
         --only)    ONLY="$2"; shift 2 ;;
         --serial)  SERIAL=true; shift ;;
         --list)    LIST=true; shift ;;
+        --strict)  STRICT=true; shift ;;
         --results) OUT="$2"; shift 2 ;;
-        -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,44p' "$0"; exit 0 ;;
         *)         die "unknown argument: $1" ;;
     esac
 done
@@ -89,6 +98,17 @@ for v in PAGER_API PAGER_HOOK PAGER_STANDIN; do
 done
 
 PAGER_CAPS=" ${PAGER_CAPS:-} "
+
+# A caller that grants `mcp` and forgets a token would turn fifteen scenarios into one confusing
+# failure each; say it once, here.
+case "$PAGER_CAPS" in
+    *" mcp "*)
+        for v in PAGER_MCP PAGER_MCP_TOKEN_READER PAGER_MCP_TOKEN_APPROVER PAGER_MCP_TOKEN_ONCALL \
+                 PAGER_MCP_TOKEN_SHARED PAGER_MCP_TOKEN_READONLY; do
+            [ -n "${!v:-}" ] || die "the mcp capability is granted but $v is not set (scripts/e2e/mcp-secrets.sh --print)"
+        done
+        ;;
+esac
 PAGER_NS="${PAGER_NS:-hephaisto}"
 PAGER_DEPLOY="${PAGER_DEPLOY:-hephaisto}"
 export PAGER_NS PAGER_DEPLOY
@@ -218,9 +238,11 @@ for f in $SHARED $EXCLUSIVE; do
             pass "$id $what"
         fi
     else
-        if known_red "$id"; then
+        if known_red "$id" && ! $STRICT; then
             record skip pager "$id $what" "known red: ${detail:0:400}"
             REDS=$((REDS + 1))
+        elif known_red "$id"; then
+            fail "$id $what" "known red, and --strict: ${detail:0:500}"
         else
             fail "$id $what" "${detail:0:600}"
         fi

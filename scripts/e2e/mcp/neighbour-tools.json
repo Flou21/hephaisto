@@ -1,0 +1,50 @@
+{
+  "_comment": [
+    "Tools of other servers behind the same MCP gateway, generic on purpose.",
+    "The decoy server in the stand-in (infra/e2e/notification-receiver) lists these, and the findability",
+    "check ranks Hephaisto's tools with these placed first, as a gateway's registry might."
+  ],
+  "server": "neighbours",
+  "tools": [
+    {
+      "name": "search_dashboards",
+      "description": "Search Grafana dashboards by title or tag and return their uid, title, folder and URL."
+    },
+    {
+      "name": "query_prometheus",
+      "description": "Query Prometheus with PromQL: an instant or range query over metrics, returning the time series."
+    },
+    {
+      "name": "query_loki_logs",
+      "description": "Query Loki with LogQL and return the log lines of a stream for a time range."
+    },
+    {
+      "name": "list_alert_rules",
+      "description": "List the alert rules of Grafana with their state (firing, pending, normal), labels and folder."
+    },
+    {
+      "name": "get_alert_rule_by_uid",
+      "description": "Get one alert rule by its uid: its query, condition, labels, annotations and notification settings."
+    },
+    {
+      "name": "list_contact_points",
+      "description": "List the notification contact points: where alerts are sent, such as email, a chat or a webhook."
+    },
+    {
+      "name": "search_incidents",
+      "description": "Search the incidents of the on-call tool by status, service and date, newest first."
+    },
+    {
+      "name": "get_incident",
+      "description": "Get one incident of the on-call tool by its id with its status and responders."
+    },
+    {
+      "name": "list_segments",
+      "description": "List the segments of the catalog with their id, name and status."
+    },
+    {
+      "name": "get_segment",
+      "description": "Get one segment of the catalog by id with its settings and history."
+    }
+  ]
+}

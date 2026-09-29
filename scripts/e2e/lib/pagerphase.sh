@@ -12,6 +12,7 @@
 # hephaisto_route=external away from the agent.
 
 PF_PORT_STANDIN=18110
+PF_PORT_MCP=18183
 
 pagerphase_run() {
     if ! docker image inspect hephaisto/notification-receiver:dev >/dev/null 2>&1; then
@@ -27,6 +28,12 @@ pagerphase_run() {
     kc -n "$OBS_NS" rollout status deploy/teams-stand-in --timeout=120s >/dev/null \
         || { fail "pager suite" "the stand-in did not start"; return; }
 
+    # values-pager.yaml names the MCP tokens' Secret, so it has to exist before the upgrade; and
+    # the fixture pod is what P33 and P41 read the log of.
+    KUBECONFIG="$E2E_KUBECONFIG" "$E2E_DIR/mcp-secrets.sh" --context "$E2E_CONTEXT" --namespace "$APP_NS" \
+        || { fail "pager suite" "the MCP tokens' Secret could not be made"; return; }
+    kc apply -f "$REPO/infra/e2e/pager-fixture.yaml" >/dev/null
+
     say "reconfiguring the agent for the pager suite (values-pager.yaml over the install's values)"
     helm_e2e upgrade hephaisto "$CHART_REPO/hephaisto" \
         --version "$VERSION" \
@@ -38,19 +45,23 @@ pagerphase_run() {
 
     port_forward standin "$OBS_NS" svc/teams-stand-in "$PF_PORT_STANDIN" 8080 || true
     port_forward hephaisto "$APP_NS" svc/hephaisto "$PF_PORT_APP" 8080 || true
+    port_forward mcp "$APP_NS" svc/hephaisto "$PF_PORT_MCP" 8083 || true
 
     # The token deploy_install's values name (#138), which the observability stack's
     # Alertmanager already sends.
     local token
     token=$(kc -n "$APP_NS" get secret hephaisto-webhook-token -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || true)
 
+    eval "$(KUBECONFIG="$E2E_KUBECONFIG" "$E2E_DIR/mcp-secrets.sh" --context "$E2E_CONTEXT" --namespace "$APP_NS" --print)"
+
     local status=0
+    PAGER_MCP="http://127.0.0.1:$PF_PORT_MCP/mcp" \
     PAGER_TOKEN="$token" \
     PAGER_API="http://127.0.0.1:$PF_PORT_APP" \
     PAGER_HOOK="http://127.0.0.1:$PF_PORT_APP" \
     PAGER_STANDIN="http://127.0.0.1:$PF_PORT_STANDIN" \
     PAGER_AM="http://127.0.0.1:$PF_PORT_ALERT" \
-    PAGER_CAPS="am kubectl prometheus spare-agent" \
+    PAGER_CAPS="am kubectl prometheus spare-agent mcp" \
     E2E_KUBECONFIG="$E2E_KUBECONFIG" E2E_CONTEXT="$E2E_CONTEXT" \
     RESULTS="$RESULTS" \
         "$E2E_DIR/pager.sh" --results "$WORKDIR/pager" || status=$?

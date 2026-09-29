@@ -1,0 +1,148 @@
+{
+  "_comment": [
+    "The reviewed MCP tool list, in the order the server lists it (#157).",
+    "Written by hand as the specification; the server's live list must equal it (McpToolSurfaceTests, P30).",
+    "needs: reader (any token), write (a token that may write), approver (approver role and may write).",
+    "The description is what a gateway's tool search indexes - see findability.tsv."
+  ],
+  "tools": [
+    {
+      "name": "search_incidents",
+      "needs": "reader",
+      "readOnly": true,
+      "description": "Search and list incidents, newest first. Answers what the latest open incidents are, what the latest closed incidents are, what my incidents are (assigned to a person), and which incidents match a free text query. Filter by state (open, closed, escalated, resolved), severity (critical, warning, info), cluster, namespace, alert name, workload, kind, assignee, acknowledged or unacknowledged, and a time range. Returns one compact row per incident: id, title, severity, state, alert name, namespace, workload, who it is assigned to, when it opened and ended. Paged with a cursor. Start here for any question about which incidents exist."
+    },
+    {
+      "name": "get_incident",
+      "needs": "reader",
+      "readOnly": true,
+      "description": "Get one incident by id, short id or console URL: the overview to read first when an incident just happened and somebody asks to check it. Returns title, severity, state, workload, alert name and labels, who acknowledged it and who it is assigned to, a summary of its signals, the primary finding of the investigation with the root cause hypothesis and confidence, proposed actions, code fixes, notifications sent, and which tool to call next for the details."
+    },
+    {
+      "name": "count_incidents",
+      "needs": "reader",
+      "readOnly": true,
+      "description": "Count incidents grouped by severity, state, namespace, alert name, assignee, kind, cluster, workload or day, with the latest incidents of each group as examples. Answers how many incidents are open, what the latest open incidents grouped by severity are, which alerts fire most and which namespaces are noisiest. Takes the filters of search_incidents: state (open, closed), severity, cluster, namespace, alert name, workload, assigned to and time range."
+    },
+    {
+      "name": "acknowledge_incident",
+      "needs": "write",
+      "readOnly": false,
+      "description": "Acknowledge an incident (ack): record that a person has seen it and is looking at it. This stops the escalation to the next person, so call it only when a person asked for it. Changes no state. Written to the audit trail as this token; the person named in onBehalfOf is recorded as claimed and unverified."
+    },
+    {
+      "name": "assign_incident",
+      "needs": "write",
+      "readOnly": false,
+      "description": "Assign an incident to a person, reassign it to somebody else, or unassign it back to the pool. The assignee is always named explicitly; me works only for a token that identifies a person. Does not acknowledge for them. Written to the audit trail as this token."
+    },
+    {
+      "name": "close_incident",
+      "needs": "approver",
+      "readOnly": false,
+      "description": "Close an incident: a person decided it needs no more attention. Needs the approver role. Give the reason and the resolution. A closed incident reopens by itself when its alert fires again. Written to the audit trail as this token."
+    },
+    {
+      "name": "add_alert_note_entry",
+      "needs": "write",
+      "readOnly": false,
+      "description": "Add an entry to the note of an alert name: one line of what was done this time, optionally linked to the incident. Append only; the note body itself is edited in the console. Written to the audit trail as this token and marked as relayed by an agent."
+    },
+    {
+      "name": "submit_incident_feedback",
+      "needs": "write",
+      "readOnly": false,
+      "description": "Submit feedback on the diagnosis of an incident: whether it was helpful, whether the root cause was correct or wrong, whether the incident was a false positive, and a comment. Written to the audit trail as this token."
+    },
+    {
+      "name": "reinvestigate_incident",
+      "needs": "approver",
+      "readOnly": false,
+      "description": "Re-investigate an incident (retry): put it back on the investigation queue for another attempt. This spends the model budget (tokens and cost). Needs the approver role. Refused while an investigation is running, while the kill switch is off or when the queue is full."
+    },
+    {
+      "name": "get_incident_history",
+      "needs": "reader",
+      "readOnly": true,
+      "description": "Get the history of an alert name or of a workload: how often it fired or happened before, the count of incidents per day or week, how each incident ended (resolved, closed, expired, escalated), how long it lasted, what was done each time (actions, code fixes, note entries) and the previous incidents with their root cause. Answers has this happened before, and is this alert recurring or flapping."
+    },
+    {
+      "name": "get_incident_findings",
+      "needs": "reader",
+      "readOnly": true,
+      "description": "Get the findings of an incident in full: each root cause hypothesis with its category and confidence, and the evidence excerpts (log lines, events, metrics) that ground it, with the investigation step each excerpt came from, and the summary of the plan. Use it after get_incident when the diagnosis and its evidence are needed."
+    },
+    {
+      "name": "get_investigation",
+      "needs": "reader",
+      "readOnly": true,
+      "description": "Get the investigation of an incident step by step: every model turn and tool call the agent made, the tool name and arguments, a digest of each result, duration, tokens and cost, how the investigation ended or why it failed, and a reference to the raw evidence blob of each step. Paged by steps. Use it to see how a root cause was found."
+    },
+    {
+      "name": "fetch_evidence_blob",
+      "needs": "reader",
+      "readOnly": true,
+      "description": "Fetch the raw evidence behind an investigation step by blob id: the full untruncated tool result, such as pod logs, Kubernetes events or a metrics query result. Paged by offset, with an optional text filter that returns only the matching lines. Evidence blobs expire after 30 days."
+    },
+    {
+      "name": "get_incident_signals",
+      "needs": "reader",
+      "readOnly": true,
+      "description": "Get the signals and alerts of one incident with their labels, annotations, severity, status (firing or resolved), first and last seen time and count. The raw alert details behind an incident: alertname, description, summary, runbook link and every label that Alertmanager or the Kubernetes watcher sent. Paged."
+    },
+    {
+      "name": "get_incident_actions",
+      "needs": "reader",
+      "readOnly": true,
+      "description": "Get the remediation actions proposed or executed for an incident: action type, target, risk, the policy verdict and its reasons, dry run or real, who approved it, outcome, error and the verification checks that ran afterwards. Read only: this server cannot approve, deny or execute an action."
+    },
+    {
+      "name": "get_incident_timeline",
+      "needs": "reader",
+      "readOnly": true,
+      "description": "Get the timeline and audit trail of an incident in order: every state transition with its reason, and every audit event with who did it, when, and whether it came from the console, from Teams or from an agent through MCP. Answers who acknowledged, assigned, closed or reopened an incident, and what happened when. Paged."
+    },
+    {
+      "name": "list_incident_notifications",
+      "needs": "reader",
+      "readOnly": true,
+      "description": "List the notifications sent for an incident: who was told, notified or paged and when, through which channel (Teams, webhook), for which event, to which recipients and routes, at which escalation step, and whether the delivery succeeded, is pending or failed with an error."
+    },
+    {
+      "name": "get_alert_note",
+      "needs": "reader",
+      "readOnly": true,
+      "description": "Get the note that people keep for an alert name: what the alert means, what the operators learned about it, and the entries of what was done the last times it fired, with author and date. The runbook knowledge of the team for one alert. Paged entries."
+    },
+    {
+      "name": "list_code_fixes",
+      "needs": "reader",
+      "readOnly": true,
+      "description": "List code fixes across incidents, newest first: the attempts of the coder to plan and implement a fix in a repository, filtered by state (planning, plan ready, implementing, pull request opened, failed, denied), repository, workload, incident and time range. Returns state, repository, branch, summary, pull request URL and cost. Paged. Answers which pull requests (PR) were opened and which plans wait for a person."
+    },
+    {
+      "name": "get_code_fix",
+      "needs": "reader",
+      "readOnly": true,
+      "description": "Get one code fix attempt in full by attempt id or incident id: plan summary, root cause, files to change, steps, notes, what could not be verified, pull request URL and number, whether build and tests passed, deviations from the plan, costs, timestamps, who decided on it and why it failed. Read only: a plan is approved in the console by a person."
+    },
+    {
+      "name": "get_status",
+      "needs": "reader",
+      "readOnly": true,
+      "description": "Get the status and health of the Hephaisto agent: mode and effective mode, kill switch arms, runaway latch, budget utilization of tokens and cost, counts of open and escalated incidents, running and queued investigations, the health of its connections (Postgres, Kubernetes, Grafana, notification channels, identity provider), version and commit. Read only: nothing here sets a mode."
+    },
+    {
+      "name": "lookup_incident_filters",
+      "needs": "reader",
+      "readOnly": true,
+      "description": "Look up the values that exist for a filter: the list of namespaces, alert names, clusters, workloads, assignees, kinds and code fix repositories seen in incidents, each with its count of open and total incidents. Use it to find the exact spelling of an alert name or a namespace before a search."
+    },
+    {
+      "name": "get_caller_identity",
+      "needs": "reader",
+      "readOnly": true,
+      "description": "Get who am I for this server (whoami): the identity of the token in use, whether it is a shared token or identifies a person, its role (reader or approver), its permissions, whether it may write, which tools it may call and how the word me is resolved for assigned to."
+    }
+  ]
+}

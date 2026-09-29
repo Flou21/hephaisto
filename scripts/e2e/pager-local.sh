@@ -61,7 +61,10 @@ export PAGER_STANDIN="${PAGER_STANDIN:-http://$H:8110}"
 export PAGER_AM="${PAGER_AM:-http://$H:9093}"
 export PAGER_NS="${PAGER_NS:-hephaisto}"
 export PAGER_DEPLOY="${PAGER_DEPLOY:-hephaisto}"
-export PAGER_CAPS="${PAGER_CAPS:-am kubectl prometheus}"
+export PAGER_CAPS="${PAGER_CAPS:-am kubectl prometheus mcp}"
+# The MCP endpoint (#157) - Tilt forwards 8183 to the agent's 8083 - and the five tokens
+# values-pager.yaml names, read from the Secret mcp-secrets.sh made (and makes, when missing).
+export PAGER_MCP="${PAGER_MCP:-http://$H:8183/mcp}"
 
 # The token the dev stack's Alertmanager sends, when the chart was given one.
 secret=$(kc -n "$PAGER_NS" get deploy "$PAGER_DEPLOY" \
@@ -70,6 +73,9 @@ if [ -n "$secret" ]; then
     PAGER_TOKEN=$(kc -n "$PAGER_NS" get secret "$secret" -o jsonpath='{.data.token}' | base64 -d)
     export PAGER_TOKEN
 fi
+
+eval "$(KUBECONFIG="$E2E_KUBECONFIG" "$E2E_DIR/mcp-secrets.sh" --context "$PAGER_CONTEXT" --namespace "$PAGER_NS" --print)"
+kc apply -f "$REPO/infra/e2e/pager-fixture.yaml" >/dev/null
 
 # An agent that is not in pager mode investigates with a real model and waits out real windows:
 # every scenario would fail slowly and for the wrong reason.

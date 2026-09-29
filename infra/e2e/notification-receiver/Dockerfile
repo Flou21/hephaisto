@@ -16,6 +16,7 @@ COPY infra/e2e/notification-receiver/notification-receiver.csproj infra/e2e/noti
 RUN dotnet restore infra/e2e/notification-receiver/notification-receiver.csproj
 
 COPY infra/e2e/notification-receiver/ infra/e2e/notification-receiver/
+COPY scripts/e2e/mcp/neighbour-tools.json scripts/e2e/mcp/
 RUN dotnet publish infra/e2e/notification-receiver/notification-receiver.csproj \
         --configuration Release \
         --no-restore \
