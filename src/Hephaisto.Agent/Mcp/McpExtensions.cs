@@ -143,6 +143,14 @@ public static class McpExtensions
                     try
                     {
                         var result = await next(context, ct).ConfigureAwait(false);
+
+                        // The budget, for every tool at once: a gateway cuts at a fixed length, and
+                        // an answer cut mid-JSON is worse than a shortened one that says so.
+                        foreach (var block in result.Content.OfType<TextContentBlock>())
+                        {
+                            block.Text = McpAnswer.Fit(block.Text, mcp.MaxResponseChars);
+                        }
+
                         var chars = result.Content.OfType<TextContentBlock>().Sum(t => t.Text.Length);
                         metrics?.McpCall(tool, result.IsError == true ? "error" : "ok", kind, Stopwatch.GetElapsedTime(started), chars);
                         return result;
@@ -154,6 +162,8 @@ public static class McpExtensions
                     }
                 });
             })
+            .WithTools<McpIncidentTools>()
+            .WithTools<McpIncidentDetailTools>()
             .WithTools<McpStatusTools>();
 
         return services;

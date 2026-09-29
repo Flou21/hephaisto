@@ -2532,6 +2532,16 @@ a token it is refused; with the reader role it cannot close; and no tool approve
   to the webhook's, a person token acting as the agent, the model or a shared token. The chart
   carries `mcp.*` and `secrets.mcp` with the same refusals; `extraEnv` may not set `Mcp__*`.
   Two tools so far, `get_status` and `get_caller_identity`. P38, P45 and P46 are green.
+- *Stage 3 (F2, F3).* Finding incidents: `search_incidents` (every filter a person asks by, `me`
+  and `nobody`, a time range, free text through the search index, paged by a cursor bound to its
+  filter), `count_incidents` (grouped by severity, state, namespace, alert name, assignee, kind,
+  cluster, workload, day or week, with the newest as examples), `get_incident` (by id, a prefix of
+  one - an ambiguous prefix is an error naming the candidates - or a console URL), and its
+  signals, timeline with where each change came from, notifications and the values a filter can
+  take. Whatever a workload, an alert or a model wrote goes out redacted, stripped of hiding
+  characters, escaped, cut and inside `<untrusted-evidence>`; a result record with a plain string
+  fails its call; every answer stays under 32,000 characters and says what it cut. Incidents that
+  predate `alert_name` get one from their first alert. P31, P32, P35 and P43 are green.
 
 **Size.** L. Open. [Roadmap v0.11.0](roadmap.md).
 

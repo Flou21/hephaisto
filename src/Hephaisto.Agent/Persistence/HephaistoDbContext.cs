@@ -264,6 +264,14 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
             e.HasIndex(i => i.CorrelationKey);
             e.HasIndex(i => i.OpenedAt).IsDescending();
 
+            // "Has this alert fired before" and the MCP endpoint's alert-name filters (#157): by
+            // alert name, newest first. Partial, because most incidents of a Kubernetes watch
+            // have no alert name at all.
+            e.HasIndex(i => new { i.AlertName, i.OpenedAt })
+                .IsDescending(false, true)
+                .HasDatabaseName("ix_incidents_alert_name_opened_at")
+                .HasFilter("alert_name IS NOT NULL");
+
             // Almost every hot query is "what is still live". A partial index keeps that
             // scan proportional to the open set rather than to all history, which is the
             // difference between a constant-cost dashboard and one that degrades for a year.

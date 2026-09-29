@@ -1,8 +1,8 @@
-using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 using Hephaisto.Agent.CodeFix.Contract;
 using Hephaisto.Core.CodeFix;
 using Hephaisto.Core.Domain;
+using Hephaisto.Core.Safety;
 
 namespace Hephaisto.Agent.CodeFix;
 
@@ -19,7 +19,7 @@ namespace Hephaisto.Agent.CodeFix;
 /// string it happened to read in a stack trace.
 /// </para>
 /// </remarks>
-public sealed partial class CodeFixRequestBuilder(IOptionsMonitor<CodeFixOptions> options)
+public sealed class CodeFixRequestBuilder(IOptionsMonitor<CodeFixOptions> options)
 {
     public const int MaxFindings = 10;
     public const int MaxEvidencePerFinding = 20;
@@ -113,28 +113,6 @@ public sealed partial class CodeFixRequestBuilder(IOptionsMonitor<CodeFixOptions
     }
 
     /// <summary>Scrubs the credential shapes that turn up in logs. Keeps the key, drops the value.</summary>
-    public static string Redact(string? text)
-    {
-        if (string.IsNullOrEmpty(text))
-            return string.Empty;
-
-        var scrubbed = KeyValueSecret().Replace(text, m => $"{m.Groups["key"].Value}{m.Groups["sep"].Value}[redacted]");
-        scrubbed = Bearer().Replace(scrubbed, "Bearer [redacted]");
-        scrubbed = KnownToken().Replace(scrubbed, "[redacted]");
-        scrubbed = UrlCredentials().Replace(scrubbed, "${scheme}[redacted]@");
-
-        return scrubbed;
-    }
-
-    [GeneratedRegex(@"(?<key>\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret)\b)(?<sep>\s*[=:]\s*)(?<value>""[^""]*""|'[^']*'|[^\s;,&""']+)", RegexOptions.IgnoreCase)]
-    private static partial Regex KeyValueSecret();
-
-    [GeneratedRegex(@"Bearer\s+[A-Za-z0-9._~+/=-]{8,}")]
-    private static partial Regex Bearer();
-
-    [GeneratedRegex(@"\b(?:ghp_|gho_|ghs_|github_pat_|sk-ant-|sk-|xox[bap]-|AKIA)[A-Za-z0-9_-]{8,}")]
-    private static partial Regex KnownToken();
-
-    [GeneratedRegex(@"(?<scheme>\b[a-z][a-z0-9+.-]*://)[^\s/@:]+:[^\s/@]+@", RegexOptions.IgnoreCase)]
-    private static partial Regex UrlCredentials();
+    /// <remarks>The patterns are <see cref="SecretRedactor"/>'s, shared with the MCP endpoint.</remarks>
+    public static string Redact(string? text) => SecretRedactor.Redact(text);
 }
