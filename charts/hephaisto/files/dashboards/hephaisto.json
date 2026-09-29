@@ -188,7 +188,7 @@
           "showLineNumbers": false,
           "showMiniMap": false
         },
-        "content": "# Hephaisto — agent telemetry\n\n**This dashboard is the metric spec.** The .NET agent must emit exactly the instruments below.\nNames come from `src/Hephaisto.Core/Telemetry/HephaistoTelemetry.Metrics` (OTel dotted form);\nthe Prometheus names here are what the OTel Collector's `prometheusremotewrite` exporter\nproduces from them with `add_metric_suffixes: true` (dots → `_`, monotonic sums → `_total`,\nUCUM unit appended, `{annotation}` units dropped, histograms → `_bucket`/`_sum`/`_count`).\n\n| OTel instrument | Prometheus name | Type / unit | Labels |\n|---|---|---|---|\n| `hephaisto.signals.received` | `hephaisto_signals_received_total` | Counter `{signal}` | `source`, `kind`, `severity` |\n| `hephaisto.signals.dropped` | `hephaisto_signals_dropped_total` | Counter `{signal}` | `reason` |\n| `hephaisto.incidents.opened` | `hephaisto_incidents_opened_total` | Counter `{incident}` | `kind`, `severity` |\n| `hephaisto.incidents.closed` | `hephaisto_incidents_closed_total` | Counter `{incident}` | `kind`, `severity`, `outcome` |\n| `hephaisto.incidents.open` | `hephaisto_incidents_open` | UpDownCounter `{incident}` | `kind` |\n| `hephaisto.detection.latency` | `hephaisto_detection_latency_seconds` | **Histogram** `s` — **MTTD** | `kind`, `severity` |\n| `hephaisto.incident.duration` | `hephaisto_incident_duration_seconds` | **Histogram** `s` — **MTTR** | `kind`, `outcome` |\n| `hephaisto.investigation.duration` | `hephaisto_investigation_duration_seconds` | Histogram `s` | `kind`, `termination_reason` |\n| `hephaisto.investigation.steps` | `hephaisto_investigation_steps` | Histogram `{step}` | `kind`, `termination_reason` |\n| `hephaisto.investigation.terminations` | `hephaisto_investigation_terminations_total` | Counter `{investigation}` | `reason`, `kind` |\n| `hephaisto.tool.calls` | `hephaisto_tool_calls_total` | Counter `{call}` | `tool`, `outcome` |\n| `hephaisto.tool.duration` | `hephaisto_tool_duration_seconds` | Histogram `s` | `tool`, `outcome` |\n| `hephaisto.llm.tokens` | `hephaisto_llm_tokens_total` | Counter `{token}` | `model`, `token_kind` (`input`/`output`) |\n| `hephaisto.llm.cost_usd` | `hephaisto_llm_cost_usd_total` | Counter `{USD}` | `model`, `operation` |\n| `hephaisto.llm.budget_utilization` | `hephaisto_llm_budget_utilization` | Gauge `1` (0..1+) | `scope` (`hour-tokens`/`hour-cost`/`day-cost`) |\n| `hephaisto.policy.decisions` | `hephaisto_policy_decisions_total` | Counter `{decision}` | `decision`, `action_type`, `downgraded`, `reason` (a `PolicyReasonCode` member, NEVER the verdict's prose) |\n| `hephaisto.actions.executed` | `hephaisto_actions_executed_total` | Counter `{action}` | `action_type`, `outcome`, `mode` |\n| `hephaisto.actions.rolled_back` | `hephaisto_actions_rolled_back_total` | Counter `{action}` | `action_type`, `reason` |\n| `hephaisto.notifications.enqueued` | `hephaisto_notifications_enqueued_total` | Counter `{delivery}` | `event`, `channel` |\n| `hephaisto.notifications.delivered` | `hephaisto_notifications_delivered_total` | Counter `{delivery}` | `channel`, `outcome` (`delivered`/`failed`/`suppressed`) |\n| `hephaisto.notification.latency` | `hephaisto_notification_latency_seconds` | Histogram `s` | `channel` |\n| `hephaisto.notifications.pending` | `hephaisto_notifications_pending` | Gauge `{delivery}` | *(none)* |\n| `hephaisto.kubernetes.watch_reconnects` | `hephaisto_kubernetes_watch_reconnects_total` | Counter `{reconnect}` | *(none)* |\n| `hephaisto.verification.result` | `hephaisto_verification_result_total` | Counter `{verification}` | `outcome`, `action_type` |\n| `hephaisto.grounding.rejected` | `hephaisto_grounding_rejected_total` | Counter `{rejection}` | `reason`, `stage` |\n| `hephaisto.budget.remaining` | `hephaisto_budget_remaining` | Gauge `{USD}` | `scope` |\n| `hephaisto.mode` | `hephaisto_mode` | Gauge `1` | *(none)* |\n| `hephaisto.human.feedback` | `hephaisto_human_feedback_total` | Counter `{verdict}` | `verdict`, `kind` |\n\n### Two contract decisions worth reading\n\n**Mode is an encoded gauge, not an info-metric.** `hephaisto_mode` carries the numeric value of\n`Hephaisto.Core.Domain.AgentMode` — `0=Off, 1=Observe, 2=DryRun, 3=Auto` — and every panel that shows it\nuses Grafana value mappings, so it reads as the word. There is no `hephaisto_mode_info{mode=\"...\"}`;\ndo not emit one. A single gauge cannot go stale the way a set of info series can (an info-metric leaves the\nprevious mode's series at `1` until the exporter forgets it), which is exactly the failure you cannot afford\non a kill switch. The three modes named in the brief map on as `observe → Observe(1)`, `suggest → DryRun(2)`,\n`act → Auto(3)`; `Off(0)` is the fourth, real state.\n\n**Label values are the enum member names, verbatim and case-sensitive** — `CrashLoopBackOff`, `RequireApproval`,\n`RolloutRestart`, `Concluded`. Queries here match them exactly. Emit `kind` from `SignalKind`, `decision` from\n`PolicyDecision`, `action_type` from `ActionType`, `reason` on terminations from `TerminationReason`.\nFree-text label values, per-incident ids, or pod names in labels will blow up cardinality — keep them on spans.\n\n`outcome` on actions/verification is the lower-case set `succeeded` / `failed` / `skipped` (+ `inconclusive` for\nverification). `verdict` on human feedback is `correct` / `incorrect` / `partial` / `unclear`."
+        "content": "# Hephaisto — agent telemetry\n\n**This dashboard is the metric spec.** The .NET agent must emit exactly the instruments below.\nNames come from `src/Hephaisto.Core/Telemetry/HephaistoTelemetry.Metrics` (OTel dotted form);\nthe Prometheus names here are what the OTel Collector's `prometheusremotewrite` exporter\nproduces from them with `add_metric_suffixes: true` (dots → `_`, monotonic sums → `_total`,\nUCUM unit appended, `{annotation}` units dropped, histograms → `_bucket`/`_sum`/`_count`).\n\n| OTel instrument | Prometheus name | Type / unit | Labels |\n|---|---|---|---|\n| `hephaisto.signals.received` | `hephaisto_signals_received_total` | Counter `{signal}` | `source`, `kind`, `severity` |\n| `hephaisto.signals.dropped` | `hephaisto_signals_dropped_total` | Counter `{signal}` | `reason` |\n| `hephaisto.incidents.opened` | `hephaisto_incidents_opened_total` | Counter `{incident}` | `kind`, `severity` |\n| `hephaisto.incidents.closed` | `hephaisto_incidents_closed_total` | Counter `{incident}` | `kind`, `severity`, `outcome` |\n| `hephaisto.incidents.open` | `hephaisto_incidents_open` | UpDownCounter `{incident}` | `kind` |\n| `hephaisto.detection.latency` | `hephaisto_detection_latency_seconds` | **Histogram** `s` — **MTTD** | `kind`, `severity` |\n| `hephaisto.incident.duration` | `hephaisto_incident_duration_seconds` | **Histogram** `s` — **MTTR** | `kind`, `outcome` |\n| `hephaisto.investigation.duration` | `hephaisto_investigation_duration_seconds` | Histogram `s` | `kind`, `termination_reason` |\n| `hephaisto.investigation.steps` | `hephaisto_investigation_steps` | Histogram `{step}` | `kind`, `termination_reason` |\n| `hephaisto.investigation.terminations` | `hephaisto_investigation_terminations_total` | Counter `{investigation}` | `reason`, `executor`, `kind` |\n| `hephaisto.investigation.job.fallbacks` | `hephaisto_investigation_job_fallbacks_total` | Counter | `reason`, `fallback` |\n| `hephaisto.tool.calls` | `hephaisto_tool_calls_total` | Counter `{call}` | `tool`, `outcome` |\n| `hephaisto.tool.duration` | `hephaisto_tool_duration_seconds` | Histogram `s` | `tool`, `outcome` |\n| `hephaisto.llm.tokens` | `hephaisto_llm_tokens_total` | Counter `{token}` | `model`, `token_kind` (`input`/`output`) |\n| `hephaisto.llm.cost_usd` | `hephaisto_llm_cost_usd_total` | Counter `{USD}` | `model`, `operation` |\n| `hephaisto.llm.budget_utilization` | `hephaisto_llm_budget_utilization` | Gauge `1` (0..1+) | `scope` (`hour-tokens`/`hour-cost`/`day-cost`) |\n| `hephaisto.policy.decisions` | `hephaisto_policy_decisions_total` | Counter `{decision}` | `decision`, `action_type`, `downgraded`, `reason` (a `PolicyReasonCode` member, NEVER the verdict's prose) |\n| `hephaisto.actions.executed` | `hephaisto_actions_executed_total` | Counter `{action}` | `action_type`, `outcome`, `mode` |\n| `hephaisto.actions.rolled_back` | `hephaisto_actions_rolled_back_total` | Counter `{action}` | `action_type`, `reason` |\n| `hephaisto.notifications.enqueued` | `hephaisto_notifications_enqueued_total` | Counter `{delivery}` | `event`, `channel` |\n| `hephaisto.notifications.delivered` | `hephaisto_notifications_delivered_total` | Counter `{delivery}` | `channel`, `outcome` (`delivered`/`failed`/`suppressed`) |\n| `hephaisto.notification.latency` | `hephaisto_notification_latency_seconds` | Histogram `s` | `channel` |\n| `hephaisto.notifications.pending` | `hephaisto_notifications_pending` | Gauge `{delivery}` | *(none)* |\n| `hephaisto.kubernetes.watch_reconnects` | `hephaisto_kubernetes_watch_reconnects_total` | Counter `{reconnect}` | *(none)* |\n| `hephaisto.verification.result` | `hephaisto_verification_result_total` | Counter `{verification}` | `outcome`, `action_type` |\n| `hephaisto.grounding.rejected` | `hephaisto_grounding_rejected_total` | Counter `{rejection}` | `reason`, `stage` |\n| `hephaisto.budget.remaining` | `hephaisto_budget_remaining` | Gauge `{USD}` | `scope` |\n| `hephaisto.mode` | `hephaisto_mode` | Gauge `1` | *(none)* |\n| `hephaisto.human.feedback` | `hephaisto_human_feedback_total` | Counter `{verdict}` | `verdict`, `kind` |\n\n### Two contract decisions worth reading\n\n**Mode is an encoded gauge, not an info-metric.** `hephaisto_mode` carries the numeric value of\n`Hephaisto.Core.Domain.AgentMode` — `0=Off, 1=Observe, 2=DryRun, 3=Auto` — and every panel that shows it\nuses Grafana value mappings, so it reads as the word. There is no `hephaisto_mode_info{mode=\"...\"}`;\ndo not emit one. A single gauge cannot go stale the way a set of info series can (an info-metric leaves the\nprevious mode's series at `1` until the exporter forgets it), which is exactly the failure you cannot afford\non a kill switch. The three modes named in the brief map on as `observe → Observe(1)`, `suggest → DryRun(2)`,\n`act → Auto(3)`; `Off(0)` is the fourth, real state.\n\n**Label values are the enum member names, verbatim and case-sensitive** — `CrashLoopBackOff`, `RequireApproval`,\n`RolloutRestart`, `Concluded`. Queries here match them exactly. Emit `kind` from `SignalKind`, `decision` from\n`PolicyDecision`, `action_type` from `ActionType`, `reason` on terminations from `TerminationReason`.\nFree-text label values, per-incident ids, or pod names in labels will blow up cardinality — keep them on spans.\n\n`outcome` on actions/verification is the lower-case set `succeeded` / `failed` / `skipped` (+ `inconclusive` for\nverification). `verdict` on human feedback is `correct` / `incorrect` / `partial` / `unclear`."
       },
       "transparent": false,
       "pluginVersion": "12.3.0"
@@ -1564,6 +1564,254 @@
       "pluginVersion": "12.3.0"
     },
     {
+      "id": 24,
+      "type": "timeseries",
+      "title": "Investigations by executor",
+      "description": "hephaisto_investigation_terminations_total by executor (v0.12.0 F5). InProcess is the agent's own loop; Job is Claude Code in an investigator Job; JobFallback is a Job that gave no answer, replaced by the in-process loop.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 41
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (executor) (rate(hephaisto_investigation_terminations_total[$__rate_interval]))",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "legendFormat": "{{executor}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "cps",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "InProcess"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Job"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "JobFallback"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      },
+      "pluginVersion": "12.3.0"
+    },
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "Investigator Job fallbacks by reason",
+      "description": "hephaisto_investigation_job_fallbacks_total by reason: an investigator Job gave no answer (refused, vanished, deadline, rate_limited, no_credential, unreadable, switched, failed) and the in-process loop took over. fallback=\"false\" means fallbackToInProcess is off and the investigation escalated instead.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 41
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (reason) (rate(hephaisto_investigation_job_fallbacks_total[$__rate_interval]))",
+          "refId": "A",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "legendFormat": "{{reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "cps",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      },
+      "pluginVersion": "12.3.0"
+    },
+    {
       "id": 300,
       "type": "row",
       "title": "LLM cost & budget",
@@ -1572,7 +1820,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 41
+        "y": 48
       },
       "panels": [],
       "datasource": {
@@ -1593,7 +1841,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 42
+        "y": 49
       },
       "targets": [
         {
@@ -1695,7 +1943,7 @@
         "h": 8,
         "w": 4,
         "x": 12,
-        "y": 42
+        "y": 49
       },
       "targets": [
         {
@@ -1772,7 +2020,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 42
+        "y": 49
       },
       "targets": [
         {
@@ -1849,7 +2097,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 50
+        "y": 57
       },
       "targets": [
         {
@@ -1959,7 +2207,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 50
+        "y": 57
       },
       "targets": [
         {
@@ -2057,7 +2305,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 57
+        "y": 64
       },
       "panels": [],
       "datasource": {
@@ -2078,7 +2326,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 58
+        "y": 65
       },
       "targets": [
         {
@@ -2225,7 +2473,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 58
+        "y": 65
       },
       "targets": [
         {
@@ -2348,7 +2596,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 66
+        "y": 73
       },
       "targets": [
         {
@@ -2507,7 +2755,7 @@
         "h": 8,
         "w": 6,
         "x": 12,
-        "y": 66
+        "y": 73
       },
       "targets": [
         {
@@ -2584,7 +2832,7 @@
         "h": 8,
         "w": 6,
         "x": 18,
-        "y": 66
+        "y": 73
       },
       "targets": [
         {
@@ -2657,7 +2905,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 74
+        "y": 81
       },
       "panels": [],
       "datasource": {
@@ -2678,7 +2926,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 75
+        "y": 82
       },
       "targets": [
         {
@@ -2779,7 +3027,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 75
+        "y": 82
       },
       "targets": [
         {
@@ -2917,7 +3165,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 83
+        "y": 90
       },
       "targets": [
         {
@@ -2990,7 +3238,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 83
+        "y": 90
       },
       "targets": [
         {
@@ -3067,7 +3315,7 @@
         "h": 6,
         "w": 6,
         "x": 12,
-        "y": 83
+        "y": 90
       },
       "targets": [
         {
@@ -3144,7 +3392,7 @@
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 83
+        "y": 90
       },
       "targets": [
         {
@@ -3217,7 +3465,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 89
+        "y": 96
       },
       "panels": [],
       "datasource": {
@@ -3238,7 +3486,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 90
+        "y": 97
       },
       "targets": [
         {
@@ -3398,7 +3646,7 @@
         "h": 14,
         "w": 24,
         "x": 0,
-        "y": 96
+        "y": 103
       },
       "targets": [
         {

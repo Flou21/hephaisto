@@ -306,6 +306,12 @@ public sealed class KubernetesInvestigationJobLoop(
     {
         logger.LogWarning("Investigator Job gave no answer: {Reason}", reason);
 
+        LlmInstrumentation.InvestigationJobFallbacks.Add(1, new System.Diagnostics.TagList
+        {
+            { "reason", FallbackKind(reason) },
+            { "fallback", j.FallbackToInProcess },
+        });
+
         return j.FallbackToInProcess
             ? JobLoopOutcome.Fallback(reason)
             : new JobLoopOutcome { Termination = TerminationReason.Faulted, Error = reason };
@@ -334,6 +340,20 @@ public sealed class KubernetesInvestigationJobLoop(
             $"-> Claude Code in Job {jobName}: {result.Turns} turn(s), {result.Outcome}, {result.Billing}"
                 + (result.Billing == "subscription" ? $" (notional ${result.CostUsd:F4}, not charged)" : string.Empty));
     }
+
+    /// <summary>The reason as a closed vocabulary, safe as a metric label.</summary>
+    internal static string FallbackKind(string reason) => reason switch
+    {
+        _ when reason.StartsWith("not configured", StringComparison.Ordinal) => "not_configured",
+        _ when reason.StartsWith("the Job was not started", StringComparison.Ordinal) => "launch_refused",
+        _ when reason.Contains("disappeared", StringComparison.Ordinal) => "vanished",
+        _ when reason.Contains("deadline", StringComparison.Ordinal) => "deadline",
+        _ when reason.Contains("switched mid-run", StringComparison.Ordinal) => "switched",
+        _ when reason.Contains("no readable answer", StringComparison.Ordinal) => "unreadable",
+        _ when reason.Contains("rate_limited", StringComparison.Ordinal) => "rate_limited",
+        _ when reason.Contains("no_credential", StringComparison.Ordinal) => "no_credential",
+        _ => "failed",
+    };
 
     private int LaunchesInTheLastHour()
     {

@@ -69,6 +69,12 @@ public static class HephaistoTelemetry
         public const string InvestigationSteps = "hephaisto.investigation.steps";
         public const string InvestigationTerminations = "hephaisto.investigation.terminations";
 
+        /// <summary>
+        /// Investigator Jobs that gave no answer and were replaced by the in-process loop (v0.12.0
+        /// F5), by <c>reason</c>. Registered once, in LlmInstrumentation.
+        /// </summary>
+        public const string InvestigationJobFallbacks = "hephaisto.investigation.job.fallbacks";
+
         public const string ToolCalls = "hephaisto.tool.calls";
         public const string ToolDuration = "hephaisto.tool.duration";
 

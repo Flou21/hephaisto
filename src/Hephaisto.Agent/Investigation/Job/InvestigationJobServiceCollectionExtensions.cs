@@ -49,6 +49,11 @@ public static class InvestigationJobServiceCollectionExtensions
         // decides in-process, which is v0.11. A singleton, because it counts the Jobs it started.
         services.TryAddSingleton<IInvestigationJobLoop, KubernetesInvestigationJobLoop>();
 
+        // Orphaned investigator Jobs - an agent restart leaves every running one without a session.
+        // Only with a cluster client; it checks the enable flag on every pass.
+        if (!string.Equals(configuration["Kubernetes:Enabled"], "false", StringComparison.OrdinalIgnoreCase))
+            services.AddHostedService<InvestigatorJobSweeper>();
+
         return services;
     }
 }
