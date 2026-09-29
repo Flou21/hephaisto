@@ -264,5 +264,10 @@ POST is all a gateway sends per call. P29 is its control - the stand-in's decoy 
 | `mcp-secrets.sh` | Makes the Secret with the five tokens `values-pager.yaml` names; `--print` exports them |
 | `infra/e2e/pager-fixture.yaml` | A pod whose log is an instruction; the stand-in's script mode cites it (P33, P41) |
 
+P48 needs the `signin` capability: a second, small install with sign-in on, next to the main one,
+against the identity-provider stand-in (`OidcStandIn.cs`). `signin-install.sh --image <production
+image>` puts it on the dev cluster; CI installs it from the chart it built. `pager-local.sh` grants
+`signin` whenever it finds that install.
+
 A scenario that needs an investigation with evidence scripts the model stand-in first
 (`mcp_script`, `POST /llm/script`): it reads one tool, then concludes citing the step it read.

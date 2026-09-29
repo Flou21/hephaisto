@@ -1,0 +1,69 @@
+# The second, small install the pager suite runs with sign-in on (#157, P48).
+#
+# Production runs the MCP endpoint with sign-in on AND a gateway's static token beside it; every
+# other test install has sign-in off. This one signs in against the identity-provider stand-in in
+# the notification receiver (OidcStandIn.cs), which mints tokens in Keycloak's shape, and keeps one
+# static token - the gateway's - from the Secret mcp-secrets.sh makes in its namespace.
+#
+# Installed by scripts/e2e/signin-install.sh, never by Tilt: it is a second copy of the agent with
+# its own Postgres, and nothing but P48 reads it. Its model is the stand-in, so it investigates
+# nothing at a cost.
+fullnameOverride: hephaisto-signin
+
+cluster:
+  name: pager-signin
+
+auth:
+  enabled: true
+  authority: http://teams-stand-in.hephaisto-obs:8080/oidc
+  clientId: hephaisto
+  rolesClaim: roles
+  approverRole: hephaisto-approver
+
+mcp:
+  enabled: true
+  port: 8083
+  tokens:
+    - name: pager-shared
+      kind: shared
+      role: reader
+
+secrets:
+  mcp: hephaisto-mcp
+
+postgres:
+  embedded:
+    enabled: true
+
+extraEnv:
+  # The stand-in serves its discovery document over plain http inside the cluster.
+  - name: Auth__RequireHttpsMetadata
+    value: "false"
+  - name: Llm__Provider
+    value: openai
+  - name: Llm__Endpoint
+    value: http://model-stand-in.hephaisto-obs:8080/v1
+  - name: Llm__Model
+    value: stand-in
+  - name: Llm__EmbeddingProvider
+    value: openai
+  - name: Llm__EmbeddingEndpoint
+    value: http://model-stand-in.hephaisto-obs:8080/v1
+  - name: Llm__EmbeddingModel
+    value: stand-in
+
+llm:
+  pricing:
+    - model: stand-in
+      inputPerMillionUsd: 0
+      outputPerMillionUsd: 0
+
+# Nothing to alert on and nobody to show a dashboard to: the objects would only duplicate the
+# main install's.
+alerts:
+  kubernetes: false
+  slo: false
+  watchdog: false
+  agentPresence: false
+dashboard:
+  enabled: false

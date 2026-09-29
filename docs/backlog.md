@@ -2565,6 +2565,12 @@ a token it is refused; with the reader role it cannot close; and no tool approve
   only the reader and the write facade, never the queries that also approve and re-arm; the write
   facade has exactly six methods; the reader never writes; and the coder's Job carries nothing of
   the endpoint. P30 and P42 are green.
+- *Stage 7.* With sign-in on: a signed-in user is their person and an approver only with the
+  configured role (Keycloak's realm roles or a plain `roles` claim, which the JWT handler renames
+  before anything reads it), and a Secret's token still gets in beside them. Held by a real-Kestrel
+  test with keys made in the test, and in the pager suite by a second, small install against an
+  identity-provider stand-in (`OidcStandIn.cs`, `values-signin.yaml`, `signin-install.sh`). P48 is
+  green, and the known-red list is empty.
 
 **Size.** L. Open. [Roadmap v0.11.0](roadmap.md).
 

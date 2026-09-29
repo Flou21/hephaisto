@@ -93,5 +93,20 @@ curl -sf --max-time 10 "$PAGER_STANDIN/healthz" >/dev/null || die "the stand-in 
 curl -sf --max-time 10 "$PAGER_STANDIN/v1/models" >/dev/null \
     || die "the stand-in has no model: its pod predates LlmStandIn.cs - kubectl -n hephaisto-obs rollout restart deploy/teams-stand-in"
 
+# The sign-in install (P48), when scripts/e2e/signin-install.sh has put one on this cluster. Its
+# port-forward is this script's own, so the script waits for the suite instead of exec-ing it.
+if kc -n hephaisto-signin get deploy hephaisto-signin >/dev/null 2>&1; then
+    KUBECONFIG="$E2E_KUBECONFIG" kubectl --context "$PAGER_CONTEXT" -n hephaisto-signin \
+        port-forward svc/hephaisto-signin 18283:8083 >"$RUN_DIR/pf-signin.log" 2>&1 &
+    PF_SIGNIN=$!
+    trap 'kill "$PF_SIGNIN" 2>/dev/null || true' EXIT
+    export PAGER_SIGNIN_MCP=http://127.0.0.1:18283/mcp
+    eval "$(KUBECONFIG="$E2E_KUBECONFIG" "$E2E_DIR/signin-install.sh" --context "$PAGER_CONTEXT" --print)"
+    export PAGER_CAPS="$PAGER_CAPS signin"
+    sleep 2
+fi
+
 say "cluster $PAGER_CONTEXT ($server), results in $RUN_DIR"
-exec "$E2E_DIR/pager.sh" --results "$RUN_DIR" "$@"
+status=0
+"$E2E_DIR/pager.sh" --results "$RUN_DIR" "$@" || status=$?
+exit "$status"

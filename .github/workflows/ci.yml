@@ -554,7 +554,7 @@ jobs:
   e2e-pager:
     runs-on: ubuntu-latest
     needs: [version, chart]
-    timeout-minutes: 55
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
@@ -646,6 +646,14 @@ jobs:
             --set prometheusOperator.selectorLabels.release=kube-prometheus-stack \
             --wait --timeout 6m
 
+      # A second, small agent with sign-in on and a gateway's static token beside it, against the
+      # identity-provider stand-in - how production runs the MCP endpoint (#157, P48).
+      - name: The sign-in install
+        run: |
+          scripts/e2e/signin-install.sh --context kind-hephaisto-e2e \
+            --chart "/tmp/chart/hephaisto-${{ needs.version.outputs.semver }}.tgz" \
+            --image hephaisto/agent:e2e
+
       - name: The pager suite
         run: |
           set -uo pipefail
@@ -653,6 +661,7 @@ jobs:
           kubectl -n hephaisto-obs port-forward svc/teams-stand-in 18110:8080 >/tmp/pf-standin.log 2>&1 &
           kubectl -n hephaisto-obs port-forward svc/pager-alertmanager 19093:9093 >/tmp/pf-am.log 2>&1 &
           kubectl -n hephaisto port-forward svc/hephaisto 18083:8083 >/tmp/pf-mcp.log 2>&1 &
+          kubectl -n hephaisto-signin port-forward svc/hephaisto-signin 18283:8083 >/tmp/pf-signin.log 2>&1 &
           for i in $(seq 1 30); do
             sleep 2
             curl -sf localhost:18080/healthz >/dev/null && curl -sf localhost:18110/healthz >/dev/null && break
@@ -666,7 +675,10 @@ jobs:
             done ) &
           export PAGER_API=http://localhost:18080 PAGER_HOOK=http://localhost:18080
           export PAGER_STANDIN=http://localhost:18110 PAGER_AM=http://localhost:19093
-          export PAGER_CAPS="am kubectl spare-agent mcp"
+          export PAGER_CAPS="am kubectl spare-agent mcp signin"
+          export PAGER_SIGNIN_MCP=http://localhost:18283/mcp
+          eval "$(scripts/e2e/signin-install.sh --context kind-hephaisto-e2e --print)"
+          echo "::add-mask::$PAGER_SIGNIN_STATIC"
           export PAGER_MCP=http://localhost:18083/mcp
           eval "$(scripts/e2e/mcp-secrets.sh --context kind-hephaisto-e2e --namespace hephaisto --print)"
           for v in READER APPROVER ONCALL SHARED READONLY; do
@@ -693,6 +705,7 @@ jobs:
           kubectl -n hephaisto-obs logs deploy/teams-stand-in --tail=200 || true
           kubectl -n hephaisto-obs logs deploy/pager-alertmanager --tail=100 || true
           cat /tmp/pf-mcp.log || true
+          kubectl -n hephaisto-signin logs deploy/hephaisto-signin --tail=100 || true
 
   # The safety net for the stylesheet. Nothing else in this workflow can see a visual
   # regression: the console suite asserts behaviour against a live agent, and every one of its

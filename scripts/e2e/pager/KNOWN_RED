@@ -7,4 +7,3 @@
 # version whose release needs the scenario green: once Directory.Build.props' floor passes it,
 # the entry is stale and a unit test fails (PagerSuiteTests). pager.sh --strict, the release
 # gate, fails every entry.
-P48 0.11 stage 7: the sign-in install
