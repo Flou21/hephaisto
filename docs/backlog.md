@@ -1427,8 +1427,9 @@ address read a dashboard no longer lets it inject a forged alert. And both wrong
 corrected: `secrets.grafanaMcp` is the caller bearer rather than a Grafana credential, and
 `grafanaMcp.url` needs its `/mcp` path.
 
-**The getting-started guide is what remains, and it carries to v0.13.0** (renumbered from v0.9.0, v0.10.0, v0.11.0 and then from v0.12.0) with the rest of the
-install-ergonomics work. Writing one was deferred deliberately rather than forgotten: v0.8.0's
+**The getting-started guide is what remains, and it carries with the rest of the
+install-ergonomics work.** It was renumbered from v0.9.0 through v0.12.0. **High priority, after
+[roadmap v0.12.0](roadmap.md) (2026-09-29)**, when production problems took precedence. Writing one was deferred deliberately rather than forgotten: v0.8.0's
 theme became operating the agent rather than installing it, on the grounds that installing is
 something you do once and had just been done.
 
@@ -1915,7 +1916,8 @@ ceiling, but it is what gives autonomy back after the agent was stopped for caus
 
 **Why it was not changed with [#127](#127).** That fix brought the console into line with rules
 the API already had. This would be a new rule, and who may give autonomy back is a decision
-rather than a correction. **Size.** S. Open.
+rather than a correction. **Size.** S. Open. Listed in [roadmap v0.12.0](roadmap.md) as a
+decision to take.
 
 
 ## As the only incident system
@@ -2240,7 +2242,7 @@ timestamp per step on the incident. **Size.** M. **Fixed in v0.10.0**: a route h
 incident whose clock (`ReopenedAt ?? OpenedAt`) has passed it, as `IncidentUnanswered`. Nothing
 is scheduled: `NotificationSteps.Due` compares the steps with the clock and the deliveries that
 already exist, so an acknowledgement stops them and a reopen restarts them. The loud channel of
-the original "what to do" is v0.12.0. Pager scenarios P23, P24.
+the original "what to do" is [#143](#143). Pager scenarios P23, P24.
 
 ### 143. Teams is the only way to reach a person
 
@@ -2254,8 +2256,10 @@ queue", which was the right place for them while something else did the paging.
 
 **What to do.** Decide the loud channel first; the abstraction is there and a channel is a
 `Name`, a `Describe()` and a `SendAsync`. **Decided 2026-09-28:** SMS and voice through Twilio.
-v0.10.0 is Teams only. **Moved 2026-09-29** from v0.11.0 to
-[roadmap v0.12.0](roadmap.md), when the MCP endpoint ([#157](#157)) took v0.11.0.
+v0.10.0 is Teams only. **Moved 2026-09-29** from v0.11.0 to v0.12.0 when the MCP endpoint
+([#157](#157)) took v0.11.0. **Moved again later that day**: it is out of the numbered
+milestones, **high priority, after [roadmap v0.12.0](roadmap.md)**, when production problems
+took precedence.
 **Size.** L. Open.
 
 ### 144. A rollout is an outage of the pager, and the chart calls that cheap
@@ -2583,6 +2587,102 @@ a token it is refused; with the reader role it cannot close; and no tool approve
 
 **Size.** L. Done in v0.11.0-rc1: every "Done when" sentence is a green scenario, and the
 known-red list is empty. [Roadmap v0.11.0](roadmap.md).
+
+## Found in production
+
+Opened on 2026-09-29, when the first production install was cleared by hand through the MCP
+endpoint: 326 open incidents, closed one call at a time. Counts are production's, read through
+that endpoint on the same day; line numbers are from `73d4b22`. Scheduled in
+[roadmap v0.12.0](roadmap.md) ahead of the louder channel and install ergonomics.
+
+### 158. An incident the Kubernetes watcher opens never closes
+
+**Symptom.** An incident closes by itself only when an Alertmanager resolve clears its last
+firing signal (`Pipeline/IncidentTriage.cs:395-453`). Only the webhook produces such a signal
+(`Web/AlertmanagerEndpoints.cs:256`). The Kubernetes watcher (`Kubernetes/KubernetesWatcherService.cs`,
+`Kubernetes/SignalMapper.cs`) reports a fault and never reports that it is over. A pod that
+crash-looped last week and has run cleanly since still has an open incident.
+
+The sweeper that would expire a silent incident (`Pipeline/IncidentSweeper.cs`, three days after
+the last signal) is off by default (`Options/IncidentSweepOptions.cs:62`) and has no chart value.
+
+**Evidence.** Production held 326 open incidents on 2026-09-29. That install's Alertmanager did
+not route to Hephaisto yet, so every one of the 331 incidents it had ever opened came from the
+watcher.
+
+**What to do.** The watcher reports a pod that is healthy again, running and Ready with no
+restart for a quiet period, as a resolved signal for the fingerprint it opened. Triage then
+closes the incident exactly as it does for Alertmanager. The sweeper gets a chart value. It
+stays the backstop for a pod that was deleted rather than healed. **Size.** M. Open.
+
+### 159. Readiness flapping is a lifetime count, not a rate
+
+**Symptom.** An `Unhealthy` readiness event opens a `ReadinessFlapping` incident once its
+`count` reaches four (`Kubernetes/SignalMapper.cs:542`, `:568-570`). Kubernetes keeps
+incrementing that count for as long as the event recurs, so four failures spread over a day
+count the same as four in a minute. The other detector for the same kind counts Ready
+transitions in the trend window (`:413`), and in the traced case the pod's Ready condition never
+changed: single probe timeouts, never enough in a row to flip it.
+
+**Evidence.** 217 of the 331 incidents production ever opened were `ReadinessFlapping`, two
+thirds of all of them, and the investigations of the traced one ended without evidence
+([#160](#160)).
+
+**What to do.** Count failures in a window, from the event's first and last timestamps or from
+the trend tracker (`Kubernetes/PodTrendTracker.cs`), and never call a pod whose Ready condition
+has not changed "flapping". **Size.** S. Open.
+
+### 160. `get_pod_logs` cannot read a pod with a sidecar
+
+**Symptom.** `get_pod_logs` passes a container only when the model names one
+(`Kubernetes/KubernetesReadTools.cs:312-334`). For a pod with more than one container, a service
+mesh's proxy for example, the API refuses: "a container name must be specified". The tool's
+description does not mention the parameter. The investigation spends its step budget around
+the error, and its forced conclusion cites nothing, so grounding drops it as
+`FindingWithoutEvidence` (`Investigation/GroundingVerifier.cs:126-134`).
+
+**Evidence.** Traced on a production `ReadinessFlapping` incident on 2026-09-29, on a
+mesh-injected pod: the step budget spent, no logs read, rejected by grounding. The rejection's
+detail was in no log line.
+
+**What to do.** When no container is named, read the one named by the
+`kubectl.kubernetes.io/default-container` annotation. Failing that, read the first container
+that is not a known sidecar. Say in the result which one was read, and name the others. Log
+each grounding rejection's `Detail` at Warning. **Size.** S. Open.
+
+### 161. A backlog can only be closed one incident at a time
+
+**Symptom.** Closing is per incident in the console, the API (`Web/IncidentQueries.cs:1094`) and
+MCP (`close_incident`, `Mcp/Tools/McpWriteTools.cs:48`).
+
+**Evidence.** Clearing production on 2026-09-29 took 326 separate calls through a gateway, in a
+script.
+
+**What to do.** A bulk close that takes the filters of `search_incidents`, needs the approver
+role and a reason, and offers a dry run that returns the count and a sample before anything
+closes. It writes one audit row per incident, as the single close does. Offer it in the console
+and as an MCP tool. **Size.** M. Open.
+
+### 162. Through a gateway nobody is anybody
+
+**Symptom.** A gateway holds one token for all of its users, so Hephaisto cannot tell them
+apart. `me` is refused (`Mcp/McpCaller.cs:44`, `Mcp/McpIncidentActions.cs:54`), "my incidents"
+cannot be answered, and every write is recorded as the gateway with an unverified name the
+model supplied ([#157](#157)).
+
+**What to do.** Decide first. One option is to accept a user identity the gateway forwards,
+trusted only from a gateway token that is configured to send it. The other is a person token
+per operator on a direct connection, which works today and does not scale. **Size.** M.
+Open, a decision.
+
+### 163. An incident's fields cannot be corrected
+
+**Symptom.** Title, severity and labels come from the signal, and nothing can change them: not
+the console, the API or MCP. Nothing can delete an incident either, which is probably right,
+but it has never been decided.
+
+**What to do.** Decide first which fields a person may correct, who may, and how the audit trail
+and the Teams card show a correction. **Size.** M. Open, a decision.
 
 ## Dead or unreachable code
 
