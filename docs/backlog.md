@@ -2542,6 +2542,13 @@ a token it is refused; with the reader role it cannot close; and no tool approve
   characters, escaped, cut and inside `<untrusted-evidence>`; a result record with a plain string
   fails its call; every answer stays under 32,000 characters and says what it cut. Incidents that
   predate `alert_name` get one from their first alert. P31, P32, P35 and P43 are green.
+- *Stage 4 (F2).* Going deeper: `get_incident_history` (how often an alert name or a workload
+  opened an incident, per day or week, and how each ended - closed by a person, ended by its
+  alert, resolved, expired, still open), `get_incident_findings` (each hypothesis with the excerpts
+  that ground it and the step and blob they came from), `get_investigation` (every step, paged),
+  `fetch_evidence_blob` (the raw result by reference, windowed, optionally only matching lines),
+  `get_incident_actions` (with the policy verdict), `get_alert_note`, `list_code_fixes` and
+  `get_code_fix` (an attempt in full, or why an incident has none). P33, P34, P41 and P44 are green.
 
 **Size.** L. Open. [Roadmap v0.11.0](roadmap.md).
 
