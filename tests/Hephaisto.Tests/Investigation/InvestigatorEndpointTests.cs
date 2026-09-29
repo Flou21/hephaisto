@@ -118,7 +118,7 @@ public sealed class InvestigatorEndpointTests : IAsyncLifetime
             Endpoint = Endpoint,
             TransportMode = HttpTransportMode.StreamableHttp,
             AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = $"Bearer {bearer}" },
-        }));
+        }), cancellationToken: TestContext.Current.CancellationToken);
 
     private static string Text(CallToolResult result) =>
         string.Concat(result.Content.OfType<TextContentBlock>().Select(c => c.Text));
@@ -128,7 +128,7 @@ public sealed class InvestigatorEndpointTests : IAsyncLifetime
     {
         await using var client = await ConnectAsync(token);
 
-        var tools = await client.ListToolsAsync();
+        var tools = await client.ListToolsAsync(cancellationToken: TestContext.Current.CancellationToken);
         tools.Select(t => t.Name).Should().BeEquivalentTo(["get_pod_logs", "query_prometheus", "conclude"]);
         tools.Single(t => t.Name == "get_pod_logs").JsonSchema.GetRawText().Should().Contain("namespace");
 
@@ -136,7 +136,7 @@ public sealed class InvestigatorEndpointTests : IAsyncLifetime
         {
             ["namespace"] = "hephaisto-chaos",
             ["name"] = "api-1",
-        });
+        }, cancellationToken: TestContext.Current.CancellationToken);
 
         result.IsError.Should().NotBe(true);
         var shown = Text(result);
@@ -159,7 +159,7 @@ public sealed class InvestigatorEndpointTests : IAsyncLifetime
         {
             ["namespace"] = "ns",
             ["name"] = "api-1",
-        }));
+        }, cancellationToken: TestContext.Current.CancellationToken));
 
         var concluded = await client.CallToolAsync("conclude", new Dictionary<string, object?>
         {
@@ -176,14 +176,14 @@ public sealed class InvestigatorEndpointTests : IAsyncLifetime
                     evidence = new[] { new { step_id = StepHeader.Match(logs).Groups[1].Value, excerpt = LogLine } },
                 },
             }),
-        });
+        }, cancellationToken: TestContext.Current.CancellationToken);
 
         concluded.IsError.Should().NotBe(true);
         conclusion.Value.Should().NotBeNull();
         conclusion.Value!.Findings.Should().ContainSingle().Which.Evidence.Should().ContainSingle();
 
         var steps = recorder.Steps.Count;
-        var after = await client.CallToolAsync("get_pod_logs", new Dictionary<string, object?> { ["namespace"] = "ns", ["name"] = "x" });
+        var after = await client.CallToolAsync("get_pod_logs", new Dictionary<string, object?> { ["namespace"] = "ns", ["name"] = "x" }, cancellationToken: TestContext.Current.CancellationToken);
 
         after.IsError.Should().BeTrue();
         Text(after).Should().Contain("has concluded");
@@ -199,7 +199,7 @@ public sealed class InvestigatorEndpointTests : IAsyncLifetime
         {
             ["query"] = "rate(http_requests_total[30d])",
             ["start"] = "now-1h",
-        }));
+        }, cancellationToken: TestContext.Current.CancellationToken));
 
         refused.Should().StartWith("REFUSED", "a Job is held to the same query limits as the in-process loop");
     }
@@ -217,10 +217,10 @@ public sealed class InvestigatorEndpointTests : IAsyncLifetime
         if (bearer is not null)
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
 
-        using var response = await http!.SendAsync(request);
+        using var response = await http!.SendAsync(request, TestContext.Current.CancellationToken);
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
-        (await response.Content.ReadAsStringAsync()).Should().BeEmpty("a refusal says nothing about which runs exist");
+        (await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)).Should().BeEmpty("a refusal says nothing about which runs exist");
     }
 
     [Fact]
@@ -234,7 +234,7 @@ public sealed class InvestigatorEndpointTests : IAsyncLifetime
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        using var response = await http!.SendAsync(request);
+        using var response = await http!.SendAsync(request, TestContext.Current.CancellationToken);
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
@@ -250,19 +250,19 @@ public sealed class InvestigatorEndpointTests : IAsyncLifetime
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        (await http!.SendAsync(request)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await http!.SendAsync(request, TestContext.Current.CancellationToken)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
     [Fact]
     public async Task The_route_answers_on_its_port_and_nowhere_else()
     {
-        (await http!.PostAsync($"http://127.0.0.1:{consolePort}/investigate", null)).StatusCode
+        (await http!.PostAsync($"http://127.0.0.1:{consolePort}/investigate", null, TestContext.Current.CancellationToken)).StatusCode
             .Should().Be(HttpStatusCode.NotFound, "/investigate is not on the console port");
 
-        (await http.GetAsync($"http://127.0.0.1:{investigatorPort}/healthz")).StatusCode
+        (await http.GetAsync($"http://127.0.0.1:{investigatorPort}/healthz", TestContext.Current.CancellationToken)).StatusCode
             .Should().Be(HttpStatusCode.NotFound, "the investigator port serves nothing but /investigate");
 
-        (await http.GetAsync($"http://127.0.0.1:{consolePort}/healthz")).StatusCode
+        (await http.GetAsync($"http://127.0.0.1:{consolePort}/healthz", TestContext.Current.CancellationToken)).StatusCode
             .Should().Be(HttpStatusCode.OK);
     }
 
@@ -272,7 +272,7 @@ public sealed class InvestigatorEndpointTests : IAsyncLifetime
         using var request = new HttpRequestMessage(HttpMethod.Get, Endpoint);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        (await http!.SendAsync(request)).StatusCode.Should().Be(HttpStatusCode.MethodNotAllowed);
+        (await http!.SendAsync(request, TestContext.Current.CancellationToken)).StatusCode.Should().Be(HttpStatusCode.MethodNotAllowed);
     }
 
     [Fact]
@@ -284,7 +284,7 @@ public sealed class InvestigatorEndpointTests : IAsyncLifetime
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        (await http!.SendAsync(request)).StatusCode.Should().Be(HttpStatusCode.Accepted);
+        (await http!.SendAsync(request, TestContext.Current.CancellationToken)).StatusCode.Should().Be(HttpStatusCode.Accepted);
     }
 
     [Fact]
@@ -296,8 +296,8 @@ public sealed class InvestigatorEndpointTests : IAsyncLifetime
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        using var response = await http!.SendAsync(request);
-        var body = JsonNode.Parse(await response.Content.ReadAsStringAsync())!;
+        using var response = await http!.SendAsync(request, TestContext.Current.CancellationToken);
+        var body = JsonNode.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken))!;
 
         body["id"]!.GetValue<int>().Should().Be(7);
         body["error"]!["code"]!.GetValue<int>().Should().Be(-32601);
