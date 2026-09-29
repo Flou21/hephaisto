@@ -623,5 +623,31 @@ else
 fi
 
 echo
+echo "Investigation in a Job (v0.12.0 F5) is off unless asked for, and borrows only what the coder has:"
+IJ=(--set codeFix.enabled=true --set investigation.job.enabled=true)
+renders "the investigator beside the code-fix stage" "${IJ[@]}"
+renders "the investigator with the code-fix stage's mode off" "${IJ[@]}" --set codeFix.mode=off
+refuses "the investigator without the code-fix stage it borrows from" --set investigation.job.enabled=true
+refuses "the console's port" "${IJ[@]}" --set investigation.job.port=8080
+refuses "the webhook's port" "${IJ[@]}" --set webhookPort=8081 --set investigation.job.port=8081
+refuses "the MCP port" "${IJ[@]}" "${MCP[@]}" --set investigation.job.port=8083
+refuses "an executor that is not inprocess or job" "${IJ[@]}" --set investigation.job.executor=always
+refuses "the switch set behind the chart's back" --set 'extraEnv[0].name=Investigation__Job__Executor' --set 'extraEnv[0].value=job'
+
+OFF=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative 2>&1)
+if grep -q 'Investigation__Job__\|investigationExecutor\|8084' <<<"$OFF"; then
+    fail "with investigation.job off, nothing of it is rendered"
+else
+    pass "with investigation.job off, nothing of it is rendered"
+fi
+IJ_ON=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative "${IJ[@]}" 2>&1)
+if grep -A1 'name: Investigation__Job__Executor' <<<"$IJ_ON" | grep -q 'value: "inprocess"' \
+    && grep -q 'investigationExecutor: "inprocess"' <<<"$IJ_ON"; then
+    pass "enabling it switches no investigation over by itself"
+else
+    fail "enabling investigation.job must leave both executor arms at inprocess"
+fi
+
+echo
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

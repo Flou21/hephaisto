@@ -151,7 +151,7 @@ scenario_I0() {
 # I1: the baseline. With the executor left alone the agent investigates in-process exactly as
 # v0.11 did - no Job, no executor other than in-process.
 scenario_I1() {
-    iv_set_executor ""
+    iv_use_executor inprocess InProcess >/dev/null 2>&1 || iv_set_executor inprocess
     local incident inv
     incident=$(iv_ensure_incident shop-api c15-null-deref)
     [ -n "$incident" ] || { fail "an incident on shop-api exists"; return 0; }
@@ -173,19 +173,21 @@ scenario_I1() {
         && pass "no investigator Job was created" || fail "no investigator Job was created"
 }
 
-# I2: the executor axis. Silence is in-process, a declared job is Job, anything else is
-# in-process - never an error and never Job.
+# I2: the executor axis. The ConfigMap arm takes the executor down to in-process and back; a typo
+# reads as in-process - never an error and never Job; and with the key gone the env arm decides.
 scenario_I2() {
     local view
     view=$(cf_get /api/investigations/executor)
     record_json I2-executor "$view"
     jq -e '.effective' <<<"$view" >/dev/null 2>&1 \
         || { fail "GET /api/investigations/executor answers" "$view"; return 0; }
-    pass "GET /api/investigations/executor answers"
+    pass "GET /api/investigations/executor answers" "$(jq -r .explanation <<<"$view")"
+    jq -e '.enabled == true' <<<"$view" >/dev/null \
+        && pass "investigation.job is enabled on this stack" || fail "investigation.job is enabled on this stack" "tilt_config.json investigator: true"
 
-    iv_set_executor ""
-    wait_for "silence to resolve to InProcess" 120 iv_executor_is InProcess \
-        && pass "silence is in-process" || fail "silence is in-process" "$(iv_executor)"
+    iv_set_executor inprocess
+    wait_for "inprocess to resolve to InProcess" 120 iv_executor_is InProcess \
+        && pass "the ConfigMap takes it down to in-process" || fail "the ConfigMap takes it down to in-process" "$(iv_executor)"
 
     iv_set_executor banana
     wait_for "a malformed switch to resolve to InProcess" 120 iv_executor_is InProcess \
@@ -196,6 +198,10 @@ scenario_I2() {
         && pass "job is Job" || fail "job is Job" "$(iv_executor)"
 
     iv_set_executor ""
+    wait_for "the env arm to decide once the key is gone" 120 iv_executor_is Job \
+        && pass "with the key gone the env arm (job) decides" || fail "with the key gone the env arm (job) decides" "$(iv_executor)"
+
+    iv_set_executor inprocess
 }
 
 # I3: the investigator port refuses anyone without a live run's token, and exists nowhere else.
@@ -236,7 +242,7 @@ scenario_I4() {
     local jobs_before
     jobs_before=$(iv_job_count "$incident")
 
-    inv=$(iv_investigate_once "$incident" 900) || { fail "a Job investigation completed"; iv_set_executor ""; return 0; }
+    inv=$(iv_investigate_once "$incident" 900) || { fail "a Job investigation completed"; iv_set_executor inprocess; return 0; }
     record_json I4-investigation "$inv"
     IV_JOB_INVESTIGATION="$inv"
     pass "a Job investigation completed" "$(jq -r '.terminationReason' <<<"$inv")"
@@ -268,7 +274,7 @@ scenario_I4() {
     jq -e '(.modelId // "") != ""' <<<"$inv" >/dev/null \
         && pass "the model is recorded" "$(jq -r .modelId <<<"$inv")" || fail "the model is recorded"
 
-    iv_set_executor ""
+    iv_set_executor inprocess
 }
 
 # I5: the investigator pod is as sealed as a coder's, and carries only what it needs.
@@ -350,14 +356,14 @@ scenario_I8() {
 
     local incident before job inv
     incident=$(iv_ensure_incident catalog-api c19-injection)
-    [ -n "$incident" ] || { fail "an incident on catalog-api exists"; iv_set_executor ""; return 0; }
+    [ -n "$incident" ] || { fail "an incident on catalog-api exists"; iv_set_executor inprocess; return 0; }
     before=$(iv_investigation_count "$incident")
 
     # catalog-api's script is the slow one: the Job is still running when it is deleted.
     iv_reinvestigate "$incident" >/dev/null
     find_job() { job=$(iv_running_job "$incident"); [ -n "$job" ]; }
     wait_for "a running investigator Job for catalog-api" 180 find_job \
-        || { fail "a running investigator Job for catalog-api"; iv_set_executor ""; return 0; }
+        || { fail "a running investigator Job for catalog-api"; iv_set_executor inprocess; return 0; }
     pass "a running investigator Job for catalog-api" "$job"
 
     kc -n "$CF_CODER_NS" delete job "$job" --wait=false >/dev/null
@@ -365,7 +371,7 @@ scenario_I8() {
 
     done_after() { [ "$(iv_investigation_count "$incident")" -gt "$before" ] && ! iv_is_running "$incident"; }
     wait_for "the investigation to finish after its Job was deleted" 1500 done_after \
-        || { fail "the investigation finished anyway"; iv_set_executor ""; return 0; }
+        || { fail "the investigation finished anyway"; iv_set_executor inprocess; return 0; }
     inv=$(iv_latest_investigation "$incident")
     record_json I8-investigation "$inv"
     pass "the investigation finished anyway" "$(jq -r .terminationReason <<<"$inv")"
@@ -375,7 +381,7 @@ scenario_I8() {
     jq -e '[.steps[]? | select(.kind == "LlmTurn")] | length >= 1' <<<"$inv" >/dev/null \
         && pass "the in-process model took over" || fail "the in-process model took over"
 
-    iv_set_executor ""
+    iv_set_executor inprocess
 }
 
 # I9: a second investigation while the one Job slot is taken runs in-process instead of waiting.
@@ -385,15 +391,15 @@ scenario_I9() {
     local slow fast job inv before
     slow=$(iv_ensure_incident catalog-api c19-injection)
     fast=$(iv_ensure_incident shop-api c15-null-deref)
-    [ -n "$slow" ] && [ -n "$fast" ] || { fail "incidents on catalog-api and shop-api exist"; iv_set_executor ""; return 0; }
+    [ -n "$slow" ] && [ -n "$fast" ] || { fail "incidents on catalog-api and shop-api exist"; iv_set_executor inprocess; return 0; }
 
     iv_reinvestigate "$slow" >/dev/null
     find_job() { job=$(iv_running_job "$slow"); [ -n "$job" ]; }
-    wait_for "the slow Job to hold the slot" 180 find_job || { fail "the slow Job holds the slot"; iv_set_executor ""; return 0; }
+    wait_for "the slow Job to hold the slot" 180 find_job || { fail "the slow Job holds the slot"; iv_set_executor inprocess; return 0; }
     pass "the slow Job holds the slot" "$job"
 
     before=$(iv_investigation_count "$fast")
-    inv=$(iv_investigate_once "$fast" 1500) || { fail "the second investigation completed"; iv_set_executor ""; return 0; }
+    inv=$(iv_investigate_once "$fast" 1500) || { fail "the second investigation completed"; iv_set_executor inprocess; return 0; }
     record_json I9-investigation "$inv"
     jq -e '(.executor // "InProcess") == "InProcess"' <<<"$inv" >/dev/null \
         && pass "the overflow ran in-process" || fail "the overflow ran in-process" "$(jq -r .executor <<<"$inv")"
@@ -402,7 +408,7 @@ scenario_I9() {
 
     # Leave nothing running for the next scenario.
     kc -n "$CF_CODER_NS" delete job "$job" --wait=false >/dev/null 2>&1 || true
-    iv_set_executor ""
+    iv_set_executor inprocess
 }
 
 # I10: an agent restart in the middle of a Job run leaves one investigation and no Job behind.
@@ -415,7 +421,7 @@ scenario_I10() {
 
     iv_reinvestigate "$incident" >/dev/null
     find_job() { job=$(iv_running_job "$incident"); [ -n "$job" ]; }
-    wait_for "a running investigator Job" 180 find_job || { fail "a running investigator Job"; iv_set_executor ""; return 0; }
+    wait_for "a running investigator Job" 180 find_job || { fail "a running investigator Job"; iv_set_executor inprocess; return 0; }
     pass "a running investigator Job" "$job"
 
     kc -n "$CF_APP_NS" delete pod -l app.kubernetes.io/name=hephaisto --wait=false >/dev/null
@@ -434,7 +440,7 @@ scenario_I10() {
     [ "$(iv_investigation_count "$incident")" -eq $((before + 1)) ] \
         && pass "exactly one investigation was written" || fail "exactly one investigation was written" "$before -> $(iv_investigation_count "$incident")"
 
-    iv_set_executor ""
+    iv_set_executor inprocess
 }
 
 # I11: with source access on, the investigator reads the running revision's code and names the
@@ -444,7 +450,7 @@ scenario_I11() {
 
     local incident inv
     incident=$(iv_ensure_incident shop-api c15-null-deref)
-    inv=$(iv_investigate_once "$incident" 900) || { fail "a Job investigation with source completed"; iv_set_executor ""; return 0; }
+    inv=$(iv_investigate_once "$incident" 900) || { fail "a Job investigation with source completed"; iv_set_executor inprocess; return 0; }
     record_json I11-investigation "$inv"
     pass "a Job investigation with source completed"
 
@@ -456,7 +462,7 @@ scenario_I11() {
     jq -e '[.findings[]? | .evidence[]? | .stepId] | length >= 1' <<<"$inv" >/dev/null \
         && pass "grounding evidence is still tool steps" || fail "grounding evidence is still tool steps"
 
-    iv_set_executor ""
+    iv_set_executor inprocess
 }
 
 IV_SCENARIOS="I0 I1 I2 I3 I4 I5 I6 I7 I8 I9 I10 I11"

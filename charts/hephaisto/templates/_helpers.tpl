@@ -194,6 +194,9 @@ would also make at startup - rendering is just the earlier, cheaper place to hea
   {{- if hasPrefix "Mcp__" .name -}}
     {{- fail (printf "extraEnv may not set %q: every Mcp setting is an mcp.* value (and a token is secrets.mcp), and the chart checks them together - the port against the others, a token against its Secret." .name) -}}
   {{- end -}}
+  {{- if hasPrefix "Investigation__Job__" .name -}}
+    {{- fail (printf "extraEnv may not set %q: every Investigation:Job setting is an investigation.job.* value, checked together with the port and the code-fix stage it borrows from." .name) -}}
+  {{- end -}}
   {{- if hasPrefix "CodeFix__" .name -}}
     {{- fail (printf "extraEnv may not set %q: every CodeFix setting is a codeFix.* value, and the chart validates them TOGETHER - the namespace against the RBAC it grants, mode pr against auth. A CodeFix__ entry here would win silently and skip every one of those checks." .name) -}}
   {{- end -}}
@@ -346,5 +349,36 @@ refuses to render, which is earlier and cheaper.
     {{- fail (printf "codeFix.repositories entry %q may not map to %q: its host %q is not in codeFix.allowedRepositoryHosts, so the mapping could never pass the host gate and would only ever be declined." .workload .url $host) -}}
   {{- end -}}
 {{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Investigation in a Job (v0.12.0 F5): its port, or empty when it is off. Every refusal is one the
+agent would also make at startup; rendering is the earlier, cheaper place to hear it.
+*/}}
+{{- define "hephaisto.investigatorPort" -}}
+{{- $job := (.Values.investigation | default dict).job | default dict -}}
+{{- if $job.enabled -}}
+  {{- if not .Values.codeFix.enabled -}}
+    {{- fail "investigation.job.enabled without codeFix.enabled is refused: the investigator Job borrows the coder's namespace, image, ServiceAccount, Secret and egress proxy. codeFix.mode may stay off." -}}
+  {{- end -}}
+  {{- $port := int $job.port -}}
+  {{- if eq $port 8080 -}}
+    {{- fail "investigation.job.port 8080 is refused: it is the console's. The investigator port admits investigator pods and nothing else, so it needs a port of its own." -}}
+  {{- end -}}
+  {{- if and .Values.webhookPort (eq $port (int .Values.webhookPort)) -}}
+    {{- fail (printf "investigation.job.port %d is refused: it is webhookPort." $port) -}}
+  {{- end -}}
+  {{- with include "hephaisto.teamsActionsPort" . -}}
+    {{- if eq $port (int .) -}}
+      {{- fail (printf "investigation.job.port %d is refused: it is the Teams actions port." $port) -}}
+    {{- end -}}
+  {{- end -}}
+  {{- with include "hephaisto.mcpPort" . -}}
+    {{- if eq $port (int .) -}}
+      {{- fail (printf "investigation.job.port %d is refused: it is the MCP port. The public endpoint and the investigator's are different surfaces with different callers." $port) -}}
+    {{- end -}}
+  {{- end -}}
+  {{- $port -}}
 {{- end -}}
 {{- end -}}

@@ -168,7 +168,7 @@ major-upgrade Prometheus on some future `tilt up`.
 
 ### Code fixes on the dev cluster (v0.9.0)
 
-Four `tilt_config.json` toggles, all off in the sample:
+Six `tilt_config.json` toggles, all off in the sample:
 
 | Toggle | Default | Effect |
 |---|---|---|
@@ -176,6 +176,8 @@ Four `tilt_config.json` toggles, all off in the sample:
 | `coder-mode` | `plan` | `codeFix.mode`: `off`, `plan` or `pr` |
 | `coder-sdk` | `fake` | `fake` is a $0 scripted run with the `gh` shim; `real` spends subscription quota |
 | `local-llm` | = `coder` | the agent investigates with Ollama at `host-ip:11434` (`gpt-oss:120b`) instead of Gemini |
+| `investigator` | `false` | v0.12.0 F5: layers `values-dev-investigator.yaml` - `investigation.job.enabled`, executor `job`. Needs `coder` |
+| `investigator-sdk` | `fake` | `fake` is a $0 scripted investigator that still calls the agent's real investigator endpoint; `real` spends quota |
 
 Three things that are not obvious:
 

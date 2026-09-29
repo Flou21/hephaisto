@@ -6,6 +6,8 @@
   "coder": false,
   "coder-mode": "plan",
   "coder-sdk": "fake",
+  "investigator": false,
+  "investigator-sdk": "fake",
   "local-llm": false,
   "teams-bot": "off",
   "pager-e2e": false,

@@ -45,3 +45,11 @@ data:
   # Always present, "off" when codeFix.enabled is false, so the fast way down exists before the
   # feature is ever turned on.
   codeFixMode: {{ if .Values.codeFix.enabled }}{{ .Values.codeFix.mode | toString | quote }}{{ else }}"off"{{ end }}
+  {{- if .Values.investigation.job.enabled }}
+
+  # Investigation in a Job (v0.12.0 F5): inprocess | job, most restrictive winning against
+  # Investigation__Job__Executor. A deleted or unrecognised key reads as inprocess, which works
+  # without any of the Job's infrastructure. Rendered only when investigation.job.enabled, so an
+  # install that never turns it on renders exactly what it did before.
+  investigationExecutor: {{ .Values.investigation.job.executor | toString | quote }}
+  {{- end }}
