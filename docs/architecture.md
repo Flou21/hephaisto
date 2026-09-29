@@ -403,6 +403,27 @@ The **first** message for a workload always goes out. A cooldown that could swal
 message would be a worse failure than the storm it prevents. The repeats are suppressed, counted
 on the row, and stated on the next message that does go out.
 
+## Being asked: the MCP endpoint
+
+A coding agent, or an MCP gateway in front of many of them, asks Hephaisto about incidents over
+MCP (#157): streamable HTTP at `/mcp`, stateless, on a port of its own (8083) and off by default.
+
+- **Who is asking.** A token from a Secret - `shared` (a gateway's, used for many people; it acts as
+  `mcp/<name>`) or `person` (acts as its subject) - or, with sign-in on, the identity provider's
+  bearer token. Compared hashed, in constant time, every token every time. The scheme and its
+  three policies are the endpoint's own; the console's allow-all never applies.
+- **What it offers.** 23 tools in a reviewed order (`scripts/e2e/mcp/tools.golden.json`): 17 reads
+  and 6 changes - acknowledge, assign, a note entry, feedback, and for an approver close and
+  re-investigate. No tool approves or denies an action or a code-fix plan, re-arms or sets a mode.
+  Tools reach incidents only through `McpIncidentReader` and `McpIncidentActions`; the writes go
+  through the console's own `IncidentQueries` methods, with an `origin` in the audit detail.
+- **What it hands over.** Anything a workload, an alert or a model wrote is redacted, stripped of
+  control and bidi characters, escaped and cut inside `<untrusted-evidence>`; an answer record with
+  a plain string fails its call; every answer stays under 32,000 characters and says what it cut.
+- **Being found.** Behind a gateway with tool search a model sees only a search tool, which
+  scores each tool's name and description by the words of the question. The descriptions are
+  written for that, and `McpFindabilityTests` ranks 36 real questions the way the gateway does.
+
 ## Persistence: Postgres 17 + pgvector
 
 Four demands that rarely co-occur, all served by one process:

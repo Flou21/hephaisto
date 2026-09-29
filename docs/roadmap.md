@@ -1551,6 +1551,12 @@ approves, denies, re-arms or sets a mode.
 
 Every sentence above is a scenario, and the suite is green with an empty known-red list.
 
+**Status (2026-09-29): shipped in `v0.11.0-rc1`.** F0-F5 are in, the pager suite is green with an
+empty known-red list, and two tiers beyond it ran locally: a LiteLLM gateway with tool search
+ranks every reviewed question's tool as the unit tests predict, and a real model (Haiku) answered
+the three questions the endpoint was built for without following the instruction planted in an
+incident. `docs/verification.md` lists what is not tested.
+
 ### What is explicitly not in v0.11.0
 
 - **Approving anything.** A caller here is a model by construction. The two doors a person is
