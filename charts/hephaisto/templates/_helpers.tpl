@@ -125,6 +125,52 @@ the whole argument for the route is that exposing that port exposes nothing else
 {{- end -}}
 {{- end -}}
 
+{{/*
+The MCP endpoint (#157): its port, or empty when it is off. Every refusal here is one the agent
+would also make at startup - rendering is just the earlier, cheaper place to hear it.
+*/}}
+{{- define "hephaisto.mcpPort" -}}
+{{- $mcp := .Values.mcp | default dict -}}
+{{- if $mcp.enabled -}}
+  {{- $port := int $mcp.port -}}
+  {{- if eq $port 8080 -}}
+    {{- fail "mcp.port 8080 is refused: it is the console's. The endpoint needs a port of its own, so that admitting a gateway to it admits nothing else." -}}
+  {{- end -}}
+  {{- if and .Values.webhookPort (eq $port (int .Values.webhookPort)) -}}
+    {{- fail (printf "mcp.port %d is refused: it is webhookPort." $port) -}}
+  {{- end -}}
+  {{- with include "hephaisto.teamsActionsPort" . -}}
+    {{- if eq $port (int .) -}}
+      {{- fail (printf "mcp.port %d is refused: it is the Teams actions port." $port) -}}
+    {{- end -}}
+  {{- end -}}
+  {{- $tokens := $mcp.tokens | default list -}}
+  {{- if and (not $tokens) (not (and .Values.auth.enabled $mcp.acceptIdentityProviderTokens)) -}}
+    {{- fail "mcp.enabled is refused with no mcp.tokens and no sign-in (auth.enabled with mcp.acceptIdentityProviderTokens): the endpoint is never open to nobody." -}}
+  {{- end -}}
+  {{- if and $tokens (not .Values.secrets.mcp) -}}
+    {{- fail "mcp.tokens without secrets.mcp is refused. The chart never takes a token as a value; it references the Secret that holds one key per token name." -}}
+  {{- end -}}
+  {{- $names := list -}}
+  {{- range $tokens -}}
+    {{- if has .name $names -}}
+      {{- fail (printf "mcp.tokens naming %q twice is refused. Each consumer gets its own token." .name) -}}
+    {{- end -}}
+    {{- $names = append $names .name -}}
+    {{- if and (eq (.kind | default "shared") "person") (not .subject) -}}
+      {{- fail (printf "mcp.tokens %q, a person token with no subject, is refused: whose actions would it record?" .name) -}}
+    {{- end -}}
+  {{- end -}}
+  {{- if .Values.codeFix.enabled -}}
+    {{- $coder := include "hephaisto.codeFixNamespace" . -}}
+    {{- if has $coder (($mcp.networkPolicy | default dict).fromNamespaces | default list) -}}
+      {{- fail (printf "mcp.networkPolicy.fromNamespaces listing %s, the coder's namespace, is refused: the coder Job gets no route to the agent (#157)." $coder) -}}
+    {{- end -}}
+  {{- end -}}
+  {{- $port -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "hephaisto.validateExtraEnv" -}}
 {{- $reserved := list
       "GEMINI_API_KEY" "LLM_API_KEY" "HEPHAISTO_MODE" "HEPHAISTO_SWITCHES_DIR"
@@ -144,6 +190,9 @@ the whole argument for the route is that exposing that port exposes nothing else
 {{- range .Values.extraEnv -}}
   {{- if has .name $reserved -}}
     {{- fail (printf "extraEnv may not set %q: the chart manages it, and because extraEnv is appended last a duplicate would silently win rather than conflict. Use the corresponding value instead - mode, secrets.llm, secrets.grafanaMcp, grafanaMcp.url, postgres.* or codeFix.* - or, for an indexed list, the next free index." .name) -}}
+  {{- end -}}
+  {{- if hasPrefix "Mcp__" .name -}}
+    {{- fail (printf "extraEnv may not set %q: every Mcp setting is an mcp.* value (and a token is secrets.mcp), and the chart checks them together - the port against the others, a token against its Secret." .name) -}}
   {{- end -}}
   {{- if hasPrefix "CodeFix__" .name -}}
     {{- fail (printf "extraEnv may not set %q: every CodeFix setting is a codeFix.* value, and the chart validates them TOGETHER - the namespace against the RBAC it grants, mode pr against auth. A CodeFix__ entry here would win silently and skip every one of those checks." .name) -}}

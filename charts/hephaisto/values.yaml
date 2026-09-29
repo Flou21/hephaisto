@@ -183,6 +183,54 @@ policy:
 webhookPort: 0
 
 # -----------------------------------------------------------------------------------------
+# The MCP endpoint (#157) - OFF by default
+# -----------------------------------------------------------------------------------------
+# Lets a coding agent, or an MCP gateway in front of many of them, ask about incidents: search,
+# one incident in full, its investigation and evidence, the history of an alert, code fixes, the
+# agent's status - and acknowledge, assign, add a note entry, give feedback, and (approver role)
+# close or re-investigate. Nothing here approves an action or a code-fix plan, re-arms or sets a
+# mode: those tools do not exist.
+#
+# MCP over stateless streamable HTTP at /mcp, on this port only. Nothing else answers here, and
+# /mcp answers nowhere else. Never without a credential: a token below, or with auth.enabled the
+# identity provider's bearer token (acceptIdentityProviderTokens).
+#
+# One token per consumer. Its value lives in the Secret named by secrets.mcp under the token's
+# name, at least 32 characters (`openssl rand -hex 24`); a shorter one refuses to start.
+#
+#   kind: shared   a gateway's token, sent for every one of its users. It acts as itself -
+#                  the audit trail says mcp/<name> - and a person a model names is recorded as
+#                  claimed, unverified. `assignedTo: me` means nobody for it.
+#   kind: person   one person's token; acts as `subject`.
+#   role           reader, or approver (adds closing and re-investigating)
+#   mayWrite       false makes it read-only
+#
+# An MCP gateway registers it like any HTTP MCP server, with the token as its bearer:
+#
+#   hephaisto:
+#     url: http://hephaisto.hephaisto:8083/mcp
+#     transport: http
+#     auth_type: bearer_token
+#     auth_value: os.environ/HEPHAISTO_MCP_TOKEN
+mcp:
+  enabled: false
+  port: 8083
+  acceptIdentityProviderTokens: true
+  tokens: []
+  #  - name: gateway
+  #    kind: shared
+  #    role: reader
+  #  - name: flo
+  #    kind: person
+  #    subject: flo
+  #    role: approver
+  # Who may reach the port, when networkPolicy.enabled. Nobody by default: list the gateway's
+  # namespace. Never the coder's - the chart refuses it, the coder gets no route to the agent.
+  networkPolicy:
+    fromNamespaces: []
+    fromCIDRs: []
+
+# -----------------------------------------------------------------------------------------
 # Authentication - OFF by default, and it fails CLOSED when on
 # -----------------------------------------------------------------------------------------
 # With this off there is no authentication of any kind: anyone who can reach the console port
@@ -292,6 +340,8 @@ secrets:
   #             authorization:
   #               credentials_file: /etc/alertmanager/secrets/hephaisto-webhook-token/token
   webhookToken: ""
+  # The MCP endpoint's tokens: one key per mcp.tokens[].name. Only read when mcp.enabled.
+  mcp: ""
   # The HMAC key the outbound webhook signs with: key `signingSecret`. Only read when
   # notifications.webhook.signed is true.
   notificationWebhook: hephaisto-notification-webhook

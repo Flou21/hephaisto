@@ -573,5 +573,55 @@ else
 fi
 
 echo
+echo "The MCP endpoint (#157): its own port, never open to nobody, tokens only from a Secret:"
+MCP=(--set mcp.enabled=true --set 'mcp.tokens[0].name=gateway' --set secrets.mcp=hephaisto-mcp)
+renders "an endpoint with a token from a Secret" "${MCP[@]}"
+refuses "an endpoint nobody could ever sign in to" --set mcp.enabled=true
+refuses "tokens with no Secret to read them from" --set mcp.enabled=true --set 'mcp.tokens[0].name=gateway'
+refuses "a token's value in the values file" "${MCP[@]}" --set 'mcp.tokens[0].value=hunter2hunter2hunter2hunter2hunter2'
+refuses "the console's port" "${MCP[@]}" --set mcp.port=8080
+refuses "the webhook's port" "${MCP[@]}" --set webhookPort=8081 --set mcp.port=8081
+refuses "the Teams actions port" "${MCP[@]}" "${BOT[@]}" --set notifications.teamsBot.actions.enabled=true --set mcp.port=8082
+refuses "one token name twice" "${MCP[@]}" --set 'mcp.tokens[1].name=gateway'
+refuses "a person token for nobody" "${MCP[@]}" --set 'mcp.tokens[1].name=flo' --set 'mcp.tokens[1].kind=person'
+refuses "a token name the audit trail cannot carry" --set mcp.enabled=true --set 'mcp.tokens[0].name=Gate Way' --set secrets.mcp=hephaisto-mcp
+refuses "a role that does not exist" "${MCP[@]}" --set 'mcp.tokens[0].role=admin'
+refuses "the switch set behind the chart's back" --set 'extraEnv[0].name=Mcp__Enabled' --set 'extraEnv[0].value=true'
+refuses "a token set behind the chart's back" --set 'extraEnv[0].name=Mcp__Tokens__0__Value' --set 'extraEnv[0].value=x'
+refuses "the coder's namespace admitted to the endpoint" "${MCP[@]}" --set codeFix.enabled=true \
+    --set 'mcp.networkPolicy.fromNamespaces[0]=hephaisto-coder'
+renders "an endpoint with no token behind sign-in" --set mcp.enabled=true --set auth.enabled=true \
+    --set auth.authority=https://idp.example/realms/r --set auth.clientId=hephaisto
+
+OFF=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative 2>&1)
+if grep -q 'Mcp__\|name: mcp\|8083' <<<"$OFF"; then
+    fail "with the endpoint off, nothing of it is rendered"
+else
+    pass "with the endpoint off, nothing of it is rendered"
+fi
+
+ON=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative "${MCP[@]}" --set networkPolicy.enabled=true \
+    --set 'mcp.networkPolicy.fromNamespaces[0]=gateway' 2>&1)
+MCP_RULE=$(printf '%s' "$ON" | python3 -c '
+import sys, yaml
+for doc in yaml.safe_load_all(sys.stdin):
+    if doc and doc.get("kind") == "NetworkPolicy" and doc["metadata"]["name"].endswith("-ingress"):
+        for rule in doc["spec"]["ingress"]:
+            ports = [p["port"] for p in rule.get("ports", [])]
+            if 8083 in ports:
+                print(",".join(str(p) for p in ports))
+')
+if [ "$MCP_RULE" = "8083" ]; then
+    pass "the rule that opens the MCP port opens nothing else"
+else
+    fail "the MCP port must be opened by a rule of its own, found: '$MCP_RULE'"
+fi
+if grep -q 'Mcp__Tokens__0__Value' <<<"$ON" && ! grep -A4 'Mcp__Tokens__0__Value' <<<"$ON" | grep -q '^ *value:'; then
+    pass "a token reaches the agent by secretKeyRef, never as a value"
+else
+    fail "a token must reach the agent by secretKeyRef"
+fi
+
+echo
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

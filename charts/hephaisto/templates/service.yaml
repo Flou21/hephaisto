@@ -31,3 +31,10 @@ spec:
       targetPort: teams-actions
       protocol: TCP
     {{- end }}
+    {{- with include "hephaisto.mcpPort" . }}
+    # The MCP endpoint (#157). A gateway registers http://<this service>:{{ . }}/mcp.
+    - name: mcp
+      port: {{ . }}
+      targetPort: mcp
+      protocol: TCP
+    {{- end }}

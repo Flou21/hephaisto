@@ -40,6 +40,7 @@ pagerphase_run() {
         --namespace "$APP_NS" \
         --reuse-values \
         --values "$E2E_DIR/values-pager.yaml" \
+        --values "$E2E_DIR/values-mcp.yaml" \
         --wait --timeout 8m >/dev/null \
         || { fail "pager suite" "helm upgrade with values-pager.yaml failed"; return; }
 

@@ -42,12 +42,20 @@ public sealed class HephaistoMetrics : IDisposable
     private readonly Counter<long> notificationsEnqueued;
     private readonly Counter<long> notificationsDelivered;
     private readonly Histogram<double> notificationLatency;
+    private readonly Counter<long> mcpCalls;
+    private readonly Histogram<double> mcpCallDuration;
+    private readonly Histogram<int> mcpResponseChars;
+    private readonly Counter<long> mcpAuthRefused;
 
     public HephaistoMetrics(IMeterFactory meterFactory)
     {
         meter = meterFactory.Create(HephaistoTelemetry.MeterName);
 
         signalsReceived   = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.SignalsReceived);
+        mcpCalls          = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.McpCalls);
+        mcpCallDuration   = meter.CreateHistogram<double>(HephaistoTelemetry.Metrics.McpCallDuration, unit: "s");
+        mcpResponseChars  = meter.CreateHistogram<int>(HephaistoTelemetry.Metrics.McpResponseChars);
+        mcpAuthRefused    = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.McpAuthRefused);
         signalsDropped    = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.SignalsDropped);
         incidentsOpened   = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.IncidentsOpened);
         incidentsReopened = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.IncidentsReopened);
@@ -290,6 +298,18 @@ public sealed class HephaistoMetrics : IDisposable
         notificationLatency.Record(
             elapsed.TotalSeconds,
             new KeyValuePair<string, object?>("channel", channel));
+
+    /// <summary>One MCP tool call, when it answered.</summary>
+    public void McpCall(string tool, string outcome, string tokenKind, TimeSpan elapsed, int chars)
+    {
+        mcpCalls.Add(1, new("tool", tool), new("outcome", outcome), new("token_kind", tokenKind));
+        mcpCallDuration.Record(elapsed.TotalSeconds, new KeyValuePair<string, object?>("tool", tool));
+        mcpResponseChars.Record(chars, new KeyValuePair<string, object?>("tool", tool));
+    }
+
+    /// <summary>A request whose credential did not get in. Never tagged with the credential.</summary>
+    public void McpAuthRefused(string reason) =>
+        mcpAuthRefused.Add(1, new KeyValuePair<string, object?>("reason", reason));
 
     public void Dispose() => meter.Dispose();
 }

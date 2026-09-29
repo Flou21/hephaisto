@@ -4,6 +4,7 @@ using Hephaisto.Agent.Demo;
 using Microsoft.Extensions.AI;
 using Hephaisto.Agent.Kubernetes;
 using Hephaisto.Agent.Llm;
+using Hephaisto.Agent.Mcp;
 using Hephaisto.Agent.Notifications;
 using Hephaisto.Agent.Notifications.TeamsBot;
 using Hephaisto.Agent.Persistence;
@@ -55,6 +56,10 @@ builder.Services.AddHephaistoAuth(builder.Configuration);
 // own Bot Framework scheme and its own port, and nothing about the console's authentication changes.
 builder.Services.AddHephaistoTeamsBotActions(builder.Configuration);
 
+// The MCP endpoint (#157). Off unless Mcp:Enabled; its own port, its own token scheme, and a fixed
+// list of tools that never approves, re-arms or sets a mode.
+builder.Services.AddHephaistoMcp(builder.Configuration);
+
 // The demo seed. Inert unless Demo:Seed is set, and refuses on a database that already holds
 // an incident - so it ships in the image without being a thing a real install can trip over.
 builder.Services.AddHephaistoDemo(builder.Configuration);
@@ -105,6 +110,9 @@ if (app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<Hephai
 // On the Teams actions port, only the one route answers - before anything else can.
 app.UseTeamsBotActionsPort();
 
+// On the MCP port, only /mcp answers; /mcp answers nowhere else.
+app.UseMcpPort();
+
 app.MapStaticAssets();
 app.UseAntiforgery();
 
@@ -115,6 +123,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapHephaistoEndpoints();
+app.MapHephaistoMcp();
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode()

@@ -471,6 +471,19 @@ jobs:
           done
           exit $fail
 
+
+      # The MCP endpoint is off unless asked for (#157): an install that never mentioned it has no
+      # port for it, and /mcp answers like any path that does not exist.
+      - name: The MCP endpoint is off by default
+        run: |
+          set -euo pipefail
+          ports=$(kubectl -n hephaisto get svc hephaisto -o jsonpath='{.spec.ports[*].port}')
+          case " $ports " in *" 8083 "*) echo "::error::the Service has the MCP port without mcp.enabled"; exit 1 ;; esac
+          kubectl -n hephaisto port-forward svc/hephaisto 18181:8080 >/tmp/pf-mcp-off.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf localhost:18181/healthz >/dev/null && break; sleep 1; done
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:18181/mcp -H 'Content-Type: application/json' --data '{}')
+          [ "$code" = 404 ] || { echo "::error::/mcp answered $code with the endpoint off"; exit 1; }
+          echo "ok: no MCP port on the Service, and /mcp is 404"
       - name: The published image runs read-only and non-root
         run: |
           set -euo pipefail
@@ -623,6 +636,7 @@ jobs:
             "/tmp/chart/hephaisto-${{ needs.version.outputs.semver }}.tgz" \
             --namespace hephaisto \
             -f scripts/e2e/values-pager.yaml \
+            -f scripts/e2e/values-mcp.yaml \
             --set cluster.name=pager-e2e \
             --set secrets.webhookToken=hephaisto-webhook-token \
             --set image.repository=hephaisto/agent \

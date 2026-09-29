@@ -1,0 +1,43 @@
+# The MCP endpoint (#157) as the pager suite and the dev cluster run it.
+#
+# Layered after values-pager.yaml by every place the suite runs (the CI job, pager-local.sh
+# through Tilt, the release harness's pager phase), and by Tilt alone when tilt_config.json says
+# "mcp": true. The five tokens' values are in the Secret hephaisto-mcp, which
+# scripts/e2e/mcp-secrets.sh makes - never here.
+#
+#   token            kind     role      writes   acts as
+#   pager-reader     person   reader    yes      pager-reader
+#   pager-approver   person   approver  yes      pager-approver
+#   pager-oncall     person   reader    yes      pager-oncall
+#   pager-shared     shared   reader    yes      mcp/pager-shared   (what a gateway holds)
+#   pager-readonly   shared   reader    no       mcp/pager-readonly
+mcp:
+  enabled: true
+  port: 8083
+  tokens:
+    - name: pager-reader
+      kind: person
+      subject: pager-reader
+      role: reader
+    - name: pager-approver
+      kind: person
+      subject: pager-approver
+      role: approver
+    - name: pager-oncall
+      kind: person
+      subject: pager-oncall
+      role: reader
+    - name: pager-shared
+      kind: shared
+      role: reader
+    - name: pager-readonly
+      kind: shared
+      role: reader
+      mayWrite: false
+  # The dev cluster enforces NetworkPolicy. The gateway tier's LiteLLM runs in hephaisto-obs
+  # (infra/e2e/litellm.yaml); the suite itself comes in through port-forwards, which no policy sees.
+  networkPolicy:
+    fromNamespaces: [hephaisto-obs]
+
+secrets:
+  mcp: hephaisto-mcp

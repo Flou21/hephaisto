@@ -88,6 +88,28 @@ spec:
           port: {{ . }}
     {{- end }}
 
+    {{- with include "hephaisto.mcpPort" . }}
+    {{- $from := $.Values.mcp.networkPolicy | default dict }}
+    {{- if or $from.fromNamespaces $from.fromCIDRs }}
+    # The MCP endpoint (#157), from the namespaces and addresses listed - a gateway's - and to that
+    # port alone. Nobody by default: a token is the endpoint's authentication, and this is what
+    # keeps anything else in the cluster from getting to try one.
+    - from:
+        {{- range $from.fromNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+        {{- end }}
+        {{- range $from.fromCIDRs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ . }}
+    {{- end }}
+    {{- end }}
+
     {{- if .Values.networkPolicy.extraIngressCIDRs }}
     # Kubelet probes arrive from the NODE's address, which no namespaceSelector can match, so
     # on some clusters the liveness probe fails without an entry here and the pod is killed in

@@ -87,6 +87,9 @@ config.define_string('teams-bot',   args = False, usage = 'Teams bot: off | stan
 # window a scenario waits out becomes seconds. It overrides local-llm and teams-bot, because the
 # suite needs both to be the stand-in; switch it off to get the dev agent back on the local model.
 config.define_bool('pager-e2e',     args = False, usage = 'Layer scripts/e2e/values-pager.yaml: stand-in model and Teams, short windows')
+# The MCP endpoint (#157) with the pager suite's five tokens (scripts/e2e/values-mcp.yaml), forwarded
+# to 8183. On whenever pager-e2e is, because the suite's P29-P48 ask it.
+config.define_bool('mcp',           args = False, usage = 'The MCP endpoint on 8183, with the tokens mcp-secrets.sh makes')
 cfg = config.parse()
 
 HOST    = cfg.get('host', 'localhost')
@@ -102,6 +105,7 @@ coder_sdk     = cfg.get('coder-sdk', 'fake')
 local_llm     = cfg.get('local-llm', coder)
 teams_bot     = cfg.get('teams-bot', 'off')
 pager_e2e     = cfg.get('pager-e2e', False)
+mcp           = cfg.get('mcp', False) or pager_e2e
 if pager_e2e:
     local_llm = False
     teams_bot = 'stand-in'
@@ -408,6 +412,17 @@ if agent:
     if pager_e2e:
         chart_values.append('scripts/e2e/values-pager.yaml')
 
+    # The MCP endpoint's tokens live in a Secret the chart only names; make it before the agent,
+    # or the pod waits on a secretKeyRef that does not resolve. An existing Secret is kept.
+    if mcp:
+        chart_values.append('scripts/e2e/values-mcp.yaml')
+        local_resource(
+            'mcp-secrets',
+            cmd = 'scripts/e2e/mcp-secrets.sh --context %s' % k8s_context(),
+            deps = ['scripts/e2e/mcp-secrets.sh'],
+            labels = ['agent'],
+        )
+
     if teams_bot == 'stand-in' and not pager_e2e:
         chart_values.append('charts/hephaisto/values-dev-teams-bot.yaml')
         chart_set.append('notifications.baseUrl=http://%s:8100' % HOST)
@@ -480,8 +495,8 @@ if agent:
 
     k8s_resource(
         'hephaisto',
-        port_forwards = [tailnet(8100, 8080)],
-        resource_deps = ['hephaisto-postgres'] + (['kube-prometheus-stack'] if observability else []),
+        port_forwards = [tailnet(8100, 8080)] + ([tailnet(8183, 8083)] if mcp else []),
+        resource_deps = ['hephaisto-postgres'] + (['kube-prometheus-stack'] if observability else []) + (['mcp-secrets'] if mcp else []),
         labels = ['agent'],
     )
 
