@@ -175,4 +175,10 @@ public sealed class AlertNoteEntry
     public string Text { get; set; } = string.Empty;
 
     public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>
+    /// Written through the MCP endpoint (#157): a model relayed it, whoever it says it is for. Such
+    /// an entry is shown, and marked, but never handed to the investigator as what operators wrote.
+    /// </summary>
+    public bool RelayedByAgent { get; set; }
 }

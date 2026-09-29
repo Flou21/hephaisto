@@ -2549,6 +2549,17 @@ a token it is refused; with the reader role it cannot close; and no tool approve
   `fetch_evidence_blob` (the raw result by reference, windowed, optionally only matching lines),
   `get_incident_actions` (with the policy verdict), `get_alert_note`, `list_code_fixes` and
   `get_code_fix` (an attempt in full, or why an incident has none). P33, P34, P41 and P44 are green.
+- *Stage 5 (F4).* The six writes: acknowledge, assign, a line on an alert's note, feedback, and -
+  with the approver role - close and re-investigate, each through the console's own method. The
+  audit row's actor is the token's person, or the token itself (`mcp/<name>`) for a shared token,
+  and its detail carries `origin` (source `mcp`, token, kind, role, client, claimed person). A
+  shared token must name who asked before it may acknowledge, since that stops the paging; the
+  name is stored beside the actor (`*_claimed_by`) and shown in the console and on Teams cards as
+  "an agent (litellm), for flo - unverified". A person's token naming somebody else is refused.
+  A note entry an agent relayed is marked and never handed to the investigator as an operator's
+  words. Two gaps closed on the way: feedback refuses the model as its author, and a
+  re-investigation the model asks for is a 403 with a reason instead of a 500.
+  P36, P37, P39, P40 and P47 are green.
 
 **Size.** L. Open. [Roadmap v0.11.0](roadmap.md).
 

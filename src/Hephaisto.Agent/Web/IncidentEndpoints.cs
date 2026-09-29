@@ -229,6 +229,14 @@ public static class IncidentEndpoints
             });
         }
 
+        if (Hephaisto.Core.IncidentStateMachine.IsForbiddenGranter(submittedBy))
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["submittedBy"] = [$"'{submittedBy}' may not give feedback: it is a person's verdict on the agent."],
+            });
+        }
+
         var feedback = await queries.AddFeedbackAsync(
             id,
             request.Helpful,
@@ -289,6 +297,7 @@ public static class IncidentEndpoints
             ReinvestigateOutcome.IllegalState => TypedResults.Conflict(result),
             ReinvestigateOutcome.QueueFull => TypedResults.Json(result, statusCode: 503),
             ReinvestigateOutcome.Disabled => TypedResults.Json(result, statusCode: 503),
+            ReinvestigateOutcome.ForbiddenActor => TypedResults.Json(result, statusCode: 403),
             _ => TypedResults.Json(result, statusCode: 500),
         };
     }

@@ -269,9 +269,12 @@ public sealed class IncidentQueries(
             ClosedAt = incident.ClosedAt,
             AcknowledgedBy = incident.AcknowledgedBy,
             AcknowledgedAt = incident.AcknowledgedAt,
+            AcknowledgedClaimedBy = incident.AcknowledgedClaimedBy,
             AssignedTo = incident.AssignedTo,
             AssignedBy = incident.AssignedBy,
             AssignedAt = incident.AssignedAt,
+            AssignedClaimedBy = incident.AssignedClaimedBy,
+            ClosedClaimedBy = incident.ClosedClaimedBy,
             Signals = [.. incident.Signals.OrderBy(s => s.FirstSeen).Select(MapSignal)],
             Transitions = [.. incident.Events.OrderBy(e => e.At).Select(MapTransition)],
             Investigations = [.. investigations.Select(MapInvestigation)],
@@ -442,10 +445,18 @@ public sealed class IncidentQueries(
         bool falsePositive,
         string? comment,
         string submittedBy,
-        CancellationToken ct)
+        CancellationToken ct,
+        AuditOrigin? origin = null)
     {
         var actor = submittedBy?.Trim() ?? string.Empty;
         ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+
+        // A verdict on a diagnosis is the one quality signal not written by the model; the model
+        // writing it would be grading itself.
+        if (IncidentStateMachine.IsForbiddenGranter(actor))
+        {
+            throw new ArgumentException($"'{actor}' may not give feedback: it is a person's verdict on the agent.", nameof(submittedBy));
+        }
 
         await using var scope = scopes.CreateAsyncScope();
         var sp = scope.ServiceProvider;
@@ -490,9 +501,9 @@ public sealed class IncidentQueries(
             Summary = $"{(helpful ? "helpful" : "not helpful")}"
                 + (falsePositive ? ", false positive" : string.Empty)
                 + (rootCauseCorrect is { } rc ? $", root cause {(rc ? "correct" : "wrong")}" : string.Empty),
-            Detail = JsonSerializer.Serialize(
+            Detail = AuditOrigin.Attach(JsonSerializer.Serialize(
                 new { helpful, rootCauseCorrect, falsePositive, comment = feedback.Comment },
-                AuditJson),
+                AuditJson), origin),
         });
 
         await db.SaveChangesAsync(ct);
@@ -532,10 +543,22 @@ public sealed class IncidentQueries(
     public async Task<ReinvestigateResult> RequestReinvestigationAsync(
         Guid incidentId,
         string requestedBy,
-        CancellationToken ct)
+        CancellationToken ct,
+        AuditOrigin? origin = null)
     {
         var actor = requestedBy?.Trim() ?? string.Empty;
         ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+
+        // Refused here with a reason, rather than by the state machine's exception, which reached
+        // the caller as a 500.
+        if (IncidentStateMachine.IsForbiddenGranter(actor))
+        {
+            return new ReinvestigateResult
+            {
+                Outcome = ReinvestigateOutcome.ForbiddenActor,
+                Detail = $"'{actor}' may not request a re-investigation: a retry spends real tokens and needs a person to answer for it.",
+            };
+        }
 
         // AgentMode.Off is documented as "ingest nothing, investigate nothing. Full stop." A
         // hand-started retry is the one investigation a human can begin directly, so it is
@@ -609,7 +632,7 @@ public sealed class IncidentQueries(
             IncidentId = incidentId,
             Actor = actor,
             Summary = $"re-investigation requested from {from}",
-            Detail = JsonSerializer.Serialize(new { from = from.ToString(), mode = mode.Effective.ToString() }, AuditJson),
+            Detail = AuditOrigin.Attach(JsonSerializer.Serialize(new { from = from.ToString(), mode = mode.Effective.ToString() }, AuditJson), origin),
         });
 
         await db.SaveChangesAsync(ct);
@@ -1072,7 +1095,8 @@ public sealed class IncidentQueries(
         Guid incidentId,
         string closedBy,
         string reason,
-        CancellationToken ct)
+        CancellationToken ct,
+        AuditOrigin? origin = null)
     {
         var actor = closedBy?.Trim() ?? string.Empty;
         ArgumentException.ThrowIfNullOrWhiteSpace(actor);
@@ -1118,6 +1142,7 @@ public sealed class IncidentQueries(
         // Before any save touches the graph - the appended event carries a client-assigned
         // Guid.CreateVersion7 key, so EF would otherwise emit an UPDATE matching nothing.
         db.TrackNewIncidentChildren(incident, eventsBefore);
+        incident.ClosedClaimedBy = origin?.ClaimedBy;
 
         audit.Enlist(new AuditEvent
         {
@@ -1126,7 +1151,7 @@ public sealed class IncidentQueries(
             IncidentId = incidentId,
             Actor = actor,
             Summary = $"closed from {from}",
-            Detail = JsonSerializer.Serialize(new { from = from.ToString(), reason = note }, AuditJson),
+            Detail = AuditOrigin.Attach(JsonSerializer.Serialize(new { from = from.ToString(), reason = note }, AuditJson), origin),
         });
 
         await db.SaveChangesAsync(ct);
@@ -1161,7 +1186,8 @@ public sealed class IncidentQueries(
         Guid incidentId,
         string? assignee,
         string assignedBy,
-        CancellationToken ct)
+        CancellationToken ct,
+        AuditOrigin? origin = null)
     {
         var actor = assignedBy?.Trim() ?? string.Empty;
         ArgumentException.ThrowIfNullOrWhiteSpace(actor);
@@ -1200,6 +1226,8 @@ public sealed class IncidentQueries(
             return new LifecycleResult { Outcome = LifecycleOutcome.IllegalState, Detail = ex.Message };
         }
 
+        incident.AssignedClaimedBy = origin?.ClaimedBy;
+
         audit.Enlist(new AuditEvent
         {
             At = clock.UtcNow,
@@ -1209,8 +1237,8 @@ public sealed class IncidentQueries(
             Summary = incident.AssignedTo is null
                 ? $"unassigned (was {previous ?? "nobody"})"
                 : $"assigned to {incident.AssignedTo}",
-            Detail = JsonSerializer.Serialize(
-                new { assignedTo = incident.AssignedTo, previous }, AuditJson),
+            Detail = AuditOrigin.Attach(JsonSerializer.Serialize(
+                new { assignedTo = incident.AssignedTo, previous }, AuditJson), origin),
         });
 
         await db.SaveChangesAsync(ct);
@@ -1241,7 +1269,8 @@ public sealed class IncidentQueries(
     public async Task<LifecycleResult> AcknowledgeIncidentAsync(
         Guid incidentId,
         string actorName,
-        CancellationToken ct)
+        CancellationToken ct,
+        AuditOrigin? origin = null)
     {
         var actor = actorName?.Trim() ?? string.Empty;
         ArgumentException.ThrowIfNullOrWhiteSpace(actor);
@@ -1281,6 +1310,8 @@ public sealed class IncidentQueries(
             return new LifecycleResult { Outcome = LifecycleOutcome.IllegalState, Detail = ex.Message };
         }
 
+        incident.AcknowledgedClaimedBy = origin?.ClaimedBy;
+
         audit.Enlist(new AuditEvent
         {
             At = clock.UtcNow,
@@ -1288,8 +1319,8 @@ public sealed class IncidentQueries(
             IncidentId = incidentId,
             Actor = actor,
             Summary = previous is null ? "acknowledged" : $"taken over from {previous}",
-            Detail = JsonSerializer.Serialize(
-                new { state = incident.State.ToString(), previousHolder = previous }, AuditJson),
+            Detail = AuditOrigin.Attach(JsonSerializer.Serialize(
+                new { state = incident.State.ToString(), previousHolder = previous }, AuditJson), origin),
         });
 
         await db.SaveChangesAsync(ct);
@@ -1405,7 +1436,8 @@ public sealed class IncidentQueries(
         string? text,
         Guid? incidentId,
         string actorName,
-        CancellationToken ct)
+        CancellationToken ct,
+        AuditOrigin? origin = null)
     {
         if (Refuse(alertName, actorName) is { } refused)
         {
@@ -1442,6 +1474,8 @@ public sealed class IncidentQueries(
             return new AlertNoteResult { Outcome = AlertNoteOutcome.Invalid, Detail = ex.Message };
         }
 
+        entry.RelayedByAgent = origin is not null;
+
         // Added explicitly: the entry's key is client-assigned, so change detection through the
         // navigation would state it as existing and emit an UPDATE that matches nothing.
         db.AlertNoteEntries.Add(entry);
@@ -1453,7 +1487,7 @@ public sealed class IncidentQueries(
             IncidentId = incidentId,
             Actor = actor,
             Summary = $"added to the note for {name}",
-            Detail = JsonSerializer.Serialize(new { alertName = name, entryId = entry.Id, text = entry.Text }, AuditJson),
+            Detail = AuditOrigin.Attach(JsonSerializer.Serialize(new { alertName = name, entryId = entry.Id, text = entry.Text }, AuditJson), origin),
         });
 
         await db.SaveChangesAsync(ct);
@@ -1591,6 +1625,9 @@ public enum ReinvestigateOutcome
 
     /// <summary>The kill switch is Off.</summary>
     Disabled = 5,
+
+    /// <summary>The requester is the agent or the model, which may not start its own retry.</summary>
+    ForbiddenActor = 6,
 }
 
 /// <summary>What happened to an approve or deny request.</summary>

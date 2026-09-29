@@ -80,8 +80,11 @@ public sealed class InvestigationCoordinator(
                 return null;
             }
 
+            // Not an entry an agent relayed through MCP (#157): the prompt presents entries as
+            // what operators wrote, and a model's words must not come back to the investigator as
+            // a person's experience.
             note.Entries = await db.AlertNoteEntries.AsNoTracking()
-                .Where(e => e.AlertName == name)
+                .Where(e => e.AlertName == name && !e.RelayedByAgent)
                 .OrderByDescending(e => e.CreatedAt)
                 .Take(PromptComposer.MaxNoteEntries)
                 .ToListAsync(ct)

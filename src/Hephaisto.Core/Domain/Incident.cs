@@ -119,6 +119,18 @@ public sealed class Incident
 
     public DateTimeOffset? AssignedAt { get; set; }
 
+    /// <summary>
+    /// Who an agent said it acknowledged, assigned or closed for, when the actor is a shared MCP
+    /// token (#157). A claim, never verified: a gateway's token is sent for all of its users, so
+    /// the name is only what the model was told. Rendered beside the actor as unverified, and
+    /// cleared when a person does the same thing themselves.
+    /// </summary>
+    public string? AcknowledgedClaimedBy { get; set; }
+
+    public string? AssignedClaimedBy { get; set; }
+
+    public string? ClosedClaimedBy { get; set; }
+
     public List<Signal> Signals { get; set; } = [];
 
     public List<Investigation> Investigations { get; set; } = [];

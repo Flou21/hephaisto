@@ -471,6 +471,13 @@ public sealed record IncidentDetailView
 
     public DateTimeOffset? AssignedAt { get; init; }
 
+    /// <summary>Who an agent said it acted for, beside a shared MCP token's actor (#157). Unverified.</summary>
+    public string? AcknowledgedClaimedBy { get; init; }
+
+    public string? AssignedClaimedBy { get; init; }
+
+    public string? ClosedClaimedBy { get; init; }
+
     /// <summary>
     /// Mirrors <c>Incident.IsOpen</c>, projected because the view model is not the entity and the
     /// console needs the same answer.

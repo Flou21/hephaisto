@@ -43,6 +43,11 @@ public sealed record TeamsIncident
 
     public string? ClosedBy { get; init; }
 
+    /// <summary>Who an agent said it acknowledged or closed for (#157). Shown as unverified.</summary>
+    public string? AcknowledgedClaimedBy { get; init; }
+
+    public string? ClosedClaimedBy { get; init; }
+
     /// <summary>The resolution note, when there is one.</summary>
     public string? Summary { get; init; }
 
@@ -500,7 +505,7 @@ public static class TeamsBotCards
         // the agent. Saying "Resolved" here would credit it with a fix it never made (#129).
         IncidentState.Closed when incident.ClosedBy == Hephaisto.Core.IncidentStateMachine.AlertmanagerActor =>
             "Cleared - the alert stopped firing",
-        IncidentState.Closed when !string.IsNullOrWhiteSpace(incident.ClosedBy) => $"Closed by {incident.ClosedBy}",
+        IncidentState.Closed when !string.IsNullOrWhiteSpace(incident.ClosedBy) => $"Closed by {ActorDisplay.Render(incident.ClosedBy, incident.ClosedClaimedBy)}",
         IncidentState.Closed => "Closed",
         IncidentState.Expired => "Expired - the signal stopped and nobody answered",
         IncidentState.Suppressed => "Suppressed",
@@ -524,7 +529,7 @@ public static class TeamsBotCards
         }
         else if (!string.IsNullOrWhiteSpace(incident.AcknowledgedBy))
         {
-            line.Add($"acknowledged by {incident.AcknowledgedBy}");
+            line.Add($"acknowledged by {ActorDisplay.Render(incident.AcknowledgedBy, incident.AcknowledgedClaimedBy)}");
         }
 
         var items = new JsonArray

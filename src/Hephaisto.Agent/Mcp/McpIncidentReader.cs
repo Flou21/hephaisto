@@ -108,6 +108,18 @@ public sealed partial class McpIncidentReader(
         };
     }
 
+    /// <summary>One incident as a list shows it, or null when there is none.</summary>
+    public async Task<IncidentRow?> RowAsync(Guid id, CancellationToken ct)
+    {
+        var row = await db.Incidents.AsNoTracking()
+            .Where(i => i.Id == id)
+            .Select(RowProjection)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+
+        return row is null ? null : Row(row);
+    }
+
     private async Task<IncidentPage> TextSearchAsync(McpIncidentFilter filter, string text, int limit, CancellationToken ct)
     {
         var result = await incidents.SearchAsync(text, new SearchFilter(), Math.Min(100, limit * 3), ct).ConfigureAwait(false);
