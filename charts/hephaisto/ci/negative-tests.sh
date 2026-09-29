@@ -641,6 +641,22 @@ else
     pass "with investigation.job off, nothing of it is rendered"
 fi
 IJ_ON=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative "${IJ[@]}" 2>&1)
+IJ_RULE=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative "${IJ[@]}" --set networkPolicy.enabled=true 2>&1 | python3 -c '
+import sys, yaml
+for doc in yaml.safe_load_all(sys.stdin):
+    if doc and doc.get("kind") == "NetworkPolicy" and doc["metadata"]["name"].endswith("-ingress"):
+        for rule in doc["spec"]["ingress"]:
+            if 8084 in [p["port"] for p in rule.get("ports", [])]:
+                for peer in rule.get("from", []):
+                    ns = peer.get("namespaceSelector", {}).get("matchLabels", {}).get("kubernetes.io/metadata.name")
+                    app = peer.get("podSelector", {}).get("matchLabels", {}).get("app.kubernetes.io/name")
+                    print(str(ns) + "/" + str(app) + "/" + str(len(rule.get("ports", []))))
+')
+if [ "$IJ_RULE" = "hephaisto-coder/hephaisto-investigator/1" ]; then
+    pass "the investigator port admits investigator pods in the coder namespace, and nothing else, to that port alone"
+else
+    fail "the investigator port must admit exactly hephaisto-coder/hephaisto-investigator on one port, found: '$IJ_RULE'"
+fi
 if grep -A1 'name: Investigation__Job__Executor' <<<"$IJ_ON" | grep -q 'value: "inprocess"' \
     && grep -q 'investigationExecutor: "inprocess"' <<<"$IJ_ON"; then
     pass "enabling it switches no investigation over by itself"

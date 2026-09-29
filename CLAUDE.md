@@ -299,7 +299,12 @@ approves, Draft PR only. Four things to know before touching it:
   fail on a hand edit.
 - **The coder answers through its log.** The last framed block, sha256 and byte count checked,
   read only from a pod the Job's controller created. It has no Hephaisto credential and no route
-  in - do not add a callback.
+  in - do not add a callback. **The investigator (v0.12.0 F5) is the one exception, and it is
+  narrow:** a pod labelled `app.kubernetes.io/name=hephaisto-investigator` may reach port 8084,
+  `/investigate` only, with a token valid for one investigation until its deadline, serving that
+  investigation's read-only tools and nothing else. A coder pod carries `hephaisto-coder` and the
+  agent's ingress rule names the investigator label, so code fixes stay sealed. Do not widen the
+  rule to the namespace, and do not route anything else onto that port.
 - **`create jobs` exists in one namespace.** `RbacSelfCheck` refuses to boot if it is held
   cluster-wide, in `kube-system` or in an actionable namespace.
 

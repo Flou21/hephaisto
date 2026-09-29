@@ -158,6 +158,12 @@ spec:
               containerPort: {{ . }}
               protocol: TCP
             {{- end }}
+            {{- with include "hephaisto.investigatorPort" . }}
+            # The investigator port (v0.12.0 F5): /investigate and nothing else.
+            - name: investigator
+              containerPort: {{ . }}
+              protocol: TCP
+            {{- end }}
           env:
             # ---------------------------------------------------------------------------
             # Mode - the env arm of the kill switch
@@ -678,7 +684,7 @@ spec:
               value: /etc/hephaisto
 
             - name: ASPNETCORE_URLS
-              value: "http://0.0.0.0:8080{{ if .Values.webhookPort }};http://0.0.0.0:{{ .Values.webhookPort }}{{ end }}{{ with include "hephaisto.teamsActionsPort" . }};http://0.0.0.0:{{ . }}{{ end }}{{ with include "hephaisto.mcpPort" . }};http://0.0.0.0:{{ . }}{{ end }}"
+              value: "http://0.0.0.0:8080{{ if .Values.webhookPort }};http://0.0.0.0:{{ .Values.webhookPort }}{{ end }}{{ with include "hephaisto.teamsActionsPort" . }};http://0.0.0.0:{{ . }}{{ end }}{{ with include "hephaisto.mcpPort" . }};http://0.0.0.0:{{ . }}{{ end }}{{ with include "hephaisto.investigatorPort" . }};http://0.0.0.0:{{ . }}{{ end }}"
 
             {{- if .Values.auth.enabled }}
             # ---------------------------------------------------------------------------

@@ -118,6 +118,9 @@ app.UseTeamsBotActionsPort();
 // On the MCP port, only /mcp answers; /mcp answers nowhere else.
 app.UseMcpPort();
 
+// On the investigator port (v0.12.0 F5), only /investigate answers; /investigate answers nowhere else.
+app.UseInvestigatorPort();
+
 app.MapStaticAssets();
 app.UseAntiforgery();
 
@@ -129,6 +132,7 @@ app.UseAuthorization();
 
 app.MapHephaistoEndpoints();
 app.MapHephaistoMcp();
+app.MapInvestigatorEndpoint();
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode()

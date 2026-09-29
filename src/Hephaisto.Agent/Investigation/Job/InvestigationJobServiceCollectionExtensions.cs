@@ -42,6 +42,9 @@ public static class InvestigationJobServiceCollectionExtensions
 
         services.TryAddSingleton<IInvestigationExecutorSwitch, InvestigationExecutorSwitch>();
 
+        // The live Job investigations and their tokens. In memory on purpose - see the type.
+        services.TryAddSingleton<InvestigationJobSessions>();
+
         return services;
     }
 }

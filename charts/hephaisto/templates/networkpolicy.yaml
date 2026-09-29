@@ -110,6 +110,23 @@ spec:
     {{- end }}
     {{- end }}
 
+    {{- with include "hephaisto.investigatorPort" . }}
+    # The investigator port (v0.12.0 F5): from investigator pods in the coder namespace, and to
+    # that port alone. One peer, namespace AND label: a coder pod in the same namespace carries
+    # app.kubernetes.io/name=hephaisto-coder and gets no route here - a code fix has no business
+    # calling the agent, and #157's "no way in for the coder" holds.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ include "hephaisto.codeFixNamespace" $ }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: hephaisto-investigator
+      ports:
+        - protocol: TCP
+          port: {{ . }}
+    {{- end }}
+
     {{- if .Values.networkPolicy.extraIngressCIDRs }}
     # Kubelet probes arrive from the NODE's address, which no namespaceSelector can match, so
     # on some clusters the liveness probe fails without an entry here and the pod is killed in

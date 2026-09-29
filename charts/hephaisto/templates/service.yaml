@@ -38,3 +38,11 @@ spec:
       targetPort: mcp
       protocol: TCP
     {{- end }}
+    {{- with include "hephaisto.investigatorPort" . }}
+    # The investigator port (v0.12.0 F5). Only investigator Jobs call it, at
+    # http://<this service>:{{ . }}/investigate, each with its own run's token.
+    - name: investigator
+      port: {{ . }}
+      targetPort: investigator
+      protocol: TCP
+    {{- end }}
