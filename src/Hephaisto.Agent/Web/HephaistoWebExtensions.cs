@@ -114,6 +114,7 @@ public static class HephaistoWebExtensions
         console.MapVersionEndpoints();
         console.MapAlertNoteEndpoints();
         CodeFix.CodeFixEndpoints.MapCodeFixEndpoints(console);
+        Investigations.Jobs.InvestigationJobEndpoints.MapInvestigationJobEndpoints(console);
 
         // Authentication (#110). The webhook group is the ONE surface outside OIDC: Alertmanager
         // cannot sign in. It checks a bearer token of its own instead, when one is configured
