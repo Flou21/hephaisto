@@ -154,6 +154,30 @@ public sealed class McpEndpointRouteTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Each_token_is_shown_the_writes_it_may_make_and_no_others()
+    {
+        string[] writes = ["acknowledge_incident", "assign_incident", "add_alert_note_entry", "submit_incident_feedback"];
+        string[] approver = ["close_incident", "reinvestigate_incident"];
+
+        (await Tools(ReadOnly)).Should().NotContain(writes).And.NotContain(approver);
+        (await Tools(Reader)).Should().Contain(writes).And.NotContain(approver);
+        (await Tools(Shared)).Should().Contain(writes).And.NotContain(approver);
+        (await Tools(Approver)).Should().Contain(writes).And.Contain(approver);
+    }
+
+    [Fact]
+    public async Task A_write_the_token_may_not_make_is_refused_before_it_runs()
+    {
+        var message = await Message(Reader, "tools/call", new JsonObject
+        {
+            ["name"] = "close_incident",
+            ["arguments"] = new JsonObject { ["id"] = Guid.NewGuid().ToString(), ["reason"] = "x" },
+        });
+
+        message["error"].Should().NotBeNull("a reader is not shown close_incident and cannot call it");
+    }
+
+    [Fact]
     public async Task A_tool_that_does_not_exist_is_a_protocol_error()
     {
         var message = await Message(Reader, "tools/call", new JsonObject { ["name"] = "approve_action", ["arguments"] = new JsonObject() });

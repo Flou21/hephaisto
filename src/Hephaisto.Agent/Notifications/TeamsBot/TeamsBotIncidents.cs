@@ -78,6 +78,8 @@ public sealed class TeamsBotIncidents(HephaistoDbContext db)
             AssignedTo = i.AssignedTo,
             AcknowledgedBy = i.AcknowledgedBy,
             ClosedBy = i.ClosedBy,
+            AcknowledgedClaimedBy = i.AcknowledgedClaimedBy,
+            ClosedClaimedBy = i.ClosedClaimedBy,
             Summary = i.Resolution,
 
             // The alert that opened it: the oldest Alertmanager signal, whose reason is the

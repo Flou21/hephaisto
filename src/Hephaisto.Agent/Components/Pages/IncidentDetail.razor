@@ -163,7 +163,7 @@ else
                         {
                             <strong data-testid="assigned-to">@assignee owns this.</strong>
                             <span class="hp-muted">
-                                Assigned by @incident.AssignedBy.
+                                Assigned by @ActorDisplay.Render(incident.AssignedBy, incident.AssignedClaimedBy).
                                 @if (incident.AcknowledgedBy is null)
                                 {
                                     <text>Not picked up yet.</text>
@@ -173,7 +173,7 @@ else
                         }
                         @if (incident.AcknowledgedBy is { Length: > 0 } holder)
                         {
-                            <strong data-testid="acknowledged-by">@holder is on this.</strong>
+                            <strong data-testid="acknowledged-by">@ActorDisplay.Render(holder, incident.AcknowledgedClaimedBy) is on this.</strong>
                             <span class="hp-muted">
                                 Acknowledged @(incident.AcknowledgedAt is { } at ? Display.Timestamp(at) : "—"). Closing it says
                                 it needs no more attention; it stays out of the open count until somebody
@@ -247,7 +247,7 @@ else
                 <span class="glyph">x</span>
                 <div class="hp-retry">
                     <div>
-                        <strong data-testid="closed-by">closed by @incident.ClosedBy.</strong>
+                        <strong data-testid="closed-by">closed by @ActorDisplay.Render(incident.ClosedBy, incident.ClosedClaimedBy).</strong>
                         <span class="hp-muted">
                             Reopening starts a fresh investigation and spends the budget again.
                         </span>

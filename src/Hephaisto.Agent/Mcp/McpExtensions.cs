@@ -114,6 +114,8 @@ public static class McpExtensions
         });
 
         services.AddScoped<McpIncidentReader>();
+        services.AddScoped<McpIncidentActions>();
+        services.AddHttpContextAccessor();
 
         services.AddMcpServer(o =>
             {
@@ -165,6 +167,7 @@ public static class McpExtensions
             .WithTools<McpIncidentTools>()
             .WithTools<McpIncidentDetailTools>()
             .WithTools<McpInvestigationTools>()
+            .WithTools<McpWriteTools>()
             .WithTools<McpStatusTools>();
 
         return services;
