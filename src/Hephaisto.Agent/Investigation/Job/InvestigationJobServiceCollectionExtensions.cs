@@ -45,6 +45,10 @@ public static class InvestigationJobServiceCollectionExtensions
         // The live Job investigations and their tokens. In memory on purpose - see the type.
         services.TryAddSingleton<InvestigationJobSessions>();
 
+        // The runner asks it whether a Job takes a run. Always registered: with every default it
+        // decides in-process, which is v0.11. A singleton, because it counts the Jobs it started.
+        services.TryAddSingleton<IInvestigationJobLoop, KubernetesInvestigationJobLoop>();
+
         return services;
     }
 }
