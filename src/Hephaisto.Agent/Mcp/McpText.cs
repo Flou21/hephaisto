@@ -9,7 +9,7 @@ namespace Hephaisto.Agent.Mcp;
 /// a log line, a hypothesis, a title - or a name, which goes out plain only when it looks like one.
 /// </summary>
 /// <remarks>
-/// The only way to put such text into a result record (<c>Hephaisto.Agent.Mcp.Results</c>) is
+/// The only way to put such text into an answer record (<c>Hephaisto.Agent.Mcp.Answers</c>) is
 /// through this type, whose factories run <see cref="UntrustedText"/>; a plain <c>string</c>
 /// there must say it is Hephaisto's own words with <see cref="ServerAuthoredAttribute"/>, or the
 /// call fails when it is serialized. A field somebody forgets is a failed call, not a leak.

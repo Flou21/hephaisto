@@ -1,6 +1,6 @@
 using System.Globalization;
 using Hephaisto.Agent.CodeFix;
-using Hephaisto.Agent.Mcp.Results;
+using Hephaisto.Agent.Mcp.Answers;
 using Hephaisto.Agent.Notifications;
 using Hephaisto.Agent.Persistence;
 using Hephaisto.Core;

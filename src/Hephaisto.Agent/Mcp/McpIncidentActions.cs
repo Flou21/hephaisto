@@ -1,4 +1,4 @@
-using Hephaisto.Agent.Mcp.Results;
+using Hephaisto.Agent.Mcp.Answers;
 using Hephaisto.Agent.Web;
 using Hephaisto.Core.Safety;
 using ModelContextProtocol;
