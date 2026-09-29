@@ -1,0 +1,39 @@
+{
+  "contract_version": "1",
+  "attempt_id": "0192a6f0-0000-7000-8000-000000000101",
+  "incident_id": "0192a6f0-0000-7000-8000-0000000000aa",
+  "investigation_id": "0192a6f0-0000-7000-8000-0000000000b1",
+  "phase": "investigate",
+  "budget": {
+    "max_cost_usd": 2,
+    "deadline_seconds": 900
+  },
+  "context": {
+    "repository_url": "https://github.com/TrueRelevance/dev-context",
+    "ref": "main"
+  },
+  "endpoint": {
+    "url": "http://hephaisto.hephaisto.svc:8084/investigator/mcp",
+    "token": "sample-token-0123456789abcdef0123456789abcdef"
+  },
+  "incident": {
+    "title": "shop-api is crash-looping",
+    "kind": "CrashLoopBackOff",
+    "severity": "Critical",
+    "target": {
+      "namespace": "hephaisto-chaos",
+      "kind": "Pod",
+      "name": "shop-api-7f9c6d5b8-abcde",
+      "workload": "hephaisto-chaos/Deployment/shop-api"
+    }
+  },
+  "system_prompt": "You are Hephaisto's investigator. (Rendered by PromptComposer; abbreviated in this sample.)",
+  "opening_message": "Investigate: shop-api is crash-looping in hephaisto-chaos.",
+  "source": {
+    "url": "https://github.com/Flou21/hephaisto-fixture-dotnet",
+    "default_branch": "main",
+    "path": "",
+    "ref": "0123456789abcdef0123456789abcdef01234567",
+    "image": "ghcr.io/flou21/hephaisto-fixture-dotnet:c15-0123456789abcdef0123456789abcdef01234567"
+  }
+}

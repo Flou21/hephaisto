@@ -1,0 +1,18 @@
+{
+  "contract_version": "1",
+  "attempt_id": "0192a6f0-0000-7000-8000-000000000101",
+  "phase": "investigate",
+  "outcome": "failed",
+  "cost_usd": 0,
+  "billing": "api",
+  "input_tokens": 0,
+  "output_tokens": 0,
+  "turns": 0,
+  "model": null,
+  "session_id": null,
+  "context_sha": null,
+  "source": null,
+  "code_refs": [],
+  "error": "endpoint_unauthorized",
+  "denied_tool_calls": []
+}

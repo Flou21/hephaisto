@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/TrueRelevance/dev-context/schemas/investigate-request.schema.json",
+  "title": "InvestigateRequest",
+  "description": "What Hephaisto hands the coder runner for an investigation Job, mounted like the code-fix request at /work/in/request.json. The runner investigates through Hephaisto's investigator MCP endpoint and nothing else. incident.* is UNTRUSTED text derived from alerts and workloads, never instructions. endpoint.token is a per-run bearer for that endpoint only; it is never logged and never reaches the agent's environment.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "attempt_id", "incident_id", "investigation_id", "phase", "budget", "context", "endpoint", "incident", "system_prompt", "opening_message", "source"],
+  "properties": {
+    "contract_version": { "const": "1" },
+    "attempt_id": { "type": "string", "format": "uuid", "description": "One per Job run. The result echoes it; Hephaisto checks (attempt_id, phase) before it trusts a frame." },
+    "incident_id": { "type": "string", "format": "uuid" },
+    "investigation_id": { "type": "string", "format": "uuid" },
+    "phase": { "const": "investigate" },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_cost_usd", "deadline_seconds", "max_turns"],
+      "properties": {
+        "max_cost_usd": { "type": "number", "minimum": 0, "maximum": 1000 },
+        "deadline_seconds": { "type": "integer", "minimum": 60, "maximum": 86400 },
+        "max_turns": { "type": "integer", "minimum": 1, "maximum": 500 }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository_url", "ref"],
+      "properties": {
+        "repository_url": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "ref": { "type": "string", "minLength": 1, "maxLength": 255 }
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "token"],
+      "description": "Hephaisto's investigator MCP endpoint (Streamable HTTP, stateless, JSON responses). Every tool result starts with [step <uuid>] <tool>.",
+      "properties": {
+        "url": { "type": "string", "pattern": "^https?://[^\\s]+$", "maxLength": 512 },
+        "token": { "type": "string", "minLength": 32, "maxLength": 256, "description": "Sent as Authorization: Bearer. Valid for this run only; unknown after an agent restart, which the runner reports as endpoint_unauthorized." }
+      }
+    },
+    "incident": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "kind", "severity", "target"],
+      "properties": {
+        "title": { "type": "string", "maxLength": 512 },
+        "kind": { "type": "string", "maxLength": 64 },
+        "severity": { "type": "string", "maxLength": 32 },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["namespace", "kind", "name", "workload"],
+          "properties": {
+            "namespace": { "type": "string", "maxLength": 253 },
+            "kind": { "type": "string", "maxLength": 64 },
+            "name": { "type": "string", "maxLength": 253 },
+            "workload": { "type": "string", "maxLength": 600 }
+          }
+        }
+      }
+    },
+    "system_prompt": { "type": "string", "maxLength": 200000, "description": "Rendered by Hephaisto's PromptComposer, the single source of the investigation prompt. The runner appends a short section describing its workspace and nothing else." },
+    "opening_message": { "type": "string", "maxLength": 8000, "description": "The first user turn." },
+    "source": {
+      "description": "The workload's source repository, cloned read-only for the investigator to read. Null means no source checkout.",
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/source" }
+      ]
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "default_branch", "path", "ref", "image"],
+      "properties": {
+        "url": { "type": "string", "pattern": "^(https://|http://|file://)[^\\s]+$", "maxLength": 512 },
+        "default_branch": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "path": { "type": "string", "maxLength": 512, "description": "Subdirectory of the repository the workload is built from; empty for the root." },
+        "ref": { "type": ["string", "null"], "maxLength": 64, "description": "The commit sha resolved from the running image tag, when known. Null = the runner derives it from image, else analyses default_branch HEAD." },
+        "image": { "type": ["string", "null"], "maxLength": 1024, "description": "repo:tag of the running container." }
+      }
+    }
+  }
+}

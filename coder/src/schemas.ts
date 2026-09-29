@@ -17,6 +17,8 @@ export const SCHEMA_FILES = {
   plan: 'codefix-plan-result.schema.json',
   implement: 'codefix-implement-result.schema.json',
   repos: 'repos.schema.json',
+  investigateRequest: 'investigate-request.schema.json',
+  investigate: 'investigate-result.schema.json',
 } as const;
 export type SchemaName = keyof typeof SCHEMA_FILES;
 
@@ -49,6 +51,8 @@ const validators: Record<SchemaName, ValidateFunction> = {
   plan: compiled('plan'),
   implement: compiled('implement'),
   repos: compiled('repos'),
+  investigateRequest: compiled('investigateRequest'),
+  investigate: compiled('investigate'),
 };
 
 export interface Validation {
@@ -241,6 +245,79 @@ export const ReposZ = z
   })
   .strict();
 
+// ---- investigate (v0.12.0): the same runner, a Job that investigates through Hephaisto's MCP endpoint
+
+const TargetZ = z
+  .object({ namespace: z.string().max(253), kind: z.string().max(64), name: z.string().max(253), workload: z.string().max(600) })
+  .strict();
+
+export const InvestigateSourceZ = z
+  .object({
+    url: z.string().max(512).regex(/^(https:\/\/|http:\/\/|file:\/\/)[^\s]+$/),
+    default_branch: z.string().min(1).max(255),
+    path: z.string().max(512),
+    ref: z.string().max(64).nullable(),
+    image: z.string().max(1024).nullable(),
+  })
+  .strict();
+
+export const InvestigateRequestZ = z
+  .object({
+    contract_version: z.literal('1'),
+    attempt_id: z.guid(),
+    incident_id: z.guid(),
+    investigation_id: z.guid(),
+    phase: z.literal('investigate'),
+    budget: z
+      .object({
+        max_cost_usd: z.number().min(0).max(1000),
+        deadline_seconds: z.number().int().min(60).max(86400),
+        max_turns: z.number().int().min(1).max(500),
+      })
+      .strict(),
+    context: z.object({ repository_url: z.string().min(1).max(512), ref: z.string().min(1).max(255) }).strict(),
+    endpoint: z.object({ url: z.string().max(512).regex(/^https?:\/\/[^\s]+$/), token: z.string().min(32).max(256) }).strict(),
+    incident: z.object({ title: z.string().max(512), kind: z.string().max(64), severity: z.string().max(32), target: TargetZ }).strict(),
+    system_prompt: z.string().max(200000),
+    opening_message: z.string().max(8000),
+    source: InvestigateSourceZ.nullable(),
+  })
+  .strict();
+
+export const CodeRefZ = z
+  .object({
+    finding: z.number().int().min(0).max(9),
+    path: z.string().max(512),
+    line: z.number().int().min(1),
+    end_line: z.number().int().min(1).nullable(),
+    note: z.string().max(500).nullable(),
+  })
+  .strict();
+
+export const InvestigateOutcomeZ = z.enum(['concluded', 'no_conclusion', 'budget_exhausted', 'max_turns', 'rate_limited', 'no_credential', 'failed']);
+export const BillingZ = z.enum(['subscription', 'api', 'fake']);
+
+export const InvestigateResultZ = z
+  .object({
+    contract_version: z.literal('1'),
+    attempt_id: z.guid(),
+    phase: z.literal('investigate'),
+    outcome: InvestigateOutcomeZ,
+    cost_usd: z.number().min(0),
+    billing: BillingZ,
+    input_tokens: z.number().int().min(0),
+    output_tokens: z.number().int().min(0),
+    turns: z.number().int().min(0),
+    model: z.string().max(128).nullable(),
+    session_id: z.string().max(128).nullable(),
+    context_sha: z.string().max(64).nullable(),
+    source: z.object({ cloned: z.boolean(), analysed_ref: z.string().max(64).nullable(), error: z.string().max(1000).nullable() }).strict().nullable(),
+    code_refs: z.array(CodeRefZ).max(20),
+    error: z.string().max(4000).nullable(),
+    denied_tool_calls: z.array(DenialZ).max(50),
+  })
+  .strict();
+
 export type CodeFixRequest = z.infer<typeof RequestZ>;
 export type PlanResult = z.infer<typeof PlanResultZ>;
 export type ImplementResult = z.infer<typeof ImplementResultZ>;
@@ -248,4 +325,12 @@ export type Denial = z.infer<typeof DenialZ>;
 export type VerificationLevel = z.infer<typeof VerificationLevelZ>;
 export type Repos = z.infer<typeof ReposZ>;
 export type RepoEntry = z.infer<typeof RepoEntryZ>;
-export type Phase = CodeFixRequest['phase'];
+export type CodeFixPhase = CodeFixRequest['phase'];
+export type InvestigateRequest = z.infer<typeof InvestigateRequestZ>;
+export type InvestigateResult = z.infer<typeof InvestigateResultZ>;
+export type InvestigateOutcome = z.infer<typeof InvestigateOutcomeZ>;
+export type Billing = z.infer<typeof BillingZ>;
+export type CodeRef = z.infer<typeof CodeRefZ>;
+/** Every phase the runner can report; each one names its result schema. */
+export type Phase = CodeFixPhase | 'investigate';
+export type AnyResult = PlanResult | ImplementResult | InvestigateResult;
