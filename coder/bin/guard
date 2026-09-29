@@ -46,16 +46,19 @@ try {
   const { evaluate } = await import(join(here, '..', 'dist', 'guard.js'));
   const mode = process.env.GUARD_MODE;
   const targetDir = process.env.GUARD_TARGET_DIR;
-  if ((mode !== 'plan' && mode !== 'implement') || !targetDir) {
+  if ((mode !== 'plan' && mode !== 'implement' && mode !== 'investigate') || !targetDir) {
     deny('guard is not configured (GUARD_MODE / GUARD_TARGET_DIR missing); denying every tool call');
   }
   const protectedGlobs = JSON.parse(process.env.GUARD_PROTECTED_GLOBS ?? '[]');
+  // investigate reads only inside these; absent, evaluate() denies every read
+  const readRoots = process.env.GUARD_READ_ROOTS ? JSON.parse(process.env.GUARD_READ_ROOTS) : undefined;
   const v = evaluate(String(hook.tool_name ?? ''), hook.tool_input ?? {}, mode, {
     targetDir,
     protectedGlobs,
     allowedBranch: process.env.GUARD_ALLOWED_BRANCH || undefined,
     homeDir: process.env.GUARD_HOME || undefined,
     cwd: typeof hook.cwd === 'string' && hook.cwd ? hook.cwd : undefined,
+    readRoots,
   });
   if (v.allow) process.exit(0);
   deny(v.reason);

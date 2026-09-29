@@ -25,7 +25,17 @@ export function makeDirs(paths: WorkPaths): void {
   }
 }
 
-export async function prepareContext(req: CodeFixRequest, env: RunnerEnv, paths: WorkPaths, signal?: AbortSignal): Promise<ContextInfo> {
+/** What both request kinds (code fix, investigate) say about the dev-context checkout. */
+export interface ContextRequest {
+  context: CodeFixRequest['context'];
+}
+
+/** The slice of a request cloneTarget needs: a code-fix request's repository, or an investigate request's source. */
+export interface CloneRequest {
+  repository: { url: string; default_branch: string };
+}
+
+export async function prepareContext(req: ContextRequest, env: RunnerEnv, paths: WorkPaths, signal?: AbortSignal): Promise<ContextInfo> {
   const genv = driverGitEnv(env, paths.home);
   rmSync(paths.context, { recursive: true, force: true });
   await clone(req.context.repository_url, paths.context, genv, { signal });
@@ -67,7 +77,7 @@ export interface Target {
 }
 
 export async function cloneTarget(
-  req: CodeFixRequest,
+  req: CloneRequest,
   repos: Repos,
   repo: RepoEntry,
   env: RunnerEnv,
@@ -93,8 +103,9 @@ export async function cloneTarget(
  * The plan analyses the commit the running image was built from. Since 2026-09-27 TR images are
  * tagged with it; fixtures use `<id>-<sha>`. A pre-change UUID tag falls back to HEAD, and says so.
  */
-export async function checkoutAnalysedRef(target: Target, image: string | null, defaultBranch: string): Promise<string> {
-  const sha = shaFromImage(image);
+export async function checkoutAnalysedRef(target: Target, image: string | null, defaultBranch: string, knownSha?: string | null): Promise<string> {
+  // investigate: Hephaisto may already have resolved the running commit; it wins over the tag
+  const sha = knownSha && /^[0-9a-f]{40}$/.test(knownSha) ? knownSha : shaFromImage(image);
   if (!sha) {
     const head = await target.git.head();
     target.notes.push(

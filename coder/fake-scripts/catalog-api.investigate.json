@@ -1,0 +1,39 @@
+{
+  "description": "FAKE SDK slow scenario: sleeps 180 s before it lists the pods and concludes with low confidence, citing a line copied verbatim from list_pods, so an e2e can delete the Job or restart the agent while it still runs. Played for catalog-api (fixture c19) and by CODEFIX_FAKE_SCRIPT=slow.",
+  "steps": [
+    {
+      "sleep_ms": 180000
+    },
+    {
+      "tool": "mcp__hephaisto__list_pods",
+      "input": {
+        "namespace": "${request.incident.target.namespace}"
+      },
+      "capture": {
+        "as": "pods",
+        "regex": "\\n([^\\n]*\\S[^\\n]*)"
+      }
+    },
+    {
+      "tool": "mcp__hephaisto__conclude",
+      "input": {
+        "summary": "FAKE SDK: a slow scripted investigation of ${request.incident.target.workload}; no model ran.",
+        "confidence": 0.2,
+        "findings": [
+          {
+            "category": "unknown",
+            "primary": true,
+            "confidence": 0.2,
+            "hypothesis": "FAKE SDK: no model ran; the pods of ${request.incident.target.namespace} were listed but not interpreted.",
+            "evidence": [
+              {
+                "step_id": "${pods.step}",
+                "excerpt": "${pods}"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

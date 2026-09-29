@@ -1,0 +1,14 @@
+{
+  "description": "FAKE SDK negative scenario: reads the namespace's pods and then stops without calling conclude, so the run reports no_conclusion. Select with CODEFIX_FAKE_SCRIPT=fail.",
+  "steps": [
+    {
+      "tool": "mcp__hephaisto__list_pods",
+      "input": {
+        "namespace": "${request.incident.target.namespace}"
+      }
+    },
+    {
+      "text": "FAKE SDK: stopping without a conclusion."
+    }
+  ]
+}

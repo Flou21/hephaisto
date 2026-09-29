@@ -4,7 +4,7 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RESULT_MAX_BYTES } from './config.js';
 import { log } from './log.js';
-import { type ImplementResult, type Phase, type PlanResult, rawSchema, validate } from './schemas.js';
+import { type AnyResult, type Billing, type CodeFixPhase, type ImplementResult, type InvestigateResult, type Phase, type PlanResult, rawSchema, validate } from './schemas.js';
 
 // The runner's only output that matters. Hephaisto reads the last 1 MiB of the pod log, takes
 // the LAST begin/end pair, and checks bytes + sha256 before it deserialises anything, so the
@@ -52,6 +52,7 @@ function resolveRef(ref: string, current: Schema): Schema {
       'codefix-plan-result.schema.json': rawSchema('plan'),
       'codefix-implement-result.schema.json': rawSchema('implement'),
       'codefix-request.schema.json': rawSchema('request'),
+      'investigate-result.schema.json': rawSchema('investigate'),
     };
     base = byFile[file] ?? current;
   }
@@ -89,8 +90,31 @@ export function clampToSchema(value: unknown, schema: Schema, root: Schema, fact
   return value;
 }
 
-export function minimalFailed(phase: Phase, attemptId: string, error: string): PlanResult | ImplementResult {
+export function minimalFailed(phase: 'investigate', attemptId: string, error: string, billing?: Billing): InvestigateResult;
+export function minimalFailed(phase: CodeFixPhase, attemptId: string, error: string): PlanResult | ImplementResult;
+export function minimalFailed(phase: Phase, attemptId: string, error: string, billing?: Billing): AnyResult;
+export function minimalFailed(phase: Phase, attemptId: string, error: string, billing: Billing = 'api'): AnyResult {
   const err = truncateString(error, 4000, false);
+  if (phase === 'investigate') {
+    return {
+      contract_version: '1',
+      attempt_id: attemptId,
+      phase: 'investigate',
+      outcome: 'failed',
+      cost_usd: 0,
+      billing,
+      input_tokens: 0,
+      output_tokens: 0,
+      turns: 0,
+      model: null,
+      session_id: null,
+      context_sha: null,
+      source: null,
+      code_refs: [],
+      error: err,
+      denied_tool_calls: [],
+    };
+  }
   if (phase === 'plan') {
     return {
       contract_version: '1',
@@ -139,7 +163,7 @@ export function minimalFailed(phase: Phase, attemptId: string, error: string): P
  * 512 KiB, and valid against the vendored result schema. If it cannot be made valid, the
  * result is REPLACED by a minimal `failed` one that says why - never written as-is.
  */
-export function finalizeResult(phase: Phase, result: PlanResult | ImplementResult): string {
+export function finalizeResult(phase: Phase, result: AnyResult): string {
   const schema = rawSchema(phase);
   const attemptId = typeof result.attempt_id === 'string' && validUuid(result.attempt_id) ? result.attempt_id : NIL_UUID;
   const fixed = { ...result, contract_version: '1', phase, attempt_id: attemptId, cost_usd: sanitiseCost(result.cost_usd) };
@@ -149,11 +173,12 @@ export function finalizeResult(phase: Phase, result: PlanResult | ImplementResul
     if (Buffer.byteLength(json, 'utf8') > RESULT_MAX_BYTES) continue;
     const v = validate(phase, clamped);
     if (v.ok) return json;
-    const fallback = minimalFailed(phase, attemptId, `runner produced a result that does not match the contract: ${v.errors.join('; ')}`);
+    const billing = (result as Partial<InvestigateResult>).billing;
+    const fallback = minimalFailed(phase, attemptId, `runner produced a result that does not match the contract: ${v.errors.join('; ')}`, billing);
     log.error(`result failed schema validation, replaced by a minimal failed result: ${v.errors.join('; ')}`);
     return JSON.stringify(clampToSchema(fallback, schema, schema));
   }
-  return JSON.stringify(minimalFailed(phase, attemptId, 'result could not be reduced below 512 KiB'));
+  return JSON.stringify(minimalFailed(phase, attemptId, 'result could not be reduced below 512 KiB', (result as Partial<InvestigateResult>).billing));
 }
 
 function sanitiseCost(c: unknown): number {
@@ -184,7 +209,7 @@ export interface EmitOptions {
   write?: (s: string) => void;
 }
 
-export function emitResult(phase: Phase, result: PlanResult | ImplementResult, opts: EmitOptions = {}): string | null {
+export function emitResult(phase: Phase, result: AnyResult, opts: EmitOptions = {}): string | null {
   if (emitted) {
     log.warn('a result was already emitted; ignoring a second one');
     return null;

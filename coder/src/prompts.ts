@@ -8,7 +8,10 @@ import type { CodeFixRequest } from './schemas.js';
 // ships in the image. Rendering is `{{name}}` substitution and nothing else - no conditionals,
 // no includes - so what a template can do is exactly what the driver hands it.
 
-export type TemplateName = 'plan' | 'implement' | 'evidence-block' | 'pr-body';
+export type TemplateName = 'plan' | 'implement' | 'evidence-block' | 'pr-body' | 'investigate';
+
+/** investigate.md, the section appended to Hephaisto's investigation prompt. */
+export const INVESTIGATE_VARS = ['context_dir', 'memory_dir', 'source_block'] as const;
 
 export const PROMPT_VARS = [
   'attempt_id', 'incident_id', 'phase', 'repo_url', 'repo_name', 'default_branch', 'branch', 'analysed_ref', 'image',
