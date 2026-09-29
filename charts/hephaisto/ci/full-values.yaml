@@ -43,6 +43,7 @@ secrets:
   postgres: hephaisto-postgres
   llm: hephaisto-llm
   grafanaMcp: grafana-mcp-caller-token
+  mcp: hephaisto-mcp
 
 postgres:
   host: postgres
@@ -200,3 +201,19 @@ codeFix:
     storageClass: standard
   networkPolicy:
     enabled: true
+
+# The MCP endpoint (#157), with one token of each kind and a gateway's namespace admitted.
+mcp:
+  enabled: true
+  port: 8083
+  tokens:
+    - name: gateway
+      kind: shared
+      role: reader
+    - name: oncall
+      kind: person
+      subject: oncall
+      role: approver
+      mayWrite: false
+  networkPolicy:
+    fromNamespaces: [gateway]

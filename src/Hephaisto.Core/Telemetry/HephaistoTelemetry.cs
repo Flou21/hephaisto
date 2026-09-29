@@ -36,6 +36,18 @@ public static class HephaistoTelemetry
     public static class Metrics
     {
         public const string SignalsReceived = "hephaisto.signals.received";
+
+        /// <summary>An MCP tool call (#157): tags tool, outcome (ok, error, refused) and token_kind.</summary>
+        public const string McpCalls = "hephaisto.mcp.calls";
+
+        /// <summary>Seconds one MCP tool call took, by tool.</summary>
+        public const string McpCallDuration = "hephaisto.mcp.call.duration";
+
+        /// <summary>Characters in one MCP answer, by tool: how close answers run to the budget.</summary>
+        public const string McpResponseChars = "hephaisto.mcp.response.chars";
+
+        /// <summary>A request to the MCP endpoint its credential did not get in with, by reason.</summary>
+        public const string McpAuthRefused = "hephaisto.mcp.auth.refused";
         public const string SignalsDropped = "hephaisto.signals.dropped";
         public const string IncidentsOpened = "hephaisto.incidents.opened";
 

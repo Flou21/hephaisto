@@ -42,6 +42,8 @@
          into ChatOptions.Tools. -->
     <PackageVersion Include="ModelContextProtocol" Version="2.2.0" />
     <PackageVersion Include="ModelContextProtocol.Core" Version="2.2.0" />
+    <!-- The server side (#157): /mcp over stateless streamable HTTP, [Authorize] on tools. -->
+    <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
   </ItemGroup>
 
   <ItemGroup Label="Kubernetes">

@@ -152,6 +152,12 @@ spec:
               containerPort: {{ . }}
               protocol: TCP
             {{- end }}
+            {{- with include "hephaisto.mcpPort" . }}
+            # The MCP endpoint (#157): /mcp and nothing else.
+            - name: mcp
+              containerPort: {{ . }}
+              protocol: TCP
+            {{- end }}
           env:
             # ---------------------------------------------------------------------------
             # Mode - the env arm of the kill switch
@@ -635,7 +641,7 @@ spec:
               value: /etc/hephaisto
 
             - name: ASPNETCORE_URLS
-              value: "http://0.0.0.0:8080{{ if .Values.webhookPort }};http://0.0.0.0:{{ .Values.webhookPort }}{{ end }}{{ with include "hephaisto.teamsActionsPort" . }};http://0.0.0.0:{{ . }}{{ end }}"
+              value: "http://0.0.0.0:8080{{ if .Values.webhookPort }};http://0.0.0.0:{{ .Values.webhookPort }}{{ end }}{{ with include "hephaisto.teamsActionsPort" . }};http://0.0.0.0:{{ . }}{{ end }}{{ with include "hephaisto.mcpPort" . }};http://0.0.0.0:{{ . }}{{ end }}"
 
             {{- if .Values.auth.enabled }}
             # ---------------------------------------------------------------------------
@@ -676,6 +682,45 @@ spec:
                 secretKeyRef:
                   name: {{ . }}
                   key: token
+            {{- end }}
+
+            {{- with include "hephaisto.mcpPort" . }}
+            # ---------------------------------------------------------------------------
+            # The MCP endpoint (#157). Each token's value by secretKeyRef, under its name.
+            # ---------------------------------------------------------------------------
+            - name: Mcp__Enabled
+              value: "true"
+            - name: Mcp__Port
+              value: {{ . | quote }}
+            - name: Mcp__AcceptIdentityProviderTokens
+              value: {{ $.Values.mcp.acceptIdentityProviderTokens | toString | quote }}
+            {{- with $.Values.mcp.maxResponseChars }}
+            - name: Mcp__MaxResponseChars
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $.Values.mcp.requestsPerMinutePerToken }}
+            - name: Mcp__RequestsPerMinutePerToken
+              value: {{ . | quote }}
+            {{- end }}
+            {{- range $i, $t := $.Values.mcp.tokens }}
+            - name: Mcp__Tokens__{{ $i }}__Name
+              value: {{ $t.name | quote }}
+            - name: Mcp__Tokens__{{ $i }}__Role
+              value: {{ $t.role | default "reader" | quote }}
+            - name: Mcp__Tokens__{{ $i }}__Kind
+              value: {{ $t.kind | default "shared" | quote }}
+            {{- with $t.subject }}
+            - name: Mcp__Tokens__{{ $i }}__Subject
+              value: {{ . | quote }}
+            {{- end }}
+            - name: Mcp__Tokens__{{ $i }}__MayWrite
+              value: {{ (ne $t.mayWrite false) | toString | quote }}
+            - name: Mcp__Tokens__{{ $i }}__Value
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.secrets.mcp }}
+                  key: {{ $t.name }}
+            {{- end }}
             {{- end }}
 
             {{- if .Values.webhookPort }}

@@ -194,6 +194,10 @@
         "webhookToken": {
           "type": "string",
           "description": "Secret holding the bearer token /webhooks requires, under key `token` (at least 16 characters). Empty requires none."
+        },
+        "mcp": {
+          "type": "string",
+          "description": "Secret holding the MCP endpoint's tokens: one key per mcp.tokens[].name, each at least 32 characters. Required when mcp.tokens is not empty."
         }
       },
       "additionalProperties": false
@@ -1124,6 +1128,94 @@
         }
       },
       "additionalProperties": false
+    },
+    "mcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The MCP endpoint (#157): coding agents and MCP gateways ask about incidents at /mcp on a port of its own. Off by default.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Its own port; not 8080, webhookPort or the Teams actions port."
+        },
+        "acceptIdentityProviderTokens": {
+          "type": "boolean",
+          "description": "With auth.enabled, accept the identity provider's bearer tokens too."
+        },
+        "maxResponseChars": {
+          "type": "integer",
+          "minimum": 4000,
+          "maximum": 1000000
+        },
+        "requestsPerMinutePerToken": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "tokens": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$",
+                "description": "Also the key in secrets.mcp, and how the audit trail names a shared token (mcp/<name>)."
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "reader",
+                  "approver"
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "shared",
+                  "person"
+                ],
+                "description": "shared: a gateway's token, used for many people. person: one person's."
+              },
+              "subject": {
+                "type": "string",
+                "description": "For a person token: the person, as the console names them."
+              },
+              "mayWrite": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "networkPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "fromNamespaces": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Namespaces admitted to the MCP port - a gateway's."
+            },
+            "fromCIDRs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "additionalProperties": false

@@ -2523,6 +2523,15 @@ a token it is refused; with the reader role it cannot close; and no tool approve
   instruction. P29, the driver against a decoy server, is green; the rest are known red, each with
   the stage that turns it green. The version floor is 0.11, and a known-red entry older than the
   floor now fails the build.
+- *Stage 2 (F1).* The endpoint: `/mcp` over stateless streamable HTTP on its own port (8083), off
+  by default. Its own token scheme - configured tokens compared in constant time, every one every
+  time, or the identity provider's bearer token when sign-in is on - and its own policies, never
+  the console's allow-all. A shared token acts as `mcp/<name>`; a person token as its subject; a
+  signed-in user is an approver only if the approver role is configured and held. Refused at
+  startup: no credential, a port somebody else has, a token under 32 characters, twice, or equal
+  to the webhook's, a person token acting as the agent, the model or a shared token. The chart
+  carries `mcp.*` and `secrets.mcp` with the same refusals; `extraEnv` may not set `Mcp__*`.
+  Two tools so far, `get_status` and `get_caller_identity`. P38, P45 and P46 are green.
 
 **Size.** L. Open. [Roadmap v0.11.0](roadmap.md).
 
