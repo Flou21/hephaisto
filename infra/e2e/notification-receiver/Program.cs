@@ -112,6 +112,9 @@ else
     // The model, for the pager suite: every investigation concludes at once, or when told to.
     NotificationReceiver.LlmStandIn.Map(app);
 
+    // A second MCP server that is not the agent: the pager suite's control, a gateway's neighbour.
+    NotificationReceiver.DecoyMcp.Map(app);
+
     app.MapDelete("/received", () =>
     {
         received.Clear();

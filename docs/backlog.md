@@ -2515,6 +2515,15 @@ this: it is handed what it needs in its request, and answers through its log.
 chart. It lists the tools, reads an incident that a scenario opened, and acknowledges it; without
 a token it is refused; with the reader role it cannot close; and no tool approves anything.
 
+**Progress.**
+
+- *Stage 1 (F0).* The scenarios exist before the endpoint: P29-P48 in the pager suite, a curl
+  driver (`scripts/e2e/lib/mcp.sh`), the reviewed tool list with its findability questions
+  (`scripts/e2e/mcp/`), a model stand-in that can cite evidence, and a fixture pod whose log is an
+  instruction. P29, the driver against a decoy server, is green; the rest are known red, each with
+  the stage that turns it green. The version floor is 0.11, and a known-red entry older than the
+  floor now fails the build.
+
 **Size.** L. Open. [Roadmap v0.11.0](roadmap.md).
 
 ## Dead or unreachable code

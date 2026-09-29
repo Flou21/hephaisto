@@ -19,4 +19,9 @@
     <NoWarn>$(NoWarn);CA1848;CA2254;CA1305</NoWarn>
   </PropertyGroup>
 
+  <!-- The decoy MCP server's tools (DecoyMcp.cs). One file, read by the unit tests too. -->
+  <ItemGroup>
+    <None Include="../../../scripts/e2e/mcp/neighbour-tools.json" Link="neighbour-tools.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

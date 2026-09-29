@@ -266,6 +266,8 @@ if chaos or teams_bot == 'stand-in':
             'infra/e2e/notification-receiver/Program.cs',
             'infra/e2e/notification-receiver/TeamsStandIn.cs',
             'infra/e2e/notification-receiver/LlmStandIn.cs',
+            'infra/e2e/notification-receiver/DecoyMcp.cs',
+            'scripts/e2e/mcp/neighbour-tools.json',
             'infra/e2e/notification-receiver/notification-receiver.csproj',
             'infra/e2e/notification-receiver/Dockerfile',
         ],
@@ -444,6 +446,15 @@ if agent:
             resource_deps = ['notification-receiver-image'],
             port_forwards = [tailnet(8110, 8080)],
             labels = ['agent'],
+        )
+
+    # The pod whose log is an instruction, for the pager suite's MCP scenarios (P33, P41).
+    if pager_e2e:
+        k8s_yaml('infra/e2e/pager-fixture.yaml')
+        k8s_resource(
+            'pager-payments',
+            resource_deps = ['notification-receiver-image'],
+            labels = ['e2e'],
         )
 
     if teams_bot == 'real':

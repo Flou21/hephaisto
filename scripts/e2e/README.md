@@ -244,5 +244,25 @@ nothing about a diagnosis. The windows it waits out are seconds (`values-pager.y
 The phase runs last because it reconfigures the installed agent (`helm upgrade --reuse-values -f
 values-pager.yaml`). `--no-pager` skips it.
 
-`pager/KNOWN_RED` lists scenarios whose fix has not landed. A red one there is reported and does
-not fail; a green one there fails the run.
+`pager/KNOWN_RED` lists scenarios whose fix has not landed, each with the milestone that needs it
+green. A red one there is reported and does not fail; a green one there fails the run, and so does
+every entry under `--strict`, the release gate. An entry whose milestone the version floor has
+passed fails the unit tests (`PagerSuiteTests`).
+
+### The MCP scenarios (P29-P48, v0.11.0)
+
+The same suite asks the agent's MCP endpoint what a coding agent would (#157). The driver is
+`lib/mcp.sh`: plain JSON-RPC over curl, because the endpoint is stateless streamable HTTP and one
+POST is all a gateway sends per call. P29 is its control - the stand-in's decoy server
+(`DecoyMcp.cs`), which works and is not the agent.
+
+| File | What |
+|---|---|
+| `mcp/tools.golden.json` | The reviewed tool list: names, order, who may call each, descriptions |
+| `mcp/findability.tsv` | Questions a gateway's tool search must answer with the right tool in its top five |
+| `mcp/neighbour-tools.json` | Other servers' tools, listed first in the findability check and by the decoy |
+| `mcp-secrets.sh` | Makes the Secret with the five tokens `values-pager.yaml` names; `--print` exports them |
+| `infra/e2e/pager-fixture.yaml` | A pod whose log is an instruction; the stand-in's script mode cites it (P33, P41) |
+
+A scenario that needs an investigation with evidence scripts the model stand-in first
+(`mcp_script`, `POST /llm/script`): it reads one tool, then concludes citing the step it read.
