@@ -2560,6 +2560,11 @@ a token it is refused; with the reader role it cannot close; and no tool approve
   words. Two gaps closed on the way: feedback refuses the model as its author, and a
   re-investigation the model asks for is a 403 with a reason instead of a 500.
   P36, P37, P39, P40 and P47 are green.
+- *Stage 6 (F5).* The doors, held on every build: the tools registered in code are the reviewed
+  list - names, order, who may call each, read-only hints and descriptions; a tool class takes
+  only the reader and the write facade, never the queries that also approve and re-arm; the write
+  facade has exactly six methods; the reader never writes; and the coder's Job carries nothing of
+  the endpoint. P30 and P42 are green.
 
 **Size.** L. Open. [Roadmap v0.11.0](roadmap.md).
 

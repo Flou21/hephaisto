@@ -130,4 +130,16 @@ public sealed class CodeFixJobSpecTests
         labels["hephaisto.dev/incident"].Should().Be(Attempt.IncidentId.ToString());
         labels["hephaisto.dev/phase"].Should().Be("implement");
     }
+
+    [Theory]
+    [InlineData(CodeFixPhase.Plan)]
+    [InlineData(CodeFixPhase.Implement)]
+    public void The_coder_is_handed_no_way_into_the_mcp_endpoint(CodeFixPhase phase)
+    {
+        // #157: the coder Job has no route to Hephaisto and gets none from the MCP endpoint - no
+        // setting, no token, no Secret reference, no address of the port.
+        var job = System.Text.Json.JsonSerializer.Serialize(CodeFixJobSpec.Job(Attempt, phase, Options()));
+
+        job.Should().NotContain("Mcp__").And.NotContain("hephaisto-mcp").And.NotContain(":8083").And.NotContain("/mcp");
+    }
 }
