@@ -10,6 +10,18 @@ broken, with the evidence for each.
 Versions are set by the git tag through MinVer; the chart version and the app version are always
 the same number.
 
+## v0.12.0 — unreleased
+
+**What production found.** See `docs/roadmap.md`, v0.12.0. This candidate carries F5 first; F1
+to F4 follow in later candidates.
+
+### New
+- **Investigation in a Job, off by default** ([#164](docs/backlog.md#164)). Nothing yet: this
+  line grows with each part of F5.
+
+### Upgrading
+- **Nothing changes until `investigation.job.enabled` is set.**
+
 ## v0.11.0 — unreleased (`v0.11.0-rc1` 2026-09-29)
 
 **An agent can ask it.** An MCP endpoint over the incidents, their investigations and their
