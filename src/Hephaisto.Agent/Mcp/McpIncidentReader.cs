@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Hephaisto.Agent.CodeFix;
-using Hephaisto.Agent.Mcp.Results;
+using Hephaisto.Agent.Mcp.Answers;
 using Hephaisto.Agent.Notifications;
 using Hephaisto.Agent.Observability;
 using Hephaisto.Agent.Persistence;

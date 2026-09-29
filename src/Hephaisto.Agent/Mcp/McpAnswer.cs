@@ -21,7 +21,7 @@ namespace Hephaisto.Agent.Mcp;
 /// </para>
 /// <para>
 /// <b>The result records are guarded.</b> A <c>string</c> property of a type in
-/// <c>Hephaisto.Agent.Mcp.Results</c> must carry <see cref="ServerAuthoredAttribute"/>; anything
+/// <c>Hephaisto.Agent.Mcp.Answers</c> must carry <see cref="ServerAuthoredAttribute"/>; anything
 /// else is <see cref="McpText"/>. The resolver refuses the type otherwise, so the call fails.
 /// </para>
 /// <para>
@@ -32,7 +32,7 @@ namespace Hephaisto.Agent.Mcp;
 /// </remarks>
 public static class McpAnswer
 {
-    public const string ResultsNamespace = "Hephaisto.Agent.Mcp.Results";
+    public const string AnswersNamespace = "Hephaisto.Agent.Mcp.Answers";
 
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -190,7 +190,7 @@ public static class McpAnswer
 
     private static void RefusePlainStrings(JsonTypeInfo info)
     {
-        if (info.Kind != JsonTypeInfoKind.Object || info.Type.Namespace != ResultsNamespace)
+        if (info.Kind != JsonTypeInfoKind.Object || info.Type.Namespace != AnswersNamespace)
         {
             return;
         }
