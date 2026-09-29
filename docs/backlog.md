@@ -2419,6 +2419,31 @@ Alertmanager repeats a firing alert. A rule deleted while firing is a person's t
 S. **Accepted for v0.10.0**, as written above.
 
 
+
+### 156. A null in the model's conclusion failed the whole investigation
+
+**Symptom.** On the v0.10.0-rc1 release gate, gpt-oss:120b concluded c5 with a finding whose
+`evidence` was `null`. A JSON null replaces the empty list `FindingDraft.Evidence` starts as, and
+`ConcludeMapper.ToFindings` iterated it: an investigation that had reached a conclusion ended in a
+`NullReferenceException` and escalated as `InvestigationFailed` - after an hour in the queue. The
+pager suite's model stand-in always sends a list, so nothing short of a real model could have
+found it.
+
+**Fixed in v0.10.0-rc2**: null is read as "none" for the findings, each finding, its citations and
+their fields; a finding without citations then fails grounding by name, which is what it is.
+
+**And the release gate read incidents the way v0.9.0 kept them.** Its fixture checks listed open
+incidents only. Since #129 an incident whose alert cleared is closed, so c5's investigated
+incident dropped off the list and the wait for "every fixture concluded" ran to its deadline.
+The fixture checks read every state now.
+
+**And the pager suite lost an alert to its own port-forward.** In the release harness the agent
+is reached through a kubectl port-forward, which dies with the pod it picked. P16 scales the
+agent to zero and back; P17's alert, posted before the forward reconnected, got an empty reply
+and never arrived, so P17 failed with the feature working (it passed on CI and the dev cluster,
+where the address does not depend on a pod). Every exclusive scenario now waits for the agent to
+answer on both addresses before it starts.
+
 ## Dead or unreachable code
 
 ### 27. `AddHephaistoLlmWithoutPersistence` has no call sites

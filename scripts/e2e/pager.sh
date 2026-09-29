@@ -181,6 +181,9 @@ for p in $pids; do wait "$p" || true; done
 
 phase "exclusive scenarios, one at a time"
 for f in $EXCLUSIVE; do
+    # Exclusive scenarios stop the database, restart the agent or scale it to zero; the next one
+    # starts only once the agent answers again, or a lost first request reads as its failure.
+    pager_wait_agent 180 || warn "the agent did not answer within 180s before $(field "$f" 1)"
     say "run $(field "$f" 1): $(field "$f" 4)"
     run_one "$f" || true
 done

@@ -10,7 +10,12 @@ broken, with the evidence for each.
 Versions are set by the git tag through MinVer; the chart version and the app version are always
 the same number.
 
-## v0.10.0 — unreleased
+## v0.10.0 — unreleased (`v0.10.0-rc1` 2026-09-28)
+
+### Fixed in rc2
+- **A model's `null` in its conclusion no longer fails the investigation** ([#156](docs/backlog.md#156)).
+  Found by the rc1 release gate: a finding with `"evidence": null` threw inside the mapper and
+  escalated a concluded investigation as `InvestigationFailed`.
 
 **It is the only thing that tells a person.** On its first production install Hephaisto replaces
 the incident service and the pager that alerts go to today; this release is what that needs. See

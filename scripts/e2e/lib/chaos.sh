@@ -546,11 +546,11 @@ chaos_await_incidents() {
     fi
 
     wait_for "an incident for each of: $APPLIED" "${INCIDENT_TIMEOUT:-$derived}" \
-        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents?limit=100' | jq -e --argjson want '$want_json' 'type == \"array\" and (. as \$inc | \$want | all(. as \$t | \$inc | any(.targetName // \"\" | . == \$t or startswith(\$t + \"-\"))))' >/dev/null" \
+        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents?state=any&limit=200' | jq -e --argjson want '$want_json' 'type == \"array\" and (. as \$inc | \$want | all(. as \$t | \$inc | any(.targetName // \"\" | . == \$t or startswith(\$t + \"-\"))))' >/dev/null" \
         || warn "not every fixture opened an incident within the deadline; see the per-fixture results below"
 
     local got
-    got=$(api_array "/api/incidents?limit=100" | jq --arg ns "$CHAOS_NS" '[.[] | select((.namespace // "") == $ns)] | length')
+    got=$(api_array "/api/incidents?state=any&limit=200" | jq --arg ns "$CHAOS_NS" '[.[] | select((.namespace // "") == $ns)] | length')
     [ "${got:-0}" -ge "$want" ] \
         && pass "$got incident(s) opened in $CHAOS_NS from $want fixture(s)" \
         || fail "only ${got:-0} incident(s) in $CHAOS_NS, expected $want" \
@@ -580,7 +580,7 @@ chaos_incident_floor() {
 # ---------------------------------------------------------------------------------------
 chaos_assert_detection() {
     local incidents
-    incidents=$(api_array "/api/incidents?limit=100")
+    incidents=$(api_array "/api/incidents?state=any&limit=200")
     printf '%s' "$incidents" > "$WORKDIR/incidents.json"
 
     # Fixture -> incident, resolved ONCE and written down for every later reader.
@@ -732,7 +732,7 @@ chaos_await_investigations() {
     # The per-fixture check below then reports precisely which fixture is missing, which is the
     # useful output.
     wait_for "every fixture's investigation to conclude (expecting $want)" "$deadline" \
-        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents' | jq -e --argjson want '$diag_want' 'type == \"array\" and (. as \$inc | \$want | all(. as \$t | \$inc | any((.targetName // \"\" | (. == \$t or startswith(\$t + \"-\"))) and ((.investigationCount // 0) >= 1) and (.inProgress == null))))' >/dev/null" \
+        bash -c "curl -sS --max-time 10 'http://127.0.0.1:$PF_PORT_APP/api/incidents?state=any&limit=200' | jq -e --argjson want '$diag_want' 'type == \"array\" and (. as \$inc | \$want | all(. as \$t | \$inc | any((.targetName // \"\" | (. == \$t or startswith(\$t + \"-\"))) and ((.investigationCount // 0) >= 1) and (.inProgress == null))))' >/dev/null" \
         || warn "not every fixture concluded within the deadline; the per-fixture result below says which"
 
     # How many of the applied fixtures have an incident carrying a diagnosis. Plainly, one
@@ -743,7 +743,7 @@ chaos_await_investigations() {
     local f t
     for f in $APPLIED; do
         t=$(fixture_target "$f")
-        if api_array "/api/incidents" \
+        if api_array "/api/incidents?state=any&limit=200" \
             | jq -e --arg t "$t" 'any((.targetName // "" | (. == $t or startswith($t + "-"))) and .hasDiagnosis)' >/dev/null 2>&1; then
             done_count=$(( done_count + 1 ))
         else
@@ -774,7 +774,7 @@ chaos_await_investigations() {
     # `|| true` throughout: this is a diagnostic on a path that has already failed, and it must
     # not take the suite down with a jq exit code under `set -Eeuo pipefail`.
     local why="" unrun="" barren=""
-    local all; all=$(api "/api/incidents?limit=100" || true)
+    local all; all=$(api "/api/incidents?state=any&limit=200" || true)
 
     for f in $missing; do
         t=$(fixture_target "$f")
@@ -855,7 +855,7 @@ $why}"
 # the judge all read the same snapshot rather than racing a live system.
 chaos_collect_details() {
     local ids
-    ids=$(api_array "/api/incidents?limit=100" | jq -r '.[].id')
+    ids=$(api_array "/api/incidents?state=any&limit=200" | jq -r '.[].id')
 
     : > "$WORKDIR/details.jsonl"
     local id
