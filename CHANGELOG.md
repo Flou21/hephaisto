@@ -247,9 +247,9 @@ started a code fix, but the mode is Off" before you turn anything on.
 - The headline invariant is re-scoped: **no model in this process ever holds a mutating handle to
   the cluster.** The coder holds a shell by construction; its only mutation target is a branch.
 - `Ingest:SelfNamespaces` is now set by the chart ([#115](docs/backlog.md#115)).
-- The install-ergonomics work ([#108](docs/backlog.md#108)) moves to v0.12.0. v0.10.0 is what
-  stands between Hephaisto and being the only incident system, and v0.11.0 adds SMS and voice,
-  in `docs/roadmap.md`.
+- The install-ergonomics work ([#108](docs/backlog.md#108)) moves to v0.13.0. v0.10.0 is what
+  stands between Hephaisto and being the only incident system, v0.11.0 lets an agent ask it over
+  MCP ([#157](docs/backlog.md#157)) and v0.12.0 adds SMS and voice, in `docs/roadmap.md`.
 
 ### Known
 - The Teams bot has run against a stand-in and not against Teams

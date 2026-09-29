@@ -1427,7 +1427,7 @@ address read a dashboard no longer lets it inject a forged alert. And both wrong
 corrected: `secrets.grafanaMcp` is the caller bearer rather than a Grafana credential, and
 `grafanaMcp.url` needs its `/mcp` path.
 
-**The getting-started guide is what remains, and it carries to v0.11.0** (renumbered from v0.9.0, then from v0.10.0) with the rest of the
+**The getting-started guide is what remains, and it carries to v0.13.0** (renumbered from v0.9.0, v0.10.0, v0.11.0 and then from v0.12.0) with the rest of the
 install-ergonomics work. Writing one was deferred deliberately rather than forgotten: v0.8.0's
 theme became operating the agent rather than installing it, on the grounds that installing is
 something you do once and had just been done.
@@ -2240,7 +2240,7 @@ timestamp per step on the incident. **Size.** M. **Fixed in v0.10.0**: a route h
 incident whose clock (`ReopenedAt ?? OpenedAt`) has passed it, as `IncidentUnanswered`. Nothing
 is scheduled: `NotificationSteps.Due` compares the steps with the clock and the deliveries that
 already exist, so an acknowledgement stops them and a reopen restarts them. The loud channel of
-the original "what to do" is v0.11.0. Pager scenarios P23, P24.
+the original "what to do" is v0.12.0. Pager scenarios P23, P24.
 
 ### 143. Teams is the only way to reach a person
 
@@ -2253,8 +2253,10 @@ unproven ([#125](#125)). The generic webhook takes one URL.
 queue", which was the right place for them while something else did the paging.
 
 **What to do.** Decide the loud channel first; the abstraction is there and a channel is a
-`Name`, a `Describe()` and a `SendAsync`. **Decided 2026-09-28:** SMS and voice through Twilio,
-in [roadmap v0.11.0](roadmap.md). v0.10.0 is Teams only. **Size.** L. Open.
+`Name`, a `Describe()` and a `SendAsync`. **Decided 2026-09-28:** SMS and voice through Twilio.
+v0.10.0 is Teams only. **Moved 2026-09-29** from v0.11.0 to
+[roadmap v0.12.0](roadmap.md), when the MCP endpoint ([#157](#157)) took v0.11.0.
+**Size.** L. Open.
 
 ### 144. A rollout is an outage of the pager, and the chart calls that cheap
 
@@ -2443,6 +2445,77 @@ agent to zero and back; P17's alert, posted before the forward reconnected, got 
 and never arrived, so P17 failed with the feature working (it passed on CI and the dev cluster,
 where the address does not depend on a pod). Every exclusive scenario now waits for the agent to
 answer on both addresses before it starts.
+
+### 157. An agent has no way to ask Hephaisto about an incident
+
+**Symptom.** Hephaisto holds everything there is to know about an incident: the signals with
+their labels, the timeline, every step of the investigation with its evidence, the finding, what
+was proposed and what the policy engine said, the code-fix plan, what people learned about the
+alert name ([#145](#145)), and a digest index that answers "has this happened before". It can be
+asked in two ways - the console, by a person, and the REST API, which nothing describes to a
+model. A coding agent working on the service that is paging gets the incident by copy and paste.
+
+Hephaisto is an MCP **client**: it reads Grafana through one. It is not a server. The roadmap's
+whole treatment was one line under "Later": *"MCP server mode, so an agent can query incidents."*
+
+**Why it is not "Later" any more.** Two reasons, and either would do. The incident service
+Hephaisto replaces offers one - search, read, claim, assign, and the notes kept per alert name -
+so this is parity, and that service cannot be switched off while something still depends on it.
+And the people who work these incidents do it with coding agents, which is where the history is
+wanted: "this alert fired eleven times this month, here is what was done each time" is worth more
+to the agent about to change the code than to anybody reading a card.
+
+**What to do.**
+
+*Where it listens.* MCP over streamable HTTP at `/mcp`, on a port of its own and off by default
+(`mcp.enabled`, `mcp.port`). The precedent is `webhookPort` and `teamsBot.actions.port`: a
+surface with its own callers gets its own port, so that a policy or an Ingress can admit exactly
+that.
+
+*Who may call it.* Never nobody. With `auth.enabled`, a bearer token from the identity provider,
+through the JWT scheme the API already has; the reader role reads, and the approver role is
+needed for what the API already puts behind it. Without an identity provider, a token from a
+Secret, as `secrets.webhookToken` is, and a short one refuses to start.
+
+*What it can read.*
+
+| Tool | Answers |
+|---|---|
+| `search_incidents` | By state, alert name, cluster, namespace, severity and time; free text through the digest index |
+| `get_incident` | Timeline, signals with labels and annotations, findings with their evidence, actions with the policy verdict, code-fix attempts, who was told and when |
+| `get_investigation` | The steps, the tool calls, and evidence blobs by reference rather than by value |
+| `incident_history` | For an alert name or a workload: how often, how each one ended, what was done |
+| `get_alert_note` | What people learned about an alert name |
+| `get_status` | Mode, budgets, kill-switch arms, connections |
+
+*What it can change.* Acknowledge, assign, add a line to an alert's note, submit feedback; and
+with the approver role, close and re-investigate - the second spends the budget, and says so in
+its description.
+
+*What it can never do.* Approve or deny an action. Approve or deny a code-fix plan. Re-arm.
+Anything that names a mode. **A caller of this endpoint is a model by construction**, and the
+two doors in this system that a person is meant to open are exactly the ones a model must not:
+`IncidentStateMachine.IsForbiddenGranter` exists for that, and an approval arriving here would be
+a model granting itself. These are absent rather than refused - there is no such tool to call -
+and a test asserts the tool list never grows one, the same way `ITeamsBotClient` has no delete.
+
+*Who it says did it.* The token's subject, through `ActorResolution`, recorded with its own
+source so that the audit trail can tell a person's click from an agent's call made in that
+person's name. Not a name from the arguments ([#127](#127)).
+
+*What it hands over is not trusted.* An incident is made of log lines and annotations a workload
+wrote, and hypotheses a model wrote. Here it is handed to another model, which may hold a shell.
+Every such field is marked as data, in the wrapper the coder's request already uses; results pass
+through the redactor, are capped in size, and name a blob instead of carrying it.
+
+*It is not a way in for the coder.* The coder Job has no route to Hephaisto and gets none from
+this: it is handed what it needs in its request, and answers through its log.
+
+**How it is tested.** As the pager suite tests paging: a real MCP client against the installed
+chart. It lists the tools, reads an incident that a scenario opened, and acknowledges it; without
+a token it is refused; with the reader role it cannot close; and no tool approves anything.
+
+**Size.** L. Open. [Roadmap v0.11.0](roadmap.md).
 
 ## Dead or unreachable code
 

@@ -1251,7 +1251,7 @@ It found two classes of thing, and the second is the release.
 **Install ergonomics** ([#108](backlog.md#108)) — installing it took a day of reading the chart's
 source to answer questions the documentation does not, and the guide that came out of it contained
 three mistakes made by someone who had just read the whole repository. Most of that is a writing
-job and is deferred to v0.12.0 (renumbered from v0.9.0, from v0.10.0, then from v0.11.0). Two pieces are not, and are in scope here because other work depends
+job and is deferred to v0.13.0 (renumbered from v0.9.0, v0.10.0, v0.11.0 and then from v0.12.0). Two pieces are not, and are in scope here because other work depends
 on them.
 
 **Operability** — and this is the theme. The agent diagnoses well and says so nowhere a person can
@@ -1333,7 +1333,7 @@ and dropped.**
 
 ### What is explicitly not in v0.8.0
 
-- **The getting-started guide** (M, [#108](backlog.md#108)) — deferred to v0.12.0 (renumbered from v0.9.0, from v0.10.0, then from v0.11.0) with the rest of
+- **The getting-started guide** (M, [#108](backlog.md#108)) — deferred to v0.13.0 (renumbered from v0.9.0, v0.10.0, v0.11.0 and then from v0.12.0) with the rest of
   the install-ergonomics work.
 - **Failure mode B**, Kafka consumer throughput after an update: a broker, a `SignalKind`, an
   alert, a runbook, a fixture, and a Prometheus-backed verification predicate, because
@@ -1502,7 +1502,7 @@ green with an empty known-red list.
   still its own release.
 - **An on-call rota and quiet hours.** Neither system being replaced has one. Escalation steps
   go to routes, and a route is a list.
-- **A louder channel than Teams.** SMS and a phone call are v0.11.0 ([#143](backlog.md#143)).
+- **A louder channel than Teams.** SMS and a phone call are v0.12.0 ([#143](backlog.md#143)).
   Until then, whether a personal chat from the bot rings a phone ([#125](backlog.md#125)) is the
   question the cutover rests on.
 - **A second replica.** See [#144](backlog.md#144).
@@ -1511,26 +1511,85 @@ green with an empty known-red list.
 
 ---
 
-## v0.11.0 — A louder channel
+## v0.11.0 — An agent can ask it
+
+Decided on 2026-09-29. Hephaisto answers a person in a browser and nobody else. This release
+lets a model ask: an MCP endpoint over the incidents, their investigations and their history
+([#157](backlog.md#157)). It took this number from the louder channel, which is now v0.12.0.
+
+### The finding it rests on
+
+Everything worth knowing about an incident is already in the database, and the expensive part -
+the investigation, grounded in evidence - is already paid for by the time anybody wants it. What
+is missing is a way to reach it that is not a person reading a page. The people who work these
+incidents do it with coding agents, and the agent about to change a service is the reader that
+most needs "this alert fired eleven times this month, and this is what was done each time".
+
+It is also parity. The incident service Hephaisto replaces offers an MCP endpoint, so that
+service cannot be switched off while anything still asks it.
+
+### What ships
+
+| # | Item | Size |
+|---|---|---|
+| F0 | **It is tested the way it is used.** A real MCP client against the installed chart, as scenarios in the pager suite. Built first; every group below is accepted by its scenarios | M |
+| F1 | **The endpoint.** MCP over streamable HTTP at `/mcp`, on a port of its own, off by default. A bearer token always: the identity provider's when there is one, a Secret's when there is not | M |
+| F2 | **Reading.** Search, one incident in full, an investigation's steps and evidence, the history of an alert name or a workload, the note kept for an alert name, the agent's status | L |
+| F3 | **What is handed over is marked as data.** Log lines, annotations and hypotheses are untrusted and go to a model that may hold a shell: wrapped, redacted, capped, blobs by reference | M |
+| F4 | **The changes that are safe to make.** Acknowledge, assign, a line on an alert's note, feedback; close and re-investigate with the approver role. Recorded as the token's subject, with a source of its own | M |
+| F5 | **The doors stay shut.** No tool approves or denies an action or a code-fix plan, re-arms, or names a mode - absent, not refused, and asserted | S |
+
+### Done when
+
+On a throwaway cluster, an MCP client with a reader's token lists the tools, finds an incident
+that a scenario opened, and reads its finding with the evidence behind it. It is told how often
+that alert fired before and how each time ended. With the same token it cannot close the
+incident; with an approver's it can, and the audit row names the token's subject and says the
+call came through MCP. Without a token it is refused. A log line that says "ignore your
+instructions" arrives inside the wrapper that marks it as data. The tool list holds nothing that
+approves, denies, re-arms or sets a mode.
+
+Every sentence above is a scenario, and the suite is green with an empty known-red list.
+
+### What is explicitly not in v0.11.0
+
+- **Approving anything.** A caller here is a model by construction. The two doors a person is
+  meant to open stay in the console and behind the approver's own sign-in.
+- **A way in for the coder.** The coder Job has no route to Hephaisto and gets none from this.
+- **Prompts and sampling.** Tools and resources only. Hephaisto does not ask the caller's model
+  for anything.
+- **Writing incidents.** An incident opens because an alert fired or a watcher saw something,
+  not because an agent said so.
+- **A second transport.** No stdio server: Hephaisto runs in a cluster, and the caller does not.
+
+---
+
+## v0.12.0 — A louder channel
 
 Decided on 2026-09-28: v0.10.0 reaches people through Teams alone. The service being replaced
 also sends an SMS and places a call when nobody answers, and that is the one thing v0.10.0 does
-not replace ([#143](backlog.md#143)).
+not replace ([#143](backlog.md#143)). Moved from v0.11.0 on 2026-09-29, when the MCP endpoint
+took that number.
 
 - **SMS and voice through Twilio**, as named HTTP channels rather than one more hard-coded
   channel: a channel is a URL template, a body template and a credential, fanned out per
   recipient, with Twilio as the shipped preset.
 - **Escalation steps may name it.** The steps of v0.10.0 already take a channel.
+- **Still to decide: what rings a phone that is set to silent.** An SMS and a call are treated
+  by a phone like any other, and stay quiet in Do Not Disturb unless each person makes an
+  exception for the number. A notification that breaks through needs an app holding the
+  platform's permission for it, which is a channel of a different kind.
 - **Done when** an unacknowledged critical incident on the release harness reaches a stand-in for
   Twilio's API once per recipient, and an acknowledged one does not.
 
 ---
 
-## v0.12.0 — Install ergonomics
+## v0.13.0 — Install ergonomics
 
-The getting-started guide and the rest of [#108](backlog.md#108). Renumbered three times: from
+The getting-started guide and the rest of [#108](backlog.md#108). Renumbered four times: from
 v0.9.0 when the code-fix stage took that number (2026-09-27), from v0.10.0 when becoming the only
-incident system took that one, and from v0.11.0 when the louder channel did (both 2026-09-28).
+incident system took that one, from v0.11.0 when the louder channel did (both 2026-09-28), and
+from v0.12.0 when the MCP endpoint took v0.11.0 (2026-09-29).
 Scope unchanged: installing Hephaisto should not take a day of reading the chart's source.
 
 ---
@@ -1654,7 +1713,9 @@ Roughly in order of value:
 - **Widen autonomy** to `rollout_restart` and `rollback_deployment`; widen namespaces.
 - **Alert-noise reduction** — find chronically flapping rules, propose changes as PRs.
 - **Topology and blast-radius reasoning** from the service graph.
-- **MCP server mode**, so an agent can query incidents.
+- ~~**MCP server mode**, so an agent can query incidents.~~ — **pulled into v0.11.0 on
+  2026-09-29** ([#157](backlog.md#157)): the service being replaced offers one, and the agents
+  that would ask are already at work.
 - **`--enforce-netpol`** tier in the e2e harness — Calico under kind, closing
   [backlog #23](backlog.md#23-networkpolicy-enforcement-is-unproven).
 - Chaos self-testing, natural-language history queries, Pyroscope, multi-cluster.
