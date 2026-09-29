@@ -2571,6 +2571,15 @@ a token it is refused; with the reader role it cannot close; and no tool approve
   test with keys made in the test, and in the pager suite by a second, small install against an
   identity-provider stand-in (`OidcStandIn.cs`, `values-signin.yaml`, `signin-install.sh`). P48 is
   green, and the known-red list is empty.
+- *Stage 8.* Through a real gateway (LiteLLM 1.102.1, pinned, tool search on) and a real model
+  (Haiku), both local and on demand. The gateway ranks every reviewed question's tool into its top
+  five exactly as the unit tests' scorer predicts. It found one bug: the per-token rate limit also
+  counted `tools/list`, which a gateway calls for every search under the one token it holds, so a
+  busy team's searches starved the gateway's index; only tool calls are limited now (300 a minute
+  by default). Haiku answered all three questions directly and did not follow the instruction in
+  the data. Through a shared gateway token it answered "my incidents" with everybody's: the
+  token cannot know who is asking, `me` is refused, and a model has to ask for a name - a person
+  token for a direct connection is the way to "my".
 
 **Size.** L. Open. [Roadmap v0.11.0](roadmap.md).
 

@@ -10,7 +10,7 @@
       "name": "search_incidents",
       "needs": "reader",
       "readOnly": true,
-      "description": "Search and list incidents, newest first. Answers what the latest open incidents are, what the latest closed incidents are, what my incidents are (assigned to a person), and which incidents match a free text query. Filter by state (open, closed, escalated, resolved), severity (critical, warning, info), cluster, namespace, alert name, workload, kind, assignee, acknowledged or unacknowledged, and a time range. Returns one compact row per incident: id, title, severity, state, alert name, namespace, workload, who it is assigned to, when it opened and ended. Paged with a cursor. Start here for any question about which incidents exist."
+      "description": "Search and list incidents, newest first. Answers what the latest open incidents are, what the latest closed incidents are, what my incidents are (assigned to a person), and which incidents match a free text query. Filter by state (open, closed, escalated, resolved), severity (critical, warning, info), cluster, namespace, alert name, workload, kind, assignee, acknowledged or unacknowledged, and a time range. Returns one compact row per incident: id, title, severity, state, alert name, namespace, workload, who it is assigned to, when it opened and ended. Paged with a cursor. Start here for any question about which incidents exist. Through a shared gateway token, me means nobody: for my incidents, ask the person for their name and pass it as assignedTo."
     },
     {
       "name": "get_incident",

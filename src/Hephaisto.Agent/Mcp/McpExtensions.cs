@@ -5,7 +5,6 @@ using Hephaisto.Agent.Options;
 using Hephaisto.Core.Notifications;
 using Hephaisto.ServiceDefaults;
 using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol.Protocol;
 
@@ -22,8 +21,6 @@ public static class McpExtensions
 
     /// <summary>Close and re-investigate: a token that may write and holds the approver role.</summary>
     public const string ApprovePolicy = "hephaisto.mcp.approve";
-
-    private const string RatePolicy = "hephaisto.mcp.rate";
 
     /// <summary>
     /// What a model is told about this server before it calls anything. Short: a gateway with tool
@@ -100,18 +97,18 @@ public static class McpExtensions
                 .RequireClaim(McpCaller.WriteClaim, "true")
                 .RequireClaim(McpCaller.RoleClaim, McpTokenOptions.Approver));
 
-        services.AddRateLimiter(o =>
-        {
-            o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-            o.AddPolicy(RatePolicy, context => RateLimitPartition.GetFixedWindowLimiter(
-                context.User.Identity?.Name ?? "anonymous",
-                _ => new FixedWindowRateLimiterOptions
-                {
-                    PermitLimit = Math.Max(1, mcp.RequestsPerMinutePerToken),
-                    Window = TimeSpan.FromMinutes(1),
-                    QueueLimit = 0,
-                }));
-        });
+        // Tool calls per token (or signed-in user), per minute. Only calls: listing the tools costs
+        // nothing, and a gateway with tool search lists them for every search its users make - under
+        // the one token it holds for all of them. A limit on the listing starved the gateway's index,
+        // and a model then found only other servers' tools (the gateway tier found it).
+        var calls = PartitionedRateLimiter.Create<string, string>(key => RateLimitPartition.GetFixedWindowLimiter(
+            key,
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = Math.Max(1, mcp.RequestsPerMinutePerToken),
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
 
         services.AddScoped<McpIncidentReader>();
         services.AddScoped<McpIncidentActions>();
@@ -141,6 +138,15 @@ public static class McpExtensions
                     var tool = context.Params?.Name ?? "unknown";
                     var kind = McpCaller.From(context.User)?.Kind ?? "unknown";
                     var metrics = context.Services?.GetService<HephaistoMetrics>();
+
+                    using var lease = calls.AttemptAcquire(context.User?.Identity?.Name ?? "anonymous");
+
+                    if (!lease.IsAcquired)
+                    {
+                        metrics?.McpCall(tool, "limited", kind, Stopwatch.GetElapsedTime(started), 0);
+                        throw new ModelContextProtocol.McpException(
+                            $"Too many tool calls for this token: at most {mcp.RequestsPerMinutePerToken} a minute. Try again in a minute.");
+                    }
 
                     try
                     {
@@ -214,11 +220,8 @@ public static class McpExtensions
             return app;
         }
 
-        app.UseRateLimiter();
-
         app.MapMcp(McpOptions.Route)
-            .RequireAuthorization(ReadPolicy)
-            .RequireRateLimiting(RatePolicy);
+            .RequireAuthorization(ReadPolicy);
 
         app.Logger.LogInformation(
             "The MCP endpoint is on: {Route} on port {Port}, {Tokens} token(s){SignIn}.",

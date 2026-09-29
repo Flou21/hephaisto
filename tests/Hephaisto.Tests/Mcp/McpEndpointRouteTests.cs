@@ -60,6 +60,7 @@ public sealed class McpEndpointRouteTests : IAsyncLifetime
             ["Mcp:Tokens:3:Name"] = "dashboards",
             ["Mcp:Tokens:3:MayWrite"] = "false",
             ["Mcp:Tokens:3:Value"] = ReadOnly,
+            ["Mcp:RequestsPerMinutePerToken"] = "5",
         });
 
         builder.Services.AddMetrics();
@@ -175,6 +176,27 @@ public sealed class McpEndpointRouteTests : IAsyncLifetime
         });
 
         message["error"].Should().NotBeNull("a reader is not shown close_incident and cannot call it");
+    }
+
+    [Fact]
+    public async Task Listing_is_never_limited_and_calls_are_per_token()
+    {
+        // A gateway with tool search lists the tools for every search, under one token.
+        for (var i = 0; i < 20; i++)
+        {
+            (await Tools(Shared)).Should().NotBeEmpty();
+        }
+
+        for (var i = 0; i < 5; i++)
+        {
+            (await Call(Shared, "get_caller_identity"))["name"]!.GetValue<string>().Should().Be("mcp/litellm");
+        }
+
+        var limited = await Message(Shared, "tools/call", new JsonObject { ["name"] = "get_caller_identity", ["arguments"] = new JsonObject() });
+        limited["result"]!["isError"]!.GetValue<bool>().Should().BeTrue();
+        limited["result"]!["content"]![0]!["text"]!.GetValue<string>().Should().Contain("Too many tool calls");
+
+        (await Call(Reader, "get_caller_identity"))["name"]!.GetValue<string>().Should().Be("flo", "another token has its own allowance");
     }
 
     [Fact]
