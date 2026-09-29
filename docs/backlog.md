@@ -2703,7 +2703,9 @@ a Job, with Hephaisto serving that Job the same tools over an internal endpoint 
 its conclusion as today, a fallback to the in-process investigation, and an optional read-only
 checkout of the running revision. Resolve [#118](#118) before enabling it in production, and land
 [#159](#159) and [#160](#160) first there, or most of the subscription is spent on readiness
-flaps whose logs cannot be read. **Size.** L. Open.
+flaps whose logs cannot be read. **Size.** L. Built in `v0.12.0-rc1` (2026-09-29): nine stacked
+parts, `feat/v0.12.0-1` to `-9`; `scripts/e2e/investigate-local.sh` I0-I11 green on the dev stack
+with the scripted investigator. Open until a production install has run it on #118's answer.
 
 ## Dead or unreachable code
 

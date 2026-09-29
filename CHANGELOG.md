@@ -10,17 +10,48 @@ broken, with the evidence for each.
 Versions are set by the git tag through MinVer; the chart version and the app version are always
 the same number.
 
-## v0.12.0 — unreleased
+## v0.12.0 — unreleased (`v0.12.0-rc1` 2026-09-29)
 
-**What production found.** See `docs/roadmap.md`, v0.12.0. This candidate carries F5 first; F1
-to F4 follow in later candidates.
+**What production found.** See `docs/roadmap.md`, v0.12.0. This candidate carries F5, the
+investigation's model loop in a Job; F1 to F4 follow in later candidates.
 
 ### New
-- **Investigation in a Job, off by default** ([#164](docs/backlog.md#164)). Nothing yet: this
-  line grows with each part of F5.
+- **Investigation in a Job, off by default** ([#164](docs/backlog.md#164)). With
+  `investigation.job.enabled` and the executor at `job`, an investigation's model loop runs as
+  Claude Code in a Job next to the coder - on the subscription token in `secrets.codeFix`, with the
+  model in `investigation.job.model` - while Hephaisto serves it the same read-only tools over an
+  internal port and grounds its conclusion exactly as before. See `docs/architecture.md`,
+  "Investigating in a Job".
+- **Its own axis.** `investigation.job.executor` (env) and the switch ConfigMap's
+  `investigationExecutor`, `inprocess | job`, most restrictive winning; silence, a typo, the
+  emergency stop and the runaway latch are all in-process. `GET /api/investigations/executor` says
+  which, and why.
+- **The investigator port** (`investigation.job.port`, 8084): `/investigate` and nothing else,
+  admitted only from investigator pods, each run with its own token. Not the public `/mcp`.
+- **Fallback, never a lost investigation.** A Job that is refused, fails, vanishes, outlives its
+  deadline or hits a subscription limit is replaced by the in-process investigation; the console,
+  the API and MCP say `JobFallback`. `fallbackToInProcess: false` escalates instead.
+- **Storm control.** `concurrentJobs` (1) and `jobsPerHour` (20): a run without a slot runs
+  in-process at once; nothing queues.
+- **Source access, read-only** (`investigation.job.source.enabled`, off). A workload mapped
+  through `codeFix.repositories` is cloned at its running commit; the investigator may name file
+  and line, shown on the finding and passed to a code fix's plan. Never evidence.
+- **Telemetry.** `hephaisto.investigation.terminations` gains an `executor` label;
+  `hephaisto.investigation.job.fallbacks{reason,fallback}` is new; two dashboard panels.
 
 ### Upgrading
-- **Nothing changes until `investigation.job.enabled` is set.**
+- **Nothing changes until `investigation.job.enabled` is set**, and enabling it switches no
+  investigation over by itself: the executor defaults to `inprocess`. An install that does not set
+  it renders byte-for-byte what v0.11 rendered.
+- **Needs `codeFix.enabled`** - the investigator borrows the coder's namespace, image,
+  ServiceAccount, Secret and egress proxy - but no code-fix mode.
+- **Two migrations run at startup**, both additive: `InvestigationExecutor` (nullable
+  `investigations.executor`; existing rows read as in-process) and `FindingCodeRefs`
+  (`findings.code_refs` jsonb, default empty).
+- **Before production:** resolve backlog #118 (the OAuth token's terms for headless use), and land
+  #159 and #160 first, or most of the subscription goes on readiness flaps whose logs cannot be read.
+- A subscription run is charged $0 to the global LLM budget (its notional cost is in the step);
+  the Job caps bound it. An API-key run is charged what it cost.
 
 ## v0.11.0 — unreleased (`v0.11.0-rc1` 2026-09-29)
 
