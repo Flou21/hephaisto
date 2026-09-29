@@ -314,7 +314,7 @@ tool steps only. The references show in the console and ride into a code fix's p
 LLM budget would trip hourly caps sized for metered API spend - and then the runaway latch. So a
 subscription run is recorded at $0 with its notional cost in the step's text; an API-key run is
 charged what it cost. The Job caps, not the dollar caps, bound a subscription. Resolve backlog
-[#118](backlog.md#118) (the OAuth token's terms for headless use) before production depends on it.
+#118 (the OAuth token's terms for headless use) before production depends on it.
 
 ## Self-observability
 
