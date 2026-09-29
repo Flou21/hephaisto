@@ -164,6 +164,7 @@ public static class McpExtensions
             })
             .WithTools<McpIncidentTools>()
             .WithTools<McpIncidentDetailTools>()
+            .WithTools<McpInvestigationTools>()
             .WithTools<McpStatusTools>();
 
         return services;

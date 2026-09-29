@@ -15,7 +15,9 @@ scenario() {
 
     n=$(pager_name P41)
     mcp_script "$n" get_pod_logs '{"namespace":"hephaisto-chaos","name":"pager-payments"}' "$line" >/dev/null
-    pager_fire "$n" namespace=hephaisto-chaos pod=pager-payments "@description=$line"
+    # Its own namespace label, so it opens its own incident rather than correlating into P33's -
+    # both are about the one fixture pod, which the scripted model reads either way.
+    pager_fire "$n" namespace=pager-p41 deployment=payments "@description=$line"
     pager_wait_count "$n" 1 60 || { fail "the alert opened an incident" "none within 60s"; return; }
     id=$(pager_first "$n")
     pager_wait_settled "$id" 120 || fail "the investigation ended" "state $(pager_state "$id")"

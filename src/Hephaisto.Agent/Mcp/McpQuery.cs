@@ -193,12 +193,16 @@ public static class McpQuery
 
     /// <summary>An opaque cursor: where the last page ended, and which search it belongs to.</summary>
     public static string Cursor(string key, DateTimeOffset at, Guid id) =>
-        Convert.ToBase64String(Encoding.UTF8.GetBytes($"k:{key}:{at.UtcTicks}:{id:N}"))
+        Convert.ToBase64String(Encoding.UTF8.GetBytes($"k:{Bind(key)}:{at.UtcTicks}:{id:N}"))
             .TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
     public static string Cursor(string key, int offset) =>
-        Convert.ToBase64String(Encoding.UTF8.GetBytes($"o:{key}:{offset}"))
+        Convert.ToBase64String(Encoding.UTF8.GetBytes($"o:{Bind(key)}:{offset}"))
             .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+    /// <summary>The search a cursor belongs to, as twelve hex digits: nothing in it can be a separator.</summary>
+    private static string Bind(string key) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)))[..12];
 
     public static (DateTimeOffset At, Guid Id)? ReadKeyset(string? cursor, string key)
     {
@@ -261,7 +265,7 @@ public static class McpQuery
 
         var parts = text.Split(':');
 
-        if (parts.Length < 3 || parts[1] != key)
+        if (parts.Length < 3 || parts[1] != Bind(key))
         {
             throw Stale();
         }

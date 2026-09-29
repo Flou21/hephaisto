@@ -274,7 +274,7 @@ public sealed class McpReaderTests(PostgresFixture pg)
         return stripped.Contains(canary, StringComparison.Ordinal);
     }
 
-    private async Task<Guid> Given(
+    private Task<Guid> Given(
         string alertName,
         Severity severity,
         IncidentState state,
@@ -285,91 +285,10 @@ public sealed class McpReaderTests(PostgresFixture pg)
         string? acknowledgedBy = null,
         string? title = null,
         Dictionary<string, string>? annotations = null,
-        Guid? id = null)
-    {
-        await using var db = pg.CreateContext();
+        Guid? id = null) =>
+        McpGiven.IncidentAsync(pg, alertName, severity, state, ns, workload, openedAt, assignedTo, acknowledgedBy, title, annotations, id);
 
-        var incident = new Incident
-        {
-            Id = id ?? Guid.CreateVersion7(),
-            Title = title ?? $"{alertName} on {workload}",
-            CorrelationKey = $"{ns}/{workload}/{alertName}/{Guid.NewGuid():N}",
-            Kind = SignalKind.Unknown,
-            Severity = severity,
-            State = state,
-            Target = new TargetRef { Cluster = "dev", Namespace = ns, Kind = "Deployment", Name = workload },
-            OpenedAt = openedAt,
-            LastSignalAt = openedAt,
-            AlertName = alertName,
-            AssignedTo = assignedTo,
-            AcknowledgedBy = acknowledgedBy,
-            ClosedAt = state == IncidentState.Closed ? openedAt.AddMinutes(5) : null,
-            ResolvedAt = state == IncidentState.Resolved ? openedAt.AddMinutes(5) : null,
-        };
-
-        incident.Signals.Add(new Signal
-        {
-            Fingerprint = Guid.NewGuid().ToString("N"),
-            Source = SignalSource.Alertmanager,
-            Kind = SignalKind.Unknown,
-            Target = new TargetRef { Cluster = "dev", Namespace = ns, Kind = "Deployment", Name = workload },
-            Severity = severity,
-            Reason = alertName,
-            Message = "pager suite",
-            FirstSeen = openedAt,
-            LastSeen = openedAt,
-            Status = SignalStatus.Firing,
-            Labels = new() { ["alertname"] = alertName, ["namespace"] = ns },
-            Annotations = annotations ?? new() { ["description"] = $"{alertName} fired" },
-        });
-
-        db.Incidents.Add(incident);
-        await db.SaveChangesAsync(Ct);
-
-        return incident.Id;
-    }
-
-    private McpIncidentReader Reader()
-    {
-        var clock = new FixedClock(Now);
-        var services = new ServiceCollection();
-        services.AddScoped(_ => pg.CreateContext());
-        var provider = services.BuildServiceProvider();
-
-        var queries = new IncidentQueries(
-            provider.GetRequiredService<IServiceScopeFactory>(),
-            new NoKillSwitch(),
-            new IncidentNotifier(NullLogger<IncidentNotifier>.Instance),
-            new WatchdogMonitor(clock),
-            new InvestigationTracker(clock),
-            new InvestigationQueue(),
-            new StaticOptionsMonitor<LlmBudgetOptions>(new LlmBudgetOptions()),
-            new ConnectionHealthCache([], clock, NullLogger<ConnectionHealthCache>.Instance),
-            clock,
-            NullLogger<IncidentQueries>.Instance);
-
-        return new McpIncidentReader(
-            pg.CreateContext(),
-            queries,
-            codeFixes: null!,
-            new ConnectionHealthCache([], clock, NullLogger<ConnectionHealthCache>.Instance),
-            new InvestigationTracker(clock),
-            new StaticOptionsMonitor<NotificationOptions>(new NotificationOptions { BaseUrl = "https://console.example" }));
-    }
+    private McpIncidentReader Reader() => McpGiven.Reader(pg, Now);
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
-
-    private sealed class FixedClock(DateTimeOffset now) : IClock
-    {
-        public DateTimeOffset UtcNow => now;
-    }
-
-    private sealed class NoKillSwitch : IKillSwitch
-    {
-        public IReadOnlyList<ModeArm> ExternalArms => [];
-
-        public ModeResolution External => throw new NotSupportedException();
-
-        public Task<ModeResolution> ResolveAsync(CancellationToken ct) => throw new NotSupportedException();
-    }
 }
