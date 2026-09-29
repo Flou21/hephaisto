@@ -29,6 +29,22 @@ public enum InvestigationExecutor
     Job = 1,
 }
 
+/// <summary>
+/// What <see cref="Domain.Investigation.Executor"/> records: who ran the model loop of one
+/// investigation. Strings rather than the enum, because the third value is not a mode.
+/// </summary>
+public static class InvestigationExecutors
+{
+    /// <summary>The v0.11 loop in the agent. Also what a null reads as: every row before v0.12.0.</summary>
+    public const string InProcess = "InProcess";
+
+    /// <summary>A Job ran the model loop against Hephaisto's tools.</summary>
+    public const string Job = "Job";
+
+    /// <summary>A Job was started and gave no answer, and the agent investigated in-process instead.</summary>
+    public const string JobFallback = "JobFallback";
+}
+
 /// <summary>What one executor arm said.</summary>
 public readonly record struct InvestigationExecutorArm
 {

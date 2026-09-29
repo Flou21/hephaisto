@@ -329,6 +329,12 @@ public sealed record InvestigationView
 
     public string ModelId { get; init; } = string.Empty;
 
+    /// <summary>
+    /// Who ran the model loop: InProcess, Job, or JobFallback (a Job gave no answer and the agent
+    /// investigated itself). Rows from before v0.12.0 read as InProcess, which they were.
+    /// </summary>
+    public string Executor { get; init; } = Core.Investigations.InvestigationExecutors.InProcess;
+
     public DateTimeOffset StartedAt { get; init; }
 
     public DateTimeOffset? CompletedAt { get; init; }

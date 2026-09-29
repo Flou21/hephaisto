@@ -273,6 +273,7 @@ public sealed partial class McpIncidentReader
                 Id = v.Id,
                 IncidentId = incidentId,
                 Model = McpText.Name(v.ModelId),
+                Executor = McpText.Name(v.Executor ?? Core.Investigations.InvestigationExecutors.InProcess),
                 StartedAt = v.StartedAt,
                 CompletedAt = v.CompletedAt,
                 Termination = v.TerminationReason,
