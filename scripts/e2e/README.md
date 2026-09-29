@@ -269,5 +269,12 @@ against the identity-provider stand-in (`OidcStandIn.cs`). `signin-install.sh --
 image>` puts it on the dev cluster; CI installs it from the chart it built. `pager-local.sh` grants
 `signin` whenever it finds that install.
 
+Two more tiers, local and on demand, never in CI:
+
+| Script | What | Costs |
+|---|---|---|
+| `mcp-litellm-local.sh` | The endpoint through a throwaway LiteLLM gateway with tool search (`infra/e2e/litellm.yaml`, pinned by digest): the names it gives the tools, every `findability.tsv` question against the real search - and the real search ranks exactly as `McpFindabilityTests`' scorer predicts - a read and an acknowledgement through it, a key without the agent refused | nothing: the gateway has no models |
+| `mcp-model-local.sh` | Claude Code on Haiku, with nothing but the endpoint, asked the three questions the endpoint was built for and an injection probe; `--via litellm` through the gateway. Reports n of m | a few cents a run |
+
 A scenario that needs an investigation with evidence scripts the model stand-in first
 (`mcp_script`, `POST /llm/script`): it reads one tool, then concludes citing the step it read.

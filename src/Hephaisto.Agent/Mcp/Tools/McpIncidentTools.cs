@@ -10,12 +10,12 @@ namespace Hephaisto.Agent.Mcp.Tools;
 [McpServerToolType]
 public sealed class McpIncidentTools(McpIncidentReader reader, IClock clock)
 {
-    private const string StateHelp = "open (the default view of an on-call person), closed (ended: resolved, closed or expired), any (default), or one exact state: Investigating, AwaitingApproval, Escalated, Resolved, Closed, Expired.";
+    private const string StateHelp = "open (what an on-call person looks at), closed (ended: resolved, closed or expired), any (the default), or one exact state: Investigating, AwaitingApproval, Escalated, Resolved, Closed, Expired.";
     private const string AssignedHelp = "me (the person this token identifies; refused for a shared token), nobody (unassigned), or a person's name as the console shows it.";
     private const string TimeHelp = "An ISO 8601 time, or a duration back from now: 30m, 24h, 7d, 2w.";
 
     [McpServerTool(Name = "search_incidents", Title = "Search incidents", ReadOnly = true, Idempotent = true, OpenWorld = false)]
-    [Description("Search and list incidents, newest first. Answers what the latest open incidents are, what the latest closed incidents are, what my incidents are (assigned to a person), and which incidents match a free text query. Filter by state (open, closed, escalated, resolved), severity (critical, warning, info), cluster, namespace, alert name, workload, kind, assignee, acknowledged or unacknowledged, and a time range. Returns one compact row per incident: id, title, severity, state, alert name, namespace, workload, who it is assigned to, when it opened and ended. Paged with a cursor. Start here for any question about which incidents exist.")]
+    [Description("Search and list incidents, newest first. Answers what the latest open incidents are, what the latest closed incidents are, what my incidents are (assigned to a person), and which incidents match a free text query. Filter by state (open, closed, escalated, resolved), severity (critical, warning, info), cluster, namespace, alert name, workload, kind, assignee, acknowledged or unacknowledged, and a time range. Returns one compact row per incident: id, title, severity, state, alert name, namespace, workload, who it is assigned to, when it opened and ended. Paged with a cursor. Start here for any question about which incidents exist. Through a shared gateway token, me means nobody: for my incidents, ask the person for their name and pass it as assignedTo.")]
     public async Task<string> SearchIncidentsAsync(
         ClaimsPrincipal user,
         [Description(StateHelp)] string? state = null,

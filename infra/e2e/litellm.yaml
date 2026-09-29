@@ -1,0 +1,171 @@
+# A throwaway LiteLLM, for the MCP gateway tier (scripts/e2e/mcp-litellm-local.sh, #157).
+#
+# In production the MCP endpoint is reached through a LiteLLM gateway whose keys have tool search
+# on: a model sees two tools, mcp_tool_search and mcp_tool_call, and finds Hephaisto's by the words
+# of its question. This is the same gateway, pinned by tag and digest near production's version,
+# registering the agent's endpoint and the decoy server in the stand-in as its neighbour - so the
+# script can check the gateway ranks Hephaisto's tools the way the unit tests' scorer predicts.
+#
+# `model_list` is empty on purpose: nothing here can spend money. Its own Postgres (virtual keys
+# need one) with no volume: the script creates the keys it needs and deletes them again.
+#
+# Applied by the script, never by Tilt or the chart. The agent's MCP port admits hephaisto-obs
+# (scripts/e2e/values-mcp.yaml), which is why this lives there.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-e2e
+  namespace: hephaisto-obs
+  labels:
+    app.kubernetes.io/part-of: hephaisto-e2e
+data:
+  config.yaml: |
+    model_list: []
+    mcp_servers:
+      hephaisto:
+        url: http://hephaisto.hephaisto:8083/mcp
+        transport: http
+        auth_type: bearer_token
+        auth_value: os.environ/HEPHAISTO_MCP_TOKEN
+      neighbours:
+        url: http://teams-stand-in.hephaisto-obs:8080/decoy/mcp
+        transport: http
+    general_settings:
+      master_key: os.environ/LITELLM_MASTER_KEY
+      database_url: os.environ/DATABASE_URL
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm-e2e-postgres
+  namespace: hephaisto-obs
+  labels:
+    app.kubernetes.io/name: litellm-e2e-postgres
+    app.kubernetes.io/part-of: hephaisto-e2e
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: litellm-e2e-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: litellm-e2e-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: pgvector/pgvector:pg17
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_USER
+              value: litellm
+            - name: POSTGRES_DB
+              value: litellm
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: litellm-e2e
+                  key: postgres-password
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "litellm"]
+            periodSeconds: 3
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm-e2e-postgres
+  namespace: hephaisto-obs
+spec:
+  selector:
+    app.kubernetes.io/name: litellm-e2e-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm-e2e
+  namespace: hephaisto-obs
+  labels:
+    app.kubernetes.io/name: litellm-e2e
+    app.kubernetes.io/part-of: hephaisto-e2e
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: litellm-e2e
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: litellm-e2e
+    spec:
+      containers:
+        - name: litellm
+          # Pinned by digest: a tag can be moved, and "the gateway ranks like the scorer" is only a
+          # finding about the version it was checked against.
+          image: ghcr.io/berriai/litellm:v1.102.1@sha256:87f34979b9f8cb274fac90ca8a4fdda07d8480de22755562a26adeb95ce20d02
+          imagePullPolicy: IfNotPresent
+          args: ["--config", "/app/e2e/config.yaml", "--port", "4000"]
+          env:
+            - name: LITELLM_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: litellm-e2e
+                  key: master-key
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: litellm-e2e
+                  key: postgres-password
+            - name: DATABASE_URL
+              value: postgresql://litellm:$(POSTGRES_PASSWORD)@litellm-e2e-postgres:5432/litellm
+            - name: HEPHAISTO_MCP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: litellm-e2e
+                  key: hephaisto-mcp-token
+          ports:
+            - containerPort: 4000
+          readinessProbe:
+            httpGet:
+              path: /health/liveliness
+              port: 4000
+            initialDelaySeconds: 20
+            periodSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /app/e2e
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+      volumes:
+        - name: config
+          configMap:
+            name: litellm-e2e
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm-e2e
+  namespace: hephaisto-obs
+spec:
+  selector:
+    app.kubernetes.io/name: litellm-e2e
+  ports:
+    - port: 4000
+      targetPort: 4000

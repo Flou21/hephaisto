@@ -47,8 +47,12 @@ public sealed partial class McpOptions
     /// </summary>
     public int MaxResponseChars { get; set; } = 32_000;
 
-    /// <summary>Per token (or per signed-in user). A leaked token should not be a firehose.</summary>
-    public int RequestsPerMinutePerToken { get; set; } = 120;
+    /// <summary>
+    /// Tool calls a minute, per token (or signed-in user). A leaked token should not be a firehose;
+    /// a gateway's token speaks for a whole team, so the default leaves room for one. Listing the
+    /// tools is never limited.
+    /// </summary>
+    public int RequestsPerMinutePerToken { get; set; } = 300;
 
     /// <summary>
     /// Every reason this configuration must not start, as sentences. Empty when it may.
