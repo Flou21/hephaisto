@@ -1,6 +1,6 @@
 using System.Text.Json.Nodes;
 using Hephaisto.Agent.Mcp;
-using Hephaisto.Agent.Mcp.Results;
+using Hephaisto.Agent.Mcp.Answers;
 using Hephaisto.Core.Safety;
 
 namespace Hephaisto.Tests.Mcp;
@@ -138,7 +138,7 @@ public sealed class UntrustedTextTests
     public void Every_string_in_every_result_record_is_mcp_text_or_server_authored()
     {
         // The resolver refuses a bad type at its first use; this finds one before any use.
-        var types = typeof(McpAnswer).Assembly.GetTypes().Where(t => t.Namespace == McpAnswer.ResultsNamespace);
+        var types = typeof(McpAnswer).Assembly.GetTypes().Where(t => t.Namespace == McpAnswer.AnswersNamespace);
 
         foreach (var type in types)
         {
