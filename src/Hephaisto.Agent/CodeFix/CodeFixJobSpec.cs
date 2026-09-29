@@ -75,7 +75,12 @@ public static class CodeFixJobSpec
             env.Add(new V1EnvVar { Name = "CODEFIX_CONSOLE_URL", Value = o.ConsoleBaseUrl.TrimEnd('/') });
 
         env.AddRange(ProxyEnv(o.EgressProxyUrl, noProxy: []));
-        env.AddRange(SecretEnv(SecretKeys, o.SecretName));
+        // A scripted (fake) coder calls no model, and the runner refuses fake mode beside a model
+        // credential - so it is handed none, and a $0 run cannot be turned into a paid one by a
+        // Secret it shares with a real coder. It still gets the git tokens its push may need.
+        env.AddRange(SecretEnv(
+            string.Equals(o.Sdk, "fake", StringComparison.Ordinal) ? SecretKeys.Skip(2) : SecretKeys,
+            o.SecretName));
 
         return Hardened(
             new JobShape(
