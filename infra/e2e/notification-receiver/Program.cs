@@ -115,6 +115,9 @@ else
     // A second MCP server that is not the agent: the pager suite's control, a gateway's neighbour.
     NotificationReceiver.DecoyMcp.Map(app);
 
+    // An identity provider, for the one install with sign-in on (P48).
+    NotificationReceiver.OidcStandIn.Map(app, builder.Configuration);
+
     app.MapDelete("/received", () =>
     {
         received.Clear();

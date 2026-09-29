@@ -101,6 +101,14 @@ public sealed class McpTokenHandler(
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// A role under the configured claim - where Keycloak's realm roles are flattened to - or under
+    /// the standard role claim, which is where the JWT handler's inbound mapping puts a top-level
+    /// <c>roles</c> claim before anything here reads it.
+    /// </summary>
+    private static bool Holds(ClaimsPrincipal principal, AuthOptions a, string role) =>
+        principal.HasClaim(a.RolesClaim, role) || principal.HasClaim(ClaimTypes.Role, role);
+
     private AuthenticateResult FromIdentityProvider(ClaimsPrincipal principal, AuthOptions a)
     {
         var name = principal.Identity?.Name?.Trim();
@@ -118,13 +126,13 @@ public sealed class McpTokenHandler(
             return AuthenticateResult.Fail("a reserved name");
         }
 
-        if (!string.IsNullOrWhiteSpace(a.ReaderRole) && !principal.HasClaim(a.RolesClaim, a.ReaderRole))
+        if (!string.IsNullOrWhiteSpace(a.ReaderRole) && !Holds(principal, a, a.ReaderRole))
         {
             metrics.McpAuthRefused("no_reader_role");
             return AuthenticateResult.Fail("the signed-in user does not hold the reader role");
         }
 
-        var approver = !string.IsNullOrWhiteSpace(a.ApproverRole) && principal.HasClaim(a.RolesClaim, a.ApproverRole);
+        var approver = !string.IsNullOrWhiteSpace(a.ApproverRole) && Holds(principal, a, a.ApproverRole);
 
         return AuthenticateResult.Success(new AuthenticationTicket(
             McpCaller.Principal(

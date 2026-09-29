@@ -271,6 +271,7 @@ if chaos or teams_bot == 'stand-in':
             'infra/e2e/notification-receiver/TeamsStandIn.cs',
             'infra/e2e/notification-receiver/LlmStandIn.cs',
             'infra/e2e/notification-receiver/DecoyMcp.cs',
+            'infra/e2e/notification-receiver/OidcStandIn.cs',
             'scripts/e2e/mcp/neighbour-tools.json',
             'infra/e2e/notification-receiver/notification-receiver.csproj',
             'infra/e2e/notification-receiver/Dockerfile',
