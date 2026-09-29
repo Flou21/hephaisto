@@ -49,7 +49,7 @@ public sealed class InvestigationSourceTests
             ["confidence"] = 0.8,
             ["findings"] = JsonSerializer.SerializeToElement(new[] { new FindingDraft { Category = "application", Hypothesis = "h", Primary = true } }),
             ["code_refs"] = JsonSerializer.SerializeToElement(new[] { new { finding = 0, path = "src/A.cs", line = 17 } }),
-        });
+        }, TestContext.Current.CancellationToken);
 
         holder.Value.Should().NotBeNull();
         holder.Value!.Findings.Should().ContainSingle();
