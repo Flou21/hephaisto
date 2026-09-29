@@ -17,6 +17,15 @@ against the code rather than believed — see [backlog #9](backlog.md#9-semantic
 
 ## Where it stands
 
+`v0.11.0-rc1` was cut on 2026-09-29. v0.9.0 (it proposes the fix), v0.10.0 (the only thing that
+tells a person) and v0.11.0 (an agent can ask it) are written up in their own sections below. The
+first production install has now run long enough to set the priorities. Clearing it on
+2026-09-29 meant closing 326 open incidents, one call at a time, and two thirds of all incidents
+it had ever opened were one kind, raised by a detector that counts the wrong thing. So the next
+milestone, [v0.12.0](#v0120--what-production-found), is what production found. The louder
+channel and install ergonomics come right after it, as the
+[next, high-priority items](#next-high-priority--after-production).
+
 `v0.8.0` shipped on 2026-09-13. **An on-call engineer can actually use it.** The agent diagnosed
 well and said so nowhere a person could act on: an incident could not be closed, acknowledged or
 assigned, every actor in the audit trail was a string somebody typed, and every dependency was
@@ -1502,7 +1511,7 @@ green with an empty known-red list.
   still its own release.
 - **An on-call rota and quiet hours.** Neither system being replaced has one. Escalation steps
   go to routes, and a route is a list.
-- **A louder channel than Teams.** SMS and a phone call are v0.12.0 ([#143](backlog.md#143)).
+- **A louder channel than Teams.** SMS and a phone call come right after v0.12.0 ([#143](backlog.md#143)).
   Until then, whether a personal chat from the bot rings a phone ([#125](backlog.md#125)) is the
   question the cutover rests on.
 - **A second replica.** See [#144](backlog.md#144).
@@ -1515,7 +1524,8 @@ green with an empty known-red list.
 
 Decided on 2026-09-29. Hephaisto answers a person in a browser and nobody else. This release
 lets a model ask: an MCP endpoint over the incidents, their investigations and their history
-([#157](backlog.md#157)). It took this number from the louder channel, which is now v0.12.0.
+([#157](backlog.md#157)). It took this number from the louder channel, which now comes right
+after v0.12.0.
 
 ### The finding it rests on
 
@@ -1570,32 +1580,92 @@ incident. `docs/verification.md` lists what is not tested.
 
 ---
 
-## v0.12.0 — A louder channel
+## v0.12.0 — What production found
+
+Decided on 2026-09-29: production problems and missing features come before anything new. The
+louder channel and install ergonomics were v0.12.0 and v0.13.0. They are still high priority,
+and they come [right after this](#next-high-priority--after-production).
+
+### The finding it rests on
+
+On 2026-09-29 the first production install was cleared by hand, through the MCP endpoint:
+**326 open incidents**, closed one call at a time. The numbers behind the backlog:
+
+- **They were open because nothing could close them.** Most of them came from the Kubernetes
+  watcher, and the watcher never says that a fault is over. Only an Alertmanager resolve closes
+  an incident. The sweeper that would expire a silent one is off by default and is not a chart
+  value. A pod that crash-looped last week still has an open incident today
+  ([#158](backlog.md#158)).
+- **Two thirds of everything it ever opened was one kind.** 217 of 331 incidents were
+  `ReadinessFlapping`, raised on a readiness event's lifetime count. A probe that times out a
+  few times a day on a pod whose Ready condition never changes counts as flapping
+  ([#159](backlog.md#159)).
+- **The investigations of those incidents could not read the logs.** `get_pod_logs` names no
+  container unless the model does, and Kubernetes refuses that for any pod with a sidecar.
+  The investigation spends its steps and ends without evidence, rejected by grounding
+  ([#160](backlog.md#160)).
+
+Closing 326 incidents also showed what is missing for the people working them: there is no way
+to close more than one at a time, and through a shared gateway token nobody is anybody.
+
+### What ships
+
+| # | Item | Backlog | Size |
+|---|---|---|---|
+| F1 | **A watcher incident ends when its fault does.** The watcher reports a pod that is healthy again, and an incident whose every signal has cleared closes like an Alertmanager one | [#158](backlog.md#158) | M |
+| F2 | **Flapping means flapping.** Readiness failures are counted in a window, not over the event's life | [#159](backlog.md#159) | S |
+| F3 | **Logs from a pod with a sidecar.** The default container is read when none is named, and a grounding rejection says why in the log | [#160](backlog.md#160) | S |
+| F4 | **Many at once.** Close by the filters of a search, approver only, with a reason and a dry run, one audit row per incident, in the console and over MCP | [#161](backlog.md#161) | M |
+
+To decide, and not yet committed to this milestone:
+
+- **Who a gateway's caller is** ([#162](backlog.md#162)): forwarded user identity or a person
+  token per operator.
+- **Correcting an incident** ([#163](backlog.md#163)): editing severity and title, and deleting.
+- **Who may re-arm** ([#128](backlog.md#128)).
+
+The list grows with what production shows. An item joins it by the same rule as these: a
+backlog entry with evidence.
+
+### Done when
+
+A pod the watcher opened an incident for, healthy again, closes that incident without anybody
+touching it. A readiness probe that fails a few times a day opens no incident, and one that
+fails four times in a few minutes still does. An investigation of a pod with a sidecar reads the
+application container's logs. A dry run of a bulk close names how many incidents it would close
+and which; the close itself refuses a reader and writes one audit row per incident.
+
+Every sentence above is a test, a pager-suite scenario where it can be one, and the suite is
+green with an empty known-red list.
+
+---
+
+## Next, high priority — after production
+
+Both were numbered milestones until 2026-09-29, when production problems took precedence. Each
+gets a version number when v0.12.0 is done, in this order.
+
+### SMS and voice through Twilio
 
 Decided on 2026-09-28: v0.10.0 reaches people through Teams alone. The service being replaced
 also sends an SMS and places a call when nobody answers, and that is the one thing v0.10.0 does
-not replace ([#143](backlog.md#143)). Moved from v0.11.0 on 2026-09-29, when the MCP endpoint
-took that number.
+not replace ([#143](backlog.md#143)).
 
 - **SMS and voice through Twilio**, as named HTTP channels rather than one more hard-coded
   channel: a channel is a URL template, a body template and a credential, fanned out per
   recipient, with Twilio as the shipped preset.
 - **Escalation steps may name it.** The steps of v0.10.0 already take a channel.
-- **Still to decide: what rings a phone that is set to silent.** An SMS and a call are treated
-  by a phone like any other, and stay quiet in Do Not Disturb unless each person makes an
+- **Still to decide: what rings a phone that is set to silent.** A phone treats an SMS and a
+  call like any other, and keeps them quiet in Do Not Disturb unless each person makes an
   exception for the number. A notification that breaks through needs an app holding the
   platform's permission for it, which is a channel of a different kind.
 - **Done when** an unacknowledged critical incident on the release harness reaches a stand-in for
   Twilio's API once per recipient, and an acknowledged one does not.
 
----
+### Install ergonomics
 
-## v0.13.0 — Install ergonomics
-
-The getting-started guide and the rest of [#108](backlog.md#108). Renumbered four times: from
-v0.9.0 when the code-fix stage took that number (2026-09-27), from v0.10.0 when becoming the only
-incident system took that one, from v0.11.0 when the louder channel did (both 2026-09-28), and
-from v0.12.0 when the MCP endpoint took v0.11.0 (2026-09-29).
+The getting-started guide and the rest of [#108](backlog.md#108). Renumbered four times between
+2026-09-27 and 2026-09-29, then moved out of the numbered milestones on 2026-09-29.
 Scope unchanged: installing Hephaisto should not take a day of reading the chart's source.
 
 ---
