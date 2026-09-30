@@ -668,6 +668,8 @@ spec:
               value: {{ .concurrentJobs | quote }}
             - name: Investigation__Job__MaxJobsPerHour
               value: {{ .jobsPerHour | quote }}
+            - name: Investigation__Job__Overflow
+              value: {{ .overflow | default "inprocess" | quote }}
             - name: Investigation__Job__FallbackToInProcess
               value: {{ .fallbackToInProcess | quote }}
             - name: Investigation__Job__Source__Enabled

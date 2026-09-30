@@ -78,6 +78,9 @@ public sealed class InvestigationJobLoopTests
 
         public Exception? RefuseWith { get; set; }
 
+        /// <summary>Runs at the start of every observation: how a test moves the clock between polls.</summary>
+        public Action? EachPoll { get; set; }
+
         public List<string> Deleted { get; } = [];
 
         public bool IsAvailable => true;
@@ -101,6 +104,8 @@ public sealed class InvestigationJobLoopTests
 
         public async Task<CodeFixJobObservation> ObserveAsync(string jobName, CancellationToken ct)
         {
+            EachPoll?.Invoke();
+
             if (Job is { } run)
             {
                 Job = null;
@@ -195,6 +200,36 @@ public sealed class InvestigationJobLoopTests
         };
     }
 
+    /// <summary>A context whose conclude grounds on the spot and whose Job plans with propose_plan.</summary>
+    private JobLoopContext PlanningContext(
+        InvestigationRecorder recorder, InvestigationRunner.ConclusionHolder holder, InvestigationRunner.JobPlanning planning)
+    {
+        var context = Context(recorder, holder);
+        var conclude = InvestigationRunner.CreateJobConcludeTool(
+            holder, planning, () => recorder.Steps, recorder.InvestigationId, (grounded, _) => "the planning prompt");
+
+        return context with
+        {
+            Tools =
+            [
+                context.Tools[0],
+                new SafeToolDecorator(conclude, "internal", new SafeToolOptions(), null, recorder),
+                new SafeToolDecorator(InvestigationRunner.CreateProposePlanTool(planning), "internal", new SafeToolOptions(), null, recorder),
+            ],
+            Planning = planning,
+        };
+    }
+
+    private static async Task InvestigateAndPlan(InvestigationJobSession session)
+    {
+        await Investigate(session);
+        await session.Tools["propose_plan"].InvokeAsync(new AIFunctionArguments
+        {
+            ["summary"] = "nothing for the cluster",
+            ["no_action_required"] = true,
+        });
+    }
+
     private static async Task Investigate(InvestigationJobSession session)
     {
         var shown = (string)(await session.Tools["get_pod_logs"].InvokeAsync(
@@ -255,6 +290,60 @@ public sealed class InvestigationJobLoopTests
         holder.Value.Should().NotBeNull();
         recorder.Steps.Should().Contain(s => s.ToolName == "get_pod_logs");
         sessions.ActiveCount.Should().Be(0, "the session closes with the run");
+    }
+
+    [Fact]
+    public async Task A_concluded_Job_is_given_time_to_propose_its_plan()
+    {
+        var (loop, launcher, _, _) = Build();
+        var planning = new InvestigationRunner.JobPlanning();
+        for (var i = 0; i < 3; i++)
+            launcher.Phases.Enqueue(CodeFixJobPhase.Running);
+        launcher.EachPoll = () => clock.Advance(TimeSpan.FromSeconds(90));
+        launcher.Job = Investigate;
+        launcher.Log = r => Frame(r, "concluded");
+
+        var outcome = await loop.RunAsync(PlanningContext(NewRecorder(), new InvestigationRunner.ConclusionHolder(), planning), CancellationToken.None);
+
+        launcher.Deleted.Should().BeEmpty("the minute after conclude is for the frame; planning comes first");
+        outcome.Termination.Should().Be(TerminationReason.Concluded);
+        outcome.Error.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task A_Job_that_concludes_but_never_plans_is_removed_after_the_plan_grace()
+    {
+        var (loop, launcher, _, _) = Build();
+        for (var i = 0; i < 8; i++)
+            launcher.Phases.Enqueue(CodeFixJobPhase.Running);
+        launcher.EachPoll = () => clock.Advance(TimeSpan.FromMinutes(2));
+        launcher.Job = Investigate;
+
+        var outcome = await loop.RunAsync(
+            PlanningContext(NewRecorder(), new InvestigationRunner.ConclusionHolder(), new InvestigationRunner.JobPlanning()),
+            CancellationToken.None);
+
+        launcher.Deleted.Should().ContainSingle();
+        outcome.FellBack.Should().BeFalse("the diagnosis is in; only the plan is missing");
+        outcome.Termination.Should().Be(TerminationReason.Concluded);
+        outcome.Error.Should().Contain("proposed no plan within 5 minutes");
+    }
+
+    [Fact]
+    public async Task A_Job_that_planned_gets_the_frame_grace_and_no_more()
+    {
+        var (loop, launcher, _, _) = Build();
+        var planning = new InvestigationRunner.JobPlanning();
+        for (var i = 0; i < 3; i++)
+            launcher.Phases.Enqueue(CodeFixJobPhase.Running);
+        launcher.EachPoll = () => clock.Advance(TimeSpan.FromSeconds(90));
+        launcher.Job = InvestigateAndPlan;
+
+        var outcome = await loop.RunAsync(PlanningContext(NewRecorder(), new InvestigationRunner.ConclusionHolder(), planning), CancellationToken.None);
+
+        planning.Draft.Should().NotBeNull();
+        launcher.Deleted.Should().ContainSingle();
+        outcome.Error.Should().Contain("within a minute of concluding");
     }
 
     [Fact]
@@ -523,6 +612,58 @@ public sealed class InvestigationJobLoopTests
             ExpiresAt = clock.UtcNow + TimeSpan.FromMinutes(5),
         });
         (await loop.DecideAsync(NewIncident(), CancellationToken.None)).Choice.Should().Be(ExecutorChoice.Overflow);
+    }
+
+    [Fact]
+    public async Task With_overflow_wait_a_run_waits_for_a_free_slot_instead_of_going_in_process()
+    {
+        job.Overflow = InvestigationOverflow.Wait;
+        var (loop, _, sessions, _) = Build();
+        var busy = Guid.NewGuid();
+        sessions.Open(new InvestigationJobSession
+        {
+            InvestigationId = busy,
+            IncidentId = Guid.NewGuid(),
+            Tools = new Dictionary<string, AIFunction>(),
+            Conclusion = new InvestigationRunner.ConclusionHolder(),
+            ExpiresAt = clock.UtcNow + TimeSpan.FromMinutes(5),
+        });
+
+        var deciding = loop.DecideAsync(NewIncident(), TestContext.Current.CancellationToken);
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+        deciding.IsCompleted.Should().BeFalse("every slot is taken, and overflow waits");
+
+        sessions.Close(busy);
+
+        (await deciding.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken)).Choice
+            .Should().Be(ExecutorChoice.Job);
+    }
+
+    [Fact]
+    public async Task With_overflow_wait_switching_the_executor_to_in_process_ends_the_wait()
+    {
+        job.Overflow = InvestigationOverflow.Wait;
+        job.MaxJobsPerHour = 0;
+        var (loop, _, _, executor) = Build();
+
+        var deciding = loop.DecideAsync(NewIncident(), TestContext.Current.CancellationToken);
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+        deciding.IsCompleted.Should().BeFalse("the hourly cap is reached, and overflow waits");
+
+        executor.Effective = InvestigationExecutor.InProcess;
+
+        (await deciding.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken)).Choice
+            .Should().Be(ExecutorChoice.InProcessByMode);
+    }
+
+    [Fact]
+    public async Task With_overflow_wait_another_clusters_incident_goes_to_a_Job_too()
+    {
+        job.Overflow = InvestigationOverflow.Wait;
+        var (loop, _, _, _) = Build(agentCluster: "studio");
+
+        (await loop.DecideAsync(NewIncident(cluster: "eu-prod"), CancellationToken.None)).Choice
+            .Should().Be(ExecutorChoice.Job);
     }
 
     [Fact]

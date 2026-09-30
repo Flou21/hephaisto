@@ -42,6 +42,7 @@ public sealed class InvestigatorEndpointTests : IAsyncLifetime
 
     private InvestigationRecorder recorder = null!;
     private InvestigationRunner.ConclusionHolder conclusion = null!;
+    private InvestigationRunner.JobPlanning planning = null!;
     private string token = string.Empty;
 
     private Uri Endpoint => new($"http://127.0.0.1:{investigatorPort}{InvestigatorEndpoint.Route}");
@@ -89,6 +90,8 @@ public sealed class InvestigatorEndpointTests : IAsyncLifetime
     {
         recorder = new InvestigationRecorder(Guid.CreateVersion7(), clock, TimeSpan.FromDays(30));
         conclusion = new InvestigationRunner.ConclusionHolder();
+        planning = new InvestigationRunner.JobPlanning();
+        var steps = recorder;
         var budget = new InvestigationBudget(new InvestigationBudgetOptions(), clock);
 
         var logs = AIFunctionFactory.Create(
@@ -100,7 +103,11 @@ public sealed class InvestigatorEndpointTests : IAsyncLifetime
         [
             new SafeToolDecorator(logs, "kubernetes", new SafeToolOptions(), budget, recorder),
             new SafeToolDecorator(query, "grafana-mcp", new SafeToolOptions(), budget, recorder),
-            new SafeToolDecorator(InvestigationRunner.CreateConcludeTool(conclusion), "internal", new SafeToolOptions(), null, recorder),
+            new SafeToolDecorator(
+                InvestigationRunner.CreateJobConcludeTool(
+                    conclusion, planning, () => steps.Steps, steps.InvestigationId, (grounded, _) => "PLAN FROM " + grounded.Count),
+                "internal", new SafeToolOptions(), null, recorder),
+            new SafeToolDecorator(InvestigationRunner.CreateProposePlanTool(planning), "internal", new SafeToolOptions(), null, recorder),
         ];
 
         return app!.Services.GetRequiredService<InvestigationJobSessions>().Open(new InvestigationJobSession
@@ -130,7 +137,7 @@ public sealed class InvestigatorEndpointTests : IAsyncLifetime
         await using var client = await ConnectAsync(token);
 
         var tools = await client.ListToolsAsync(cancellationToken: TestContext.Current.CancellationToken);
-        tools.Select(t => t.Name).Should().BeEquivalentTo(["get_pod_logs", "query_prometheus", "conclude"]);
+        tools.Select(t => t.Name).Should().BeEquivalentTo(["get_pod_logs", "query_prometheus", "conclude", "propose_plan"]);
         tools.Single(t => t.Name == "get_pod_logs").JsonSchema.GetRawText().Should().Contain("namespace");
 
         var result = await client.CallToolAsync("get_pod_logs", new Dictionary<string, object?>
@@ -189,6 +196,52 @@ public sealed class InvestigatorEndpointTests : IAsyncLifetime
         after.IsError.Should().BeTrue();
         Text(after).Should().Contain("has concluded");
         recorder.Steps.Count.Should().Be(steps);
+    }
+
+    [Fact]
+    public async Task After_conclude_the_Job_proposes_its_plan_once_and_nothing_else()
+    {
+        await using var client = await ConnectAsync(token);
+        var ct = TestContext.Current.CancellationToken;
+        var plan = new Dictionary<string, object?> { ["summary"] = "nothing for the cluster", ["no_action_required"] = true };
+
+        Text(await client.CallToolAsync("propose_plan", plan, cancellationToken: ct))
+            .Should().Contain("call conclude first", "a plan is made from grounded findings, so it waits for conclude");
+        planning.Draft.Should().BeNull();
+
+        var logs = Text(await client.CallToolAsync("get_pod_logs", new Dictionary<string, object?>
+        {
+            ["namespace"] = "ns",
+            ["name"] = "api-1",
+        }, cancellationToken: ct));
+
+        var concluded = Text(await client.CallToolAsync("conclude", new Dictionary<string, object?>
+        {
+            ["summary"] = "mongo is unreachable",
+            ["confidence"] = 0.8,
+            ["findings"] = JsonSerializer.SerializeToElement(new[]
+            {
+                new
+                {
+                    category = "dependency",
+                    hypothesis = "api cannot reach mongo",
+                    confidence = 0.8,
+                    primary = true,
+                    evidence = new[] { new { step_id = StepHeader.Match(logs).Groups[1].Value, excerpt = LogLine } },
+                },
+            }),
+        }, cancellationToken: ct));
+
+        concluded.Should().Contain("1 finding(s) survived grounding").And.Contain("PLAN FROM 1");
+
+        var proposed = await client.CallToolAsync("propose_plan", plan, cancellationToken: ct);
+        proposed.IsError.Should().NotBe(true);
+        planning.Draft.Should().NotBeNull();
+        planning.Draft!.NoActionRequired.Should().BeTrue();
+
+        Text(await client.CallToolAsync("propose_plan", plan, cancellationToken: ct)).Should().Contain("already recorded");
+        (await client.CallToolAsync("get_pod_logs", new Dictionary<string, object?> { ["namespace"] = "ns", ["name"] = "x" }, cancellationToken: ct))
+            .IsError.Should().BeTrue("after conclude, looking around is over");
     }
 
     [Fact]

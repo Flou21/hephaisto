@@ -632,6 +632,7 @@ refuses "the console's port" "${IJ[@]}" --set investigation.job.port=8080
 refuses "the webhook's port" "${IJ[@]}" --set webhookPort=8081 --set investigation.job.port=8081
 refuses "the MCP port" "${IJ[@]}" "${MCP[@]}" --set investigation.job.port=8083
 refuses "an executor that is not inprocess or job" "${IJ[@]}" --set investigation.job.executor=always
+refuses "an overflow that is not inprocess or wait" "${IJ[@]}" --set investigation.job.overflow=queue
 refuses "the switch set behind the chart's back" --set 'extraEnv[0].name=Investigation__Job__Executor' --set 'extraEnv[0].value=job'
 
 OFF=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative 2>&1)

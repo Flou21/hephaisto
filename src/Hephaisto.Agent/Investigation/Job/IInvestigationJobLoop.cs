@@ -30,6 +30,12 @@ public sealed record JobLoopContext
     public required InvestigationRecorder Recorder { get; init; }
 
     public required InvestigationRunner.ConclusionHolder Conclusion { get; init; }
+
+    /// <summary>
+    /// What conclude grounded and propose_plan proposed. Null for a loop that does not plan, whose
+    /// run is settled by conclude alone.
+    /// </summary>
+    public InvestigationRunner.JobPlanning? Planning { get; init; }
 }
 
 /// <summary>How a Job-backed model loop ended.</summary>

@@ -41,7 +41,7 @@ const DEFAULT_RESULTS: Record<string, string | ((args: Record<string, unknown>) 
   get_events: () => 'Warning  BackOff  pod/shop-api-7f9c6d5b8-abcde  Back-off restarting failed container (x7 over 12m)',
 };
 
-const TOOLS = ['list_pods', 'get_pod_logs', 'get_events', 'describe_pod', 'conclude'].map((name) => ({
+const TOOLS = ['list_pods', 'get_pod_logs', 'get_events', 'describe_pod', 'conclude', 'propose_plan'].map((name) => ({
   name,
   description: `stub ${name}`,
   inputSchema: { type: 'object', properties: {}, additionalProperties: true },
@@ -53,6 +53,7 @@ export async function startMcpStub(opts: StubOptions): Promise<McpStub> {
   const steps = new Map<string, string>();
   let succeeded = 0;
   let concluded = false;
+  let planned = false;
   const results = { ...DEFAULT_RESULTS, ...(opts.results ?? {}) };
 
   const json = (res: ServerResponse, status: number, body: unknown) => {
@@ -61,6 +62,13 @@ export async function startMcpStub(opts: StubOptions): Promise<McpStub> {
   };
 
   const toolCall = (name: string, args: Record<string, unknown>): { text: string; isError: boolean; stepId: string | null } => {
+    // like Hephaisto's endpoint: after conclude, propose_plan once and nothing else
+    if (name === 'propose_plan') {
+      if (!concluded) return { text: 'REFUSED: call conclude first; a plan is made from the findings it grounds.', isError: false, stepId: null };
+      if (planned) return { text: 'REFUSED: a plan is already recorded. Stop here.', isError: false, stepId: null };
+      planned = true;
+      return { text: `[step ${randomUUID()}] propose_plan\nPlan recorded. Stop here.`, isError: false, stepId: null };
+    }
     if (concluded) return { text: 'the investigation is already concluded; no further calls are accepted', isError: true, stepId: null };
     const stepId = randomUUID();
     if (name === 'conclude') {
@@ -74,7 +82,7 @@ export async function startMcpStub(opts: StubOptions): Promise<McpStub> {
         }
       }
       concluded = true;
-      return { text: `[step ${stepId}] conclude\nrecorded ${findings.length} finding(s)`, isError: false, stepId };
+      return { text: `[step ${stepId}] conclude\nrecorded ${findings.length} finding(s); now call propose_plan once`, isError: false, stepId };
     }
     const r = results[name];
     if (r === undefined) return { text: `unknown tool ${name}`, isError: true, stepId: null };

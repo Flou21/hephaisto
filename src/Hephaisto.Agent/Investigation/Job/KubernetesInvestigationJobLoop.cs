@@ -51,6 +51,9 @@ public sealed class KubernetesInvestigationJobLoop(
     /// <summary>After a conclude, how long the Job gets to print its frame before it is removed.</summary>
     internal static readonly TimeSpan FrameGrace = TimeSpan.FromSeconds(60);
 
+    /// <summary>After a conclude, how long the Job gets to propose its plan.</summary>
+    internal static readonly TimeSpan PlanGrace = TimeSpan.FromMinutes(5);
+
     /// <summary>How often a running Job re-reads the executor, so switching back takes effect mid-run.</summary>
     private const int ResolveEveryPolls = 10;
 
@@ -60,6 +63,43 @@ public sealed class KubernetesInvestigationJobLoop(
     {
         ArgumentNullException.ThrowIfNull(incident);
 
+        DateTimeOffset? waitingSince = null;
+
+        while (true)
+        {
+            var decision = await DecideOnceAsync(incident, ct).ConfigureAwait(false);
+            var j = jobOptions.CurrentValue;
+
+            // Overflow = wait: an investigation that cannot have a Job now holds its worker slot until
+            // one frees, and is never handed to the in-process model. Re-decided every poll, so an
+            // executor switched to in-process ends the wait.
+            if (j.Overflow != InvestigationOverflow.Wait
+                || decision.Choice is not (ExecutorChoice.Overflow or ExecutorChoice.HourlyCapReached))
+            {
+                if (waitingSince is { } since)
+                {
+                    logger.LogInformation(
+                        "Incident {IncidentId} waited {Seconds:F0}s for an investigator Job slot",
+                        incident.Id, (clock.UtcNow - since).TotalSeconds);
+                }
+
+                return decision;
+            }
+
+            if (waitingSince is null)
+            {
+                waitingSince = clock.UtcNow;
+                tracker.Relabel(incident.Id, "waiting for a Job slot");
+                logger.LogInformation(
+                    "Incident {IncidentId} waits for an investigator Job slot: {Why}", incident.Id, decision.Explanation);
+            }
+
+            await Task.Delay(j.PollInterval, ct).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<JobLoopDecision> DecideOnceAsync(Incident incident, CancellationToken ct)
+    {
         InvestigationExecutorResolution resolution;
 
         try
@@ -85,7 +125,7 @@ public sealed class KubernetesInvestigationJobLoop(
             j.Caps,
             sessions.ActiveCount,
             LaunchesInTheLastHour(),
-            incident.Target.IsForeignTo(prompts.AgentCluster));
+            j.Overflow != InvestigationOverflow.Wait && incident.Target.IsForeignTo(prompts.AgentCluster));
 
         return new JobLoopDecision(choice, choice switch
         {
@@ -205,6 +245,7 @@ public sealed class KubernetesInvestigationJobLoop(
     {
         var deadline = clock.UtcNow + j.Deadline + FrameGrace;
         DateTimeOffset? concludedAt = null;
+        DateTimeOffset? settledAt = null;
 
         for (var poll = 1; ; poll++)
         {
@@ -215,6 +256,10 @@ public sealed class KubernetesInvestigationJobLoop(
 
             if (concluded)
                 concludedAt ??= clock.UtcNow;
+
+            // Settled once it has also planned - or once it cannot: conclude grounded nothing to plan from.
+            if (concluded && (context.Planning is not { } planning || planning.Draft is not null || NothingToPlan(planning)))
+                settledAt ??= clock.UtcNow;
 
             switch (observed.Phase)
             {
@@ -228,7 +273,13 @@ public sealed class KubernetesInvestigationJobLoop(
                     return Fall(j, "the Job disappeared before it concluded");
             }
 
-            if (concludedAt is { } at && clock.UtcNow - at > FrameGrace)
+            if (settledAt is null && concludedAt is { } c && clock.UtcNow - c > PlanGrace)
+            {
+                await DeleteQuietlyAsync(jobName).ConfigureAwait(false);
+                return Concluded(context, null, jobName, $"the Job proposed no plan within {PlanGrace.TotalMinutes:F0} minutes of concluding");
+            }
+
+            if (settledAt is { } at && clock.UtcNow - at > FrameGrace)
             {
                 // The answer is in; the frame is bookkeeping, and a Job that will not print it does
                 // not get to hold a slot for its whole deadline.
@@ -256,6 +307,9 @@ public sealed class KubernetesInvestigationJobLoop(
             }
         }
     }
+
+    private static bool NothingToPlan(InvestigationRunner.JobPlanning planning) =>
+        planning.Claimed is not null && planning.Grounded == 0;
 
     /// <summary>Turns the frame into how the loop ended.</summary>
     private JobLoopOutcome Collect(

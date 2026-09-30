@@ -24,6 +24,13 @@ public sealed class SafeToolOptions
     /// </summary>
     public int MaxResultBytes { get; set; } = 8 * 1024;
 
+    /// <summary>
+    /// Show the result as it is, clipped at <see cref="MaxResultBytes"/>, rather than digested. For
+    /// Hephaisto's own answers only - a Job's conclude hands back the planning prompt, and a digest
+    /// would keep its tail and drop the finding ids the plan has to cite.
+    /// </summary>
+    public bool Verbatim { get; set; }
+
     /// <summary>The untruncated result kept for the audit trail. Beyond this it is clipped.</summary>
     public int MaxRawBytes { get; set; } = 1_000_000;
 
@@ -164,9 +171,9 @@ public sealed partial class SafeToolDecorator(
         var durationMs = (long)Stopwatch.GetElapsedTime(start).TotalMilliseconds;
         var rawBytes = Encoding.UTF8.GetByteCount(raw);
 
-        var digest = LogDigester.Digest(
-            raw,
-            new LogDigestOptions { MaxBytes = options.MaxResultBytes });
+        var digest = options.Verbatim
+            ? UnDigested(raw, options.MaxResultBytes)
+            : LogDigester.Digest(raw, new LogDigestOptions { MaxBytes = options.MaxResultBytes });
 
         // The step id is prepended to what the model actually sees, because Evidence.StepId
         // is how a citation names its source and the model can only cite an id it was shown.
@@ -380,6 +387,17 @@ public sealed partial class SafeToolDecorator(
 
     private static string Clip(string text, int maxBytes) =>
         Encoding.UTF8.GetByteCount(text) <= maxBytes ? text : text[..Math.Min(text.Length, maxBytes)];
+
+    private static LogDigest UnDigested(string raw, int maxBytes)
+    {
+        var bytes = Encoding.UTF8.GetByteCount(raw);
+        var lines = raw.Split('\n').Length;
+        var text = Clip(raw, maxBytes);
+
+        return text.Length == raw.Length
+            ? new LogDigest(raw, false, 0, lines, bytes)
+            : new LogDigest(text + "\n[truncated]", true, lines - text.Split('\n').Length, lines, bytes);
+    }
 }
 
 internal static class ToolJson

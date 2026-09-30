@@ -1,5 +1,5 @@
 {
-  "description": "FAKE SDK investigation for any target: lists the namespace's pods and its events through Hephaisto's real investigator endpoint, then concludes with low confidence, citing a line copied verbatim from the list_pods result. No model runs.",
+  "description": "FAKE SDK investigation for any target: lists the namespace's pods and its events through Hephaisto's real investigator endpoint, then concludes with low confidence, citing a line copied verbatim from the list_pods result. Then proposes a plan with no cluster action. No model runs.",
   "steps": [
     {
       "tool": "mcp__hephaisto__list_pods",
@@ -40,6 +40,14 @@
             ]
           }
         ]
+      }
+    },
+    {
+      "tool": "mcp__hephaisto__propose_plan",
+      "input": {
+        "summary": "FAKE SDK: no model ran, so there is nothing to act on in the cluster.",
+        "no_action_required": true,
+        "actions": []
       }
     }
   ]

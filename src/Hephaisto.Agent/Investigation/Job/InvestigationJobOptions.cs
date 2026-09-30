@@ -57,6 +57,14 @@ public sealed class InvestigationJobOptions
     public int MaxJobsPerHour { get; set; } = 20;
 
     /// <summary>
+    /// What an investigation does when every Job slot is taken or the hourly cap is reached:
+    /// investigate in-process (the v0.12.0 default), or wait for a slot so the in-process model is
+    /// never called. <see cref="InvestigationOverflow.Wait"/> also sends incidents about another
+    /// cluster to a Job; its Grafana tools still read them.
+    /// </summary>
+    public InvestigationOverflow Overflow { get; set; } = InvestigationOverflow.InProcess;
+
+    /// <summary>
     /// When a Job cannot give an answer - it was refused, failed, vanished, hit a subscription limit
     /// or outlived its deadline - investigate in-process instead of escalating with nothing.
     /// </summary>
@@ -68,6 +76,13 @@ public sealed class InvestigationJobOptions
     public InvestigationJobSourceOptions Source { get; set; } = new();
 
     public ExecutorCaps Caps => new() { MaxConcurrentJobs = MaxConcurrentJobs, MaxJobsPerHour = MaxJobsPerHour };
+}
+
+/// <summary>What an investigation does when it cannot have a Job right now.</summary>
+public enum InvestigationOverflow
+{
+    InProcess,
+    Wait,
 }
 
 /// <summary>A read-only checkout of the running revision for the investigator (Part 8).</summary>

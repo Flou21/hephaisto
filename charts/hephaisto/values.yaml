@@ -292,9 +292,14 @@ investigation:
     maxCostUsd: 2
     maxTurns: 60
     deadline: "00:15:00"
-    # Storm control. A run that cannot have a slot runs in-process now; it never waits.
+    # Storm control. What a run that cannot have a slot does is overflow, below.
     concurrentJobs: 1
     jobsPerHour: 20
+    # With every slot taken or the hourly cap reached: "inprocess" investigates with the in-process
+    # model, "wait" holds the investigation until a Job slot frees, so the in-process model is
+    # never called (set fallbackToInProcess: false too). "wait" also sends incidents about another
+    # cluster to a Job.
+    overflow: inprocess
     # A refused, failed, vanished or rate-limited Job falls back to the in-process investigation.
     fallbackToInProcess: true
     # A read-only clone of the running revision, when the workload maps through
