@@ -39,7 +39,9 @@ public sealed class TeamsBotIncidents(HephaistoDbContext db)
             .Take(Math.Max(0, max))
             .ToList();
 
-        return (await WithNotesAsync(await WithCodeFixAsync(listed, ct).ConfigureAwait(false), ct).ConfigureAwait(false), total);
+        return (await WithDiagnosisAsync(
+            await WithNotesAsync(await WithCodeFixAsync(listed, ct).ConfigureAwait(false), ct).ConfigureAwait(false),
+            ct).ConfigureAwait(false), total);
     }
 
     /// <summary>The named incidents, whatever state they are in. One that no longer exists is absent.</summary>
@@ -58,7 +60,9 @@ public sealed class TeamsBotIncidents(HephaistoDbContext db)
             .ToListAsync(ct)
             .ConfigureAwait(false);
 
-        return (await WithNotesAsync(await WithCodeFixAsync(found, ct).ConfigureAwait(false), ct).ConfigureAwait(false))
+        return (await WithDiagnosisAsync(
+                await WithNotesAsync(await WithCodeFixAsync(found, ct).ConfigureAwait(false), ct).ConfigureAwait(false),
+                ct).ConfigureAwait(false))
             .ToDictionary(i => i.Id);
     }
 
@@ -118,6 +122,92 @@ public sealed class TeamsBotIncidents(HephaistoDbContext db)
         return [.. incidents.Select(i => i.AlertName is { } name && bodies.TryGetValue(name, out var body)
             ? i with { NoteExcerpt = AlertNote.Excerpt(body) }
             : i)];
+    }
+
+    /// <summary>
+    /// Each incident's newest investigation and what it found, in two queries for all of them: the
+    /// investigations, then the primary findings of the newest ones with their first citations.
+    /// </summary>
+    private async Task<IReadOnlyList<TeamsIncident>> WithDiagnosisAsync(
+        IReadOnlyList<TeamsIncident> incidents,
+        CancellationToken ct)
+    {
+        if (incidents.Count == 0)
+        {
+            return incidents;
+        }
+
+        var ids = incidents.Select(i => i.Id).ToList();
+
+        var investigations = await db.Investigations.AsNoTracking()
+            .Where(v => ids.Contains(v.IncidentId) && v.CompletedAt != null)
+            .Select(v => new
+            {
+                v.Id,
+                v.IncidentId,
+                v.StartedAt,
+                v.TerminationReason,
+                v.Executor,
+                v.ModelId,
+                PlanSummary = v.Plan == null ? null : v.Plan.Summary,
+            })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        var newest = investigations
+            .GroupBy(v => v.IncidentId)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(v => v.StartedAt).First());
+
+        if (newest.Count == 0)
+        {
+            return incidents;
+        }
+
+        var investigationIds = newest.Values.Select(v => v.Id).ToList();
+
+        var primaries = await db.Findings.AsNoTracking()
+            .Where(f => investigationIds.Contains(f.InvestigationId) && f.IsPrimary)
+            .Select(f => new
+            {
+                f.InvestigationId,
+                f.Hypothesis,
+                f.Category,
+                f.Confidence,
+                f.CodeRefs,
+                Evidence = f.Evidence.OrderBy(e => e.Id).Select(e => e.Excerpt).Take(5).ToList(),
+            })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        var byInvestigation = primaries
+            .GroupBy(f => f.InvestigationId)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        return [.. incidents.Select(i =>
+        {
+            if (!newest.TryGetValue(i.Id, out var v))
+            {
+                return i;
+            }
+
+            byInvestigation.TryGetValue(v.Id, out var f);
+
+            return i with
+            {
+                Diagnosis = new TeamsDiagnosis
+                {
+                    Hypothesis = f?.Hypothesis,
+                    Category = f?.Category,
+                    Confidence = f?.Confidence,
+                    Summary = v.PlanSummary,
+                    Termination = v.TerminationReason,
+                    Executor = v.Executor ?? Core.Investigations.InvestigationExecutors.InProcess,
+                    ModelId = v.ModelId,
+                    Evidence = f?.Evidence ?? [],
+                    CodeRefs = f?.CodeRefs ?? [],
+                },
+            };
+        })];
     }
 
     private async Task<IReadOnlyList<TeamsIncident>> WithCodeFixAsync(
