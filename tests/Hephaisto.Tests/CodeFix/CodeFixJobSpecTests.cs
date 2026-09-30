@@ -142,4 +142,19 @@ public sealed class CodeFixJobSpecTests
 
         job.Should().NotContain("Mcp__").And.NotContain("hephaisto-mcp").And.NotContain(":8083").And.NotContain("/mcp");
     }
+
+    [Fact]
+    public void A_scripted_coder_is_handed_no_model_credential()
+    {
+        var attempt = new CodeFixAttempt { IncidentId = Guid.NewGuid() };
+        var fake = CodeFixJobSpec.Job(attempt, CodeFixPhase.Plan, new CodeFixOptions { Image = "coder:dev", Sdk = "fake" });
+        var real = CodeFixJobSpec.Job(attempt, CodeFixPhase.Plan, new CodeFixOptions { Image = "coder:dev", Sdk = "real" });
+
+        static IEnumerable<string> Keys(k8s.Models.V1Job job) =>
+            job.Spec.Template.Spec.Containers[0].Env.Where(e => e.ValueFrom?.SecretKeyRef != null).Select(e => e.Name);
+
+        Keys(fake).Should().BeEquivalentTo(["GITHUB_TOKEN", "NUGET_GITHUB_TOKEN"],
+            "the runner refuses fake mode beside a model credential, and the dev Secret holds a real one");
+        Keys(real).Should().BeEquivalentTo(CodeFixJobSpec.SecretKeys);
+    }
 }

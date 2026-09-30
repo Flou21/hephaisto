@@ -75,10 +75,14 @@ public static class InvestigateJobSpec
     /// at all: it calls no model, the runner refuses to start fake while one is present, and a $0
     /// run that could be flipped into a paid one by a Secret it happens to share is not $0.
     /// </summary>
+    /// <remarks>
+    /// The GitHub token goes with every Job, source access or not: the runner clones the context
+    /// repository (dev-context) before anything else, and in production that repository is private.
+    /// The driver clones with it; the agent inside never sees it. Found on the first production
+    /// install, where every Job for an unmapped workload failed at that clone.
+    /// </remarks>
     public static IReadOnlyList<string> KeysFor(string? sdk, bool withSource) =>
-        string.Equals(sdk, "fake", StringComparison.Ordinal)
-            ? withSource ? ["GITHUB_TOKEN"] : []
-            : withSource ? SourceSecretKeys : SecretKeys;
+        string.Equals(sdk, "fake", StringComparison.Ordinal) ? ["GITHUB_TOKEN"] : SourceSecretKeys;
 
     public static V1ConfigMap RequestConfigMap(
         Guid attemptId, Guid incidentId, Guid investigationId, CodeFixOptions o, string requestJson, V1Job owner) =>

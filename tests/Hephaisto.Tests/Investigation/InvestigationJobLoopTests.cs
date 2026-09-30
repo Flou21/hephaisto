@@ -422,7 +422,8 @@ public sealed class InvestigationJobLoopTests
         spec.Spec.ActiveDeadlineSeconds.Should().Be(600);
 
         env.Where(e => e.ValueFrom?.SecretKeyRef is not null).Select(e => e.Name)
-            .Should().BeEquivalentTo(["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"], "no GitHub or NuGet token without source access");
+            .Should().BeEquivalentTo(["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "GITHUB_TOKEN"],
+                "the context repository is private in production, source access or not; never a NuGet token");
         env.Should().NotContain(e => e.Value != null && e.Name.Contains("TOKEN"));
         env.Single(e => e.Name == "NO_PROXY").Value.Should().Contain("hephaisto.hephaisto.svc");
         env.Single(e => e.Name == "no_proxy").Value.Should().Contain("hephaisto.hephaisto.svc");
@@ -440,8 +441,9 @@ public sealed class InvestigationJobLoopTests
         await loop.RunAsync(Context(NewRecorder(), new InvestigationRunner.ConclusionHolder()), CancellationToken.None);
 
         launcher.Spec!.Spec.Template.Spec.Containers[0].Env
-            .Should().NotContain(e => e.ValueFrom != null && e.ValueFrom.SecretKeyRef != null,
-                "the runner refuses fake mode beside a real credential, and a $0 run must not become a paid one");
+            .Where(e => e.ValueFrom?.SecretKeyRef != null).Select(e => e.Name)
+            .Should().BeEquivalentTo(["GITHUB_TOKEN"],
+                "the runner refuses fake mode beside a model credential, and a $0 run must not become a paid one; the git token clones the context");
     }
 
     [Fact]
@@ -486,7 +488,7 @@ public sealed class InvestigationJobLoopTests
     [Theory]
     [InlineData(false, "github.com")]
     [InlineData(true, "gitlab.com")]
-    public async Task Without_access_or_an_allowed_host_there_is_no_source_and_no_GitHub_token(bool mapped, string allowedHost)
+    public async Task Without_access_or_an_allowed_host_there_is_no_source(bool mapped, string allowedHost)
     {
         job.Source.Enabled = true;
         codeFix.Repositories = mapped
@@ -499,7 +501,6 @@ public sealed class InvestigationJobLoopTests
         await loop.RunAsync(Context(NewRecorder(), new InvestigationRunner.ConclusionHolder()), CancellationToken.None);
 
         launcher.Request!.Source.Should().BeNull("no source is never a failed investigation");
-        launcher.Spec!.Spec.Template.Spec.Containers[0].Env.Should().NotContain(e => e.Name == "GITHUB_TOKEN");
     }
 
     [Fact]

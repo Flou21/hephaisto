@@ -915,3 +915,37 @@ curl -s -o /dev/null -w '%{http_code}\n' "http://$H:8183/api/incidents"         
 - **TLS, an Ingress, proxy buffering of the SSE answer, token rotation without a restart, load,
   and clients other than the .NET SDK's wire format, LiteLLM and Claude Code.**
 
+
+## 18. An investigation can run in a Job, and falls back when the Job cannot (v0.12.0 F5)
+
+`scripts/e2e/investigate-local.sh` is the acceptance suite. On the dev stack it is $0: set
+`tilt_config.json` `"coder": true`, `"investigator": true`, `"investigator-sdk": "fake"` (and
+`"local-llm": true` for the in-process scenarios), then
+
+```sh
+scripts/e2e/investigate-local.sh            # I0-I11, about 20 minutes (the in-process ones use gpt-oss)
+scripts/e2e/investigate-local.sh --only I4  # the Job path alone, under a minute
+scripts/e2e/investigate-local.sh --strict   # the release gate: a known-red entry fails
+```
+
+It switches `codeFixMode` off for its run - c15 and c19 escalate as application bugs, and the dev
+cluster's code-fix stage runs the real SDK - and restores it on exit.
+
+| | What it proves |
+|---|---|
+| I0 | The agent is up; `create jobs` exists in the coder namespace and nowhere else |
+| I1 | With the executor at `inprocess`, an investigation is v0.11's: in-process, no Job |
+| I2 | The executor axis: the ConfigMap takes it down, a typo reads as in-process, the env arm decides when the key is gone |
+| I3 | The investigator port refuses a missing and an unknown token; `/investigate` is not on the console port |
+| I4 | A scripted investigator on c15 reaches Hephaisto's own tools; its calls are recorded steps; its application finding is grounded; the executor is `Job` |
+| I5 | The investigator pod is as sealed as a coder's, labelled an investigator, with no NuGet token and a request owned by its Job |
+| I6 | Coders still reach only DNS and the proxy; only investigator pods reach the investigator port |
+| I7 | A Job investigation has the same shape as an in-process one to every API consumer |
+| I8 | A Job deleted mid-run: the investigation finishes in-process, marked `JobFallback` |
+| I9 | With the one Job slot taken, the next investigation runs in-process at once |
+| I10 | An agent restart mid-Job: the orphan is removed, the incident is investigated once |
+| I11 | With source access, the finding names `Endpoints.cs` at a commit; grounding is still tool steps |
+
+A real model, not gating: `scripts/e2e/investigate-model-local.sh` runs I4 with
+`investigator-sdk: real` on Haiku (a few cents per run) and reports how many of N runs concluded
+with a grounded finding.

@@ -250,6 +250,72 @@ and the guard hook's denial record. The v2 hardening is a two-container split â€
 holding the tokens and an agent container without them, sharing `/work` â€” deferred because the
 first version has to prove the flow before it is worth splitting.
 
+## Investigating in a Job (v0.12.0 F5)
+
+The in-process investigation runs against `Llm:Provider` - Gemini or anything on the OpenAI wire.
+v0.12.0 lets the investigation's **model loop** run as Claude Code in a Job next to the coder, so a
+subscription's Fable or Opus can diagnose with the dev-context notes. Only the model loop moves.
+Hephaisto still builds the tools, records every step, grounds the conclusion and plans; the Job
+replaces exactly one call in `InvestigationRunner`.
+
+**The one route in, and why it is not a callback.** The code-fix section above says the coder has
+no route into Hephaisto, and that stays true for coders. An investigator Job is a different pod
+kind (`app.kubernetes.io/name=hephaisto-investigator`) with one destination the coder lacks: the
+agent's **investigator port** (8084), route `/investigate`, a minimal stateless MCP server
+(`initialize`, `ping`, `tools/list`, `tools/call`, JSON answers). It serves *that run's* tools -
+the same `SafeToolDecorator`-wrapped Kubernetes and Grafana tools and `conclude` the in-process
+loop would have called, bound to the run's recorder and budget - behind a token that is 32 random
+bytes, held only as a hash, valid for one investigation until its deadline. Nothing on that port
+writes anything but the run's own conclusion; the public `/mcp` surface is untouched and separate.
+The agent's ingress rule names the investigator label, so coder pods in the same namespace have no
+route there.
+
+**Grounding does not move.** Because the Job's tool calls are Hephaisto's own tool calls, every
+result it reads carries a `[step <id>]` header Hephaisto recorded, and its `conclude` is grounded
+against those digests exactly as an in-process one is. A Job cannot cite bytes no tool returned -
+a test has one try. The framed result in the pod log (the code-fix framing, unchanged) carries only
+run metadata: model, turns, tokens, cost, how it ended.
+
+**Fallback, not escalation.** A refused launch, a Job that fails, vanishes, outlives its deadline,
+reports `rate_limited` or `no_credential`, or is switched away mid-run: the runner investigates
+in-process instead, with a fresh budget, and records the executor as `JobFallback`. A Job that ran
+and chose not to conclude - out of turns, out of budget, nothing to say - ends as that; running the
+same evidence again in-process would double the spend. `investigation.job.fallbackToInProcess:
+false` turns every fallback into a `Faulted` investigation that says why.
+
+**No new state.** A run holds its worker slot and polls its Job, exactly as an in-process run holds
+the slot while it waits on a provider. Sessions live in memory: after an agent restart an orphaned
+Job's calls are refused, `InvestigatorJobSweeper` deletes it, and `StrandedIncidentRequeue` re-runs
+the incident - v0.11's restart semantics, nothing to reconcile.
+
+**Its own axis.** `InvestigationExecutor {InProcess, Job}`, env `Investigation__Job__Executor` plus
+the switch ConfigMap's `investigationExecutor`, most restrictive winning; silence and typos are
+in-process; `investigation.job.enabled` false is in-process whatever the arms say; the emergency
+stop and the runaway latch force in-process. `InvestigationExecutorPolicy.Decide` is the storm
+control: a run that cannot have one of `concurrentJobs` slots, or would exceed `jobsPerHour`, runs
+in-process now and never queues. Another cluster's incident stays in-process, because a Job's
+Kubernetes tools read only this one.
+
+**What the investigator can reach.** The coder's pod (`CodeFixJobSpec.Hardened`, shared on
+purpose): no ServiceAccount token, non-root, read-only root, no capabilities, no retries. Egress:
+DNS, the egress proxy, and the investigator port. Credentials: the model's token only - a scripted
+(`fake`) investigator gets none at all - and a GitHub token only with source access. The Claude
+agent inside has `Read`, `Grep`, `Glob` over its workspace and the investigator's MCP tools; no
+shell, no edit, no web.
+
+**Source access, read-only.** With `investigation.job.source.enabled`, a workload mapped through
+`codeFix.repositories` to an allowed host is cloned by the driver - not the agent - at the commit
+of its running image, and the agent may name file and line in `conclude`'s `code_refs`. The driver
+keeps only references whose file and line exist in the checkout; Hephaisto attaches those to the
+surviving finding they name. **A code reference is never evidence**: grounding reads citations of
+tool steps only. The references show in the console and ride into a code fix's plan request.
+
+**Billing.** A subscription is not billed per token, and its notional cost charged to the global
+LLM budget would trip hourly caps sized for metered API spend - and then the runaway latch. So a
+subscription run is recorded at $0 with its notional cost in the step's text; an API-key run is
+charged what it cost. The Job caps, not the dollar caps, bound a subscription. Resolve backlog
+#118 (the OAuth token's terms for headless use) before production depends on it.
+
 ## Self-observability
 
 ```
