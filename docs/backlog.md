@@ -2684,6 +2684,27 @@ but it has never been decided.
 **What to do.** Decide first which fields a person may correct, who may, and how the audit trail
 and the Teams card show a correction. **Size.** M. Open, a decision.
 
+### 164. An investigation cannot use the model the subscription pays for
+
+**Symptom.** The investigation's model is whatever `Llm:Provider` names, and the providers are
+`gemini` and the OpenAI wire (`Llm/LlmServiceCollectionExtensions.cs:59-73`). Claude runs only in
+the code-fix stage's Job (`coder/`), on the subscription token (`CLAUDE_CODE_OAUTH_TOKEN`). So
+the stage that decides what an incident is gets the cheaper model, and the dev-context notes a
+code fix plans with are never seen by the stage that diagnoses.
+
+**Evidence.** Production ran its investigations over the Gemini API through 2026-09-29, and they
+work. The code-fix Jobs of v0.9.0 fixed c15 end to end with Haiku for about $0.20, and the owner
+holds a subscription on which Fable and Opus cost no marginal money. Hephaisto's own tools,
+digests and grounding (`Llm/SafeToolDecorator.cs`, `Investigation/GroundingVerifier.cs`) are
+what make an investigation trustworthy; none of them depends on which model reads the results.
+
+**What to do.** Roadmap v0.12.0 F5: an opt-in executor that runs the model loop as Claude Code in
+a Job, with Hephaisto serving that Job the same tools over an internal endpoint and grounding
+its conclusion as today, a fallback to the in-process investigation, and an optional read-only
+checkout of the running revision. Resolve [#118](#118) before enabling it in production, and land
+[#159](#159) and [#160](#160) first there, or most of the subscription is spent on readiness
+flaps whose logs cannot be read. **Size.** L. Open.
+
 ## Dead or unreachable code
 
 ### 27. `AddHephaistoLlmWithoutPersistence` has no call sites

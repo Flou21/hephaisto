@@ -1616,6 +1616,34 @@ to close more than one at a time, and through a shared gateway token nobody is a
 | F2 | **Flapping means flapping.** Readiness failures are counted in a window, not over the event's life | [#159](backlog.md#159) | S |
 | F3 | **Logs from a pod with a sidecar.** The default container is read when none is named, and a grounding rejection says why in the log | [#160](backlog.md#160) | S |
 | F4 | **Many at once.** Close by the filters of a search, approver only, with a reason and a dry run, one audit row per incident, in the console and over MCP | [#161](backlog.md#161) | M |
+| F5 | **Investigate with the model the subscription pays for.** An opt-in executor runs the investigation's model loop as Claude Code in a Job next to the coder; Hephaisto stays the tools, the grounding and everything after | [#164](backlog.md#164) | L |
+
+### F5 — the investigation's model loop in a Job
+
+Production showed the in-process investigation over the Gemini API working. The code-fix stage
+showed a Job running Claude Code working. F5 puts the two together, so an investigation can use
+Fable or Opus on the Anthropic subscription with the dev-context notes, **without giving up
+anything the in-process loop guarantees**. Decided with the owner on 2026-09-29:
+
+- **The Job is the model loop; Hephaisto stays the tools.** The Job reaches evidence only through
+  an internal endpoint of Hephaisto's (its own port, 8084, route `/investigate`), which serves
+  exactly the tools the in-process loop has, through the same `SafeToolDecorator`, recorded as
+  steps of that investigation. Grounding therefore still checks citations against bytes
+  Hephaisto saw, not bytes the Job reports. The Job holds no cluster RBAC and no Grafana token;
+  the public `/mcp` surface is untouched.
+- **All investigations, capped, with a fallback.** When the executor is `job`, every
+  investigation goes to a Job, bounded in concurrency and per hour. Overflow, a failed or
+  vanished Job, a missing credential or a subscription limit falls back to the in-process
+  investigation, which still works exactly as before.
+- **Source access, read-only and separately switched.** When the workload maps to a repository,
+  the Job gets a clone of the running revision and may name file and line. A code reference is
+  never grounding evidence; it rides along to the console and to a code fix.
+- **Backwards compatible.** The executor is its own axis, silence is in-process, and an
+  install that does not set `investigation.job.enabled` renders nothing new.
+
+Delivered as nine stacked parts, the first of which is the suite that accepts the other eight:
+`scripts/e2e/investigate-local.sh`, $0 with the scripted investigator
+(`scripts/e2e/investigate/KNOWN_RED` says which scenario each later part turns green).
 
 To decide, and not yet committed to this milestone:
 
