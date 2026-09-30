@@ -551,6 +551,58 @@ public sealed class InvestigationJobLoopTests
     }
 
     [Fact]
+    public async Task With_overflow_wait_a_run_waits_for_a_free_slot_instead_of_going_in_process()
+    {
+        job.Overflow = InvestigationOverflow.Wait;
+        var (loop, _, sessions, _) = Build();
+        var busy = Guid.NewGuid();
+        sessions.Open(new InvestigationJobSession
+        {
+            InvestigationId = busy,
+            IncidentId = Guid.NewGuid(),
+            Tools = new Dictionary<string, AIFunction>(),
+            Conclusion = new InvestigationRunner.ConclusionHolder(),
+            ExpiresAt = clock.UtcNow + TimeSpan.FromMinutes(5),
+        });
+
+        var deciding = loop.DecideAsync(NewIncident(), TestContext.Current.CancellationToken);
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+        deciding.IsCompleted.Should().BeFalse("every slot is taken, and overflow waits");
+
+        sessions.Close(busy);
+
+        (await deciding.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken)).Choice
+            .Should().Be(ExecutorChoice.Job);
+    }
+
+    [Fact]
+    public async Task With_overflow_wait_switching_the_executor_to_in_process_ends_the_wait()
+    {
+        job.Overflow = InvestigationOverflow.Wait;
+        job.MaxJobsPerHour = 0;
+        var (loop, _, _, executor) = Build();
+
+        var deciding = loop.DecideAsync(NewIncident(), TestContext.Current.CancellationToken);
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+        deciding.IsCompleted.Should().BeFalse("the hourly cap is reached, and overflow waits");
+
+        executor.Effective = InvestigationExecutor.InProcess;
+
+        (await deciding.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken)).Choice
+            .Should().Be(ExecutorChoice.InProcessByMode);
+    }
+
+    [Fact]
+    public async Task With_overflow_wait_another_clusters_incident_goes_to_a_Job_too()
+    {
+        job.Overflow = InvestigationOverflow.Wait;
+        var (loop, _, _, _) = Build(agentCluster: "studio");
+
+        (await loop.DecideAsync(NewIncident(cluster: "eu-prod"), CancellationToken.None)).Choice
+            .Should().Be(ExecutorChoice.Job);
+    }
+
+    [Fact]
     public void The_Jobs_tools_get_a_turn_each_and_the_Jobs_deadline()
     {
         var (loop, _, _, _) = Build();

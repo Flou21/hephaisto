@@ -1149,6 +1149,10 @@
               "minimum": 0,
               "maximum": 10000
             },
+            "overflow": {
+              "type": "string",
+              "enum": ["inprocess", "wait"]
+            },
             "fallbackToInProcess": {
               "type": "boolean"
             },

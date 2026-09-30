@@ -60,6 +60,43 @@ public sealed class KubernetesInvestigationJobLoop(
     {
         ArgumentNullException.ThrowIfNull(incident);
 
+        DateTimeOffset? waitingSince = null;
+
+        while (true)
+        {
+            var decision = await DecideOnceAsync(incident, ct).ConfigureAwait(false);
+            var j = jobOptions.CurrentValue;
+
+            // Overflow = wait: an investigation that cannot have a Job now holds its worker slot until
+            // one frees, and is never handed to the in-process model. Re-decided every poll, so an
+            // executor switched to in-process ends the wait.
+            if (j.Overflow != InvestigationOverflow.Wait
+                || decision.Choice is not (ExecutorChoice.Overflow or ExecutorChoice.HourlyCapReached))
+            {
+                if (waitingSince is { } since)
+                {
+                    logger.LogInformation(
+                        "Incident {IncidentId} waited {Seconds:F0}s for an investigator Job slot",
+                        incident.Id, (clock.UtcNow - since).TotalSeconds);
+                }
+
+                return decision;
+            }
+
+            if (waitingSince is null)
+            {
+                waitingSince = clock.UtcNow;
+                tracker.Relabel(incident.Id, "waiting for a Job slot");
+                logger.LogInformation(
+                    "Incident {IncidentId} waits for an investigator Job slot: {Why}", incident.Id, decision.Explanation);
+            }
+
+            await Task.Delay(j.PollInterval, ct).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<JobLoopDecision> DecideOnceAsync(Incident incident, CancellationToken ct)
+    {
         InvestigationExecutorResolution resolution;
 
         try
@@ -85,7 +122,7 @@ public sealed class KubernetesInvestigationJobLoop(
             j.Caps,
             sessions.ActiveCount,
             LaunchesInTheLastHour(),
-            incident.Target.IsForeignTo(prompts.AgentCluster));
+            j.Overflow != InvestigationOverflow.Wait && incident.Target.IsForeignTo(prompts.AgentCluster));
 
         return new JobLoopDecision(choice, choice switch
         {
