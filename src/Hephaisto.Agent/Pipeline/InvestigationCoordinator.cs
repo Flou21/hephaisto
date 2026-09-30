@@ -210,7 +210,8 @@ public sealed class InvestigationCoordinator(
         metrics.InvestigationCompleted(
             clock.UtcNow - started,
             investigation.StepsUsed,
-            investigation.TerminationReason);
+            investigation.TerminationReason,
+            investigation.Executor);
 
         // rejection.Reason, not rejection. The record's compiler-generated ToString() emits all
         // four members - including a Detail string and two Guids - so this was writing a label

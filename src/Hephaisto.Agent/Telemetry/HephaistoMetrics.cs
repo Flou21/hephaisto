@@ -175,11 +175,18 @@ public sealed class HephaistoMetrics : IDisposable
         }
     }
 
-    public void InvestigationCompleted(TimeSpan duration, int steps, TerminationReason reason)
+    /// <param name="executor">
+    /// Who ran the model loop (v0.12.0 F5): InProcess, Job or JobFallback. A closed vocabulary, so it
+    /// is safe as a label.
+    /// </param>
+    public void InvestigationCompleted(TimeSpan duration, int steps, TerminationReason reason, string? executor = null)
     {
         investigationDuration.Record(duration.TotalSeconds);
         investigationSteps.Record(steps);
-        investigationTerminations.Add(1, new KeyValuePair<string, object?>("reason", reason.ToString()));
+        investigationTerminations.Add(
+            1,
+            new KeyValuePair<string, object?>("reason", reason.ToString()),
+            new KeyValuePair<string, object?>("executor", executor ?? Core.Investigations.InvestigationExecutors.InProcess));
     }
 
     /// <summary>

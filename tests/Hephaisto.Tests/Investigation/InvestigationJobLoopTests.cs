@@ -482,6 +482,22 @@ public sealed class InvestigationJobLoopTests
             .Should().Be(ExecutorChoice.ForeignCluster);
     }
 
+    [Theory]
+    [InlineData("not configured: CodeFix:Image is not set", "not_configured")]
+    [InlineData("the Job was not started: forbidden", "launch_refused")]
+    [InlineData("the Job disappeared before it concluded", "vanished")]
+    [InlineData("the Job gave no answer within its 8-minute deadline", "deadline")]
+    [InlineData("the executor was switched mid-run (...)", "switched")]
+    [InlineData("the Job gave no readable answer: sha mismatch", "unreadable")]
+    [InlineData("the Job ended rate_limited: usage limit", "rate_limited")]
+    [InlineData("the Job ended no_credential", "no_credential")]
+    [InlineData("the Job ended failed: endpoint_unauthorized", "failed")]
+    public void A_fallback_reason_becomes_a_closed_label(string reason, string kind)
+    {
+        // A metric label from free text is a cardinality leak waiting for its first long error.
+        KubernetesInvestigationJobLoop.FallbackKind(reason).Should().Be(kind);
+    }
+
     [Fact]
     public void The_Jobs_tools_get_a_turn_each_and_the_Jobs_deadline()
     {

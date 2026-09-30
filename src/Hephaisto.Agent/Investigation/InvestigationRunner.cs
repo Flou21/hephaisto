@@ -259,7 +259,8 @@ public sealed class InvestigationRunner(
         activity?.SetTag("investigation.tool_calls", investigation.ToolCallsUsed);
         activity?.SetTag("investigation.cost_usd", investigation.CostUsd);
 
-        LlmInstrumentation.Terminations.Add(1, new TagList { { "reason", termination.ToString() } });
+        LlmInstrumentation.Terminations.Add(
+            1, new TagList { { "reason", termination.ToString() }, { "executor", investigation.Executor } });
         LlmInstrumentation.InvestigationDuration.Record(
             (clock.UtcNow - investigation.StartedAt).TotalMilliseconds,
             new TagList { { "signal.kind", incident.Kind.ToString() } });

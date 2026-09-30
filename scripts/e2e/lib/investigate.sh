@@ -424,13 +424,25 @@ scenario_I10() {
     wait_for "a running investigator Job" 180 find_job || { fail "a running investigator Job"; iv_set_executor inprocess; return 0; }
     pass "a running investigator Job" "$job"
 
-    kc -n "$CF_APP_NS" delete pod -l app.kubernetes.io/name=hephaisto --wait=false >/dev/null
-    say "deleted the agent pod mid-run"
-    wait_for "the agent to be healthy again" 600 bash -c "curl -sf --max-time 5 '$CF_API/healthz' >/dev/null" \
-        && pass "the agent came back" || { fail "the agent came back"; return 0; }
+    local old_pod
+    old_pod=$(kc -n "$CF_APP_NS" get pods -l app.kubernetes.io/name=hephaisto -o jsonpath='{.items[0].metadata.name}')
+    kc -n "$CF_APP_NS" delete pod "$old_pod" --wait=false >/dev/null
+    say "deleted the agent pod $old_pod mid-run"
+
+    # A different pod, Ready, answering - not the old one still draining.
+    replaced() {
+        ! kc -n "$CF_APP_NS" get pod "$old_pod" >/dev/null 2>&1 \
+            && [ "$(kc -n "$CF_APP_NS" get pods -l app.kubernetes.io/name=hephaisto -o json \
+                   | jq '[.items[] | select(.status.conditions[]? | select(.type == "Ready" and .status == "True"))] | length')" -ge 1 ] \
+            && curl -sf --max-time 5 "$CF_API/healthz" >/dev/null
+    }
+    wait_for "a new agent pod to be healthy" 900 replaced \
+        && pass "a new agent pod came up" || { fail "a new agent pod came up"; return 0; }
 
     gone() { ! kc -n "$CF_CODER_NS" get job "$job" >/dev/null 2>&1 || \
         [ "$(kc -n "$CF_CODER_NS" get job "$job" -o json | jq -r '(.status.active // 0) == 0')" = true ]; }
+    # Deleted by the old agent on its way down, or by the new one's sweeper - either is correct;
+    # what must not happen is a Job running on with no run to answer to.
     wait_for "the orphaned Job to stop" 600 gone \
         && pass "the orphaned Job stopped" || fail "the orphaned Job stopped"
 

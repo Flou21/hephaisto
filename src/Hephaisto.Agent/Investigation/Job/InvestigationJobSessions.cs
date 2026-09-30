@@ -80,6 +80,13 @@ public sealed class InvestigationJobSessions(IClock clock)
         return true;
     }
 
+    /// <summary>Whether a run of this investigation is live in this process.</summary>
+    public bool IsLive(Guid investigationId)
+    {
+        var now = clock.UtcNow;
+        return _sessions.Values.Any(s => s.InvestigationId == investigationId && now < s.ExpiresAt);
+    }
+
     public void Close(Guid investigationId)
     {
         foreach (var (key, s) in _sessions)

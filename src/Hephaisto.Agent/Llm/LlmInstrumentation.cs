@@ -46,6 +46,9 @@ internal static class LlmInstrumentation
     public static readonly Counter<long> Terminations =
         Meter.CreateCounter<long>(HephaistoTelemetry.Metrics.InvestigationTerminations);
 
+    public static readonly Counter<long> InvestigationJobFallbacks =
+        Meter.CreateCounter<long>(HephaistoTelemetry.Metrics.InvestigationJobFallbacks);
+
     public static readonly Histogram<double> InvestigationDuration =
         Meter.CreateHistogram<double>(HephaistoTelemetry.Metrics.InvestigationDuration, "ms");
 

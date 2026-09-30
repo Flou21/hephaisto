@@ -56,6 +56,7 @@ public sealed class InvestigatorEndpointTests : IAsyncLifetime
         builder.WebHost.UseUrls($"http://127.0.0.1:{investigatorPort}", $"http://127.0.0.1:{consolePort}");
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
         {
+            ["Kubernetes:Enabled"] = "false",
             ["Investigation:Job:Enabled"] = "true",
             ["Investigation:Job:Port"] = investigatorPort.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["Investigation:Job:EndpointUrl"] = $"http://127.0.0.1:{investigatorPort}/investigate",
