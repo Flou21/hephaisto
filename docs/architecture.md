@@ -264,7 +264,7 @@ kind (`app.kubernetes.io/name=hephaisto-investigator`) with one destination the 
 agent's **investigator port** (8084), route `/investigate`, a minimal stateless MCP server
 (`initialize`, `ping`, `tools/list`, `tools/call`, JSON answers). It serves *that run's* tools -
 the same `SafeToolDecorator`-wrapped Kubernetes and Grafana tools and `conclude` the in-process
-loop would have called, bound to the run's recorder and budget - behind a token that is 32 random
+loop would have called, plus `propose_plan`, bound to the run's recorder and budget - behind a token that is 32 random
 bytes, held only as a hash, valid for one investigation until its deadline. Nothing on that port
 writes anything but the run's own conclusion; the public `/mcp` surface is untouched and separate.
 The agent's ingress rule names the investigator label, so coder pods in the same namespace have no
@@ -275,6 +275,15 @@ result it reads carries a `[step <id>]` header Hephaisto recorded, and its `conc
 against those digests exactly as an in-process one is. A Job cannot cite bytes no tool returned -
 a test has one try. The framed result in the pod log (the code-fix framing, unchanged) carries only
 run metadata: model, turns, tokens, cost, how it ended.
+
+**Phase 2 happens in the Job too.** A Job's `conclude` grounds its findings on the spot and answers
+with the planning prompt over the survivors - shown verbatim, not digested, so the finding ids
+survive. The Job then calls `propose_plan` once; after `conclude` it is the only tool served, and
+only once. The runner keeps the findings `conclude` grounded, so the ids the plan cites are the ids
+it grounds the plan against (`GroundingVerifier.VerifyPlan`, then `ActionPlanDraftMapper`, the same
+path as the in-process planner's reply). A Job investigation never calls `Llm:Provider`: a Job that
+proposes nothing has no plan. The loop gives a concluded Job five minutes to plan before the
+one-minute frame grace starts.
 
 **Fallback, not escalation.** A refused launch, a Job that fails, vanishes, outlives its deadline,
 reports `rate_limited` or `no_credential`, or is switched away mid-run: the runner investigates
@@ -293,8 +302,10 @@ the switch ConfigMap's `investigationExecutor`, most restrictive winning; silenc
 in-process; `investigation.job.enabled` false is in-process whatever the arms say; the emergency
 stop and the runaway latch force in-process. `InvestigationExecutorPolicy.Decide` is the storm
 control: a run that cannot have one of `concurrentJobs` slots, or would exceed `jobsPerHour`, runs
-in-process now and never queues. Another cluster's incident stays in-process, because a Job's
-Kubernetes tools read only this one.
+in-process now (`investigation.job.overflow: inprocess`, the default), or holds its worker slot and
+waits for a free Job slot (`wait`), re-deciding every poll. With `inprocess`, another cluster's
+incident stays in-process, because a Job's Kubernetes tools read only this one; with `wait` it goes
+to a Job, whose Grafana tools still read it.
 
 **What the investigator can reach.** The coder's pod (`CodeFixJobSpec.Hardened`, shared on
 purpose): no ServiceAccount token, non-root, read-only root, no capabilities, no retries. Egress:

@@ -42,6 +42,16 @@ investigation's model loop in a Job; F1 to F4 follow in later candidates.
   references - and says so when an investigation grounded nothing. Each board row gets a one-line
   "Diagnosis: ... (0.85)" and the full section under Details. Model-written text is redacted and
   rendered as TextRuns, never as markdown, so a quoted log line cannot become a link on a card.
+- **A Job investigation plans in the Job (rc4).** `conclude` grounds the findings on the spot and
+  answers with the planning prompt over them; the Job then calls the new `propose_plan` tool, which
+  Hephaisto grounds against those findings and hands to the policy engine exactly like the
+  in-process planner's reply. A Job investigation never calls `Llm:Provider`: no plan proposed is
+  no plan, a diagnosis for a human. A concluded Job gets five minutes to plan before it is removed.
+- **Overflow can wait (rc4).** `investigation.job.overflow: wait` holds an investigation that finds
+  every `concurrentJobs` slot taken, or `jobsPerHour` reached, until a slot frees - re-deciding
+  every poll, so switching the executor back ends the wait - and sends another cluster's incident
+  to a Job too. With `fallbackToInProcess: false` as well, investigations never use the in-process
+  model. Default `inprocess`, as in rc1-rc3.
 - **Telemetry.** `hephaisto.investigation.terminations` gains an `executor` label;
   `hephaisto.investigation.job.fallbacks{reason,fallback}` is new; two dashboard panels.
 
