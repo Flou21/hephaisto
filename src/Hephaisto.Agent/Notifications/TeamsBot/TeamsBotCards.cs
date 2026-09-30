@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using Hephaisto.Core.CodeFix;
 using Hephaisto.Core.Domain;
 using Hephaisto.Core.Notifications;
+using Hephaisto.Core.Safety;
 
 namespace Hephaisto.Agent.Notifications.TeamsBot;
 
@@ -62,6 +63,9 @@ public sealed record TeamsIncident
     /// <summary>The start of what people wrote about that alert (#145), when they wrote something.</summary>
     public string? NoteExcerpt { get; init; }
 
+    /// <summary>What the newest investigation found, when the incident was investigated.</summary>
+    public TeamsDiagnosis? Diagnosis { get; init; }
+
     public bool IsOpen => State is not (
         IncidentState.Resolved
         or IncidentState.Expired
@@ -86,6 +90,43 @@ public sealed record TeamsCardLinks
     /// where it will be read: with it off no card can need Microsoft to call this process.
     /// </summary>
     public bool Actions { get; init; }
+}
+
+/// <summary>
+/// The newest investigation of an incident, as a card shows it: the diagnosis a person reads before
+/// they open anything.
+/// </summary>
+/// <remarks>
+/// Everything here but the numbers and the enums was written by a model that read
+/// attacker-influenceable logs. The cards render it as <c>TextRun</c>s, which Teams never parses as
+/// markdown, so a hypothesis cannot become a link, and it is redacted and cleaned first.
+/// </remarks>
+public sealed record TeamsDiagnosis
+{
+    /// <summary>The primary finding's hypothesis. Null when the investigation grounded no finding.</summary>
+    public string? Hypothesis { get; init; }
+
+    public string? Category { get; init; }
+
+    public double? Confidence { get; init; }
+
+    /// <summary>The planner's summary of what to do, or that nothing is to be done.</summary>
+    public string? Summary { get; init; }
+
+    public TerminationReason Termination { get; init; }
+
+    /// <summary>InProcess, Job or JobFallback (v0.12.0 F5).</summary>
+    public string Executor { get; init; } = Core.Investigations.InvestigationExecutors.InProcess;
+
+    public string ModelId { get; init; } = string.Empty;
+
+    /// <summary>The first cited excerpts of the primary finding, verbatim from a tool result.</summary>
+    public IReadOnlyList<string> Evidence { get; init; } = [];
+
+    /// <summary>Where it points in the running revision's source, when the investigator read it.</summary>
+    public IReadOnlyList<CodeRef> CodeRefs { get; init; } = [];
+
+    public bool Grounded => !string.IsNullOrWhiteSpace(Hypothesis);
 }
 
 /// <summary>
@@ -139,6 +180,19 @@ public static class TeamsBotCards
 
     /// <summary>A resolution note is prose of any length; a board row is not the place for all of it.</summary>
     private const int MaxSummaryLength = 280;
+
+    /// <summary>A hypothesis on an alert card: enough to act on, not a page.</summary>
+    private const int MaxHypothesisLength = 700;
+
+    /// <summary>The one diagnosis line of a board row.</summary>
+    private const int MaxBoardDiagnosisLength = 180;
+
+    /// <summary>One cited excerpt. The console has the rest, and the step it came from.</summary>
+    private const int MaxExcerptLength = 240;
+
+    private const int MaxEvidenceShown = 2;
+
+    private const int MaxCodeRefsShown = 3;
 
     /// <summary>
     /// The board: every open incident the caller passed, and a line for the ones it did not.
@@ -287,6 +341,13 @@ public static class TeamsBotCards
             },
             new JsonObject { ["type"] = "FactSet", ["facts"] = Facts(incident) },
         };
+
+        if (incident.Diagnosis is { } diagnosis)
+        {
+            // The investigation itself, on the card: what was found and what it rests on, before
+            // the person opens anything. The console still has every step behind it.
+            body.Add(DiagnosisSection(diagnosis));
+        }
 
         if (!string.IsNullOrWhiteSpace(incident.Summary))
         {
@@ -582,9 +643,22 @@ public static class TeamsBotCards
             });
         }
 
+        if (incident.Diagnosis is { Grounded: true } found)
+        {
+            items.Add(Plain(
+                $"Diagnosis: {ModelText(found.Hypothesis, MaxBoardDiagnosisLength)}"
+                + (found.Confidence is { } c ? string.Create(CultureInfo.InvariantCulture, $" ({c:0.00})") : string.Empty),
+                spacing: "None"));
+        }
+
         var actions = Links(incident, links);
 
         var details = new JsonArray();
+
+        if (incident.Diagnosis is { } diagnosis)
+        {
+            details.Add(DiagnosisSection(diagnosis));
+        }
 
         if (!string.IsNullOrWhiteSpace(incident.Summary))
         {
@@ -618,6 +692,143 @@ public static class TeamsBotCards
             ["spacing"] = "Medium",
             ["items"] = items,
         };
+    }
+
+    /// <summary>The investigation as a card section. Every model-written string goes through <see cref="Plain"/>.</summary>
+    private static JsonObject DiagnosisSection(TeamsDiagnosis diagnosis)
+    {
+        var items = new JsonArray
+        {
+            new JsonObject
+            {
+                ["type"] = "TextBlock",
+                ["text"] = "Diagnosis",
+                ["weight"] = "Bolder",
+                ["wrap"] = true,
+            },
+        };
+
+        if (!diagnosis.Grounded)
+        {
+            items.Add(Plain(
+                $"No grounded diagnosis: the investigation ended {diagnosis.Termination} ({Investigator(diagnosis)}).",
+                subtle: true));
+
+            return Section(items);
+        }
+
+        items.Add(Plain(ModelText(diagnosis.Hypothesis, MaxHypothesisLength)));
+
+        var meta = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(diagnosis.Category))
+        {
+            meta.Add(ModelText(diagnosis.Category, 40));
+        }
+
+        if (diagnosis.Confidence is { } confidence)
+        {
+            meta.Add(string.Create(CultureInfo.InvariantCulture, $"confidence {confidence:0.00}"));
+        }
+
+        meta.Add($"investigated {Investigator(diagnosis)}");
+        items.Add(Plain(string.Join(" - ", meta), subtle: true, spacing: "None"));
+
+        if (!string.IsNullOrWhiteSpace(diagnosis.Summary))
+        {
+            items.Add(Plain(ModelText(diagnosis.Summary, MaxHypothesisLength), subtle: true));
+        }
+
+        var evidence = diagnosis.Evidence.Where(e => !string.IsNullOrWhiteSpace(e)).Take(MaxEvidenceShown).ToList();
+
+        if (evidence.Count > 0)
+        {
+            items.Add(new JsonObject
+            {
+                ["type"] = "TextBlock",
+                ["text"] = diagnosis.Evidence.Count > evidence.Count
+                    ? string.Create(CultureInfo.InvariantCulture, $"Evidence ({evidence.Count} of {diagnosis.Evidence.Count})")
+                    : "Evidence",
+                ["isSubtle"] = true,
+                ["size"] = "Small",
+                ["wrap"] = true,
+            });
+
+            foreach (var excerpt in evidence)
+            {
+                items.Add(Plain(ModelText(excerpt, MaxExcerptLength), monospace: true, spacing: "Small"));
+            }
+        }
+
+        foreach (var code in diagnosis.CodeRefs.Take(MaxCodeRefsShown))
+        {
+            var at = code.Ref is { Length: > 0 } sha ? $" at {(sha.Length > 12 ? sha[..12] : sha)}" : string.Empty;
+            var lines = code.EndLine is { } end ? string.Create(CultureInfo.InvariantCulture, $"{code.Line}-{end}") : code.Line.ToString(CultureInfo.InvariantCulture);
+
+            items.Add(Plain(ModelText($"Code: {code.Path}:{lines}{at}", 300), monospace: true, spacing: "Small"));
+        }
+
+        return Section(items);
+    }
+
+    private static JsonObject Section(JsonArray items) => new()
+    {
+        ["type"] = "Container",
+        ["separator"] = true,
+        ["spacing"] = "Medium",
+        ["items"] = items,
+    };
+
+    private static string Investigator(TeamsDiagnosis diagnosis)
+    {
+        var model = string.IsNullOrWhiteSpace(diagnosis.ModelId) ? "unknown model" : diagnosis.ModelId;
+
+        return diagnosis.Executor switch
+        {
+            Core.Investigations.InvestigationExecutors.Job => $"by Claude Code in a Job, {model}",
+            Core.Investigations.InvestigationExecutors.JobFallback => $"in-process after the Job gave no answer, {model}",
+            _ => $"in-process, {model}",
+        };
+    }
+
+    /// <summary>
+    /// Text a model wrote, as a card may show it: secrets redacted, control and direction characters
+    /// removed, cut to <paramref name="max"/>.
+    /// </summary>
+    internal static string ModelText(string? text, int max)
+    {
+        var clean = UntrustedText.Clean(SecretRedactor.Redact(text ?? string.Empty)).Trim();
+
+        return clean.Length <= max ? clean : clean[..max].TrimEnd() + "...";
+    }
+
+    /// <summary>
+    /// A <c>RichTextBlock</c> of one <c>TextRun</c>. Teams renders a TextRun's text as it is and never
+    /// as markdown - which a <c>TextBlock</c> would, turning <c>[x](url)</c> in a log line a model
+    /// quoted into a link on a card people trust.
+    /// </summary>
+    private static JsonObject Plain(string text, bool subtle = false, bool monospace = false, string? spacing = null)
+    {
+        var run = new JsonObject { ["type"] = "TextRun", ["text"] = text };
+
+        if (subtle)
+        {
+            run["isSubtle"] = true;
+        }
+
+        if (monospace)
+        {
+            run["fontType"] = "Monospace";
+        }
+
+        var block = new JsonObject { ["type"] = "RichTextBlock", ["inlines"] = new JsonArray(run) };
+
+        if (spacing is not null)
+        {
+            block["spacing"] = spacing;
+        }
+
+        return block;
     }
 
     private static JsonArray Links(TeamsIncident incident, TeamsCardLinks links)

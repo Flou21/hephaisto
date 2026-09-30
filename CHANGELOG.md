@@ -36,6 +36,12 @@ investigation's model loop in a Job; F1 to F4 follow in later candidates.
 - **Source access, read-only** (`investigation.job.source.enabled`, off). A workload mapped
   through `codeFix.repositories` is cloned at its running commit; the investigator may name file
   and line, shown on the finding and passed to a code fix's plan. Never evidence.
+- **The investigation on the Teams cards.** An alert card shows the newest investigation's
+  diagnosis - the primary hypothesis, category and confidence, who investigated (Claude Code in a
+  Job or in-process, and the model), the plan's summary, the first two cited excerpts and any code
+  references - and says so when an investigation grounded nothing. Each board row gets a one-line
+  "Diagnosis: ... (0.85)" and the full section under Details. Model-written text is redacted and
+  rendered as TextRuns, never as markdown, so a quoted log line cannot become a link on a card.
 - **Telemetry.** `hephaisto.investigation.terminations` gains an `executor` label;
   `hephaisto.investigation.job.fallbacks{reason,fallback}` is new; two dashboard panels.
 
