@@ -59,10 +59,6 @@ public static class CodeFixJobSpec
         ArgumentNullException.ThrowIfNull(attempt);
         ArgumentNullException.ThrowIfNull(o);
 
-        var name = JobName(attempt.Id, phase);
-        var labels = Labels(attempt, phase);
-        var deadline = phase == CodeFixPhase.Plan ? o.PlanDeadline : o.ImplementDeadline;
-
         var env = new List<V1EnvVar>
         {
             new V1EnvVar { Name = "CODEFIX_REQUEST", Value = "/work/in/request.json" },
@@ -78,31 +74,39 @@ public static class CodeFixJobSpec
         if (!string.IsNullOrWhiteSpace(o.ConsoleBaseUrl))
             env.Add(new V1EnvVar { Name = "CODEFIX_CONSOLE_URL", Value = o.ConsoleBaseUrl.TrimEnd('/') });
 
-        if (!string.IsNullOrWhiteSpace(o.EgressProxyUrl))
-        {
-            // Both cases. git and curl read only the lowercase http_proxy for an http:// URL, while
-            // node and .NET read the uppercase ones; setting one spelling leaves a tool going direct.
-            foreach (var (proxyVar, proxyValue) in new[]
-                     {
-                         ("HTTPS_PROXY", o.EgressProxyUrl), ("HTTP_PROXY", o.EgressProxyUrl), ("NO_PROXY", "localhost,127.0.0.1"),
-                         ("https_proxy", o.EgressProxyUrl), ("http_proxy", o.EgressProxyUrl), ("no_proxy", "localhost,127.0.0.1"),
-                     })
-            {
-                env.Add(new V1EnvVar { Name = proxyVar, Value = proxyValue });
-            }
-        }
+        env.AddRange(ProxyEnv(o.EgressProxyUrl, noProxy: []));
+        env.AddRange(SecretEnv(SecretKeys, o.SecretName));
 
-        foreach (var key in SecretKeys)
-        {
-            env.Add(new V1EnvVar
-            {
-                Name = key,
-                ValueFrom = new V1EnvVarSource
-                {
-                    SecretKeyRef = new V1SecretKeySelector { Name = o.SecretName, Key = key, Optional = true },
-                },
-            });
-        }
+        return Hardened(
+            new JobShape(
+                JobName(attempt.Id, phase),
+                ConfigMapName(attempt.Id, phase),
+                Labels(attempt, phase),
+                env,
+                phase == CodeFixPhase.Plan ? o.PlanDeadline : o.ImplementDeadline,
+                o.WorkspaceSize,
+                o.NugetCacheClaim),
+            o);
+    }
+
+    /// <summary>What differs between the Jobs Hephaisto starts; everything else is <see cref="Hardened"/>.</summary>
+    internal sealed record JobShape(
+        string Name,
+        string ConfigMapName,
+        IDictionary<string, string> Labels,
+        IList<V1EnvVar> Env,
+        TimeSpan Deadline,
+        string WorkspaceSize,
+        string? NugetCacheClaim);
+
+    /// <summary>
+    /// The pod every Job Hephaisto starts runs in - a coder's and, since v0.12.0, an investigator's.
+    /// One place, so the properties in this file's remarks cannot hold for one kind and not the other.
+    /// </summary>
+    internal static V1Job Hardened(JobShape shape, CodeFixOptions o)
+    {
+        ArgumentNullException.ThrowIfNull(shape);
+        ArgumentNullException.ThrowIfNull(o);
 
         var mounts = new List<V1VolumeMount>
         {
@@ -113,22 +117,22 @@ public static class CodeFixJobSpec
 
         var volumes = new List<V1Volume>
         {
-            new() { Name = "work", EmptyDir = new V1EmptyDirVolumeSource { SizeLimit = new ResourceQuantity(o.WorkspaceSize) } },
+            new() { Name = "work", EmptyDir = new V1EmptyDirVolumeSource { SizeLimit = new ResourceQuantity(shape.WorkspaceSize) } },
             new() { Name = "tmp", EmptyDir = new V1EmptyDirVolumeSource { SizeLimit = new ResourceQuantity("1Gi") } },
             new()
             {
                 Name = "request",
-                ConfigMap = new V1ConfigMapVolumeSource { Name = ConfigMapName(attempt.Id, phase), DefaultMode = 0x124 },
+                ConfigMap = new V1ConfigMapVolumeSource { Name = shape.ConfigMapName, DefaultMode = 0x124 },
             },
         };
 
-        if (!string.IsNullOrWhiteSpace(o.NugetCacheClaim))
+        if (!string.IsNullOrWhiteSpace(shape.NugetCacheClaim))
         {
             mounts.Add(new V1VolumeMount { Name = "nuget", MountPath = "/work/nuget/packages" });
             volumes.Add(new V1Volume
             {
                 Name = "nuget",
-                PersistentVolumeClaim = new V1PersistentVolumeClaimVolumeSource { ClaimName = o.NugetCacheClaim },
+                PersistentVolumeClaim = new V1PersistentVolumeClaimVolumeSource { ClaimName = shape.NugetCacheClaim },
             });
         }
 
@@ -136,15 +140,15 @@ public static class CodeFixJobSpec
         {
             ApiVersion = "batch/v1",
             Kind = "Job",
-            Metadata = new V1ObjectMeta { Name = name, NamespaceProperty = o.Namespace, Labels = labels },
+            Metadata = new V1ObjectMeta { Name = shape.Name, NamespaceProperty = o.Namespace, Labels = shape.Labels },
             Spec = new V1JobSpec
             {
                 BackoffLimit = 0,
-                ActiveDeadlineSeconds = (long)deadline.TotalSeconds,
+                ActiveDeadlineSeconds = (long)shape.Deadline.TotalSeconds,
                 TtlSecondsAfterFinished = (int)o.JobTtl.TotalSeconds,
                 Template = new V1PodTemplateSpec
                 {
-                    Metadata = new V1ObjectMeta { Labels = labels },
+                    Metadata = new V1ObjectMeta { Labels = shape.Labels },
                     Spec = new V1PodSpec
                     {
                         RestartPolicy = "Never",
@@ -166,7 +170,7 @@ public static class CodeFixJobSpec
                                 Name = ContainerName,
                                 Image = o.Image,
                                 ImagePullPolicy = o.ImagePullPolicy,
-                                Env = env,
+                                Env = shape.Env,
                                 VolumeMounts = mounts,
                                 SecurityContext = new V1SecurityContext
                                 {
@@ -198,11 +202,54 @@ public static class CodeFixJobSpec
     }
 
     /// <summary>
+    /// The proxy variables, in both cases: git and curl read only the lowercase <c>http_proxy</c> for
+    /// an http:// URL, while node and .NET read the uppercase ones; setting one spelling leaves a
+    /// tool going direct. <paramref name="noProxy"/> adds hosts reached without the proxy.
+    /// </summary>
+    internal static IEnumerable<V1EnvVar> ProxyEnv(string? proxyUrl, IReadOnlyList<string> noProxy)
+    {
+        if (string.IsNullOrWhiteSpace(proxyUrl))
+            yield break;
+
+        var bypass = string.Join(',', new[] { "localhost", "127.0.0.1" }.Concat(noProxy));
+
+        foreach (var (name, value) in new[]
+                 {
+                     ("HTTPS_PROXY", proxyUrl), ("HTTP_PROXY", proxyUrl), ("NO_PROXY", bypass),
+                     ("https_proxy", proxyUrl), ("http_proxy", proxyUrl), ("no_proxy", bypass),
+                 })
+        {
+            yield return new V1EnvVar { Name = name, Value = value };
+        }
+    }
+
+    /// <summary>Credentials by reference, each optional, from a Secret Hephaisto can name but never read.</summary>
+    internal static IEnumerable<V1EnvVar> SecretEnv(IEnumerable<string> keys, string secretName) =>
+        keys.Select(key => new V1EnvVar
+        {
+            Name = key,
+            ValueFrom = new V1EnvVarSource
+            {
+                SecretKeyRef = new V1SecretKeySelector { Name = secretName, Key = key, Optional = true },
+            },
+        });
+
+    /// <summary>
     /// The request, as a ConfigMap owned by its Job. Created after the Job so it can carry the Job's
     /// uid as owner: the pod waits a moment for the volume, and garbage collection removes the
     /// request with the Job instead of leaving evidence excerpts lying in a namespace forever.
     /// </summary>
     public static V1ConfigMap RequestConfigMap(CodeFixAttempt attempt, CodeFixPhase phase, CodeFixOptions o, string requestJson, V1Job owner)
+    {
+        ArgumentNullException.ThrowIfNull(attempt);
+        ArgumentNullException.ThrowIfNull(o);
+
+        return RequestConfigMap(ConfigMapName(attempt.Id, phase), Labels(attempt, phase), o.Namespace, requestJson, owner);
+    }
+
+    /// <summary>The request ConfigMap of any Job Hephaisto starts, owned by that Job.</summary>
+    internal static V1ConfigMap RequestConfigMap(
+        string name, IDictionary<string, string> labels, string ns, string requestJson, V1Job owner)
     {
         ArgumentNullException.ThrowIfNull(owner);
 
@@ -212,9 +259,9 @@ public static class CodeFixJobSpec
             Kind = "ConfigMap",
             Metadata = new V1ObjectMeta
             {
-                Name = ConfigMapName(attempt.Id, phase),
-                NamespaceProperty = o.Namespace,
-                Labels = Labels(attempt, phase),
+                Name = name,
+                NamespaceProperty = ns,
+                Labels = labels,
                 OwnerReferences =
                 [
                     new V1OwnerReference

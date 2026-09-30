@@ -30,6 +30,17 @@ public interface ICodeFixJobLauncher
     /// <summary>Creates the Job and its request ConfigMap; returns the Job name. Idempotent on the name.</summary>
     Task<string> LaunchAsync(CodeFixAttempt attempt, CodeFixPhase phase, string requestJson, CancellationToken ct);
 
+    /// <summary>
+    /// Creates any Job Hephaisto starts - since v0.12.0 an investigator's too - and its request
+    /// ConfigMap, built from the created Job so it can be owned by it. Idempotent on the name.
+    /// </summary>
+    /// <remarks>
+    /// Refusing by default, so a launcher that only knows code fixes - a test double, the refusing
+    /// launcher - says so rather than silently starting nothing.
+    /// </remarks>
+    Task<string> LaunchAsync(V1Job spec, Func<V1Job, V1ConfigMap> request, CancellationToken ct) =>
+        throw new CodeFixLaunchRefusedException("this launcher starts code-fix Jobs only");
+
     Task<CodeFixJobObservation> ObserveAsync(string jobName, CancellationToken ct);
 
     /// <summary>The tail of the coder container's log, or null when there is no pod to read.</summary>
@@ -83,7 +94,23 @@ public sealed class KubernetesCodeFixJobLauncher(
         if (string.IsNullOrWhiteSpace(o.Image))
             throw new CodeFixLaunchRefusedException("CodeFix:Image is not set");
 
-        var spec = CodeFixJobSpec.Job(attempt, phase, o);
+        return await LaunchAsync(
+                CodeFixJobSpec.Job(attempt, phase, o),
+                job => CodeFixJobSpec.RequestConfigMap(attempt, phase, o, requestJson, job),
+                ct)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<string> LaunchAsync(V1Job spec, Func<V1Job, V1ConfigMap> request, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(spec);
+        ArgumentNullException.ThrowIfNull(request);
+
+        var o = options.CurrentValue;
+
+        if (string.IsNullOrWhiteSpace(spec.Spec?.Template?.Spec?.Containers?.FirstOrDefault()?.Image))
+            throw new CodeFixLaunchRefusedException("the Job names no image");
+
         V1Job job;
 
         try
@@ -94,11 +121,11 @@ public sealed class KubernetesCodeFixJobLauncher(
         {
             // A restart between the create and the save that records it. The name is derived from
             // the attempt id, so the existing Job is this attempt's own, not a stranger's.
-            logger.LogInformation("Coder job {Job} already exists; adopting it.", spec.Metadata.Name);
+            logger.LogInformation("Job {Job} already exists; adopting it.", spec.Metadata.Name);
             job = await api.Batch.ReadNamespacedJobAsync(spec.Metadata.Name, o.Namespace, cancellationToken: ct).ConfigureAwait(false);
         }
 
-        var cm = CodeFixJobSpec.RequestConfigMap(attempt, phase, o, requestJson, job);
+        var cm = request(job);
 
         try
         {

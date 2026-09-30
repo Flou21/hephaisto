@@ -67,6 +67,18 @@ public sealed class InvestigationTracker(IClock clock)
         }
     }
 
+    /// <summary>
+    /// Renames the model a running investigation shows. A Job investigation (v0.12.0 F5) is begun
+    /// under the in-process model's name before anyone knows a Job will take it.
+    /// </summary>
+    public void Relabel(Guid incidentId, string model)
+    {
+        if (_running.TryGetValue(incidentId, out var entry))
+        {
+            entry.Model = model;
+        }
+    }
+
     private void End(Guid incidentId) => _running.TryRemove(incidentId, out _);
 
     /// <remarks>
@@ -84,7 +96,7 @@ public sealed class InProgressInvestigation(Guid incidentId, string model, DateT
 {
     public Guid IncidentId { get; } = incidentId;
 
-    public string Model { get; } = model;
+    public string Model { get; internal set; } = model;
 
     public DateTimeOffset StartedAt { get; } = startedAt;
 

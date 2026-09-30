@@ -125,7 +125,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [hephaisto-coder, hephaisto-coder-egress]
+                values: [hephaisto-coder, hephaisto-coder-egress, hephaisto-investigator]
       ports:
         - protocol: TCP
           port: 8080
@@ -150,9 +150,12 @@ metadata:
   labels:
     app.kubernetes.io/part-of: hephaisto
 spec:
+  # Investigators (v0.12.0 F5) clone dev-context from here too.
   podSelector:
-    matchLabels:
-      app.kubernetes.io/name: hephaisto-coder
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [hephaisto-coder, hephaisto-investigator]
   policyTypes:
     - Egress
   egress:

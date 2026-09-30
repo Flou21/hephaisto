@@ -317,7 +317,7 @@ scenario_I6() {
         && pass "investigators may reach the investigator port" || fail "investigators may reach the investigator port"
 
     agent=$(kc -n "$CF_APP_NS" get networkpolicy -o json | jq -c --arg p "$IV_PORT" '[.items[].spec.ingress[]? | select([.ports[]?.port | tostring] | index($p))]')
-    jq -e 'length >= 1 and all(.from[]?; .podSelector.matchLabels["app.kubernetes.io/name"] == "hephaisto-investigator")' <<<"$agent" >/dev/null \
+    jq -e 'length >= 1 and all(.[]; (.from | length) >= 1 and all(.from[]; .podSelector.matchLabels["app.kubernetes.io/name"] == "hephaisto-investigator"))' <<<"$agent" >/dev/null \
         && pass "the agent admits only investigators to that port" || fail "the agent admits only investigators to that port" "$agent"
 }
 
