@@ -8,13 +8,23 @@ import { CONTRACTS_DIR, type SchemaName, rawSchema, validate, validateWith } fro
 // ajv against the vendored contract is what the runner uses at runtime: for every request before
 // anything runs, and for every result before it is written.
 
+/** Sample file name -> the schema it is a sample of (investigate-request-*, investigate-result-*, request-*, plan-result-*, implement-result-*). */
+function sampleSchema(f: string): SchemaName {
+  if (f.startsWith('investigate-request')) return 'investigateRequest';
+  if (f.startsWith('investigate-result')) return 'investigate';
+  if (f.startsWith('request')) return 'request';
+  if (f.startsWith('plan-result')) return 'plan';
+  if (f.startsWith('implement-result')) return 'implement';
+  throw new Error(`sample ${f} names no known schema`);
+}
+
 function samples(kind: 'valid' | 'invalid') {
   const dir = join(CONTRACTS_DIR, 'samples', kind);
   return readdirSync(dir)
     .filter((f) => f.endsWith('.json'))
     .map((f) => ({
       file: f,
-      schema: (f.startsWith('request') ? 'request' : f.startsWith('plan-result') ? 'plan' : 'implement') as SchemaName,
+      schema: sampleSchema(f),
       doc: JSON.parse(readFileSync(join(dir, f), 'utf8')) as Record<string, unknown>,
     }));
 }
@@ -22,7 +32,7 @@ function samples(kind: 'valid' | 'invalid') {
 describe('vendored samples', () => {
   it('there are valid and invalid samples for every document kind', () => {
     for (const kind of ['valid', 'invalid'] as const) {
-      expect(new Set(samples(kind).map((s) => s.schema))).toEqual(new Set(['request', 'plan', 'implement']));
+      expect(new Set(samples(kind).map((s) => s.schema))).toEqual(new Set(['request', 'plan', 'implement', 'investigateRequest', 'investigate']));
     }
   });
   for (const s of samples('valid')) {

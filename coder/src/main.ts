@@ -1,9 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { DEADLINE_HEADROOM_SECONDS, type RunnerEnv, parseEnv, workPaths } from './config.js';
-import { log, setLogPrefix } from './log.js';
+import { billingOf, fakeScriptCandidates, runInvestigate } from './investigate.js';
+import { log, redact, setLogPrefix } from './log.js';
 import { type PhaseDeps, runImplement, runPlan } from './phases.js';
 import { NIL_UUID, emitResult, hasEmitted, minimalFailed, validUuid } from './result.js';
-import { type CodeFixRequest, type ImplementResult, type Phase, type PlanResult, validate } from './schemas.js';
+import { type AnyResult, type CodeFixRequest, type InvestigateRequest, type InvestigateResult, type Phase, validate } from './schemas.js';
 import { loadQuery } from './sdk.js';
 
 // Entry point. One invariant above all others: exactly ONE framed result is the last thing on
@@ -26,7 +27,7 @@ function identityFrom(raw: unknown): Identity {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   return {
     attemptId: typeof o.attempt_id === 'string' && validUuid(o.attempt_id) ? o.attempt_id : NIL_UUID,
-    phase: o.phase === 'implement' ? 'implement' : 'plan',
+    phase: o.phase === 'implement' ? 'implement' : o.phase === 'investigate' ? 'investigate' : 'plan',
   };
 }
 
@@ -35,12 +36,22 @@ export function internalDeadline(deadlineSeconds: number, now = Date.now()): num
   return now + seconds * 1000;
 }
 
-export async function main(opts: MainOptions = {}): Promise<{ phase: Phase; result: PlanResult | ImplementResult; json: string | null }> {
+export async function main(opts: MainOptions = {}): Promise<{ phase: Phase; result: AnyResult; json: string | null }> {
   let identity: Identity = { attemptId: NIL_UUID, phase: 'plan' };
   let env: RunnerEnv | null = null;
   const abort = new AbortController();
+  /** investigate: the result so far, so a SIGTERM still reports the cost, tokens and context it knows. */
+  let live: InvestigateResult | null = null;
 
-  const emit = (result: PlanResult | ImplementResult) => emitResult(identity.phase, result, { sink: env?.resultSink, write: opts.write });
+  const emit = (result: AnyResult) => {
+    // the endpoint token is redacted from logs; an error text that quotes it must not carry it either
+    const r = result.error ? { ...result, error: redact(result.error) } : result;
+    return emitResult(identity.phase, r, { sink: env?.resultSink, write: opts.write });
+  };
+  const failed = (error: string): AnyResult => {
+    if (identity.phase === 'investigate' && live) return { ...live, outcome: 'failed', error };
+    return minimalFailed(identity.phase, identity.attemptId, error, billingOf(env));
+  };
 
   if (opts.installSignalHandlers) {
     let terminating = false;
@@ -49,21 +60,21 @@ export async function main(opts: MainOptions = {}): Promise<{ phase: Phase; resu
       terminating = true;
       log.error(`received ${sig}; reporting failure before the kubelet kills the pod`);
       abort.abort();
-      if (!hasEmitted()) emit(minimalFailed(identity.phase, identity.attemptId, `runner terminated by ${sig} before it finished (Job deadline or eviction)`));
+      if (!hasEmitted()) emit(failed(`runner terminated by ${sig} before it finished (Job deadline or eviction)`));
       process.exit(143);
     };
     process.on('SIGTERM', onSignal);
     process.on('SIGINT', onSignal);
     const onCrash = (e: unknown) => {
       log.error(`unhandled: ${(e as Error)?.stack ?? String(e)}`);
-      if (!hasEmitted()) emit(minimalFailed(identity.phase, identity.attemptId, `runner crashed: ${(e as Error)?.message ?? String(e)}`));
+      if (!hasEmitted()) emit(failed(`runner crashed: ${(e as Error)?.message ?? String(e)}`));
       process.exit(1);
     };
     process.on('uncaughtException', onCrash);
     process.on('unhandledRejection', onCrash);
   }
 
-  const finish = (result: PlanResult | ImplementResult) => ({ phase: identity.phase, result, json: emit(result) });
+  const finish = (result: AnyResult) => ({ phase: identity.phase, result, json: emit(result) });
 
   // --- environment
   try {
@@ -83,20 +94,52 @@ export async function main(opts: MainOptions = {}): Promise<{ phase: Phase; resu
     return finish(minimalFailed(identity.phase, identity.attemptId, `request could not be read: ${(e as Error).message}`));
   }
   identity = identityFrom(raw);
-  const v = validate('request', raw);
+  const investigating = identity.phase === 'investigate';
+  const v = validate(investigating ? 'investigateRequest' : 'request', raw);
   if (!v.ok) {
-    log.error(`request does not match codefix-request.schema.json: ${v.errors.join('; ')}`);
-    return finish(minimalFailed(identity.phase, identity.attemptId, `request does not match the contract: ${v.errors.slice(0, 10).join('; ')}`));
+    log.error(`request does not match ${investigating ? 'investigate' : 'codefix'}-request.schema.json: ${v.errors.join('; ')}`);
+    return finish(minimalFailed(identity.phase, identity.attemptId, `request does not match the contract: ${v.errors.slice(0, 10).join('; ')}`, billingOf(env)));
   }
-  const req = raw as CodeFixRequest;
 
   // --- fake mode must never be able to spend money or reach a real model
   if (env.sdkMode === 'fake' && env.anthropicAuth) {
-    return finish(minimalFailed(identity.phase, identity.attemptId, 'CODEFIX_SDK=fake refuses to start while CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY is set'));
+    return finish(minimalFailed(identity.phase, identity.attemptId, 'CODEFIX_SDK=fake refuses to start while CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY is set', billingOf(env)));
   }
   if (env.sdkMode === 'real' && !env.anthropicAuth) {
-    return finish(minimalFailed(identity.phase, identity.attemptId, 'no Anthropic credential: set CLAUDE_CODE_OAUTH_TOKEN (or ANTHROPIC_API_KEY)'));
+    const error = 'no Anthropic credential: set CLAUDE_CODE_OAUTH_TOKEN (or ANTHROPIC_API_KEY)';
+    if (investigating) return finish({ ...minimalFailed('investigate', identity.attemptId, error, billingOf(env)), outcome: 'no_credential' });
+    return finish(minimalFailed(identity.phase, identity.attemptId, error));
   }
+
+  if (investigating) {
+    const ireq = raw as InvestigateRequest;
+    const runnerEnv = env;
+    const deadline = internalDeadline(ireq.budget.deadline_seconds);
+    log.info(`attempt ${ireq.attempt_id} phase investigate incident ${ireq.incident_id} sdk=${env.sdkMode} deadline in ${Math.round((deadline - Date.now()) / 1000)}s`);
+    try {
+      const result = await runInvestigate(ireq, {
+        env: runnerEnv,
+        paths: workPaths(runnerEnv.workDir),
+        deadline,
+        abort,
+        onProgress: (r) => (live = r),
+        makeQuery: () =>
+          loadQuery(runnerEnv.sdkMode, {
+            scriptDir: runnerEnv.fakeScriptDir,
+            repoName: '',
+            phase: 'investigate',
+            vars: {},
+            scripts: fakeScriptCandidates(ireq, runnerEnv.fakeScript),
+            request: ireq,
+          }),
+      });
+      log.info(`outcome ${result.outcome}${result.error ? `: ${result.error}` : ''} (cost $${result.cost_usd.toFixed(4)}, ${result.billing})`);
+      return finish(result);
+    } catch (e) {
+      return finish(failed(`runner failed: ${(e as Error).message}`));
+    }
+  }
+  const req = raw as CodeFixRequest;
 
   const deadline = internalDeadline(req.budget.deadline_seconds);
   log.info(`attempt ${req.attempt_id} phase ${req.phase} repo ${req.repository.url} sdk=${env.sdkMode} deadline in ${Math.round((deadline - Date.now()) / 1000)}s`);

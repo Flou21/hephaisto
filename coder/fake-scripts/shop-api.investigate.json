@@ -1,0 +1,60 @@
+{
+  "description": "FAKE SDK investigation for chaos fixture c15 (hephaisto-chaos/shop-api): finds the crash-looping pod, reads its logs and concludes that startup throws a NullReferenceException in src/Shop.Api/Startup/Endpoints.cs, citing the log line verbatim. Runs through Hephaisto's real investigator endpoint. No model runs.",
+  "steps": [
+    {
+      "tool": "mcp__hephaisto__list_pods",
+      "input": {
+        "namespace": "${request.incident.target.namespace}"
+      },
+      "capture": {
+        "as": "pods",
+        "regex": "(shop-api-[a-z0-9]+-[a-z0-9]+)"
+      }
+    },
+    {
+      "tool": "mcp__hephaisto__get_pod_logs",
+      "input": {
+        "namespace": "${request.incident.target.namespace}",
+        "name": "${pods}",
+        "previous": false
+      },
+      "capture": {
+        "as": "logs",
+        "regex": "(NullReferenceException[^\\n]*)"
+      }
+    },
+    {
+      "tool": "mcp__hephaisto__conclude",
+      "input": {
+        "summary": "FAKE SDK: shop-api crash-loops because startup throws a NullReferenceException in Shop.Api.Startup.Endpoints.Primary when Shop:Endpoints is absent.",
+        "confidence": 0.85,
+        "findings": [
+          {
+            "category": "application",
+            "primary": true,
+            "confidence": 0.85,
+            "hypothesis": "Startup dereferences a null Shop:Endpoints list in Endpoints.Primary, so the process dies before the host starts and the pod crash-loops.",
+            "evidence": [
+              {
+                "step_id": "${logs.step}",
+                "excerpt": "${logs}"
+              },
+              {
+                "step_id": "${pods.step}",
+                "excerpt": "${pods}"
+              }
+            ]
+          }
+        ],
+        "code_refs": [
+          {
+            "finding": 0,
+            "path": "src/Shop.Api/Startup/Endpoints.cs",
+            "line": 17,
+            "note": "options.Endpoints.Count is read without a null check"
+          }
+        ]
+      }
+    }
+  ]
+}

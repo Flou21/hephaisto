@@ -8,6 +8,8 @@ import type { AddressInfo } from 'node:net';
 // CLAUDE.md files it loaded, which tools it offered).
 
 type Block = { type: 'text'; text: string } | { type: 'tool_use'; id: string; name: string; input: unknown };
+/** A block may be computed from the request - e.g. to cite a step id that only exists in an earlier tool result. */
+type Scripted = Block | ((body: Record<string, unknown>) => Block);
 
 export interface MockApi {
   url: string;
@@ -15,7 +17,7 @@ export interface MockApi {
   close(): Promise<void>;
 }
 
-export async function startMockApi(script: { plan: Block[]; implement: Block[] }): Promise<MockApi> {
+export async function startMockApi(script: { plan: Scripted[]; implement: Scripted[]; investigate?: Scripted[] }): Promise<MockApi> {
   const requests: MockApi['requests'] = [];
   let n = 0;
   const server: Server = createServer(async (req, res) => {
@@ -39,12 +41,15 @@ export async function startMockApi(script: { plan: Block[]; implement: Block[] }
     const results = JSON.stringify(body.messages).split('"tool_result"').length - 1;
     let content: Block[];
     let stop = 'tool_use';
-    if (!tools.includes('StructuredOutput')) {
+    const investigating = script.investigate && tools.includes('mcp__hephaisto__conclude');
+    if (!tools.includes('StructuredOutput') && !investigating) {
       content = [{ type: 'text', text: 'ok' }];
       stop = 'end_turn';
     } else {
-      const seq = tools.includes('Edit') ? script.implement : script.plan;
-      content = [seq[Math.min(results, seq.length - 1)]!];
+      const seq = investigating ? script.investigate! : tools.includes('Edit') ? script.implement : script.plan;
+      const next = seq[Math.min(results, seq.length - 1)]!;
+      content = [typeof next === 'function' ? next(body as Record<string, unknown>) : next];
+      if (content[0]!.type === 'text') stop = 'end_turn';
     }
     const message = { id: `msg_${n}`, type: 'message', role: 'assistant', model: 'claude-mock', content, stop_reason: stop, stop_sequence: null, usage: { input_tokens: 100, output_tokens: 50 } };
     if (!body.stream) {

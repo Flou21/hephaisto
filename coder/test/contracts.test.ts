@@ -3,7 +3,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { CONTRACTS_DIR, ImplementResultZ, PlanResultZ, RequestZ, ReposZ, type SchemaName, rawSchema } from '../src/schemas.js';
+import { CONTRACTS_DIR, ImplementResultZ, InvestigateRequestZ, InvestigateResultZ, PlanResultZ, RequestZ, ReposZ, type SchemaName, rawSchema } from '../src/schemas.js';
 
 // The vendored contract must be byte-identical to what SCHEMAS.lock pins (so drift shows up as a
 // lock change in a PR, never as a runtime ContractViolation), and the zod mirrors that give the
@@ -84,6 +84,8 @@ const mirrors: [SchemaName, z.ZodType][] = [
   ['plan', PlanResultZ],
   ['implement', ImplementResultZ],
   ['repos', ReposZ],
+  ['investigateRequest', InvestigateRequestZ],
+  ['investigate', InvestigateResultZ],
 ];
 
 describe('zod mirrors match the vendored JSON Schemas', () => {
@@ -100,17 +102,34 @@ describe('zod mirrors match the vendored JSON Schemas', () => {
 
 // ---- the same samples through zod
 
+/** Sample file name -> the schema it is a sample of (investigate-request-*, investigate-result-*, request-*, plan-result-*, implement-result-*). */
+function sampleSchema(f: string): SchemaName {
+  if (f.startsWith('investigate-request')) return 'investigateRequest';
+  if (f.startsWith('investigate-result')) return 'investigate';
+  if (f.startsWith('request')) return 'request';
+  if (f.startsWith('plan-result')) return 'plan';
+  if (f.startsWith('implement-result')) return 'implement';
+  throw new Error(`sample ${f} names no known schema`);
+}
+
 function samples(kind: 'valid' | 'invalid'): { file: string; schema: SchemaName; doc: unknown }[] {
   const dir = join(CONTRACTS_DIR, 'samples', kind);
   return readdirSync(dir)
     .filter((f) => f.endsWith('.json'))
     .map((f) => ({
       file: f,
-      schema: (f.startsWith('request') ? 'request' : f.startsWith('plan-result') ? 'plan' : 'implement') as SchemaName,
+      schema: sampleSchema(f),
       doc: JSON.parse(readFileSync(join(dir, f), 'utf8')) as unknown,
     }));
 }
-const zodFor: Record<SchemaName, z.ZodType> = { request: RequestZ, plan: PlanResultZ, implement: ImplementResultZ, repos: ReposZ };
+const zodFor: Record<SchemaName, z.ZodType> = {
+  request: RequestZ,
+  plan: PlanResultZ,
+  implement: ImplementResultZ,
+  repos: ReposZ,
+  investigateRequest: InvestigateRequestZ,
+  investigate: InvestigateResultZ,
+};
 
 it('the parity walk notices drift (positive control)', () => {
   const drifted = PlanResultZ.extend({ risk: z.string() });

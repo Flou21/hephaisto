@@ -10,7 +10,7 @@ import { type SimpleCommand, type Word, lex } from './shell.js';
 // It only ever sees what the model asked for. The driver's own git/gh calls never pass through
 // here, which is how "push" can be forbidden to the agent and still happen.
 
-export type GuardMode = 'plan' | 'implement';
+export type GuardMode = 'plan' | 'implement' | 'investigate';
 
 export interface GuardContext {
   /** Realpath of the target clone. Every write must land inside it. */
@@ -23,6 +23,8 @@ export interface GuardContext {
   cwd?: string;
   /** What `~` expands to. */
   homeDir?: string;
+  /** investigate: the only directories Read/Grep/Glob may touch (realpaths: /work/context, /work/repos). */
+  readRoots?: string[];
 }
 
 export type Verdict = { allow: true } | { allow: false; reason: string };
@@ -43,6 +45,7 @@ const AGENT_TOOLS = new Set(['Task', 'Agent']);
 
 export function evaluate(toolName: string, input: unknown, mode: GuardMode, ctx: GuardContext): Verdict {
   const args = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  if (mode === 'investigate') return evaluateInvestigate(toolName, args, ctx);
   if (toolName === 'Bash') return evaluateBash(args, mode, ctx);
   if (READ_TOOLS.has(toolName)) {
     const p = firstString(args.file_path, args.path, args.notebook_path);
@@ -63,6 +66,48 @@ export function evaluate(toolName: string, input: unknown, mode: GuardMode, ctx:
   if (AGENT_TOOLS.has(toolName)) return deny(`${toolName} is not available: the coder does not spawn subagents`);
   if (toolName.startsWith('mcp__')) return deny('MCP tools are not available to the coder');
   return deny(`tool ${toolName} is not on the coder's allowlist`);
+}
+
+// ---------------------------------------------------------------------------------------------
+// investigate: Hephaisto's MCP tools, and reading two directories. No shell, no writes, no web.
+
+/** The one MCP server the investigator has; the runner registers it under this key. */
+export const INVESTIGATOR_SERVER = 'hephaisto';
+const INVESTIGATOR_TOOL = /^mcp__hephaisto__[A-Za-z0-9_-]+$/;
+const INVESTIGATE_READ_TOOLS = new Set(['Read', 'Grep', 'Glob']);
+
+function evaluateInvestigate(toolName: string, args: Record<string, unknown>, ctx: GuardContext): Verdict {
+  if (INVESTIGATOR_TOOL.test(toolName)) return ALLOW;
+  if (toolName.startsWith('mcp__')) return deny(`only the ${INVESTIGATOR_SERVER} MCP server is available to the investigator`);
+  if (toolName === 'Bash') return deny('the investigator has no shell');
+  if (EDIT_TOOLS.has(toolName)) return deny(`${toolName} is not available: the investigator cannot change anything`);
+  if (NETWORK_TOOLS.has(toolName)) return deny(`${toolName} is not available: the investigator has no web access`);
+  if (AGENT_TOOLS.has(toolName)) return deny(`${toolName} is not available: the investigator does not spawn subagents`);
+  if (!INVESTIGATE_READ_TOOLS.has(toolName)) return deny(`tool ${toolName} is not on the investigator's allowlist`);
+
+  const roots = (ctx.readRoots ?? []).map((r) => realish(r));
+  if (roots.length === 0) return deny('the investigator has no readable directories configured');
+  const base = ctx.cwd ?? ctx.targetDir;
+  const paths: string[] = [];
+  const p = firstString(args.file_path, args.path);
+  if (toolName === 'Read' && p === undefined) return deny('Read without a file path');
+  paths.push(p ?? base);
+  // An absolute Glob pattern names its own directory: its literal prefix must be inside a root too.
+  if (toolName === 'Glob' && typeof args.pattern === 'string') {
+    const pattern = args.pattern;
+    if (pattern.split(/[\\/]/).includes('..')) return deny('glob patterns may not climb out with ..');
+    if (isAbsolute(pattern)) {
+      const literal = pattern.split('/').filter((seg, i, all) => !/[*?[{]/.test(all.slice(0, i + 1).join('/')));
+      paths.push(literal.join('/') || '/');
+    }
+  }
+  for (const raw of paths) {
+    const bad = forbiddenReadPath(raw);
+    if (bad) return deny(bad);
+    const abs = realish(isAbsolute(raw) ? raw : join(base, raw));
+    if (!roots.some((r) => inside(abs, r))) return deny(`${toolName} is confined to ${(ctx.readRoots ?? []).join(' and ')} (${raw})`);
+  }
+  return ALLOW;
 }
 
 function firstString(...xs: unknown[]): string | undefined {

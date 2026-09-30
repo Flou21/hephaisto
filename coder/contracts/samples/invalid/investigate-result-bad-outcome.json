@@ -1,0 +1,36 @@
+{
+  "contract_version": "1",
+  "attempt_id": "0192a6f0-0000-7000-8000-000000000101",
+  "phase": "investigate",
+  "outcome": "planned",
+  "cost_usd": 0.4213,
+  "billing": "subscription",
+  "input_tokens": 48211,
+  "output_tokens": 2307,
+  "turns": 9,
+  "model": "claude-sonnet-4-6",
+  "session_id": "5b0c3f0e-1d2a-4c55-9e0f-3a1b2c4d5e6f",
+  "context_sha": "47cb11b0a1b2c3d4e5f60718293a4b5c6d7e8f90",
+  "source": {
+    "cloned": true,
+    "analysed_ref": "0123456789abcdef0123456789abcdef01234567",
+    "error": null
+  },
+  "code_refs": [
+    {
+      "finding": 0,
+      "path": "src/Shop.Api/Startup/Endpoints.cs",
+      "line": 17,
+      "end_line": null,
+      "note": "options.Endpoints is null when Shop:Endpoints is absent"
+    }
+  ],
+  "error": null,
+  "denied_tool_calls": [
+    {
+      "tool": "Bash",
+      "input": "kubectl get secrets -A",
+      "reason": "Bash is not available to the investigator"
+    }
+  ]
+}

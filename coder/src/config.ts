@@ -10,6 +10,8 @@ const EnvSchema = z.object({
   CODEFIX_REQUEST: z.string().default('/work/in/request.json'),
   CODEFIX_SDK: z.enum(['fake', 'real']).default('real'),
   CODEFIX_FAKE_SCRIPT_DIR: z.string().optional(),
+  /** investigate + fake only: a script in the script dir to play instead of the one the target selects. */
+  CODEFIX_FAKE_SCRIPT: z.string().optional(),
   CODEFIX_GH: z.enum(['real', 'shim']).default('real'),
   CODEFIX_GH_SHIM_DIR: z.string().optional(),
   CODEFIX_WORK_DIR: z.string().default('/work'),
@@ -28,6 +30,7 @@ export interface RunnerEnv {
   requestPath: string;
   sdkMode: 'fake' | 'real';
   fakeScriptDir: string;
+  fakeScript: string | undefined;
   ghMode: 'real' | 'shim';
   ghShimDir: string;
   workDir: string;
@@ -51,6 +54,7 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): RunnerEnv {
     requestPath: e.CODEFIX_REQUEST,
     sdkMode: e.CODEFIX_SDK,
     fakeScriptDir: e.CODEFIX_FAKE_SCRIPT_DIR ?? join(APP_ROOT, 'fake-scripts'),
+    fakeScript: e.CODEFIX_FAKE_SCRIPT || undefined,
     ghMode: e.CODEFIX_GH,
     ghShimDir: e.CODEFIX_GH_SHIM_DIR ?? defaultShimDir(),
     workDir: resolve(e.CODEFIX_WORK_DIR),
@@ -103,6 +107,28 @@ export function workPaths(workDir: string): WorkPaths {
     home: join(workDir, 'home'),
     out: join(workDir, 'out'),
   };
+}
+
+/**
+ * NO_PROXY and no_proxy with `url`'s host added, so a client that honours the proxy variables
+ * reaches Hephaisto's investigator endpoint directly instead of through the egress proxy (which
+ * allows only package registries and GitHub). Both spellings: tools disagree about which counts.
+ */
+export function withNoProxyFor(env: NodeJS.ProcessEnv, url: string): NodeJS.ProcessEnv {
+  let host: string;
+  try {
+    host = new URL(url).hostname.replace(/^\[|\]$/g, '');
+  } catch {
+    return env;
+  }
+  if (!host) return env;
+  const merged = [env.NO_PROXY, env.no_proxy]
+    .flatMap((v) => (v ?? '').split(','))
+    .map((h) => h.trim())
+    .filter(Boolean);
+  if (!merged.includes(host)) merged.push(host);
+  const value = [...new Set(merged)].join(',');
+  return { ...env, NO_PROXY: value, no_proxy: value };
 }
 
 export const PLAN_MAX_TURNS = 60;

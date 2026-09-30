@@ -116,6 +116,7 @@ export function guardEnvFor(mode: GuardMode, ctx: GuardContext): Record<string, 
   };
   if (ctx.allowedBranch) e.GUARD_ALLOWED_BRANCH = ctx.allowedBranch;
   if (ctx.homeDir) e.GUARD_HOME = ctx.homeDir;
+  if (ctx.readRoots) e.GUARD_READ_ROOTS = JSON.stringify(ctx.readRoots);
   return e;
 }
 
@@ -314,5 +315,304 @@ export async function runAgent<T>(o: AgentRunOptions): Promise<AgentRunResult<T>
     return fail('execution', `agent failed: ${msg.slice(0, 1500)}`);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+// =============================================================================================
+// investigate: the same guard and hooks around a different posture. Hephaisto's MCP endpoint is
+// the only MCP server, Read/Grep/Glob the only built-ins, NO settings sources (dev-context's
+// CLAUDE.md and rules are about code fixes), Hephaisto's own system prompt, and no structured
+// output: the answer is the endpoint's `conclude` call, which Hephaisto persists itself.
+
+export const INVESTIGATE_TOOLS = {
+  available: ['Read', 'Grep', 'Glob'],
+  allowed: ['Read', 'Grep', 'Glob'],
+  disallowed: ['Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Task', 'Agent'],
+};
+
+export const CONCLUDE_TOOL = 'mcp__hephaisto__conclude';
+export const CONCLUDE_NOW = 'Conclude now with the evidence you have; call conclude.';
+/** The one "conclude now" turn may spend this share of the budget beyond the cap, and never more. */
+export const CONCLUDE_GRACE_SHARE = 0.1;
+
+export type InvestigatorStop = 'concluded' | 'no_conclusion' | 'max_turns' | 'budget' | 'rate_limited' | 'unauthorized' | 'deadline' | 'failed';
+
+export interface InvestigatorRunOptions {
+  systemPrompt: string;
+  prompt: string;
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  additionalDirectories: string[];
+  maxTurns: number;
+  maxBudgetUsd: number;
+  guard: GuardContext;
+  deadline: number;
+  abort: AbortController;
+  query: QueryFn;
+  endpoint: { url: string; token: string };
+  model?: string | undefined;
+  claudeExecutable?: string | undefined;
+  /** Called with every change worth reporting if the pod dies mid-run (SIGTERM). */
+  onProgress?: (p: InvestigatorProgress) => void;
+}
+
+export interface InvestigatorProgress {
+  costUsd: number;
+  sessionId: string | null;
+  model: string | null;
+  numTurns: number;
+  inputTokens: number;
+  outputTokens: number;
+  denials: Denial[];
+}
+
+export interface InvestigatorRunResult extends InvestigatorProgress {
+  stop: InvestigatorStop;
+  /** The input of the conclude call that succeeded. */
+  conclusion: Record<string, unknown> | null;
+  error: string | null;
+}
+
+type Block = { type: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; is_error?: boolean; content?: unknown };
+
+function blocksOf(m: SDKMessage): Block[] {
+  const c = (m as { message?: { content?: unknown } }).message?.content;
+  return Array.isArray(c) ? (c as Block[]) : [];
+}
+
+function resultText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) return content.map((c) => (c && typeof c === 'object' && typeof (c as { text?: unknown }).text === 'string' ? (c as { text: string }).text : '')).join('\n');
+  return '';
+}
+
+const UNAUTHORIZED = /\b401\b|unauthori[sz]ed/i;
+
+export async function runInvestigator(o: InvestigatorRunOptions): Promise<InvestigatorRunResult> {
+  const denials = new DenialLog();
+  const p: InvestigatorProgress = { costUsd: 0, sessionId: null, model: null, numTurns: 0, inputTokens: 0, outputTokens: 0, denials: denials.list };
+  const progress = () => o.onProgress?.({ ...p, denials: [...denials.list] });
+
+  let concludeOnly = false;
+  let conclusion: Record<string, unknown> | null = null;
+  let rateLimited = false;
+  let deadlineHit = false;
+  let unauthorizedStreak = 0;
+  let unauthorized = false;
+  let mcpFailure: string | null = null;
+  const calls = new Map<string, { name: string; input: Record<string, unknown> }>();
+
+  // a local controller: the driver aborts THIS run (401s, deadline) without aborting main's
+  const local = new AbortController();
+  const onOuterAbort = () => local.abort();
+  o.abort.signal.addEventListener('abort', onOuterAbort, { once: true });
+  const stopRun = () => {
+    if (!local.signal.aborted) local.abort();
+  };
+
+  const verdict = (tool: string, input: unknown, cwd?: string) => {
+    if (conclusion) return { allow: false as const, reason: 'the investigation is already concluded; stop now' };
+    if (concludeOnly && tool !== CONCLUDE_TOOL) return { allow: false as const, reason: `only ${CONCLUDE_TOOL} is available now: conclude with the evidence you have` };
+    return evaluate(tool, input, 'investigate', { ...o.guard, cwd: cwd || o.guard.cwd });
+  };
+
+  const preToolUse: HookCallbackMatcher = {
+    hooks: [
+      async (input, toolUseID): Promise<HookJSONOutput> => {
+        if (input.hook_event_name !== 'PreToolUse') return {};
+        const v = verdict(input.tool_name, input.tool_input, input.cwd);
+        if (v.allow) return {};
+        if (!conclusion) denials.record(toolUseID ?? input.tool_use_id, input.tool_name, input.tool_input, v.reason);
+        return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: v.reason } };
+      },
+    ],
+  };
+  const postToolUse: HookCallbackMatcher = {
+    hooks: [
+      async (input): Promise<HookJSONOutput> => {
+        if (input.hook_event_name !== 'PostToolUse') return {};
+        log.info(`tool ${input.tool_name} done: ${describeInput(input.tool_name, input.tool_input).slice(0, 200)}`);
+        // the conclude call's arguments, kept by id; it counts only once its tool_result is not an error
+        if (input.tool_name === CONCLUDE_TOOL && input.tool_input && typeof input.tool_input === 'object') {
+          calls.set(input.tool_use_id, { name: input.tool_name, input: input.tool_input as Record<string, unknown> });
+        }
+        return {};
+      },
+    ],
+  };
+  const canUseTool = async (toolName: string, input: Record<string, unknown>, opts: { toolUseID: string }): Promise<PermissionResult> => {
+    const v = verdict(toolName, input);
+    if (v.allow) return { behavior: 'allow', updatedInput: input };
+    if (!conclusion) denials.record(opts.toolUseID, toolName, input, v.reason);
+    return { behavior: 'deny', message: v.reason };
+  };
+
+  const remainingMs = o.deadline - Date.now();
+  const timer = setTimeout(() => {
+    deadlineHit = true;
+    log.warn('internal deadline reached; aborting the investigator');
+    stopRun();
+  }, Math.max(0, remainingMs));
+
+  const options = (budget: number, maxTurns: number): Options => ({
+    cwd: o.cwd,
+    env: o.env,
+    additionalDirectories: o.additionalDirectories,
+    settingSources: [],
+    systemPrompt: o.systemPrompt,
+    mcpServers: { hephaisto: { type: 'http', url: o.endpoint.url, headers: { Authorization: `Bearer ${o.endpoint.token}` } } },
+    strictMcpConfig: true,
+    maxTurns,
+    maxBudgetUsd: budget,
+    tools: INVESTIGATE_TOOLS.available,
+    allowedTools: INVESTIGATE_TOOLS.allowed,
+    disallowedTools: INVESTIGATE_TOOLS.disallowed,
+    permissionMode: 'default',
+    hooks: { PreToolUse: [preToolUse], PostToolUse: [postToolUse] },
+    canUseTool,
+    abortController: local,
+    stderr: (d: string) => log.info(`claude: ${d.trimEnd().slice(0, 2000)}`),
+    ...(o.model ? { model: o.model } : {}),
+    ...(o.claudeExecutable ? { pathToClaudeCodeExecutable: o.claudeExecutable } : {}),
+  });
+
+  interface Attempt {
+    subtype: string | null;
+    errors: string[];
+    isError: boolean;
+    apiStatus: number | null;
+    resultText: string;
+  }
+
+  const consume = async (prompt: string, opts: Options): Promise<Attempt> => {
+    const a: Attempt = { subtype: null, errors: [], isError: false, apiStatus: null, resultText: '' };
+    const before = { cost: p.costUsd, input: p.inputTokens, output: p.outputTokens };
+    for await (const m of o.query({ prompt, options: opts })) {
+      if ('session_id' in m && typeof m.session_id === 'string' && m.session_id) p.sessionId = m.session_id;
+      const d = describeMessage(m);
+      if (d) log.info(d);
+      if (m.type === 'system' && m.subtype === 'init') {
+        p.model = m.model || p.model;
+        const server = (m.mcp_servers ?? []).find((s) => s.name === 'hephaisto');
+        if (server) log.info(`MCP server hephaisto: ${server.status}`);
+        if (server?.status === 'needs-auth') {
+          unauthorized = true;
+          stopRun();
+        } else if (server?.status === 'failed') {
+          mcpFailure = 'the hephaisto MCP server failed to connect';
+          stopRun();
+        }
+        progress();
+      }
+      if (m.type === 'assistant') {
+        if (m.error === 'rate_limit') rateLimited = true;
+        for (const b of blocksOf(m)) {
+          if (b.type === 'tool_use' && b.id && b.name && !calls.has(b.id)) {
+            calls.set(b.id, { name: b.name, input: (b.input && typeof b.input === 'object' ? b.input : {}) as Record<string, unknown> });
+          }
+        }
+      }
+      if (m.type === 'user') {
+        for (const b of blocksOf(m)) {
+          if (b.type !== 'tool_result' || !b.tool_use_id) continue;
+          const call = calls.get(b.tool_use_id);
+          if (!call || !call.name.startsWith('mcp__hephaisto__')) continue;
+          const text = resultText(b.content);
+          if (b.is_error === true && UNAUTHORIZED.test(text)) {
+            unauthorizedStreak++;
+            log.warn(`the investigator endpoint refused ${call.name} as unauthorized (${unauthorizedStreak} in a row)`);
+            if (unauthorizedStreak >= 2) {
+              unauthorized = true;
+              stopRun();
+            }
+            continue;
+          }
+          unauthorizedStreak = 0;
+          if (call.name === CONCLUDE_TOOL && b.is_error !== true && !conclusion) {
+            conclusion = call.input;
+            log.info('conclude returned without error: the investigation is concluded');
+          }
+        }
+      }
+      if (m.type === 'system' && m.subtype === 'api_retry' && m.error_status === 429) rateLimited = true;
+      if (m.type === 'rate_limit_event' && m.rate_limit_info.status === 'rejected') rateLimited = true;
+      if (m.type === 'result') {
+        // a resumed session reports running totals; be conservative if a producer does not
+        p.costUsd = m.total_cost_usd >= before.cost ? m.total_cost_usd : before.cost + m.total_cost_usd;
+        p.numTurns += m.num_turns;
+        const usage = Object.values(m.modelUsage ?? {});
+        const input = usage.length
+          ? usage.reduce((n, u) => n + u.inputTokens + u.cacheReadInputTokens + u.cacheCreationInputTokens, 0)
+          : (m.usage?.input_tokens ?? 0) + (m.usage?.cache_read_input_tokens ?? 0) + (m.usage?.cache_creation_input_tokens ?? 0);
+        const output = usage.length ? usage.reduce((n, u) => n + u.outputTokens, 0) : (m.usage?.output_tokens ?? 0);
+        p.inputTokens = input >= before.input ? input : before.input + input;
+        p.outputTokens = output >= before.output ? output : before.output + output;
+        if (!p.model) p.model = Object.keys(m.modelUsage ?? {})[0] ?? null;
+        a.subtype = m.subtype;
+        a.isError = m.is_error;
+        if (m.subtype === 'success') {
+          a.apiStatus = m.api_error_status ?? null;
+          a.resultText = m.result;
+        } else {
+          a.errors = m.errors;
+        }
+        progress();
+      }
+    }
+    return a;
+  };
+
+  const done = (stop: InvestigatorStop, error: string | null): InvestigatorRunResult => {
+    if (denials.droppedCount > 0) log.warn(`${denials.droppedCount} further denials not recorded in the result (cap 50)`);
+    return { ...p, denials: denials.list, stop: conclusion ? 'concluded' : stop, conclusion, error: conclusion ? null : error };
+  };
+
+  /** Why the run stopped, when it did not conclude; null = it may get the one "conclude now" turn. */
+  const classify = (a: Attempt): { stop: InvestigatorStop; error: string } | null => {
+    const errText = [...a.errors, a.resultText].join(' ');
+    if (unauthorized) return { stop: 'unauthorized', error: 'endpoint_unauthorized' };
+    if (mcpFailure) return { stop: 'failed', error: mcpFailure };
+    if (deadlineHit) return { stop: 'deadline', error: 'internal deadline reached; the investigator was aborted' };
+    if (a.subtype === 'error_max_turns' || a.subtype === 'error_max_budget_usd' || p.costUsd > o.maxBudgetUsd + 1e-9) return null;
+    const errored = a.isError || a.subtype === 'error_during_execution';
+    if (errored && (rateLimited || a.apiStatus === 429 || isRateLimit(errText))) {
+      return { stop: 'rate_limited', error: `RateLimited: ${errText || 'rate limited'}`.slice(0, 2000) };
+    }
+    if (a.subtype === 'error_during_execution') return { stop: 'failed', error: `agent execution error: ${errText.slice(0, 1500) || 'unknown'}` };
+    if (a.subtype === null) return { stop: 'failed', error: 'the agent ended without a result message' };
+    if (a.subtype === 'success' && a.isError) return { stop: 'failed', error: `API error${a.apiStatus ? ` ${a.apiStatus}` : ''}: ${errText.slice(0, 1500)}` };
+    return { stop: 'no_conclusion', error: 'the investigator ended without calling conclude' };
+  };
+
+  try {
+    let a = await consume(o.prompt, options(o.maxBudgetUsd, o.maxTurns));
+    if (conclusion) return done('concluded', null);
+    let c = classify(a);
+    if (c) return done(c.stop, c.error);
+
+    // max turns or budget, and no conclusion: ONE resumed turn in which only conclude is allowed
+    const limit: InvestigatorStop = a.subtype === 'error_max_turns' ? 'max_turns' : 'budget';
+    const limitError = limit === 'max_turns' ? `the investigator reached maxTurns (${o.maxTurns}) without concluding` : `budget exhausted: spent $${p.costUsd.toFixed(4)} of $${o.maxBudgetUsd} without concluding`;
+    if (!p.sessionId) return done(limit, limitError);
+    concludeOnly = true;
+    const grace = o.maxBudgetUsd * CONCLUDE_GRACE_SHARE;
+    const budget = Math.max(o.maxBudgetUsd - p.costUsd, 0) + grace;
+    log.warn(`${limitError}; one resumed turn that may only call conclude (budget $${budget.toFixed(4)})`);
+    a = await consume(CONCLUDE_NOW, { ...options(budget, 3), resume: p.sessionId });
+    if (conclusion) return done('concluded', null);
+    c = classify(a);
+    if (c && c.stop !== 'no_conclusion') return done(c.stop, c.error);
+    return done(limit, `${limitError}; the conclude-now turn did not conclude either`);
+  } catch (e) {
+    const msg = (e as Error).message ?? String(e);
+    if (unauthorized) return done('unauthorized', 'endpoint_unauthorized');
+    if (mcpFailure) return done('failed', mcpFailure);
+    if (deadlineHit) return done('deadline', `internal deadline reached after ${Math.round((Date.now() - (o.deadline - remainingMs)) / 1000)}s; the investigator was aborted`);
+    if ((e as Error).name === 'AbortError') return done('failed', `the investigator was aborted: ${msg}`);
+    if (rateLimited || isRateLimit(msg)) return done('rate_limited', `RateLimited: ${msg}`);
+    return done('failed', `agent failed: ${msg.slice(0, 1500)}`);
+  } finally {
+    clearTimeout(timer);
+    o.abort.signal.removeEventListener('abort', onOuterAbort);
   }
 }

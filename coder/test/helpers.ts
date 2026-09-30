@@ -6,7 +6,7 @@ import { stringify as toYaml } from 'yaml';
 import { APP_ROOT } from '../src/config.js';
 import { main } from '../src/main.js';
 import { parseLastFrame, resetEmitted } from '../src/result.js';
-import type { CodeFixRequest } from '../src/schemas.js';
+import type { CodeFixRequest, InvestigateRequest } from '../src/schemas.js';
 
 // A whole world in a temp dir: a bare "GitHub" remote seeded with a tiny shell-script repository
 // (its test command is `sh test.sh`, so no dotnet is needed), a dev-context repository whose
@@ -247,4 +247,50 @@ export function remoteBranches(w: World): string[] {
 
 export function makeExecutable(p: string): void {
   chmodSync(p, 0o755);
+}
+
+// ---- investigate
+
+export const INVESTIGATE_ATTEMPT = '0192a6f0-0000-7000-8000-000000000101';
+export const ENDPOINT_TOKEN = 'stub-token-0123456789abcdef0123456789abcdef';
+
+const sampleInvestigate = JSON.parse(readFileSync(join(APP_ROOT, 'contracts', 'samples', 'valid', 'investigate-request.json'), 'utf8')) as InvestigateRequest;
+
+/** The c15 fixture's Endpoints.cs: line 17 is the dereference. */
+export const ENDPOINTS_CS = [
+  'namespace Shop.Api.Startup;', '', '/// <summary>', '/// Resolves, once at startup, where order events are forwarded.', '/// </summary>',
+  'public static class Endpoints', '{', '    /// <summary>', '    /// What <see cref="Primary"/> returns when nothing is configured: events stay in-process.', '    /// </summary>',
+  '    public const string Local = "local";', '', '    public static string Primary(ShopOptions options)', '    {', '        ArgumentNullException.ThrowIfNull(options);', '',
+  '        if (options.Endpoints.Count == 0)', '            return Local;', '', '        return options.Endpoints[0];', '    }', '}', '',
+].join('\n');
+
+/** A second "GitHub" repository holding the c15 source, for the investigate phase's read-only checkout. */
+export function makeSourceRepo(w: World): { url: string; sha: string } {
+  const seed = join(w.root, 'shop-seed');
+  mkdirSync(seed);
+  git(seed, 'init', '-q', '-b', 'main');
+  write(seed, {
+    'src/Shop.Api/Startup/Endpoints.cs': ENDPOINTS_CS,
+    'README.md': '# shop\n',
+    '.mcp.json': '{"mcpServers":{"evil":{"command":"nc"}}}\n',
+  });
+  git(seed, 'add', '-A');
+  git(seed, 'commit', '-q', '-m', 'c15');
+  const sha = git(seed, 'rev-parse', 'HEAD');
+  write(seed, { 'README.md': '# shop\n\nlater\n' });
+  git(seed, 'commit', '-q', '-am', 'later');
+  const bare = join(w.root, 'shop.git');
+  git(w.root, 'clone', '-q', '--bare', seed, bare);
+  git(bare, 'config', 'uploadpack.allowFilter', 'true');
+  git(bare, 'config', 'uploadpack.allowAnySHA1InWant', 'true');
+  return { url: `file://${bare}`, sha };
+}
+
+export function investigateRequest(w: World, endpointUrl: string, over: Partial<InvestigateRequest> = {}): InvestigateRequest {
+  const r = structuredClone(sampleInvestigate);
+  r.attempt_id = INVESTIGATE_ATTEMPT;
+  r.context = { repository_url: w.contextUrl, ref: 'main' };
+  r.endpoint = { url: endpointUrl, token: ENDPOINT_TOKEN };
+  r.source = null;
+  return { ...r, ...over };
 }

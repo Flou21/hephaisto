@@ -181,6 +181,75 @@ describe('guard.evaluate', () => {
   }
 });
 
+// ---- investigate: Hephaisto's MCP tools and reading two directories, nothing else
+
+const ictx: GuardContext = {
+  targetDir: '/work/repos',
+  protectedGlobs: [],
+  homeDir: '/work/home',
+  readRoots: ['/work/context', '/work/repos'],
+};
+
+const investigateCases: [label: string, tool: string, input: Record<string, unknown>, allow: boolean, reason?: RegExp][] = [
+  ['an investigator tool (control)', 'mcp__hephaisto__list_pods', { namespace: 'shop' }, true],
+  ['conclude (control)', 'mcp__hephaisto__conclude', { summary: 's', confidence: 0.5, findings: [] }, true],
+  ['another MCP server', 'mcp__grafana__query_loki_logs', {}, false, /only the hephaisto MCP server/],
+  ['a server whose name only starts with hephaisto', 'mcp__hephaisto2__list_pods', {}, false, /only the hephaisto/],
+  ['a malformed hephaisto tool name', 'mcp__hephaisto__list pods', {}, false],
+  ['Bash, however harmless', 'Bash', { command: 'ls' }, false, /no shell/],
+  ['Edit', 'Edit', { file_path: '/work/repos/svc/a.cs', old_string: 'a', new_string: 'b' }, false, /cannot change/],
+  ['Write', 'Write', { file_path: '/work/repos/svc/a.cs', content: 'x' }, false, /cannot change/],
+  ['MultiEdit', 'MultiEdit', { file_path: '/work/repos/svc/a.cs', edits: [] }, false, /cannot change/],
+  ['NotebookEdit', 'NotebookEdit', { notebook_path: '/work/repos/svc/a.ipynb' }, false, /cannot change/],
+  ['WebFetch', 'WebFetch', { url: 'http://x' }, false, /web/],
+  ['WebSearch', 'WebSearch', { query: 'x' }, false, /web/],
+  ['Task', 'Task', { prompt: 'x' }, false, /subagents/],
+  ['Agent', 'Agent', { prompt: 'x' }, false, /subagents/],
+  ['TodoWrite', 'TodoWrite', { todos: [] }, false, /allowlist/],
+  ['Skill', 'Skill', { skill: 'x' }, false, /allowlist/],
+  ['an unknown tool', 'KillShell', {}, false, /allowlist/],
+  ['Read a note (control)', 'Read', { file_path: '/work/context/memory/INDEX.md' }, true],
+  ['Read the source (control)', 'Read', { file_path: '/work/repos/svc/src/Endpoints.cs' }, true],
+  ['Read a relative path from the cwd (control)', 'Read', { file_path: 'svc/src/Endpoints.cs' }, true],
+  ['Read the request (it holds the endpoint token)', 'Read', { file_path: '/work/in/request.json' }, false, /confined/],
+  ['Read climbing out with ..', 'Read', { file_path: '/work/repos/../in/request.json' }, false, /confined/],
+  ['Read relative climbing out', 'Read', { file_path: '../in/request.json' }, false, /confined/],
+  ['Read the claude config', 'Read', { file_path: '/work/.claude/settings.json' }, false, /confined/],
+  ['Read /proc', 'Read', { file_path: '/proc/self/environ' }, false, /proc/],
+  ['Read /etc/passwd', 'Read', { file_path: '/etc/passwd' }, false, /confined/],
+  ['Read without a path', 'Read', {}, false, /without a file path/],
+  ['Grep in the source (control)', 'Grep', { pattern: 'NullReference', path: '/work/repos/svc' }, true],
+  ['Grep without a path, from the cwd (control)', 'Grep', { pattern: 'x' }, true],
+  ['Grep over /work', 'Grep', { pattern: 'token', path: '/work' }, false, /confined/],
+  ['Grep over /work/in', 'Grep', { pattern: 'token', path: '/work/in' }, false, /confined/],
+  ['Glob in the notes (control)', 'Glob', { pattern: '**/*.md', path: '/work/context/memory' }, true],
+  ['Glob with an absolute pattern outside', 'Glob', { pattern: '/work/in/**' }, false, /confined/],
+  ['Glob with a root pattern', 'Glob', { pattern: '/*' }, false, /confined/],
+  ['Glob climbing with ..', 'Glob', { pattern: '../in/*' }, false, /\.\./],
+  ['Glob with an absolute pattern inside (control)', 'Glob', { pattern: '/work/repos/svc/**/*.cs' }, true],
+];
+
+describe('guard.evaluate [investigate]', () => {
+  for (const [label, tool, input, allow, reason] of investigateCases) {
+    it(`${allow ? 'allows' : 'denies'} ${label}`, () => {
+      const v = evaluate(tool, input, 'investigate', ictx);
+      expect(v.allow, JSON.stringify(v)).toBe(allow);
+      if (!v.allow && reason) expect(v.reason).toMatch(reason);
+    });
+  }
+  it('denies every read when no roots are configured (fails closed)', () => {
+    const v = evaluate('Read', { file_path: '/work/context/x.md' }, 'investigate', { ...ictx, readRoots: undefined });
+    expect(v.allow).toBe(false);
+  });
+  it('a plan-phase allowance is not an investigate allowance: git log is refused', () => {
+    expect(evaluate('Bash', { command: 'git log --oneline -5' }, 'plan', ctx).allow).toBe(true);
+    expect(evaluate('Bash', { command: 'git log --oneline -5' }, 'investigate', ictx).allow).toBe(false);
+  });
+  it('the investigator MCP tools stay denied in plan and implement', () => {
+    for (const m of ['plan', 'implement'] as const) expect(evaluate('mcp__hephaisto__list_pods', {}, m, ctx).allow).toBe(false);
+  });
+});
+
 describe('protected globs', () => {
   it.each([
     ['nuget.config', 'nuget.config'],
@@ -223,6 +292,27 @@ describe('bin/guard (Claude Code hook protocol)', () => {
     ensureBuilt();
     const r = hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'dotnet build' }, cwd: TARGET }, genv);
     expect(r.status).toBe(0);
+  });
+  it('investigate: allows an investigator tool and a note, denies Bash and the request file', () => {
+    ensureBuilt();
+    const ienv = { GUARD_MODE: 'investigate', GUARD_TARGET_DIR: '/work/repos', GUARD_READ_ROOTS: JSON.stringify(['/work/context', '/work/repos']) };
+    expect(hook({ hook_event_name: 'PreToolUse', tool_name: 'mcp__hephaisto__get_pod_logs', tool_input: { namespace: 'x', name: 'y' } }, ienv).status).toBe(0);
+    expect(hook({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: '/work/context/memory/INDEX.md' } }, ienv).status).toBe(0);
+    const b = hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } }, ienv);
+    expect(b.status).toBe(2);
+    expect(b.stderr).toMatch(/no shell/);
+    expect(hook({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: '/work/in/request.json' } }, ienv).status).toBe(2);
+  });
+  it('investigate without read roots denies every read', () => {
+    ensureBuilt();
+    const r = hook({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: '/work/context/x' } }, { GUARD_MODE: 'investigate', GUARD_TARGET_DIR: '/work/repos' });
+    expect(r.status).toBe(2);
+  });
+  it('fails closed on an unknown mode', () => {
+    ensureBuilt();
+    const r = hook({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: '/work/context/x' } }, { GUARD_MODE: 'observe', GUARD_TARGET_DIR: '/work/repos' });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/not configured/);
   });
   it('fails closed when it is not configured', () => {
     ensureBuilt();

@@ -1,0 +1,46 @@
+{
+  "description": "FAKE SDK investigation for any target: lists the namespace's pods and its events through Hephaisto's real investigator endpoint, then concludes with low confidence, citing a line copied verbatim from the list_pods result. No model runs.",
+  "steps": [
+    {
+      "tool": "mcp__hephaisto__list_pods",
+      "input": {
+        "namespace": "${request.incident.target.namespace}"
+      },
+      "capture": {
+        "as": "pods",
+        "regex": "\\n([^\\n]*\\S[^\\n]*)"
+      }
+    },
+    {
+      "tool": "mcp__hephaisto__get_events",
+      "input": {
+        "namespace": "${request.incident.target.namespace}"
+      },
+      "capture": {
+        "as": "events",
+        "regex": "\\n([^\\n]*\\S[^\\n]*)"
+      }
+    },
+    {
+      "tool": "mcp__hephaisto__conclude",
+      "input": {
+        "summary": "FAKE SDK: a scripted investigation of ${request.incident.target.workload}; no model ran, so the cause is not determined.",
+        "confidence": 0.2,
+        "findings": [
+          {
+            "category": "unknown",
+            "primary": true,
+            "confidence": 0.2,
+            "hypothesis": "FAKE SDK: no model ran; the pods and events of ${request.incident.target.namespace} were read but not interpreted.",
+            "evidence": [
+              {
+                "step_id": "${pods.step}",
+                "excerpt": "${pods}"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
