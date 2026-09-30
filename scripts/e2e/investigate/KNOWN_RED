@@ -6,7 +6,6 @@
 # fail the run; a GREEN one listed here fails it, so the fix and its removal land in one commit.
 # Once Directory.Build.props' floor passes the milestone the entry is stale and a unit test fails
 # (InvestigateSuiteTests). investigate-local.sh --strict, the release gate, fails every entry.
-I3 0.12 part 4: there is no investigator port yet
 I4 0.12 part 6: nothing launches an investigator Job yet
 I5 0.12 part 6: there is no investigator Job to inspect yet
 I6 0.12 part 6: there is no investigator NetworkPolicy yet
