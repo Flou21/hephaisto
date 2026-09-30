@@ -73,6 +73,11 @@ config.define_bool('chaos',         args = False, usage = 'Register the chaos fi
 config.define_bool('coder',         args = False, usage = 'Code fixes: coder image, coder-git server, codeFix.enabled')
 config.define_string('coder-mode',  args = False, usage = 'codeFix.mode: off | plan | pr (default plan)')
 config.define_string('coder-sdk',   args = False, usage = 'codeFix.sdk: fake ($0 scripted plumbing, default) | real')
+# Investigation in a Job (v0.12.0 F5). Needs `coder`: the investigator Job borrows its image,
+# namespace and Secret. investigator-sdk=fake is a $0 scripted investigator that still calls the
+# agent's real investigator endpoint; real spends subscription quota on every investigation.
+config.define_bool('investigator',     args = False, usage = 'investigation.job.enabled with executor job (needs coder)')
+config.define_string('investigator-sdk', args = False, usage = 'investigation.job.sdk: fake ($0 scripted, default) | real')
 # The agent's own model. Defaults to whatever `coder` is, because a code-fix run is an
 # investigation first, and this project's dev cluster does not investigate with Gemini.
 config.define_bool('local-llm',     args = False, usage = 'Investigate with the local Ollama (gpt-oss:120b) at host-ip:11434')
@@ -103,6 +108,8 @@ coder         = cfg.get('coder', False)
 coder_mode    = cfg.get('coder-mode', 'plan')
 coder_sdk     = cfg.get('coder-sdk', 'fake')
 local_llm     = cfg.get('local-llm', coder)
+investigator  = cfg.get('investigator', False)
+investigator_sdk = cfg.get('investigator-sdk', 'fake')
 teams_bot     = cfg.get('teams-bot', 'off')
 pager_e2e     = cfg.get('pager-e2e', False)
 mcp           = cfg.get('mcp', False) or pager_e2e
@@ -116,6 +123,10 @@ if teams_bot not in ['off', 'stand-in', 'real']:
     fail('teams-bot must be off, stand-in or real, not %r' % teams_bot)
 if coder_sdk not in ['fake', 'real']:
     fail("coder-sdk must be fake or real - got '%s'" % coder_sdk)
+if investigator_sdk not in ['fake', 'real']:
+    fail("investigator-sdk must be fake or real - got '%s'" % investigator_sdk)
+if investigator and not coder:
+    fail('investigator needs coder: the investigator Job borrows the coder image, namespace and Secret.')
 
 # --- namespaces ---------------------------------------------------------------------------
 
@@ -365,6 +376,9 @@ if agent:
         # at the in-cluster git server, which real gh refuses, so a real-model run would push its
         # branch and then fail at `gh pr create`.
         chart_set.append('codeFix.gh=shim')
+        if investigator:
+            chart_values.append('charts/hephaisto/values-dev-investigator.yaml')
+            chart_set.append('investigation.job.sdk=%s' % investigator_sdk)
 
         local_resource(
             'coder-image',

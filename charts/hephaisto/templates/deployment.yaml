@@ -632,6 +632,43 @@ spec:
             {{- end }}
             {{- end }}
 
+            {{- with include "hephaisto.investigatorPort" . }}
+            {{- with $.Values.investigation.job }}
+            # ---------------------------------------------------------------------------
+            # Investigation in a Job (v0.12.0 F5). The Job borrows CodeFix__Namespace, the
+            # image, the ServiceAccount, the Secret and the egress proxy from the block above.
+            # ---------------------------------------------------------------------------
+            - name: Investigation__Job__Enabled
+              value: "true"
+            # The env arm of the executor. The switch ConfigMap's investigationExecutor is the
+            # other; the most restrictive wins.
+            - name: Investigation__Job__Executor
+              value: {{ .executor | toString | quote }}
+            - name: Investigation__Job__Port
+              value: {{ include "hephaisto.investigatorPort" $ | quote }}
+            - name: Investigation__Job__EndpointUrl
+              value: {{ printf "http://%s.%s.svc:%s/investigate" (include "hephaisto.fullname" $) $.Release.Namespace (include "hephaisto.investigatorPort" $) | quote }}
+            - name: Investigation__Job__Model
+              value: {{ .model | quote }}
+            - name: Investigation__Job__Sdk
+              value: {{ .sdk | quote }}
+            - name: Investigation__Job__MaxCostUsd
+              value: {{ .maxCostUsd | quote }}
+            - name: Investigation__Job__MaxTurns
+              value: {{ .maxTurns | quote }}
+            - name: Investigation__Job__Deadline
+              value: {{ .deadline | quote }}
+            - name: Investigation__Job__MaxConcurrentJobs
+              value: {{ .concurrentJobs | quote }}
+            - name: Investigation__Job__MaxJobsPerHour
+              value: {{ .jobsPerHour | quote }}
+            - name: Investigation__Job__FallbackToInProcess
+              value: {{ .fallbackToInProcess | quote }}
+            - name: Investigation__Job__Source__Enabled
+              value: {{ .source.enabled | quote }}
+            {{- end }}
+            {{- end }}
+
             # A DIRECTORY, not a file: each ConfigMap key projects as its own file under it.
             # Unset outside Kubernetes, which makes the ConfigMap arm silent rather than
             # unreadable - someone running `dotnet run` has no ConfigMap and must not be

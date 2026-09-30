@@ -1,0 +1,47 @@
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Hephaisto.Agent.CodeFix;
+using Hephaisto.Core.Investigations;
+
+namespace Hephaisto.Agent.Investigations.Jobs;
+
+public static class InvestigationJobServiceCollectionExtensions
+{
+    /// <summary>
+    /// Investigation in a Job. Registered unconditionally so the executor can be read and reported
+    /// on every install; every default resolves to in-process.
+    /// </summary>
+    public static IServiceCollection AddHephaistoInvestigationJob(this IServiceCollection services, IConfiguration configuration)
+    {
+        var mcpPort = configuration.GetValue<int?>("Mcp:Port") ?? 8083;
+
+        services.AddOptions<InvestigationJobOptions>()
+            .Bind(configuration.GetSection(InvestigationJobOptions.SectionName))
+            .Validate(
+                o => InvestigationExecutorResolver.Parse("env", o.Executor).Status != Core.Safety.ModeArmStatus.Malformed,
+                "Investigation:Job:Executor must be inprocess or job. A typo would silently read as inprocess, "
+                    + "which at startup is worth refusing rather than discovering in production.")
+            .Validate(
+                o => !o.Enabled || o.Port is > 0 and < 65536,
+                "Investigation:Job:Port must be a TCP port.")
+            .Validate(
+                o => !o.Enabled || (o.Port != 8080 && o.Port != mcpPort),
+                "Investigation:Job:Port must be its own port: nothing else answers on it, and it answers nothing else.")
+            .Validate(
+                o => !o.Enabled || Uri.TryCreate(o.EndpointUrl, UriKind.Absolute, out _),
+                "Investigation:Job:EndpointUrl must be an absolute URL when Investigation:Job:Enabled is set.")
+            .Validate(
+                o => o.Deadline > TimeSpan.FromMinutes(4),
+                "Investigation:Job:Deadline must exceed four minutes; the runner reserves three to report.")
+            .Validate(
+                o => o.MaxConcurrentJobs >= 0 && o.MaxJobsPerHour >= 0 && o.MaxTurns > 0 && o.MaxCostUsd >= 0,
+                "Investigation:Job caps must not be negative, and MaxTurns must be positive.")
+            .Validate(
+                o => o.Sdk is "real" or "fake",
+                "Investigation:Job:Sdk must be real or fake.")
+            .ValidateOnStart();
+
+        services.TryAddSingleton<IInvestigationExecutorSwitch, InvestigationExecutorSwitch>();
+
+        return services;
+    }
+}

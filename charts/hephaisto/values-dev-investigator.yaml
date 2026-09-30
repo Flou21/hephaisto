@@ -1,0 +1,27 @@
+# Investigation in a Job (v0.12.0 F5) on THIS repo's dev cluster. Layered over values-dev-coder.yaml
+# by the Tiltfile only when the `investigator` toggle is on; investigation.job.sdk comes from the
+# `investigator-sdk` toggle and is --set on top of this file.
+#
+# With investigator-sdk=fake (the default) the Job runs a scripted investigator
+# (coder/fake-scripts/*.investigate.json) that calls the agent's REAL investigator endpoint - so
+# every tool call, step record and grounding check is the production path - for $0.
+# scripts/e2e/investigate-local.sh switches between the executors with the ConfigMap arm.
+
+investigation:
+  job:
+    enabled: true
+    # The env arm allows Job; the switch ConfigMap's investigationExecutor, rendered from the same
+    # value, is what the e2e flips between inprocess and job.
+    executor: job
+    # Haiku for the dev loop, as for the coder: a real-sdk run here is about checking the loop, not
+    # the quality of the diagnosis.
+    model: claude-haiku-4-5-20251001
+    maxCostUsd: 0.5
+    maxTurns: 30
+    # Short, so a wedged Job is noticed in minutes. Above the four minutes the runner reserves.
+    deadline: "00:08:00"
+    concurrentJobs: 1
+    jobsPerHour: 60
+    fallbackToInProcess: true
+    source:
+      enabled: false

@@ -268,6 +268,40 @@ investigation:
   # than naming a namespace that exists on one development machine.
   inScopeNamespaces: []
 
+  # Investigation in a Job (v0.12.0 F5). The investigation's model loop runs as Claude Code in a
+  # Job next to the coder - on the subscription token in secrets.codeFix - while Hephaisto serves
+  # it the same read-only tools over an internal port and grounds its conclusion as it always has.
+  # Off renders nothing: every investigation runs in-process, as in v0.11.
+  #
+  # Needs codeFix.enabled: the Job borrows the coder's namespace, image, ServiceAccount, Secret
+  # and egress proxy. It needs no mode of the code-fix stage - codeFix.mode off is fine.
+  job:
+    enabled: false
+    # inprocess | job - the env arm. The switch ConfigMap's investigationExecutor key is the other,
+    # most restrictive winning, so enabling the infrastructure and switching investigations over
+    # are two separate acts, and either arm takes it back to inprocess.
+    executor: inprocess
+    # The investigator port: /investigate and nothing else, admitted only from investigator pods.
+    port: 8084
+    # The Claude model the investigator runs (an id, or a CLI alias such as opus). Independent of
+    # codeFix.model. Empty lets the CLI choose the account default.
+    model: ""
+    # real | fake. fake runs scripted, $0 - dev and CI only.
+    sdk: real
+    # Per run. On a subscription the cost is notional, but it still caps what one run may use.
+    maxCostUsd: 2
+    maxTurns: 60
+    deadline: "00:15:00"
+    # Storm control. A run that cannot have a slot runs in-process now; it never waits.
+    concurrentJobs: 1
+    jobsPerHour: 20
+    # A refused, failed, vanished or rate-limited Job falls back to the in-process investigation.
+    fallbackToInProcess: true
+    # A read-only clone of the running revision, when the workload maps through
+    # codeFix.repositories. Adds GitHub egress and a clone to every such investigation.
+    source:
+      enabled: false
+
 # -----------------------------------------------------------------------------------------
 # Model prices - the cost caps bind only on a priced model
 # -----------------------------------------------------------------------------------------

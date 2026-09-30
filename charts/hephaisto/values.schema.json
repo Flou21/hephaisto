@@ -1092,6 +1092,76 @@
             "minLength": 1
           },
           "description": "Namespaces worth investigating, stated on the environment card. Empty says nothing about scope."
+        },
+        "job": {
+          "type": "object",
+          "description": "Investigation in a Job (v0.12.0 F5): the investigation's model loop runs as Claude Code in a Job, Hephaisto serves it the tools. Nothing renders unless enabled; needs codeFix.enabled.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "executor": {
+              "enum": [
+                "inprocess",
+                "job",
+                "InProcess",
+                "Job"
+              ],
+              "description": "The env arm. The switch ConfigMap's investigationExecutor is the other; most restrictive wins."
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "model": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "sdk": {
+              "enum": [
+                "real",
+                "fake"
+              ]
+            },
+            "maxCostUsd": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1000
+            },
+            "maxTurns": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            },
+            "deadline": {
+              "type": "string",
+              "pattern": "^[0-9]{2}:[0-9]{2}:[0-9]{2}$"
+            },
+            "concurrentJobs": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 20
+            },
+            "jobsPerHour": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "fallbackToInProcess": {
+              "type": "boolean"
+            },
+            "source": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
         }
       },
       "additionalProperties": false
