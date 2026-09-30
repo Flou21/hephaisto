@@ -142,6 +142,9 @@ public sealed record InvestigationDetail
 
     public required McpText Model { get; init; }
 
+    /// <summary>Who ran the model loop: InProcess, Job, or JobFallback (v0.12.0 F5).</summary>
+    public required McpText Executor { get; init; }
+
     public required DateTimeOffset StartedAt { get; init; }
 
     public DateTimeOffset? CompletedAt { get; init; }

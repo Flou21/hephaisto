@@ -509,6 +509,14 @@ else
             <article class="hp-investigation" @key="inv.Id">
                 <header class="hp-inv-header">
                     <span class="mono">@inv.ModelId</span>
+                    @if (inv.Executor != Hephaisto.Core.Investigations.InvestigationExecutors.InProcess)
+                    {
+                        @* Only when it is not the default: in-process is what every investigation
+                           was before v0.12.0, and labelling all of them says nothing. *@
+                        <span class="hp-chip mono" title="Who ran the model loop. JobFallback: the Job gave no answer and the agent investigated itself.">
+                            @(inv.Executor == Hephaisto.Core.Investigations.InvestigationExecutors.Job ? "in a Job" : "Job fell back")
+                        </span>
+                    }
                     <span class="hp-chip mono" title="Why the loop stopped. Concluded is the only clean exit.">
                         @inv.TerminationReason
                     </span>

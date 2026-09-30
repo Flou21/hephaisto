@@ -3,9 +3,11 @@ using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Hephaisto.Agent.Investigations.Jobs;
 using Hephaisto.Agent.Llm;
 using Hephaisto.Core.Abstractions;
 using Hephaisto.Core.Domain;
+using Hephaisto.Core.Investigations;
 using Hephaisto.Core.Telemetry;
 
 namespace Hephaisto.Agent.Investigations;
@@ -69,7 +71,8 @@ public sealed class InvestigationRunner(
     IClock clock,
     IOptionsMonitor<LlmOptions> llmOptions,
     IOptionsMonitor<InvestigationOptions> options,
-    ILogger<InvestigationRunner> logger)
+    ILogger<InvestigationRunner> logger,
+    IInvestigationJobLoop? jobLoop = null)
 {
     private static readonly JsonSerializerOptions PlanJson = new(JsonSerializerDefaults.Web);
 
@@ -102,6 +105,7 @@ public sealed class InvestigationRunner(
             IncidentId = incident.Id,
             ModelId = clients.InvestigationModelId,
             StartedAt = clock.UtcNow,
+            Executor = InvestigationExecutors.InProcess,
         };
 
         var global = await globalBudget.CheckAsync(incident.Id, ct).ConfigureAwait(false);
@@ -154,11 +158,67 @@ public sealed class InvestigationRunner(
 
         var termination = TerminationReason.Faulted;
         string? error = null;
+        int? jobTurns = null;
 
         try
         {
-            termination = await InvestigateAsync(
-                incident, opts, llm, recorder, budget, conclusion, rollout, note, ct).ConfigureAwait(false);
+            // v0.12.0 F5: the model loop may run in a Job. Everything around it - the tools, the
+            // recorder, the conclusion holder, grounding and phase 2 - is this file's either way.
+            var decision = jobLoop is null
+                ? null
+                : await jobLoop.DecideAsync(incident, ct).ConfigureAwait(false);
+
+            JobLoopOutcome? job = null;
+
+            if (decision is { UseJob: true })
+            {
+                activity?.SetTag("investigation.executor", InvestigationExecutors.Job);
+
+                var tools = await BuildToolsAsync(
+                    llm, new InvestigationBudget(jobLoop!.BudgetFor(llm.Investigation), clock),
+                    recorder, conclusion, incident, ct).ConfigureAwait(false);
+
+                job = await jobLoop.RunAsync(new JobLoopContext
+                {
+                    Incident = incident,
+                    InvestigationId = investigation.Id,
+                    SystemPrompt = prompts.ComposeInvestigationPrompt(incident, rollout: rollout, note: note),
+                    OpeningMessage = opts.OpeningMessage,
+                    Tools = tools,
+                    Recorder = recorder,
+                    Conclusion = conclusion,
+                }, ct).ConfigureAwait(false);
+            }
+            else if (decision is not null && decision.Choice != Core.Investigations.ExecutorChoice.InProcessByMode)
+            {
+                logger.LogInformation(
+                    "Investigating incident {IncidentId} in-process rather than in a Job: {Why}",
+                    incident.Id, decision.Explanation);
+            }
+
+            if (job is { FellBack: false })
+            {
+                investigation.Executor = InvestigationExecutors.Job;
+                investigation.ModelId = job.ModelId ?? investigation.ModelId;
+                termination = job.Termination;
+                error = job.Error;
+                jobTurns = job.Turns;
+            }
+            else
+            {
+                if (job is { FellBack: true })
+                {
+                    // A fresh budget: the Job's time must not be charged to the loop that replaces it.
+                    investigation.Executor = InvestigationExecutors.JobFallback;
+                    budget = new InvestigationBudget(llm.Investigation, clock);
+                    logger.LogWarning(
+                        "The investigator Job for incident {IncidentId} gave no answer ({Reason}); investigating in-process",
+                        incident.Id, job.FallbackReason);
+                }
+
+                termination = await InvestigateAsync(
+                    incident, opts, llm, recorder, budget, conclusion, rollout, note, ct).ConfigureAwait(false);
+            }
         }
         catch (BudgetExhaustedException ex)
         {
@@ -187,7 +247,7 @@ public sealed class InvestigationRunner(
 
         investigation.TerminationReason = termination;
         investigation.Steps = [.. steps];
-        investigation.StepsUsed = budget.Steps;
+        investigation.StepsUsed = jobTurns ?? budget.Steps;
         investigation.ToolCallsUsed = recorder.ToolCallCount;
         investigation.InputTokens = recorder.TotalInputTokens;
         investigation.OutputTokens = recorder.TotalOutputTokens;
@@ -778,7 +838,7 @@ public sealed class InvestigationRunner(
     /// visible to the loop: <c>FunctionInvokingChatClient</c> may invoke tools on a different
     /// thread, and it may invoke several concurrently.
     /// </summary>
-    internal sealed class ConclusionHolder
+    public sealed class ConclusionHolder
     {
         private ConcludeRequest? _value;
 

@@ -20,6 +20,12 @@ public sealed class Investigation
 
     public string ModelId { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Who ran the model loop (v0.12.0 F5): one of <see cref="Investigations.InvestigationExecutors"/>.
+    /// Null on every row written before it existed, which reads as in-process - it was.
+    /// </summary>
+    public string? Executor { get; set; }
+
     public DateTimeOffset StartedAt { get; set; }
 
     public DateTimeOffset? CompletedAt { get; set; }

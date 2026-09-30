@@ -12,6 +12,7 @@ using Hephaisto.Agent.Safety;
 using Hephaisto.Core;
 using Hephaisto.Core.Abstractions;
 using Hephaisto.Core.Domain;
+using Hephaisto.Core.Investigations;
 using Hephaisto.Core.Notifications;
 using Hephaisto.ServiceDefaults;
 using Hephaisto.Agent.Observability;
@@ -957,6 +958,7 @@ public sealed class IncidentQueries(
             Id = v.Id,
             TraceId = v.TraceId,
             ModelId = v.ModelId,
+            Executor = v.Executor ?? InvestigationExecutors.InProcess,
             StartedAt = v.StartedAt,
             CompletedAt = v.CompletedAt,
             TerminationReason = v.TerminationReason,
