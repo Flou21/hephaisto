@@ -314,6 +314,30 @@ Locally: `tilt_config.json` `"coder": true` builds the coder image and an in-clu
 (`gpt-oss:120b`) - never Gemini. The end-to-end check is `scripts/e2e/codefix-local.sh`, which pins
 itself to `studio-rancher-desktop` through a private kubeconfig. See `docs/verification.md`.
 
+## Investigating in a Job, as of v0.12.0
+
+`investigation.job`: the investigation's model loop as Claude Code in a Job, Hephaisto still the
+tools (`src/Hephaisto.Agent/Investigation/Job/`, `coder/src/investigate.ts`). Four things to know:
+
+- **Only the model loop moves.** `InvestigationRunner` asks `IInvestigationJobLoop` whether a Job
+  takes the run and, if so, hands it the SAME wrapped tools; grounding, planning and persistence do
+  not know the difference. Never let a Job report its own steps or evidence - that is what keeps
+  grounding honest.
+- **Its own axis, silence in-process.** `InvestigationExecutor {InProcess, Job}`: env
+  `Investigation__Job__Executor` plus the `investigationExecutor` key of `hephaisto-switches`, most
+  restrictive wins, not enabled / typo / emergency stop / latch all in-process.
+- **Fallback, never a lost investigation.** A Job that cannot answer is replaced by the in-process
+  loop (`JobFallback`); overflow runs in-process at once. Sessions are in memory on purpose - an
+  agent restart orphans running Jobs and `InvestigatorJobSweeper` removes them.
+- **A scripted investigator gets no model credential.** The runner refuses fake mode beside one,
+  and the dev Secret holds a real token for the coder.
+
+Locally: `"investigator": true` (needs `"coder": true`) with `"investigator-sdk": "fake"`, then
+`scripts/e2e/investigate-local.sh` ($0; `--strict` is the release gate) and, not gating,
+`scripts/e2e/investigate-model-local.sh` (Haiku). If a Tilt image build fails with "keychain cannot
+be accessed", pre-pull its base image with a stub `docker-credential-osxkeychain` on PATH and
+`tilt trigger` it; never `kubectl apply` a Tilt-built manifest by hand - it replaces the image.
+
 ## The Teams bot, as of v0.9.0-rc4
 
 `notifications.teamsBot`: one board in a channel, edited in place, and alerts by personal chat.

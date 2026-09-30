@@ -423,6 +423,25 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
+        b.Entity<Finding>(e =>
+        {
+            // A small list read with its finding and never queried into, so a jsonb column rather
+            // than a table (v0.12.0 F5).
+            e.Property(f => f.CodeRefs)
+                .HasColumnType("jsonb")
+                .HasConversion(
+                    v => System.Text.Json.JsonSerializer.Serialize(v, (System.Text.Json.JsonSerializerOptions?)null),
+                    v => string.IsNullOrEmpty(v)
+                        ? new List<CodeRef>()
+                        : System.Text.Json.JsonSerializer.Deserialize<List<CodeRef>>(v, (System.Text.Json.JsonSerializerOptions?)null) ?? new List<CodeRef>(),
+                    new Microsoft.EntityFrameworkCore.ChangeTracking.ValueComparer<List<CodeRef>>(
+                        (a, b) => System.Text.Json.JsonSerializer.Serialize(a, (System.Text.Json.JsonSerializerOptions?)null)
+                            == System.Text.Json.JsonSerializer.Serialize(b, (System.Text.Json.JsonSerializerOptions?)null),
+                        v => System.Text.Json.JsonSerializer.Serialize(v, (System.Text.Json.JsonSerializerOptions?)null).GetHashCode(StringComparison.Ordinal),
+                        v => v.ToList()))
+                .HasDefaultValueSql("'[]'::jsonb");
+        });
+
         b.Entity<InvestigationStep>(e =>
         {
             e.ToTable("investigation_steps");

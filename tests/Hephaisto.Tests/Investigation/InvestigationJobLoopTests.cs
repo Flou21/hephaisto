@@ -122,6 +122,18 @@ public sealed class InvestigationJobLoopTests
         }
     }
 
+    private readonly StubImages images = new();
+
+    private sealed class StubImages : IWorkloadImageReader
+    {
+        public string? Image { get; set; } = "ghcr.io/flou21/hephaisto-fixture-dotnet:c15-583b1e5b75add2ba341319eef1ae438e8346c4b0";
+
+        public Task<(string? Image, string? Revision)> ReadAsync(TargetRef target, CancellationToken ct) =>
+            Task.FromResult<(string?, string?)>((Image, "1"));
+
+        public Task<TargetRef> ResolveWorkloadAsync(TargetRef target, CancellationToken ct) => Task.FromResult(target);
+    }
+
     private (KubernetesInvestigationJobLoop Loop, ScriptedLauncher Launcher, InvestigationJobSessions Sessions, Switch Switch) Build(
         InvestigationExecutor effective = InvestigationExecutor.Job, string agentCluster = "")
     {
@@ -133,6 +145,7 @@ public sealed class InvestigationJobLoopTests
             executor,
             sessions,
             launcher,
+            images,
             new PromptComposer(Options.Create(new EnvironmentCardOptions { ClusterName = agentCluster })),
             new Hephaisto.Agent.Pipeline.InvestigationTracker(clock),
             new TestOptionsMonitor<InvestigationJobOptions>(job),
@@ -409,7 +422,8 @@ public sealed class InvestigationJobLoopTests
         spec.Spec.ActiveDeadlineSeconds.Should().Be(600);
 
         env.Where(e => e.ValueFrom?.SecretKeyRef is not null).Select(e => e.Name)
-            .Should().BeEquivalentTo(["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"], "no GitHub or NuGet token without source access");
+            .Should().BeEquivalentTo(["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "GITHUB_TOKEN"],
+                "the context repository is private in production, source access or not; never a NuGet token");
         env.Should().NotContain(e => e.Value != null && e.Name.Contains("TOKEN"));
         env.Single(e => e.Name == "NO_PROXY").Value.Should().Contain("hephaisto.hephaisto.svc");
         env.Single(e => e.Name == "no_proxy").Value.Should().Contain("hephaisto.hephaisto.svc");
@@ -427,8 +441,9 @@ public sealed class InvestigationJobLoopTests
         await loop.RunAsync(Context(NewRecorder(), new InvestigationRunner.ConclusionHolder()), CancellationToken.None);
 
         launcher.Spec!.Spec.Template.Spec.Containers[0].Env
-            .Should().NotContain(e => e.ValueFrom != null && e.ValueFrom.SecretKeyRef != null,
-                "the runner refuses fake mode beside a real credential, and a $0 run must not become a paid one");
+            .Where(e => e.ValueFrom?.SecretKeyRef != null).Select(e => e.Name)
+            .Should().BeEquivalentTo(["GITHUB_TOKEN"],
+                "the runner refuses fake mode beside a model credential, and a $0 run must not become a paid one; the git token clones the context");
     }
 
     [Fact]
@@ -449,6 +464,43 @@ public sealed class InvestigationJobLoopTests
         request.Incident.Target.Workload.Should().Be("hephaisto-chaos/Deployment/shop-api");
         request.Budget.MaxTurns.Should().Be(job.MaxTurns);
         request.Source.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task With_source_access_a_mapped_workload_is_cloned_at_its_running_image()
+    {
+        job.Source.Enabled = true;
+        codeFix.Repositories = [new() { Workload = "hephaisto-chaos/Deployment/shop-api", Url = "https://github.com/Flou21/hephaisto-fixture-dotnet", DefaultBranch = "fixture/c15-null-deref" }];
+        codeFix.AllowedRepositoryHosts = ["github.com"];
+        var (loop, launcher, _, _) = Build();
+        launcher.Log = r => Frame(r, "no_conclusion");
+
+        await loop.RunAsync(Context(NewRecorder(), new InvestigationRunner.ConclusionHolder()), CancellationToken.None);
+
+        var source = launcher.Request!.Source.Should().NotBeNull().And.Subject.As<InvestigateSource>();
+        source.Url.Should().Be("https://github.com/Flou21/hephaisto-fixture-dotnet");
+        source.DefaultBranch.Should().Be("fixture/c15-null-deref");
+        source.Image.Should().Contain("583b1e5b");
+        launcher.Spec!.Spec.Template.Spec.Containers[0].Env.Should().Contain(e => e.Name == "GITHUB_TOKEN",
+            "the driver clones with it; the agent inside never sees it");
+    }
+
+    [Theory]
+    [InlineData(false, "github.com")]
+    [InlineData(true, "gitlab.com")]
+    public async Task Without_access_or_an_allowed_host_there_is_no_source(bool mapped, string allowedHost)
+    {
+        job.Source.Enabled = true;
+        codeFix.Repositories = mapped
+            ? [new() { Workload = "hephaisto-chaos/Deployment/shop-api", Url = "https://github.com/Flou21/hephaisto-fixture-dotnet" }]
+            : [];
+        codeFix.AllowedRepositoryHosts = [allowedHost];
+        var (loop, launcher, _, _) = Build();
+        launcher.Log = r => Frame(r, "no_conclusion");
+
+        await loop.RunAsync(Context(NewRecorder(), new InvestigationRunner.ConclusionHolder()), CancellationToken.None);
+
+        launcher.Request!.Source.Should().BeNull("no source is never a failed investigation");
     }
 
     [Fact]

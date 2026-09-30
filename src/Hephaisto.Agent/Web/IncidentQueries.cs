@@ -1020,6 +1020,7 @@ public sealed class IncidentQueries(
                 SourceUri = e.SourceUri,
             }),
         ],
+        CodeRefs = [.. f.CodeRefs],
     };
 
     private static PlanView MapPlan(ActionPlan p) => new()

@@ -40,6 +40,7 @@ public sealed class KubernetesInvestigationJobLoop(
     IInvestigationExecutorSwitch executor,
     InvestigationJobSessions sessions,
     ICodeFixJobLauncher launcher,
+    IWorkloadImageReader images,
     PromptComposer prompts,
     Pipeline.InvestigationTracker tracker,
     IOptionsMonitor<InvestigationJobOptions> jobOptions,
@@ -151,9 +152,11 @@ public sealed class KubernetesInvestigationJobLoop(
 
         try
         {
-            var request = InvestigateRequestBuilder.Build(attemptId, context, j, o, token, source: null);
+            var source = j.Source.Enabled ? await SourceForAsync(context.Incident, o, ct).ConfigureAwait(false) : null;
+            var request = InvestigateRequestBuilder.Build(attemptId, context, j, o, token, source);
             var json = JsonSerializer.Serialize(request, CodeFixContract.Json);
-            var spec = InvestigateJobSpec.Job(attemptId, context.Incident.Id, context.InvestigationId, withSource: false, j, o);
+            var spec = InvestigateJobSpec.Job(
+                attemptId, context.Incident.Id, context.InvestigationId, withSource: source is not null, j, o);
 
             try
             {
@@ -176,12 +179,12 @@ public sealed class KubernetesInvestigationJobLoop(
             var ended = await WaitAsync(jobName, context, j, ct).ConfigureAwait(false);
 
             if (ended is not null)
-                return ended;
+                return ended with { Repository = source?.Url };
 
             var log = await launcher.ReadResultLogAsync(jobName, ct).ConfigureAwait(false);
             var parsed = CodeFixResultParser.ParseInvestigate(log, attemptId);
 
-            return Collect(parsed, context, j, jobName, Stopwatch.GetElapsedTime(started));
+            return Collect(parsed, context, j, jobName, Stopwatch.GetElapsedTime(started)) with { Repository = source?.Url };
         }
         catch (OperationCanceledException) when (jobName is not null)
         {
@@ -288,7 +291,54 @@ public sealed class KubernetesInvestigationJobLoop(
         ModelId = result?.Model,
         Turns = result?.Turns ?? 0,
         Error = note is null ? null : $"{jobName}: {note}",
+        CodeRefs = result?.Source is { Cloned: true } ? result.CodeRefs : [],
+        AnalysedRef = result?.Source?.AnalysedRef,
     };
+
+    /// <summary>
+    /// The workload's repository at its running image, when source access is on and the workload
+    /// maps through <c>codeFix.repositories</c> to an allowed host. Anything missing means no source,
+    /// never a failed investigation: the investigator still has every tool.
+    /// </summary>
+    private async Task<InvestigateSource?> SourceForAsync(Incident incident, CodeFixOptions o, CancellationToken ct)
+    {
+        var target = incident.Target;
+
+        try
+        {
+            target = await images.ResolveWorkloadAsync(target, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogDebug(ex, "Could not resolve the workload of incident {IncidentId}", incident.Id);
+        }
+
+        if (o.BindingFor(target.WorkloadKey) is not { } binding)
+            return null;
+
+        if (!Uri.TryCreate(binding.Url, UriKind.Absolute, out var url)
+            || !o.AllowedRepositoryHosts.Contains(url.Host, StringComparer.OrdinalIgnoreCase))
+        {
+            logger.LogInformation(
+                "Not giving the investigator {Workload}'s source: {Url} is not on an allowed host", target.WorkloadKey, binding.Url);
+            return null;
+        }
+
+        string? image = null;
+
+        try
+        {
+            (image, _) = await images.ReadAsync(target, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogDebug(ex, "Could not read the running image of {Workload}", target.WorkloadKey);
+        }
+
+        // The runner derives the commit from the image tag (tags are commit shas) and falls back to
+        // the default branch when it cannot; Hephaisto does not guess one here.
+        return new InvestigateSource(binding.Url, binding.DefaultBranch, binding.Path ?? string.Empty, Ref: null, Image: image);
+    }
 
     private static JobLoopOutcome Ended(InvestigateResult result, TerminationReason termination, string why) => new()
     {

@@ -129,6 +129,30 @@ public sealed class Finding
     public bool IsPrimary { get; set; }
 
     public List<Evidence> Evidence { get; set; } = [];
+
+    /// <summary>
+    /// Where in the running revision's source this points (v0.12.0 F5, an investigator with source
+    /// access). Never evidence: grounding reads <see cref="Evidence"/> only. Each reference was
+    /// confirmed to exist in the checkout by the runner before it was reported.
+    /// </summary>
+    public List<CodeRef> CodeRefs { get; set; } = [];
+}
+
+/// <summary>A file and line in a repository at a commit. Pointing, not proving.</summary>
+public sealed record CodeRef
+{
+    public string Repository { get; init; } = string.Empty;
+
+    /// <summary>The commit the investigator read, or null when only a branch was.</summary>
+    public string? Ref { get; init; }
+
+    public string Path { get; init; } = string.Empty;
+
+    public int Line { get; init; }
+
+    public int? EndLine { get; init; }
+
+    public string? Note { get; init; }
 }
 
 /// <summary>

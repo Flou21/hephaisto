@@ -41,8 +41,10 @@ public sealed class InvestigatorJobSweeper(
                 {
                     await SweepAsync(stoppingToken).ConfigureAwait(false);
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
                 {
+                    // Including a timed-out API call, which is an OperationCanceledException too:
+                    // letting it escape would stop the host (BackgroundServiceExceptionBehavior).
                     logger.LogWarning(ex, "Could not sweep orphaned investigator Jobs; retrying in {Interval}", Interval);
                 }
             }

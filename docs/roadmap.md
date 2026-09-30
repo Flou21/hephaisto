@@ -1663,8 +1663,14 @@ fails four times in a few minutes still does. An investigation of a pod with a s
 application container's logs. A dry run of a bulk close names how many incidents it would close
 and which; the close itself refuses a reader and writes one audit row per incident.
 
+F5: with the executor at `job`, an investigation runs in a Job, calls Hephaisto's own tools,
+and its finding is grounded against steps Hephaisto recorded; a Job that disappears is replaced by
+the in-process investigation; with every Job slot taken the next investigation runs in-process at
+once; an agent restart leaves one investigation and no running Job; with source access a finding
+names file and line at the running commit, and its evidence is still tool steps.
+
 Every sentence above is a test, a pager-suite scenario where it can be one, and the suite is
-green with an empty known-red list.
+green with an empty known-red list. F5's are `scripts/e2e/investigate-local.sh` I0-I11.
 
 ---
 

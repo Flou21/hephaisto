@@ -93,7 +93,9 @@ say "cluster $CF_CONTEXT ($server), agent $CF_API, results in $RUN_DIR"
 phase preflight
 
 sdk=$(jq -r '."investigator-sdk" // "fake"' "$REPO/tilt_config.json" 2>/dev/null || echo fake)
-[ "$sdk" = fake ] || die "tilt_config.json investigator-sdk is '$sdk'; this runner is \$0 only with 'fake'"
+# investigate-model-local.sh is the one caller allowed past this, and says so in its name.
+[ "$sdk" = fake ] || [ "${IV_ALLOW_REAL_SDK:-}" = 1 ] \
+    || die "tilt_config.json investigator-sdk is '$sdk'; this runner is \$0 only with 'fake'"
 
 SAVED_CODEFIX=$(iv_switch_get codeFixMode)
 SAVED_EXECUTOR=$(iv_switch_get "$IV_SWITCH_KEY")

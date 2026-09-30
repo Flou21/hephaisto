@@ -94,11 +94,18 @@ iv_reinvestigate() {
     cf_post "/api/incidents/$1/reinvestigate" "$(jq -cn --arg a "$CF_ACTOR" '{requestedBy:$a}')"
 }
 
+iv_is_idle() { ! iv_is_running "$1"; }
+
+# A re-investigation is refused while one runs - an earlier scenario's fallback, say - so every
+# scenario that starts one waits for its incident to be idle first.
+iv_wait_idle() { wait_for "incident $1 to be idle" "${2:-1500}" iv_is_idle "$1" >&2 || true; }
+
 # Re-investigates and waits for the new investigation to be written. Prints its JSON; empty on
 # timeout. The count is read before the request so an investigation that finishes between the
 # POST and the first poll is still seen.
 iv_investigate_once() {
     local incident="$1" timeout="$2" before out code
+    iv_wait_idle "$incident"
     before=$(iv_investigation_count "$incident")
     out=$(iv_reinvestigate "$incident")
     code=$(tail -1 <<<"$out")
@@ -209,7 +216,8 @@ scenario_I3() {
     local pf_port=18084 pf_pid code
     kc -n "$CF_APP_NS" port-forward "svc/$IV_SVC" "$pf_port:$IV_PORT" >/dev/null 2>&1 &
     pf_pid=$!
-    sleep 3
+    forwarded() { [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 -X POST "http://127.0.0.1:$pf_port/investigate")" != 000 ]; }
+    wait_for "the port-forward to the investigator port" 60 forwarded || true
 
     code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 -X POST -H 'Content-Type: application/json' \
         -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' "http://127.0.0.1:$pf_port/investigate")
@@ -357,6 +365,7 @@ scenario_I8() {
     local incident before job inv
     incident=$(iv_ensure_incident catalog-api c19-injection)
     [ -n "$incident" ] || { fail "an incident on catalog-api exists"; iv_set_executor inprocess; return 0; }
+    iv_wait_idle "$incident"
     before=$(iv_investigation_count "$incident")
 
     # catalog-api's script is the slow one: the Job is still running when it is deleted.
@@ -393,6 +402,7 @@ scenario_I9() {
     fast=$(iv_ensure_incident shop-api c15-null-deref)
     [ -n "$slow" ] && [ -n "$fast" ] || { fail "incidents on catalog-api and shop-api exist"; iv_set_executor inprocess; return 0; }
 
+    iv_wait_idle "$slow"
     iv_reinvestigate "$slow" >/dev/null
     find_job() { job=$(iv_running_job "$slow"); [ -n "$job" ]; }
     wait_for "the slow Job to hold the slot" 180 find_job || { fail "the slow Job holds the slot"; iv_set_executor inprocess; return 0; }
@@ -417,6 +427,7 @@ scenario_I10() {
 
     local incident before job
     incident=$(iv_ensure_incident catalog-api c19-injection)
+    iv_wait_idle "$incident"
     before=$(iv_investigation_count "$incident")
 
     iv_reinvestigate "$incident" >/dev/null

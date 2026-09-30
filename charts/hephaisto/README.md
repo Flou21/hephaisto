@@ -158,6 +158,34 @@ check, and `NOTES.txt` lists the repositories it applies to. Start in `plan`, re
 move to `pr` only with `auth.enabled: true`: approving a repository write on an unauthenticated
 click is refused at render time and again at startup.
 
+## Investigating in a Job (v0.12.0)
+
+With `investigation.job.enabled`, an investigation's **model loop** can run as Claude Code in a Job
+beside the coder - on the same Secret's `CLAUDE_CODE_OAUTH_TOKEN`, with a model of your choice -
+while Hephaisto keeps the tools, records every step and grounds the conclusion exactly as it does
+in-process. The Job reaches evidence only through the agent's **investigator port**
+(`investigation.job.port`, 8084, `/investigate`), admitted only from investigator pods, each run
+with a token of its own. It has no cluster identity and no Grafana token.
+
+It ships **off, and unrendered**, and enabling it switches nothing over: the executor
+(`investigation.job.executor`, plus the switch ConfigMap's `investigationExecutor`, most
+restrictive winning) defaults to `inprocess`. It needs `codeFix.enabled` - the Job borrows the
+coder's namespace, image, Secret and proxy - but no code-fix mode. A run that cannot have one of
+`concurrentJobs` slots, or would exceed `jobsPerHour`, runs in-process at once; a Job that fails,
+vanishes or hits a subscription limit is replaced by the in-process investigation.
+
+```sh
+helm upgrade hephaisto oci://ghcr.io/flou21/charts/hephaisto -n hephaisto --reuse-values \
+  --set investigation.job.enabled=true --set investigation.job.executor=job \
+  --set investigation.job.model=opus
+# and back, without a rollout:
+kubectl -n hephaisto patch cm hephaisto-switches --type merge -p '{"data":{"investigationExecutor":"inprocess"}}'
+```
+
+`investigation.job.source.enabled` also gives the investigator a read-only clone of a mapped
+workload's repository at its running commit, so a finding can name file and line - shown on the
+finding and passed to a code fix, never counted as evidence.
+
 ## Try it without a cluster
 
 The published image can run with no Kubernetes behind it at all, loaded with recorded

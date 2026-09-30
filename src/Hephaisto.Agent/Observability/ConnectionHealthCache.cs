@@ -83,6 +83,21 @@ public sealed class ConnectionHealthCache(
         {
             return await probe.ProbeAsync(ct);
         }
+        catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
+        {
+            // A probe's own HTTP timeout surfaces as a TaskCanceledException, which is an
+            // OperationCanceledException - and this used to let it through, out of ExecuteAsync,
+            // where BackgroundServiceExceptionBehavior.StopHost turned one slow identity provider
+            // into a crash-looping agent (production, 2026-09-29, a 5 s OIDC probe timeout during a
+            // cluster-wide network stall). Only the host's own stop is a cancellation to honour.
+            logger.LogWarning(ex, "Connection probe {Probe} timed out; reporting it as unreachable.", probe.Name);
+
+            return new ConnectionReport(
+                probe.Name,
+                ConnectionState.Unreachable,
+                "The probe timed out.",
+                clock.UtcNow);
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // A probe is contractually not supposed to throw. If one does, that is itself worth

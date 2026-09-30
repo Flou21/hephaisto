@@ -23,5 +23,7 @@ investigation:
     concurrentJobs: 1
     jobsPerHour: 60
     fallbackToInProcess: true
+    # On here: the fixture repositories are in-cluster (coder-git), so a clone costs nothing and
+    # I11 can check that a finding names file and line at the running commit.
     source:
-      enabled: false
+      enabled: true

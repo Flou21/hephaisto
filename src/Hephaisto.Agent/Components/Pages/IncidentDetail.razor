@@ -753,6 +753,31 @@ else
                                     }
                                 </ul>
                             }
+
+                            @if (finding.CodeRefs.Count > 0)
+                            {
+                                @* v0.12.0 F5: where the investigator, reading the running revision's
+                                   source, says this points. A pointer for a human and a code fix -
+                                   never evidence, which is why it is below the citations and not
+                                   among them. *@
+                                <ul class="hp-evidence" data-testid="code-refs">
+                                    @foreach (var pointer in finding.CodeRefs)
+                                    {
+                                        <li>
+                                            <span class="hp-cite" title="A code reference, confirmed to exist in the checkout. Not evidence.">code</span>
+                                            <span class="mono">@pointer.Path:@pointer.Line@(pointer.EndLine is { } end ? $"-{end}" : string.Empty)</span>
+                                            @if (pointer.Ref is { Length: > 0 } sha)
+                                            {
+                                                <span class="hp-muted mono"> @@ @(sha.Length > 12 ? sha[..12] : sha)</span>
+                                            }
+                                            @if (pointer.Note is { Length: > 0 } note)
+                                            {
+                                                <span class="hp-muted"> - @note</span>
+                                            }
+                                        </li>
+                                    }
+                                </ul>
+                            }
                         </article>
                     }
                 }
