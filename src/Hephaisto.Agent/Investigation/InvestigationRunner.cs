@@ -160,6 +160,7 @@ public sealed class InvestigationRunner(
         string? error = null;
         int? jobTurns = null;
         JobLoopOutcome? jobResult = null;
+        var jobPlanning = new JobPlanning();
 
         try
         {
@@ -177,7 +178,7 @@ public sealed class InvestigationRunner(
 
                 var tools = await BuildToolsAsync(
                     llm, new InvestigationBudget(jobLoop!.BudgetFor(llm.Investigation), clock),
-                    recorder, conclusion, incident, ct, forJob: true).ConfigureAwait(false);
+                    recorder, conclusion, incident, ct, forJob: true, planning: jobPlanning).ConfigureAwait(false);
 
                 jobResult = job = await jobLoop.RunAsync(new JobLoopContext
                 {
@@ -188,6 +189,7 @@ public sealed class InvestigationRunner(
                     Tools = tools,
                     Recorder = recorder,
                     Conclusion = conclusion,
+                    Planning = jobPlanning,
                 }, ct).ConfigureAwait(false);
             }
             else if (decision is not null && decision.Choice != Core.Investigations.ExecutorChoice.InProcessByMode)
@@ -268,9 +270,12 @@ public sealed class InvestigationRunner(
 
         // ---- grounding, between the phases ----
 
-        var claimed = conclusion.Value is { } request
-            ? ConcludeMapper.ToFindings(request, investigation.Id, steps)
-            : [];
+        // A Job's conclude grounded its findings already, and its plan cites their ids: keep those.
+        var claimed = investigation.Executor == InvestigationExecutors.Job && jobPlanning.Claimed is { } jobClaimed
+            ? jobClaimed
+            : conclusion.Value is { } request
+                ? ConcludeMapper.ToFindings(request, investigation.Id, steps)
+                : [];
 
         var grounding = GroundingVerifier.Verify(investigation.Id, steps, claimed);
         RecordRejections(grounding.Rejections);
@@ -303,9 +308,12 @@ public sealed class InvestigationRunner(
 
         // ---- phase 2 ----
 
-        var (draft, plan, planRejections) = await PlanAsync(
-            incident, investigation, recorder, grounding.Findings, conclusion.Value?.Summary, opts, ct)
-            .ConfigureAwait(false);
+        // A Job investigation planned in the Job; the in-process model is never called for it.
+        var (draft, plan, planRejections) = investigation.Executor == InvestigationExecutors.Job
+            ? PlanFromJob(incident, investigation, grounding.Findings, jobPlanning.Draft)
+            : await PlanAsync(
+                incident, investigation, recorder, grounding.Findings, conclusion.Value?.Summary, opts, ct)
+                .ConfigureAwait(false);
 
         var allRejections = planRejections.Count == 0
             ? grounding.Rejections
@@ -468,7 +476,8 @@ public sealed class InvestigationRunner(
         ConclusionHolder conclusion,
         Incident incident,
         CancellationToken ct,
-        bool forJob = false)
+        bool forJob = false,
+        JobPlanning? planning = null)
     {
         var tools = new List<AIFunction>();
 
@@ -499,8 +508,20 @@ public sealed class InvestigationRunner(
         // exhausted is told to conclude with what it has, and a `conclude` that the same
         // budget then refuses would leave it no way to say anything at all.
         tools.Add(new SafeToolDecorator(
-            forJob ? CreateJobConcludeTool(conclusion) : CreateConcludeTool(conclusion),
-            "internal", llm.Tools, budget: null, recorder));
+            forJob
+                ? CreateJobConcludeTool(
+                    conclusion,
+                    planning,
+                    () => recorder.Steps,
+                    recorder.InvestigationId,
+                    (grounded, summary) => prompts.ComposePlanningPrompt(incident, grounded, summary))
+                : CreateConcludeTool(conclusion),
+            "internal", forJob ? JobConcludeLimits(llm.Tools) : llm.Tools, budget: null, recorder));
+
+        if (forJob && planning is not null)
+        {
+            tools.Add(new SafeToolDecorator(CreateProposePlanTool(planning), "internal", llm.Tools, budget: null, recorder));
+        }
 
         return tools;
     }
@@ -577,7 +598,12 @@ public sealed class InvestigationRunner(
     /// keeps only those whose file and line exist in its checkout, and reports those; the runner
     /// here attaches the reported ones. Recorded in the step's arguments either way.
     /// </remarks>
-    internal static AIFunction CreateJobConcludeTool(ConclusionHolder holder) =>
+    internal static AIFunction CreateJobConcludeTool(
+        ConclusionHolder holder,
+        JobPlanning? planning = null,
+        Func<IReadOnlyList<InvestigationStep>>? steps = null,
+        Guid investigationId = default,
+        Func<IReadOnlyList<Finding>, string?, string>? planningPrompt = null) =>
         AIFunctionFactory.Create(
             (
                 [System.ComponentModel.Description(
@@ -597,15 +623,49 @@ public sealed class InvestigationRunner(
                     + "tool steps as evidence.")]
                 List<CodeRefDraft>? code_refs) =>
             {
-                holder.Value = new ConcludeRequest
+                var request = new ConcludeRequest
                 {
                     Findings = findings ?? [],
                     Summary = summary ?? string.Empty,
                     Confidence = confidence,
                 };
 
-                return "Conclusion recorded. Your citations are now checked against what the tools "
-                    + "actually returned; any that do not match are discarded. Stop here.";
+                holder.Value = request;
+
+                if (planning is null || steps is null || planningPrompt is null)
+                {
+                    return "Conclusion recorded. Your citations are now checked against what the tools "
+                        + "actually returned; any that do not match are discarded. Stop here.";
+                }
+
+                // Grounded now rather than after the Job ends, so phase 2 can run in the Job against
+                // the findings that survive - and never in-process (v0.12.0). The runner keeps these
+                // same Finding objects, so the ids the plan cites are the ids it grounds against.
+                var recorded = steps();
+                var claimed = ConcludeMapper.ToFindings(request, investigationId, recorded);
+                var grounded = GroundingVerifier.Verify(investigationId, recorded, claimed);
+
+                planning.Grounded = grounded.Findings.Count;
+                planning.Claimed = claimed;
+
+                if (grounded.Findings.Count == 0)
+                {
+                    return "Conclusion recorded, but none of your findings survived grounding: no "
+                        + "excerpt you cited appears in the tool result it names. There is nothing to "
+                        + "plan from. Stop here.";
+                }
+
+                return string.Create(
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        $"Conclusion recorded. {grounded.Findings.Count} finding(s) survived grounding. ")
+                    + "Now decide whether anything should be done in the cluster, and call "
+                    + "propose_plan exactly once. Cite findings by the ids below. If nothing in the "
+                    + "cluster should change, set no_action_required and give no actions. Then stop. "
+                    + "Where the notes below say you have no tools and must answer in JSON: here your "
+                    + "answer is the propose_plan call, with the fields they describe, and no other "
+                    + "tool is served any more."
+                    + Environment.NewLine + Environment.NewLine
+                    + planningPrompt(grounded.Findings, request.Summary);
             },
             new AIFunctionFactoryOptions
             {
@@ -614,6 +674,75 @@ public sealed class InvestigationRunner(
                     "Ends the investigation and records your findings. Call this when you have "
                     + "enough to state a cause, or enough to be sure you cannot. Do not simply "
                     + "stop talking.",
+                ConfigureParameterBinding = _ => new AIFunctionFactoryOptions.ParameterBindingOptions
+                {
+                    BindParameter = BindConcludeParameter,
+                },
+            });
+
+    /// <summary>
+    /// A Job's phase 2 (v0.12.0): the plan its model proposes from the findings conclude grounded.
+    /// Recording only - the runner grounds it against those findings and the policy engine judges it,
+    /// exactly as it does a plan from the in-process planner.
+    /// </summary>
+    internal const string ProposePlanToolName = "propose_plan";
+
+    /// <summary>
+    /// A Job's conclude answers with the whole planning prompt, finding ids included. Digested at
+    /// the tools' 8 KiB it would lose exactly the ids the plan has to cite.
+    /// </summary>
+    private static SafeToolOptions JobConcludeLimits(SafeToolOptions tools) => new()
+    {
+        Timeout = tools.Timeout,
+        MaxResultBytes = Math.Max(tools.MaxResultBytes, 64 * 1024),
+        Verbatim = true,
+        MaxRawBytes = tools.MaxRawBytes,
+        MaxQueryRange = tools.MaxQueryRange,
+        RequireTimeRange = tools.RequireTimeRange,
+        RedactedArgumentNames = tools.RedactedArgumentNames,
+    };
+
+    internal static AIFunction CreateProposePlanTool(JobPlanning planning) =>
+        AIFunctionFactory.Create(
+            (
+                [System.ComponentModel.Description(
+                    "One or two sentences: what should happen, or why nothing in the cluster should.")]
+                string? summary,
+                [System.ComponentModel.Description(
+                    "True when no cluster action would help - a code bug, a dependency outside the "
+                    + "cluster, or not enough evidence. Then give no actions.")]
+                bool no_action_required,
+                [System.ComponentModel.Description(
+                    "Cluster actions, only when one would help. Each cites evidence_finding_ids from "
+                    + "the findings conclude returned, and names the namespace, kind and name it acts on.")]
+                List<ActionDraft>? actions) =>
+            {
+                if (planning.Claimed is null)
+                {
+                    return "REFUSED: call conclude first; a plan is made from the findings it grounds.";
+                }
+
+                if (planning.Draft is not null)
+                {
+                    return "REFUSED: a plan is already recorded. Stop here.";
+                }
+
+                planning.Draft = new ActionPlanDraft
+                {
+                    Summary = summary ?? string.Empty,
+                    NoActionRequired = no_action_required,
+                    Actions = actions ?? [],
+                };
+
+                return "Plan recorded. It is checked against the grounded findings and judged by the "
+                    + "policy engine; you execute nothing. Stop here.";
+            },
+            new AIFunctionFactoryOptions
+            {
+                Name = ProposePlanToolName,
+                Description =
+                    "After conclude: propose what, if anything, should be done in the cluster. Call "
+                    + "it once. Nothing you propose is executed by you.",
                 ConfigureParameterBinding = _ => new AIFunctionFactoryOptions.ParameterBindingOptions
                 {
                     BindParameter = BindConcludeParameter,
@@ -787,46 +916,7 @@ public sealed class InvestigationRunner(
                 return (null, null, []);
             }
 
-            var verdict = GroundingVerifier.VerifyPlan(draft, findings);
-            RecordRejections(verdict.Rejections);
-
-            if (!verdict.Accepted)
-            {
-                // Whole-plan rejection, not per-action. An action justified by a finding that
-                // turned out to be invented says this investigation's reasoning is not
-                // trustworthy, and the right response is a human, not a tidied-up plan.
-                logger.LogWarning(
-                    "Plan for investigation {Id} rejected: {Reasons}",
-                    investigation.Id,
-                    string.Join("; ", verdict.Rejections.Select(r => r.Detail)));
-
-                activity?.SetStatus(ActivityStatusCode.Error, "grounding rejected");
-
-                return (draft, null, verdict.Rejections);
-            }
-
-            var plan = ActionPlanDraftMapper.TryToDomain(draft, investigation.Id, incident.Id, clock.UtcNow, incident.Target);
-
-            // TryToDomain drops actions the model gave no usable target. Say so: an action
-            // that silently vanishes between the model proposing it and a human reading the
-            // plan is indistinguishable from one that was never proposed.
-            var dropped = draft.Actions.Count - plan.Actions.Count;
-            if (dropped > 0)
-            {
-                logger.LogWarning(
-                    "Dropped {Dropped} of {Total} proposed actions for investigation {Id}: "
-                    + "the model gave no namespace, kind or name.",
-                    dropped, draft.Actions.Count, investigation.Id);
-            }
-
-            activity?.SetTag("plan.actions_dropped", dropped);
-            activity?.SetTag("plan.action_count", plan.Actions.Count);
-            activity?.SetTag(
-                "plan.max_risk",
-                plan.Actions.Count == 0 ? "none" : plan.Actions.Max(a => a.Risk).ToString());
-            activity?.SetTag("plan.no_action_required", plan.NoActionRequired);
-
-            return (draft, plan, verdict.Rejections);
+            return Judge(draft, incident, investigation, findings, activity);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || ct.IsCancellationRequested)
         {
@@ -837,6 +927,80 @@ public sealed class InvestigationRunner(
 
             return (null, null, []);
         }
+    }
+
+    /// <summary>
+    /// A Job's plan, from its propose_plan call. No model call: the Job's model made it, against the
+    /// findings its conclude grounded. None proposed is no plan - a diagnosis for a human.
+    /// </summary>
+    private (ActionPlanDraft? Draft, ActionPlan? Plan, IReadOnlyList<GroundingRejection> Rejections)
+        PlanFromJob(Incident incident, Investigation investigation, IReadOnlyList<Finding> findings, ActionPlanDraft? draft)
+    {
+        using var activity = LlmInstrumentation.Source.StartActivity(HephaistoTelemetry.Spans.Plan, ActivityKind.Internal);
+
+        activity?.SetTag("investigation.id", investigation.Id);
+        activity?.SetTag("investigation.executor", InvestigationExecutors.Job);
+
+        if (draft is null)
+        {
+            logger.LogInformation("The investigator Job proposed no plan for investigation {Id}", investigation.Id);
+            return (null, null, []);
+        }
+
+        return Judge(draft, incident, investigation, findings, activity);
+    }
+
+    /// <summary>
+    /// A proposed plan, grounded against the findings and mapped to the domain - the same for the
+    /// in-process planner's reply and a Job's propose_plan.
+    /// </summary>
+    private (ActionPlanDraft? Draft, ActionPlan? Plan, IReadOnlyList<GroundingRejection> Rejections) Judge(
+        ActionPlanDraft draft,
+        Incident incident,
+        Investigation investigation,
+        IReadOnlyList<Finding> findings,
+        Activity? activity)
+    {
+        var verdict = GroundingVerifier.VerifyPlan(draft, findings);
+        RecordRejections(verdict.Rejections);
+
+        if (!verdict.Accepted)
+        {
+            // Whole-plan rejection, not per-action. An action justified by a finding that
+            // turned out to be invented says this investigation's reasoning is not
+            // trustworthy, and the right response is a human, not a tidied-up plan.
+            logger.LogWarning(
+                "Plan for investigation {Id} rejected: {Reasons}",
+                investigation.Id,
+                string.Join("; ", verdict.Rejections.Select(r => r.Detail)));
+
+            activity?.SetStatus(ActivityStatusCode.Error, "grounding rejected");
+
+            return (draft, null, verdict.Rejections);
+        }
+
+        var plan = ActionPlanDraftMapper.TryToDomain(draft, investigation.Id, incident.Id, clock.UtcNow, incident.Target);
+
+        // TryToDomain drops actions the model gave no usable target. Say so: an action
+        // that silently vanishes between the model proposing it and a human reading the
+        // plan is indistinguishable from one that was never proposed.
+        var dropped = draft.Actions.Count - plan.Actions.Count;
+        if (dropped > 0)
+        {
+            logger.LogWarning(
+                "Dropped {Dropped} of {Total} proposed actions for investigation {Id}: "
+                + "the model gave no namespace, kind or name.",
+                dropped, draft.Actions.Count, investigation.Id);
+        }
+
+        activity?.SetTag("plan.actions_dropped", dropped);
+        activity?.SetTag("plan.action_count", plan.Actions.Count);
+        activity?.SetTag(
+            "plan.max_risk",
+            plan.Actions.Count == 0 ? "none" : plan.Actions.Max(a => a.Risk).ToString());
+        activity?.SetTag("plan.no_action_required", plan.NoActionRequired);
+
+        return (draft, plan, verdict.Rejections);
     }
 
     /// <summary>
@@ -938,6 +1102,37 @@ public sealed class InvestigationRunner(
         {
             get => Volatile.Read(ref _value);
             set => Volatile.Write(ref _value, value);
+        }
+    }
+
+    /// <summary>
+    /// What a Job's conclude grounded and what its propose_plan proposed. Phase 2 of a Job
+    /// investigation happens in the Job, against the findings grounded here - so the ids the
+    /// Job's model cites are the ids of the findings the runner keeps.
+    /// </summary>
+    public sealed class JobPlanning
+    {
+        private List<Finding>? _claimed;
+        private ActionPlanDraft? _draft;
+        private int _grounded;
+
+        /// <summary>How many of <see cref="Claimed"/> survived grounding at conclude; set before it.</summary>
+        public int Grounded
+        {
+            get => Volatile.Read(ref _grounded);
+            set => Volatile.Write(ref _grounded, value);
+        }
+
+        public List<Finding>? Claimed
+        {
+            get => Volatile.Read(ref _claimed);
+            set => Volatile.Write(ref _claimed, value);
+        }
+
+        public ActionPlanDraft? Draft
+        {
+            get => Volatile.Read(ref _draft);
+            set => Volatile.Write(ref _draft, value);
         }
     }
 }

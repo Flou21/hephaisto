@@ -67,7 +67,7 @@ describe('investigate through main() with the fake SDK and a real MCP endpoint',
     expect(doc.denied_tool_calls).toEqual([]);
 
     // what reached the endpoint: the target namespace, the captured pod name, then conclude
-    expect(stub.calls.map((c) => c.name)).toEqual(['list_pods', 'get_pod_logs', 'conclude']);
+    expect(stub.calls.map((c) => c.name)).toEqual(['list_pods', 'get_pod_logs', 'conclude', 'propose_plan']);
     expect(stub.calls[0]!.arguments).toEqual({ namespace: 'hephaisto-chaos' });
     expect(stub.calls[1]!.arguments).toEqual({ namespace: 'hephaisto-chaos', name: STUB_POD, previous: false });
     const c = stub.calls[2]!;
@@ -94,7 +94,7 @@ describe('investigate through main() with the fake SDK and a real MCP endpoint',
     expect(doc.outcome).toBe('concluded');
     expect(doc.source).toBeNull();
     expect(doc.code_refs).toEqual([]);
-    expect(stub.calls.map((c) => c.name)).toEqual(['list_pods', 'get_events', 'conclude']);
+    expect(stub.calls.map((c) => c.name)).toEqual(['list_pods', 'get_events', 'conclude', 'propose_plan']);
     expect(stub.calls[0]!.arguments).toEqual({ namespace: 'shop' });
     const f = (stub.calls[2]!.arguments.findings as { category: string; confidence: number }[])[0]!;
     expect(f.category).toBe('unknown');
@@ -149,6 +149,25 @@ describe('investigate through main() with the fake SDK and a real MCP endpoint',
     expect(doc).toMatchObject({ outcome: 'failed', error: 'endpoint_unauthorized' });
     expect(Date.now() - started).toBeLessThan(4_000); // aborted, not played to the end
     expect(stub.calls.map((c) => c.name)).toEqual(['list_pods']);
+  });
+
+  it('after conclude the investigator may propose its plan once, and nothing else', async () => {
+    script(w, 'default.investigate.json', {
+      steps: [
+        { tool: 'mcp__hephaisto__list_pods', input: { namespace: 'x' }, capture: { as: 'pods', regex: '(redis-0)' } },
+        conclude([{ step_id: '${pods.step}', excerpt: '${pods}' }]),
+        { tool: 'mcp__hephaisto__get_events', input: { namespace: 'x' } },
+        { tool: 'mcp__hephaisto__propose_plan', input: { summary: 'nothing for the cluster', no_action_required: true } },
+        { tool: 'mcp__hephaisto__propose_plan', input: { summary: 'again', no_action_required: true } },
+      ],
+    });
+    const { doc } = await runRequest(w, investigateRequest(w, stub.url));
+    expectValid(doc);
+    expect(doc.outcome).toBe('concluded');
+    expect(stub.calls.map((c) => c.name)).toEqual(['list_pods', 'conclude', 'propose_plan']);
+    expect(stub.calls[2]!.arguments).toEqual({ summary: 'nothing for the cluster', no_action_required: true });
+    expect(stderr.join('')).toMatch(/only mcp__hephaisto__propose_plan is left/);
+    expect(stderr.join('')).toMatch(/concluded and planned; stop now/);
   });
 
   it('the guard confines the investigator: no shell, no request file, no writes; notes stay readable', async () => {

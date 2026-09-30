@@ -1,5 +1,5 @@
 {
-  "description": "FAKE SDK investigation for chaos fixture c15 (hephaisto-chaos/shop-api): finds the crash-looping pod, reads its logs and concludes that startup throws a NullReferenceException in src/Shop.Api/Startup/Endpoints.cs, citing the log line verbatim. Runs through Hephaisto's real investigator endpoint. No model runs.",
+  "description": "FAKE SDK investigation for chaos fixture c15 (hephaisto-chaos/shop-api): finds the crash-looping pod, reads its logs and concludes that startup throws a NullReferenceException in src/Shop.Api/Startup/Endpoints.cs, citing the log line verbatim. Runs through Hephaisto's real investigator endpoint. Then proposes a plan with no cluster action. No model runs.",
   "steps": [
     {
       "tool": "mcp__hephaisto__list_pods",
@@ -54,6 +54,14 @@
             "note": "options.Endpoints.Count is read without a null check"
           }
         ]
+      }
+    },
+    {
+      "tool": "mcp__hephaisto__propose_plan",
+      "input": {
+        "summary": "FAKE SDK: a null dereference at startup is a code bug; nothing in the cluster would fix it.",
+        "no_action_required": true,
+        "actions": []
       }
     }
   ]

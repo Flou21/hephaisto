@@ -282,6 +282,19 @@ scenario_I4() {
     jq -e '(.modelId // "") != ""' <<<"$inv" >/dev/null \
         && pass "the model is recorded" "$(jq -r .modelId <<<"$inv")" || fail "the model is recorded"
 
+    # Phase 2 happens in the Job too: the plan is its propose_plan call, never the in-process model.
+    [[ ",$tools," == *",propose_plan,"* ]] \
+        && pass "the Job proposed the plan through propose_plan" "$tools" \
+        || fail "the Job proposed the plan through propose_plan" "$tools"
+    jq -e '.plan.noActionRequired == true' <<<"$inv" >/dev/null \
+        && pass "the plan is no action for a code bug" "$(jq -r '.plan.summary // ""' <<<"$inv" | head -c 120)" \
+        || fail "the plan is no action for a code bug" "$(jq -c '.plan' <<<"$inv")"
+    if [ "${IV_ALLOW_REAL_SDK:-}" != 1 ]; then
+        jq -e '(.plan.summary // "") | startswith("FAKE SDK")' <<<"$inv" >/dev/null \
+            && pass "the plan is the Job's own, not an in-process planner's" \
+            || fail "the plan is the Job's own, not an in-process planner's" "$(jq -r '.plan.summary // ""' <<<"$inv")"
+    fi
+
     iv_set_executor inprocess
 }
 

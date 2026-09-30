@@ -141,7 +141,7 @@ describe('real SDK + CLI: investigate against a mock Messages API and a stub inv
     // what the CLI put in front of the model
     const first = api.requests.find((r) => JSON.stringify(r.body.tools ?? []).includes('mcp__hephaisto__conclude'))!;
     const names = ((first.body.tools as { name: string }[]) ?? []).map((t) => t.name).sort();
-    expect(names).toEqual(['Glob', 'Grep', 'Read', 'mcp__hephaisto__conclude', 'mcp__hephaisto__describe_pod', 'mcp__hephaisto__get_events', 'mcp__hephaisto__get_pod_logs', 'mcp__hephaisto__list_pods']);
+    expect(names).toEqual(['Glob', 'Grep', 'Read', 'mcp__hephaisto__conclude', 'mcp__hephaisto__describe_pod', 'mcp__hephaisto__get_events', 'mcp__hephaisto__get_pod_logs', 'mcp__hephaisto__list_pods', 'mcp__hephaisto__propose_plan']);
     const sent = JSON.stringify(first.body);
     expect(sent).toContain('HEPHAISTO-INVESTIGATOR-PROMPT');
     expect(sent).toContain('Where you are running');

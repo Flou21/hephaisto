@@ -88,6 +88,64 @@ public sealed class InvestigationJobSeamTests
         }
     }
 
+    private static readonly Regex FindingId = new(@"- id: `([0-9a-fA-F-]{36})`", RegexOptions.CultureInvariant);
+
+    /// <summary>What a Job does after conclude: propose a plan through propose_plan, citing what conclude answered.</summary>
+    private static async Task<JobLoopOutcome> ConcludeAndPlanLikeAJob(
+        JobLoopContext context, Func<string, object> actions, bool noActionRequired = false)
+    {
+        var answer = await ConcludeAnswerAsync(context);
+        var propose = context.Tools.Single(t => t.Name == "propose_plan");
+
+        await propose.InvokeAsync(new AIFunctionArguments
+        {
+            ["summary"] = "Restart the rollout so api reconnects.",
+            ["no_action_required"] = noActionRequired,
+            ["actions"] = JsonSerializer.SerializeToElement(actions(answer)),
+        });
+
+        return new JobLoopOutcome { Termination = TerminationReason.Concluded, ModelId = "claude-test", Turns = 4 };
+    }
+
+    private static ActionDraft[] RolloutRestartCiting(string findingId) =>
+    [
+        new ActionDraft
+        {
+            Type = ActionType.RolloutRestart,
+            Namespace = "hephaisto-chaos",
+            Kind = "Deployment",
+            Name = "api",
+            PredictedEffect = "api reconnects and stays Ready for 5 minutes",
+            EvidenceFindingIds = [findingId],
+            Risk = RiskTier.Low,
+        },
+    ];
+
+    private static async Task<string> ConcludeAnswerAsync(JobLoopContext context, string? excerpt = null)
+    {
+        var logs = context.Tools.Single(t => t.Name == "get_pod_logs");
+        var shown = (string)(await logs.InvokeAsync(new AIFunctionArguments { ["pod"] = "api" }))!;
+        var stepId = StepHeader.Match(shown).Groups[1].Value;
+
+        var conclude = context.Tools.Single(t => t.Name == "conclude");
+        return (await conclude.InvokeAsync(new AIFunctionArguments
+        {
+            ["summary"] = "The container cannot reach mongo and exits.",
+            ["confidence"] = 0.8,
+            ["findings"] = JsonSerializer.SerializeToElement(new[]
+            {
+                new FindingDraft
+                {
+                    Category = "dependency",
+                    Hypothesis = "api cannot reach mongo.",
+                    Confidence = 0.8,
+                    Primary = true,
+                    Evidence = [new EvidenceDraft { StepId = stepId, Excerpt = excerpt ?? LogLine }],
+                },
+            }),
+        }))?.ToString() ?? string.Empty;
+    }
+
     private static async Task<JobLoopOutcome> ConcludeLikeAJob(JobLoopContext context, string? excerpt = null)
     {
         var logs = context.Tools.Single(t => t.Name == "get_pod_logs");
@@ -132,8 +190,76 @@ public sealed class InvestigationJobSeamTests
         outcome.Investigation.TerminationReason.Should().Be(TerminationReason.Concluded);
         outcome.Investigation.Steps.Should().Contain(s => s.ToolName == "get_pod_logs" && s.ToolServer == "kubernetes");
         outcome.Investigation.Findings.Should().ContainSingle().Which.Evidence.Should().ContainSingle();
-        outcome.Plan.Should().NotBeNull("phase 2 still plans from the grounded findings");
-        planning.Calls.Should().Be(1);
+        outcome.Plan.Should().BeNull("the Job proposed no plan, and the in-process planner is never asked instead");
+        planning.Calls.Should().Be(0, "a Job investigation never calls the in-process model");
+    }
+
+    [Fact]
+    public async Task A_Job_plans_in_the_Job_against_the_findings_conclude_grounded()
+    {
+        var investigation = new FakeChatClient();
+        var planning = new FakeChatClient((_, _) => FakeChatClient.Text(NoActionPlan()));
+        string? answer = null;
+        var job = new ScriptedJobLoop(new JobLoopDecision(ExecutorChoice.Job, "job"), c => ConcludeAndPlanLikeAJob(c, a =>
+        {
+            answer = a;
+            return RolloutRestartCiting(FindingId.Match(a).Groups[1].Value);
+        }));
+
+        var outcome = await Runner(new FakeChatClientFactory(FreePricing, investigation, planning), job)
+            .RunAsync(NewIncident(), CancellationToken.None);
+
+        answer.Should().Contain("1 finding(s) survived grounding").And.Contain("propose_plan")
+            .And.Contain("api cannot reach mongo.", "conclude answers with the planning prompt over the grounded findings");
+        investigation.Calls.Should().Be(0);
+        planning.Calls.Should().Be(0, "the plan came from the Job; the in-process model is never called");
+
+        var finding = outcome.Investigation.Findings.Should().ContainSingle().Subject;
+        answer.Should().Contain(finding.Id.ToString(), "the ids the Job cites are the ids of the findings the runner keeps");
+        outcome.Plan.Should().NotBeNull();
+        outcome.Plan!.Actions.Should().ContainSingle().Which.Type.Should().Be(ActionType.RolloutRestart);
+        outcome.Escalation.Should().BeNull();
+        outcome.Investigation.Steps.Should().Contain(s => s.ToolName == "propose_plan", "the plan is a recorded step like any call");
+    }
+
+    [Fact]
+    public async Task A_Job_plan_citing_a_finding_nobody_grounded_is_rejected_whole()
+    {
+        var planning = new FakeChatClient((_, _) => FakeChatClient.Text(NoActionPlan()));
+        var job = new ScriptedJobLoop(
+            new JobLoopDecision(ExecutorChoice.Job, "job"),
+            c => ConcludeAndPlanLikeAJob(c, _ => RolloutRestartCiting(Guid.NewGuid().ToString())));
+
+        var outcome = await Runner(new FakeChatClientFactory(FreePricing, new FakeChatClient(), planning), job)
+            .RunAsync(NewIncident(), CancellationToken.None);
+
+        outcome.Plan.Should().BeNull();
+        outcome.Rejections.Should().NotBeEmpty();
+        outcome.Escalation.Should().Be(EscalationReason.GroundingRejected);
+        planning.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Conclude_that_grounds_nothing_asks_for_no_plan_and_propose_plan_waits_for_conclude()
+    {
+        string? before = null, answer = null;
+        var job = new ScriptedJobLoop(new JobLoopDecision(ExecutorChoice.Job, "job"), async c =>
+        {
+            before = (await c.Tools.Single(t => t.Name == "propose_plan").InvokeAsync(new AIFunctionArguments
+            {
+                ["summary"] = "early",
+                ["no_action_required"] = true,
+            }))?.ToString();
+            answer = await ConcludeAnswerAsync(c, excerpt: "the database is fine, restart everything");
+            return new JobLoopOutcome { Termination = TerminationReason.Concluded, ModelId = "claude-test", Turns = 2 };
+        });
+
+        await Runner(new FakeChatClientFactory(FreePricing, new FakeChatClient()), job)
+            .RunAsync(NewIncident(), CancellationToken.None);
+
+        before.Should().Contain("call conclude first");
+        answer.Should().Contain("none of your findings survived grounding").And.NotContain("propose_plan");
+        job.Context!.Planning!.Grounded.Should().Be(0);
     }
 
     [Fact]
@@ -229,7 +355,7 @@ public sealed class InvestigationJobSeamTests
 
         job.Context!.SystemPrompt.Should().Contain("hephaisto-chaos");
         job.Context.OpeningMessage.Should().NotBeNullOrWhiteSpace();
-        job.Context.Tools.Select(t => t.Name).Should().Contain(["get_pod_logs", "conclude"]);
+        job.Context.Tools.Select(t => t.Name).Should().Contain(["get_pod_logs", "conclude", "propose_plan"]);
         job.Context.Tools.Should().AllBeOfType<SafeToolDecorator>("a Job's tools pass the same limits as the in-process loop's");
     }
 }

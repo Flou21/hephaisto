@@ -331,6 +331,8 @@ export const INVESTIGATE_TOOLS = {
 };
 
 export const CONCLUDE_TOOL = 'mcp__hephaisto__conclude';
+/** After conclude, the one call left: the plan, made in the Job so Hephaisto never calls a model of its own. */
+export const PROPOSE_PLAN_TOOL = 'mcp__hephaisto__propose_plan';
 export const CONCLUDE_NOW = 'Conclude now with the evidence you have; call conclude.';
 /** The one "conclude now" turn may spend this share of the budget beyond the cap, and never more. */
 export const CONCLUDE_GRACE_SHARE = 0.1;
@@ -395,6 +397,7 @@ export async function runInvestigator(o: InvestigatorRunOptions): Promise<Invest
 
   let concludeOnly = false;
   let conclusion: Record<string, unknown> | null = null;
+  let planned = false;
   let rateLimited = false;
   let deadlineHit = false;
   let unauthorizedStreak = 0;
@@ -411,7 +414,10 @@ export async function runInvestigator(o: InvestigatorRunOptions): Promise<Invest
   };
 
   const verdict = (tool: string, input: unknown, cwd?: string) => {
-    if (conclusion) return { allow: false as const, reason: 'the investigation is already concluded; stop now' };
+    if (conclusion && (planned || tool !== PROPOSE_PLAN_TOOL)) {
+      return { allow: false as const, reason: planned ? 'the investigation is concluded and planned; stop now' : `the investigation is concluded; only ${PROPOSE_PLAN_TOOL} is left, then stop` };
+    }
+    if (conclusion) return evaluate(tool, input, 'investigate', { ...o.guard, cwd: cwd || o.guard.cwd });
     if (concludeOnly && tool !== CONCLUDE_TOOL) return { allow: false as const, reason: `only ${CONCLUDE_TOOL} is available now: conclude with the evidence you have` };
     return evaluate(tool, input, 'investigate', { ...o.guard, cwd: cwd || o.guard.cwd });
   };
@@ -531,6 +537,10 @@ export async function runInvestigator(o: InvestigatorRunOptions): Promise<Invest
           if (call.name === CONCLUDE_TOOL && b.is_error !== true && !conclusion) {
             conclusion = call.input;
             log.info('conclude returned without error: the investigation is concluded');
+          }
+          if (call.name === PROPOSE_PLAN_TOOL && b.is_error !== true && conclusion && !planned) {
+            planned = true;
+            log.info('propose_plan returned without error: the plan is recorded');
           }
         }
       }

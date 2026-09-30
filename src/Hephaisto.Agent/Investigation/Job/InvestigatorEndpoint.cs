@@ -188,7 +188,9 @@ public static class InvestigatorEndpoint
     {
         var name = parameters?["name"]?.GetValue<string>() ?? string.Empty;
 
-        if (session.Conclusion.Value is not null)
+        // After conclude only propose_plan is served: phase 2 happens in the Job (v0.12.0), and a
+        // plan is made from the findings conclude grounded, never from more looking around.
+        if (session.Conclusion.Value is not null && name != InvestigationRunner.ProposePlanToolName)
         {
             return ToolResult(
                 "REFUSED: this investigation has concluded. Stop here; nothing more is recorded.", isError: true);
