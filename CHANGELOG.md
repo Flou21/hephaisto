@@ -73,6 +73,9 @@ investigation's model loop in a Job; F1 to F4 follow in later candidates.
   read policy, and the API answers a missing cookie with 401 rather than a redirect, so nothing
   ever sent a browser to the IdP: the console was readable without OIDC, every viewer was
   anonymous, and close, approve and deny were disabled for approvers too. Production found it.
+  `v0.12.0-rc7` carried the first half only: the pages took the API's policy, whose bearer scheme
+  answers the challenge, so opening the console was a 401 rather than the IdP's login page. They
+  have a policy of their own now, and a signed-in user without the reader role gets a 403.
 
 ### Upgrading
 - **With `auth.enabled`, the ID token must carry the roles** before this lands, or every reader

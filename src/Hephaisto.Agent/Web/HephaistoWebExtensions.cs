@@ -92,7 +92,7 @@ public static class HephaistoWebExtensions
                 : Results.NotFound();
 
     /// <summary>
-    /// The console's pages and their circuit, behind the read policy.
+    /// The console's pages and their circuit, behind the read policy for pages.
     /// </summary>
     /// <remarks>
     /// The pages are where a person signs in: the API answers a missing cookie with a 401, never
@@ -108,7 +108,7 @@ public static class HephaistoWebExtensions
         app.MapRazorComponents<Components.App>()
             .AddInteractiveServerRenderMode()
             .WithStaticAssets()
-            .RequireAuthorization(AuthenticationExtensions.ReadPolicy);
+            .RequireAuthorization(AuthenticationExtensions.PagesPolicy);
 
         return app;
     }
