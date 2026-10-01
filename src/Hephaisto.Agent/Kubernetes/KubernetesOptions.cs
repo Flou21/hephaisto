@@ -134,14 +134,6 @@ public sealed class KubernetesOptions
     public TimeSpan RestartStormWindow { get; set; } = TimeSpan.FromMinutes(10);
 
     /// <summary>
-    /// Ready flips inside <see cref="ReadinessFlapWindow"/>. Four, not two: one ready-&gt;
-    /// not-ready-&gt;ready cycle is a rolling update or a slow start, not a flap.
-    /// </summary>
-    public int ReadinessFlapThreshold { get; set; } = 4;
-
-    public TimeSpan ReadinessFlapWindow { get; set; } = TimeSpan.FromMinutes(10);
-
-    /// <summary>
     /// Lines requested from the kubelet before digestion. Generous because
     /// <c>LogDigester</c> collapses repetition anyway, and the failure is usually near the
     /// start of a crash loop rather than the end.
