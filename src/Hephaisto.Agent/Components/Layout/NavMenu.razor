@@ -1,3 +1,4 @@
+@using Microsoft.AspNetCore.Components.Authorization
 @using Hephaisto.Agent.CodeFix
 @inject IncidentQueries Queries
 @inject IServiceScopeFactory Scopes
@@ -38,31 +39,41 @@
         </li>
     </ul>
 
-    @* Static markup and a plain onclick, deliberately not an @@onclick handler. A theme is
-       this browser's preference, stored in this browser, and making it a circuit round trip
-       would mean it stops working while the circuit is down - which is exactly when someone
-       is squinting at this page. It ships with no label because app.js writes the one that
-       is true for this reader; a server-rendered label would be wrong for everybody who
-       chose. *@
-    <button type="button"
-            class="hp-theme"
-            data-theme-control
-            data-testid="theme-control"
-            title="Cycle the theme: system, light, dark. Remembered in this browser only."
-            onclick="window.hephaisto.cycleTheme()">theme </button>
-
     @if (_status is { WatchdogStale: true })
     {
         <div class="hp-nav-alarm" title="The AgentWatchdog alert has stopped arriving. Something between Prometheus and this pod is broken.">
             <span class="glyph">!!</span> alert path
         </div>
     }
+
+    @* Who this browser is acting as, on every page rather than only beside a button: the name
+       here is the one every action from this tab is recorded under. It leads to the account
+       page, which also holds the theme - so it is drawn when nobody is signed in too. *@
+    <NavLink href="account" class="hp-profile" data-testid="profile"
+             title="@(_viewer.Authenticated ? $"Signed in as {_viewer.SignedInAs}. Account, roles and theme." : "Account and theme.")">
+        @if (_viewer.Authenticated)
+        {
+            <span class="hp-profile-initial" aria-hidden="true">@ProfileInitial</span>
+            <span data-testid="profile-name">@_viewer.SignedInAs</span>
+        }
+        else
+        {
+            <span>account</span>
+        }
+    </NavLink>
 </nav>
 
 @code {
     private AgentStatusView? _status;
     private CodeFixCounts? _codeFixes;
     private CancellationTokenSource? _cts;
+    private ConsoleViewer _viewer = ConsoleViewer.Anonymous;
+
+    [Inject]
+    private AuthenticationStateProvider? AuthProvider { get; set; }
+
+    private string ProfileInitial =>
+        _viewer.SignedInAs is { Length: > 0 } name ? name[..1].ToUpperInvariant() : "?";
 
     private int CodeFixBadge => _codeFixes is { } c ? c.Running + c.AwaitingApproval : 0;
 
@@ -100,6 +111,9 @@
     protected override async Task OnInitializedAsync()
     {
         _cts = new CancellationTokenSource();
+
+        // No authorization service: the navigation only names the viewer, it decides nothing.
+        _viewer = await ConsoleViewer.ResolveAsync(AuthProvider, authorization: null);
         await RefreshAsync();
         _ = PollAsync(_cts.Token);
         _ = ListenAsync(_cts.Token);

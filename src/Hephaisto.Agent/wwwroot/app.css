@@ -205,61 +205,134 @@ h4 {
     font-weight: 600;
 }
 
-/* The theme control. `margin-left: auto` here rather than on the alarm alone, so the pair
-   sits together at the right end: the first auto margin takes the free space and the alarm
-   follows immediately after it.
+/* The profile link, at the right end. `margin-left: auto` takes the free space; when the alarm
+   is present it owns that space instead and the link follows it.
 
-   Quiet by design. It is a preference, not a state anyone needs to read at a glance, and it
+   Quiet by design. Who is signed in is not a state anyone needs to read at a glance, and it
    sits in the same chrome as the mode badge - which IS load-bearing and must stay the thing
    the eye lands on. */
-.hp-theme {
+.hp-profile {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
     margin-left: auto;
-    padding: 0.1rem 0.4rem;
+    padding: 0.1rem 0.45rem 0.1rem 0.2rem;
     border: 1px solid var(--border);
-    border-radius: 2px;
-    background: transparent;
-    color: var(--fg-faint);
-    font-family: var(--mono);
-    font-size: var(--text-sm);
-    cursor: pointer;
-}
-
-/* THE LABEL IS CSS, NOT JAVASCRIPT, and that is not a stylistic preference.
-   `<Routes>` renders interactively, so Blazor replaces the body subtree once the circuit takes
-   over - which wiped a label written by app.js on load and left the button reading "theme"
-   with no state at all. Same shape as backlog #48: acting on the static render and being
-   overwritten by the live one.
-
-   `data-theme` lives on <html>, which Blazor does not own, so a rule keyed off it survives
-   every re-render with no re-application and no observer. Absent means system, which is also
-   what an unreadable or unrecognised stored value degrades to. */
-.hp-theme::after {
-    content: "system";
-}
-
-:root[data-theme="light"] .hp-theme::after {
-    content: "light";
-}
-
-:root[data-theme="dark"] .hp-theme::after {
-    content: "dark";
-}
-
-.hp-theme:hover {
-    background: var(--bg-hover);
+    border-radius: var(--radius);
     color: var(--fg-dim);
+    font-family: var(--mono);
+    font-size: var(--text-lg);
 }
 
-.hp-theme:focus-visible {
+.hp-nav-alarm + .hp-profile {
+    margin-left: 0.6rem;
+}
+
+.hp-profile:hover {
+    background: var(--bg-hover);
+    color: var(--fg);
+    text-decoration: none;
+}
+
+.hp-profile.active {
+    color: var(--fg);
+    border-color: var(--accent);
+}
+
+.hp-profile:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
 }
 
-/* When the alarm is present it, not the button, owns the free space - otherwise the alarm
-   would be pushed flush against the button and read as part of it. */
-.hp-nav-alarm + .hp-theme,
-.hp-theme ~ .hp-nav-alarm {
-    margin-left: 0.6rem;
+/* Signed out there is no initial, and the label needs the padding the badge would have had. */
+.hp-profile > span:only-child {
+    padding-left: 0.25rem;
+}
+
+.hp-profile-initial {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.35rem;
+    height: 1.35rem;
+    border-radius: var(--radius-sm);
+    background: var(--bg-sunken);
+    border: 1px solid var(--border-strong);
+    color: var(--fg);
+    font-size: var(--text-sm);
+    font-weight: 700;
+}
+
+/* ---------------------------------------------------------------- account */
+
+.hp-roles {
+    list-style: none;
+    margin: 0 0 0.7rem;
+    padding: 0;
+    display: grid;
+    gap: 0.3rem;
+}
+
+.hp-roles li {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.hp-theme-choices {
+    display: inline-flex;
+    margin-bottom: 0.5rem;
+}
+
+.hp-theme-choice {
+    padding: 0.25rem 0.8rem;
+    border: 1px solid var(--border-strong);
+    background: transparent;
+    color: var(--fg-dim);
+    font-family: var(--mono);
+    font-size: var(--text-lg);
+    cursor: pointer;
+}
+
+.hp-theme-choice + .hp-theme-choice {
+    margin-left: -1px;
+}
+
+.hp-theme-choice:first-child {
+    border-radius: var(--radius) 0 0 var(--radius);
+}
+
+.hp-theme-choice:last-child {
+    border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.hp-theme-choice:hover {
+    background: var(--bg-hover);
+    color: var(--fg);
+}
+
+.hp-theme-choice:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+/* WHICH ONE IS CHOSEN IS CSS, NOT JAVASCRIPT, and that is not a stylistic preference.
+   `<Routes>` renders interactively, so Blazor replaces the body subtree once the circuit takes
+   over - which wipes anything app.js wrote onto these buttons on load. Same shape as backlog
+   #48: acting on the static render and being overwritten by the live one.
+
+   `data-theme` lives on <html>, which Blazor does not own, so a rule keyed off it survives
+   every re-render with no re-application and no observer. Absent means system, which is also
+   what an unreadable or unrecognised stored value degrades to. */
+:root:not([data-theme]) .hp-theme-choice[data-theme-option="system"],
+:root[data-theme="light"] .hp-theme-choice[data-theme-option="light"],
+:root[data-theme="dark"] .hp-theme-choice[data-theme-option="dark"] {
+    position: relative;
+    border-color: var(--accent);
+    background: var(--bg-raised);
+    color: var(--fg);
+    font-weight: 600;
 }
 
 /* ---------------------------------------------------------------- tables */

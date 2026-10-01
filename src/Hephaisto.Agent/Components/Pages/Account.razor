@@ -1,0 +1,169 @@
+@page "/account"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.Extensions.Options
+@using Hephaisto.Agent.Options
+@inject IAuthorizationService Authorization
+@inject IOptions<AuthOptions> Auth
+@inject IJSRuntime Js
+
+<PageTitle>hephaisto — account</PageTitle>
+
+<h1>account</h1>
+
+<section class="hp-section">
+    <h2>identity</h2>
+
+    @if (_profile.Authenticated)
+    {
+        <dl class="hp-kv" data-testid="account-identity">
+            <dt>username</dt>
+            <dd class="mono" data-testid="account-username">@_profile.Username</dd>
+
+            @if (_profile.FullName is not null)
+            {
+                <dt>name</dt>
+                <dd>@_profile.FullName</dd>
+            }
+
+            @if (_profile.Email is not null)
+            {
+                <dt>email</dt>
+                <dd class="mono">@_profile.Email</dd>
+            }
+
+            @if (_profile.Subject is not null)
+            {
+                <dt>subject</dt>
+                <dd class="mono hp-muted">@_profile.Subject</dd>
+            }
+        </dl>
+
+        <p class="hp-muted">
+            The username is what the incident timeline and the audit trail record for everything
+            done from this browser. It comes from the sign-in and cannot be typed over.
+        </p>
+    }
+    else if (_profile.SignInEnabled)
+    {
+        <p class="hp-muted" data-testid="account-identity">Not signed in.</p>
+    }
+    else
+    {
+        <p class="hp-muted" data-testid="account-identity">
+            Sign-in is off on this install, so nobody is signed in. Actions are attributed to the
+            name typed beside them.
+        </p>
+    }
+</section>
+
+@if (_profile.Authenticated)
+{
+    <section class="hp-section">
+        <h2>access</h2>
+
+        <dl class="hp-kv" data-testid="account-access">
+            <dt>read</dt>
+            <dd>
+                <span class="hp-yes"><span class="glyph">+</span> yes</span>
+                <span class="hp-muted">
+                    @(_profile.ReaderRole is { } reader ? $"— holds {reader}" : "— any signed-in user may read")
+                </span>
+            </dd>
+
+            <dt>decide</dt>
+            <dd data-testid="account-may-decide" data-allowed="@(_profile.MayDecide ? "true" : "false")">
+                @if (_profile.MayDecide)
+                {
+                    <span class="hp-yes"><span class="glyph">+</span> yes</span>
+                    <span class="hp-muted">
+                        @(_profile.ApproverRole is { } approver ? $"— holds {approver}" : "— any signed-in user may decide")
+                    </span>
+                }
+                else
+                {
+                    <span class="hp-no"><span class="glyph">-</span> no</span>
+                    <span class="hp-muted">— needs @_profile.ApproverRole</span>
+                }
+            </dd>
+        </dl>
+
+        <h3>roles</h3>
+
+        @if (_profile.Roles.Count == 0)
+        {
+            <p class="hp-muted" data-testid="account-roles">The sign-in carried no roles.</p>
+        }
+        else
+        {
+            <ul class="hp-roles" data-testid="account-roles">
+                @foreach (var role in _profile.Roles)
+                {
+                    <li>
+                        <span class="hp-chip mono @(role.Grants is null ? "" : "chip-primary")">@role.Name</span>
+                        <span class="hp-muted">@(role.Grants ?? "not used by this console")</span>
+                    </li>
+                }
+            </ul>
+        }
+
+        <p class="hp-note">
+            <span class="glyph">i</span>
+            Roles are read once, at sign-in, and a session lasts up to eight hours of use. A role
+            granted or removed since then shows here after the next sign-in.
+        </p>
+    </section>
+}
+
+<section class="hp-section">
+    <h2>appearance</h2>
+
+    @* Static markup and plain onclick, deliberately not @@onclick handlers. A theme is this
+       browser's preference, stored in this browser, and making it a circuit round trip would
+       mean it stops working while the circuit is down. Which one is chosen is painted by CSS
+       off the attribute on <html>, which Blazor does not own - see .hp-theme-choice. *@
+    <div class="hp-theme-choices" role="group" aria-label="Theme" data-testid="theme-choices">
+        <button type="button" class="hp-theme-choice" data-theme-option="system"
+                onclick="window.hephaisto.setTheme('system')">system</button>
+        <button type="button" class="hp-theme-choice" data-theme-option="light"
+                onclick="window.hephaisto.setTheme('light')">light</button>
+        <button type="button" class="hp-theme-choice" data-theme-option="dark"
+                onclick="window.hephaisto.setTheme('dark')">dark</button>
+    </div>
+
+    <p class="hp-muted">
+        System follows the operating system. Remembered in this browser only, not on the account.
+    </p>
+</section>
+
+@code {
+    private ConsoleProfile _profile = ConsoleProfile.From(ConsoleViewer.Anonymous, new AuthOptions());
+
+    [Inject]
+    private AuthenticationStateProvider? AuthProvider { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var viewer = await ConsoleViewer.ResolveAsync(AuthProvider, Authorization);
+        _profile = ConsoleProfile.From(viewer, Auth.Value);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        try
+        {
+            // Only the accessible state: the interactive render replaced the buttons app.js
+            // marked on load, and aria-pressed is the one part a stylesheet cannot express.
+            await Js.InvokeVoidAsync("hephaisto.syncTheme");
+        }
+        catch (Exception e) when (e is JSException or JSDisconnectedException or OperationCanceledException)
+        {
+            // app.js did not load, or the tab is gone. The choice still works and still shows.
+        }
+    }
+}

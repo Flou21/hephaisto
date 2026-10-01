@@ -54,6 +54,10 @@ investigation's model loop in a Job; F1 to F4 follow in later candidates.
   model. Default `inprocess`, as in rc1-rc3.
 - **Telemetry.** `hephaisto.investigation.terminations` gains an `executor` label;
   `hephaisto.investigation.job.fallbacks{reason,fallback}` is new; two dashboard panels.
+- **Who is signed in, on every page.** The navigation ends in the signed-in username, linking to a
+  new account page (`/account`): username, name, email, every role the sign-in carried with what
+  each one allows here, and whether this account may decide. The answer to "why can I not close
+  this" no longer needs a token decoded in the IdP.
 
 ### Changed
 - **The watcher no longer opens `ReadinessFlapping` incidents** ([#159](docs/backlog.md#159)).
@@ -63,6 +67,8 @@ investigation's model loop in a Job; F1 to F4 follow in later candidates.
   stays not-ready is the `KubePodNotReady` rule's, as `PodNotReady`; the `TargetFlapping` rule
   still raises `ReadinessFlapping` through Alertmanager. `Kubernetes:ReadinessFlapThreshold` and
   `Kubernetes:ReadinessFlapWindow` are removed; a value still set for them is ignored.
+- **The theme choice moved to the account page**, as three buttons (system, light, dark) in
+  place of the button in the navigation that cycled through them. Still remembered per browser.
 - **`Kubernetes:IgnoredKinds`** - signal kinds the watcher never reports, empty by default. For a
   cluster whose alert rules cover a kind better: production ignores `Unschedulable`, because the
   watcher fired on a cait-scraper rollout's first scheduler refusal (01a0f29f, 2026-09-30) while

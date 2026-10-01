@@ -320,9 +320,9 @@ past.
   console is opened on a desktop by somebody on call; a phone layout has never been attempted and
   should not be claimed.
 - **There is no spacing scale.** See rule 4.
-- **There is no theme toggle.** Both themes are first-class, and selection is delegated entirely to
-  the operating system through `prefers-color-scheme` — so a reader on a dark OS who wants light has
-  no way to ask. The `localStorage` interop a toggle would need already exists and is proven.
+- **The theme choice lives in one browser.** System, light or dark is chosen on the account page
+  and remembered in `localStorage`, so it does not follow a person to another machine. Storing it
+  on the account would need somewhere to keep per-user state, and this console has none.
 - **Two components are duplicated** and should be consolidated: `hp-meter-*` and `hp-conf-*` are
   unrelated implementations of a bar, and `hp-code` and `hp-excerpt` are near-duplicate treatments
   of a monospace block.
