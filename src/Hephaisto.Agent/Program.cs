@@ -134,8 +134,6 @@ app.MapHephaistoEndpoints();
 app.MapHephaistoMcp();
 app.MapInvestigatorEndpoint();
 
-app.MapRazorComponents<App>()
-    .AddInteractiveServerRenderMode()
-    .WithStaticAssets();
+app.MapHephaistoConsolePages();
 
 await app.RunAsync();
