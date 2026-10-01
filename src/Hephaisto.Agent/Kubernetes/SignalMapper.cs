@@ -7,15 +7,15 @@ using Hephaisto.Core.Fingerprinting;
 namespace Hephaisto.Agent.Kubernetes;
 
 /// <summary>
-/// What the watcher remembers about a pod between two observations, reduced to the two
-/// numbers that cannot be read off a single snapshot.
+/// What the watcher remembers about a pod between two observations, reduced to the one
+/// number that cannot be read off a single snapshot.
 /// </summary>
 /// <remarks>
 /// A restart count of 40 says nothing on its own - it may have been 40 for a week. What
 /// matters is how many of those happened recently, and a snapshot cannot know that. The
 /// watcher keeps the window; the mapper stays a pure function of what it is handed.
 /// </remarks>
-public readonly record struct PodTrend(int RestartsInWindow, int ReadyTransitionsInWindow)
+public readonly record struct PodTrend(int RestartsInWindow)
 {
     /// <summary>For a first observation, a relist, or any caller with no history.</summary>
     public static PodTrend None => default;
@@ -25,7 +25,7 @@ public readonly record struct PodTrend(int RestartsInWindow, int ReadyTransition
 /// The counts at which a trend becomes a signal. Passed in rather than read from options so
 /// the mapper has no configuration dependency and a test can state the threshold it means.
 /// </summary>
-public sealed record SignalThresholds(int RestartStormCount = 3, int ReadinessFlapCount = 4)
+public sealed record SignalThresholds(int RestartStormCount = 3)
 {
     public static SignalThresholds Default { get; } = new();
 }
@@ -241,10 +241,7 @@ public static class SignalMapper
         var reason = kubeEvent.Reason ?? string.Empty;
         var message = kubeEvent.Message ?? string.Empty;
 
-        // Count, not just reason: see EventKind's Unhealthy arm. Kubernetes aggregates
-        // repeated identical events, so Count IS the evidence of repetition, and a null
-        // Count is treated as one occurrence rather than assumed to be many.
-        if (EventKind(reason, message, kubeEvent.Count ?? 1) is not { } kind)
+        if (EventKind(reason, message) is not { } kind)
         {
             return null;
         }
@@ -408,17 +405,10 @@ public static class SignalMapper
                 null);
         }
 
-        // 8. Ready oscillating while the container keeps running. Deliberately last: if
-        //    restarts are climbing too, this is the wrong runbook and the checks above own it.
-        if (trend.ReadyTransitionsInWindow >= thresholds.ReadinessFlapCount)
-        {
-            return new Outcome(
-                SignalKind.ReadinessFlapping,
-                "ReadinessFlapping",
-                $"pod readiness changed {trend.ReadyTransitionsInWindow} times in the trend window "
-                    + "without restarting",
-                null);
-        }
+        // No readiness detector. The watcher used to raise ReadinessFlapping from Ready
+        // transitions and from Unhealthy events; both fire on every rollout of a slow starter
+        // (a Mimir upgrade opened one per component) and were most of production's incidents.
+        // A pod stuck not-ready is the KubePodNotReady rule's, as PodNotReady (backlog #159).
 
         return null;
     }
@@ -511,37 +501,7 @@ public static class SignalMapper
     // Event and alert vocabularies
     // ------------------------------------------------------------------
 
-    /// <summary>
-    /// How many times a readiness probe must have failed before it is called <b>flapping</b>.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Deliberately the same number as <see cref="SignalThresholds.ReadinessFlapCount"/>, which
-    /// governs the other detector for this same kind three hundred lines above. That one counts
-    /// ready-transitions in a window and refuses to call anything flapping below four. This one
-    /// used to claim it from <b>one</b> warning event, so the same file held two detectors for
-    /// one <see cref="SignalKind"/> with thresholds of four and of one.
-    /// </para>
-    /// <para>
-    /// What that cost, measured on the v0.7.0 gate: a readiness probe fails once on every pod
-    /// that takes longer to start than its <c>initialDelaySeconds</c>, which is every ordinary
-    /// rollout. c14's incident was opened 21 seconds after its deliberate bad deploy by an
-    /// <c>Unhealthy</c> event, classified <c>ReadinessFlapping</c>, and every later signal -
-    /// including the error-rate alert the fixture exists to raise - correlated into an incident
-    /// already labelled as a flap. The investigation was then handed the flap runbook, whose
-    /// entire argument is that the fault is intermittent and that restarting will not help,
-    /// against a fixture whose correct answer is a rollback.
-    /// </para>
-    /// <para>
-    /// A pod that is genuinely stuck not-ready still reports: the event repeats, Count climbs,
-    /// and the shipped <c>KubePodNotReady</c> rule covers it at two minutes as
-    /// <see cref="SignalKind.PodNotReady"/>. Nothing is lost by declining to call one failure a
-    /// flap; a claim of oscillation needs evidence of oscillation.
-    /// </para>
-    /// </remarks>
-    private const int ReadinessFlapEventCount = 4;
-
-    private static SignalKind? EventKind(string reason, string message, int count) => reason switch
+    private static SignalKind? EventKind(string reason, string message) => reason switch
     {
         "FailedScheduling" => SignalKind.Unschedulable,
         "OOMKilling" or OomKilledReason => SignalKind.OomKilled,
@@ -562,12 +522,6 @@ public static class SignalMapper
             || message.Contains("ErrImagePull", StringComparison.OrdinalIgnoreCase) => SignalKind.ImagePullBackOff,
         "Failed" when message.Contains("CreateContainerConfigError", StringComparison.OrdinalIgnoreCase)
             => SignalKind.ConfigError,
-
-        // Flapping means INTERMITTENT, and one probe failure is not intermittent - it is a
-        // pod starting up. See ReadinessFlapEventCount.
-        "Unhealthy" when message.Contains("Readiness probe", StringComparison.OrdinalIgnoreCase)
-            && count >= ReadinessFlapEventCount
-            => SignalKind.ReadinessFlapping,
 
         // Everything else is a warning about something Hephaisto has no runbook for.
         // Ingesting it would add cost and noise without adding a diagnosis.

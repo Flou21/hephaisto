@@ -256,8 +256,8 @@ public class SignalMapperTests
     {
         var pod = K8sFixtures.Pod(containers: [K8sFixtures.Container(restartCount: 9)]);
 
-        var quiet = SignalMapper.FromPod(pod, K8sFixtures.Cluster, K8sFixtures.Now, new PodTrend(2, 0));
-        var storm = SignalMapper.FromPod(pod, K8sFixtures.Cluster, K8sFixtures.Now, new PodTrend(5, 0));
+        var quiet = SignalMapper.FromPod(pod, K8sFixtures.Cluster, K8sFixtures.Now, new PodTrend(2));
+        var storm = SignalMapper.FromPod(pod, K8sFixtures.Cluster, K8sFixtures.Now, new PodTrend(5));
 
         // A high total restart count with no recent restarts is history, not an incident.
         quiet.Should().BeNull();
@@ -265,31 +265,14 @@ public class SignalMapperTests
     }
 
     [Fact]
-    public void Readiness_oscillation_becomes_ReadinessFlapping()
+    public void A_pod_that_is_not_ready_but_running_produces_no_signal()
     {
+        // Readiness is no longer the watcher's to judge: every rollout of a slow starter looked
+        // like a flap. A pod that stays not-ready is the KubePodNotReady rule's (backlog #159).
         var pod = K8sFixtures.Pod(containers: [K8sFixtures.Container(ready: false)]);
 
-        var signal = SignalMapper.FromPod(pod, K8sFixtures.Cluster, K8sFixtures.Now, new PodTrend(0, 6));
-
-        signal!.Kind.Should().Be(SignalKind.ReadinessFlapping);
-    }
-
-    /// <summary>
-    /// Flapping is only the right story while the container keeps running. Once restarts are
-    /// climbing as well it is a different incident, and the ReadinessFlapping runbook - whose
-    /// whole point is "do not restart this" - would be the wrong one to reach for.
-    /// </summary>
-    [Fact]
-    public void A_crash_loop_outranks_flapping_readiness()
-    {
-        var pod = K8sFixtures.Pod(containers:
-        [
-            K8sFixtures.Container(ready: false, restartCount: 7, state: K8sFixtures.Waiting("CrashLoopBackOff")),
-        ]);
-
-        var signal = SignalMapper.FromPod(pod, K8sFixtures.Cluster, K8sFixtures.Now, new PodTrend(5, 8));
-
-        signal!.Kind.Should().Be(SignalKind.CrashLoopBackOff);
+        SignalMapper.FromPod(pod, K8sFixtures.Cluster, K8sFixtures.Now, PodTrend.None)
+            .Should().BeNull();
     }
 
     [Fact]
@@ -444,80 +427,25 @@ public class SignalMapperTests
         SignalMapper.FromEvent(kubeEvent, K8sFixtures.Cluster)!.Count.Should().Be(214);
     }
 
-    // ---------------------------------------------------------------------------------
-    // A readiness probe failing once is a pod starting, not a pod flapping.
-    // ---------------------------------------------------------------------------------
-    //
-    // Found on the v0.7.0 gate. This file already had a detector for ReadinessFlapping that
-    // refuses to claim it below SignalThresholds.ReadinessFlapCount ready-transitions - and
-    // three hundred lines below it, a second detector for the same kind that claimed it from a
-    // single Unhealthy event. Two thresholds for one word: four, and one.
-    //
-    // The consequence was not subtle. Every pod that takes longer to start than its
-    // initialDelaySeconds emits one of these, so every ordinary rollout opened an incident
-    // asserting the workload was flapping - and because it opened FIRST, every later signal
-    // correlated into an incident already carrying the wrong kind and therefore the wrong
-    // runbook.
-
-    [Fact]
-    public void One_readiness_probe_failure_is_not_a_flap()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(9)]
+    [InlineData(500)]
+    public void A_failing_readiness_probe_opens_nothing_however_often_it_fails(int count)
     {
-        var signal = SignalMapper.FromEvent(
-            EventWithCount("Warning", "Unhealthy", "Readiness probe failed: HTTP probe failed with statuscode: 503", count: 1),
-            K8sFixtures.Cluster);
-
-        signal.Should().BeNull(
-            "a probe that has failed once is a pod that has not finished starting; claiming it "
-            + "is flapping opens an incident on every ordinary rollout and hands the "
-            + "investigation a runbook written for an intermittent fault");
+        // The watcher used to call four of these a flap. Kubernetes keeps counting for the
+        // event's whole life, so a slow rollout - a Mimir upgrade, one incident per component -
+        // crossed it as easily as a sick pod did (backlog #159).
+        SignalMapper.FromEvent(
+            EventWithCount("Warning", "Unhealthy", "Readiness probe failed: HTTP probe failed with statuscode: 503", count),
+            K8sFixtures.Cluster)
+            .Should().BeNull();
     }
 
     [Fact]
-    public void A_readiness_probe_failing_repeatedly_is_a_flap()
+    public void A_liveness_probe_failure_is_not_a_signal_either()
     {
-        var signal = SignalMapper.FromEvent(
-            EventWithCount("Warning", "Unhealthy", "Readiness probe failed: HTTP probe failed with statuscode: 503", count: 9),
-            K8sFixtures.Cluster);
-
-        signal.Should().NotBeNull();
-        signal!.Kind.Should().Be(SignalKind.ReadinessFlapping);
-    }
-
-    [Fact]
-    public void The_two_detectors_of_this_one_kind_agree_on_what_flapping_requires()
-    {
-        // The actual defect was that they disagreed, so the threshold is asserted rather than
-        // just its effect. If somebody tunes one, this fails until they consider the other.
-        var justBelow = SignalMapper.FromEvent(
-            EventWithCount("Warning", "Unhealthy", "Readiness probe failed", count: new SignalThresholds().ReadinessFlapCount - 1),
-            K8sFixtures.Cluster);
-
-        var atThreshold = SignalMapper.FromEvent(
-            EventWithCount("Warning", "Unhealthy", "Readiness probe failed", count: new SignalThresholds().ReadinessFlapCount),
-            K8sFixtures.Cluster);
-
-        justBelow.Should().BeNull();
-        atThreshold.Should().NotBeNull();
-    }
-
-    [Fact]
-    public void An_event_with_no_count_at_all_is_treated_as_one_occurrence()
-    {
-        // Count is nullable, and the newer Events API does not always populate it. Absent
-        // evidence of repetition must not be read as evidence of repetition - the whole point
-        // of the claim is that it happened more than once.
-        var signal = SignalMapper.FromEvent(
-            EventWithCount("Warning", "Unhealthy", "Readiness probe failed", count: null),
-            K8sFixtures.Cluster);
-
-        signal.Should().BeNull();
-    }
-
-    [Fact]
-    public void A_liveness_probe_failure_is_still_not_this_signal()
-    {
-        // Guards the message match, not the count: liveness failures lead to restarts, which
-        // CrashLoopBackOff and RestartStorm own.
+        // Liveness failures lead to restarts, which CrashLoopBackOff and RestartStorm own.
         SignalMapper.FromEvent(
             EventWithCount("Warning", "Unhealthy", "Liveness probe failed: connection refused", count: 20),
             K8sFixtures.Cluster)

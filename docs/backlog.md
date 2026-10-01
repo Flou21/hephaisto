@@ -2630,7 +2630,9 @@ thirds of all of them, and the investigations of the traced one ended without ev
 
 **What to do.** Count failures in a window, from the event's first and last timestamps or from
 the trend tracker (`Kubernetes/PodTrendTracker.cs`), and never call a pod whose Ready condition
-has not changed "flapping". **Size.** S. Open.
+has not changed "flapping". **Size.** S. **Fixed in v0.12.0** by removal instead: on 2026-10-01 a
+Mimir rollout opened one incident per component, and the user dropped the watcher's readiness
+detectors outright rather than tune them. Stuck pods stay covered by `KubePodNotReady`.
 
 ### 160. `get_pod_logs` cannot read a pod with a sidecar
 

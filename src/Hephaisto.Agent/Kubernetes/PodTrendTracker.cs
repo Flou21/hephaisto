@@ -5,15 +5,15 @@ using k8s.Models;
 namespace Hephaisto.Agent.Kubernetes;
 
 /// <summary>
-/// Turns a stream of pod snapshots into the two rates a snapshot cannot express.
+/// Turns a stream of pod snapshots into the restart rate a snapshot cannot express.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <c>restartCount: 40</c> is not a problem statement. Forty restarts over three weeks is a
-/// workload that occasionally hiccups; forty in ten minutes is an incident. The same is true
-/// of readiness: a pod that has been ready and not-ready once is starting up, and one that has
-/// flipped six times in ten minutes is flapping. Both distinctions need memory, so it lives
-/// here and <see cref="SignalMapper"/> stays a pure function.
+/// workload that occasionally hiccups; forty in ten minutes is an incident. That distinction
+/// needs memory, so it lives here and <see cref="SignalMapper"/> stays a pure function.
+/// Readiness used to be tracked here too; see <see cref="SignalMapper"/>'s note on why the
+/// watcher no longer raises ReadinessFlapping.
 /// </para>
 /// <para>
 /// Keyed on the pod UID, not on namespace/name: a recreated pod with the same name is a
@@ -21,7 +21,7 @@ namespace Hephaisto.Agent.Kubernetes;
 /// a Deployment is rolled.
 /// </para>
 /// </remarks>
-public sealed class PodTrendTracker(TimeSpan restartWindow, TimeSpan readinessWindow)
+public sealed class PodTrendTracker(TimeSpan restartWindow)
 {
     private readonly ConcurrentDictionary<string, State> states = new(StringComparer.Ordinal);
 
@@ -43,9 +43,6 @@ public sealed class PodTrendTracker(TimeSpan restartWindow, TimeSpan readinessWi
             }
         }
 
-        var ready = pod.Status?.Conditions?.FirstOrDefault(c => c.Type == "Ready") is { } condition
-            && string.Equals(condition.Status, "True", StringComparison.Ordinal);
-
         lock (state)
         {
             if (state.LastRestartCount is { } previous && restarts > previous)
@@ -59,19 +56,11 @@ public sealed class PodTrendTracker(TimeSpan restartWindow, TimeSpan readinessWi
             }
 
             state.LastRestartCount = restarts;
-
-            if (state.LastReady is { } wasReady && wasReady != ready)
-            {
-                state.ReadyFlips.Enqueue(now);
-            }
-
-            state.LastReady = ready;
             state.LastSeen = now;
 
             Trim(state.Restarts, now - restartWindow);
-            Trim(state.ReadyFlips, now - readinessWindow);
 
-            return new PodTrend(state.Restarts.Count, state.ReadyFlips.Count);
+            return new PodTrend(state.Restarts.Count);
         }
     }
 
@@ -117,12 +106,8 @@ public sealed class PodTrendTracker(TimeSpan restartWindow, TimeSpan readinessWi
     {
         public int? LastRestartCount { get; set; }
 
-        public bool? LastReady { get; set; }
-
         public DateTimeOffset LastSeen { get; set; } = DateTimeOffset.UtcNow;
 
         public Queue<DateTimeOffset> Restarts { get; } = new();
-
-        public Queue<DateTimeOffset> ReadyFlips { get; } = new();
     }
 }

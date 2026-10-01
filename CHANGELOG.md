@@ -55,6 +55,15 @@ investigation's model loop in a Job; F1 to F4 follow in later candidates.
 - **Telemetry.** `hephaisto.investigation.terminations` gains an `executor` label;
   `hephaisto.investigation.job.fallbacks{reason,fallback}` is new; two dashboard panels.
 
+### Changed
+- **The watcher no longer opens `ReadinessFlapping` incidents** ([#159](docs/backlog.md#159)).
+  Both detectors are gone: four `Unhealthy` readiness events (a lifetime count, so any slow
+  rollout crossed it - a Mimir upgrade opened one incident per component) and four Ready
+  transitions in ten minutes. They were 204 of 264 production incidents in two weeks. A pod that
+  stays not-ready is the `KubePodNotReady` rule's, as `PodNotReady`; the `TargetFlapping` rule
+  still raises `ReadinessFlapping` through Alertmanager. `Kubernetes:ReadinessFlapThreshold` and
+  `Kubernetes:ReadinessFlapWindow` are removed; a value still set for them is ignored.
+
 ### Upgrading
 - **Nothing changes until `investigation.job.enabled` is set**, and enabling it switches no
   investigation over by itself: the executor defaults to `inprocess`. An install that does not set
@@ -65,7 +74,7 @@ investigation's model loop in a Job; F1 to F4 follow in later candidates.
   `investigations.executor`; existing rows read as in-process) and `FindingCodeRefs`
   (`findings.code_refs` jsonb, default empty).
 - **Before production:** resolve backlog #118 (the OAuth token's terms for headless use), and land
-  #159 and #160 first, or most of the subscription goes on readiness flaps whose logs cannot be read.
+  #160 first (#159 is in this release), or investigations of mesh-injected pods cannot read logs.
 - A subscription run is charged $0 to the global LLM budget (its notional cost is in the step);
   the Job caps bound it. An API-key run is charged what it cost.
 

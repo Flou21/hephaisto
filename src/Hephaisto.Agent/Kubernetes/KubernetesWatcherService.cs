@@ -82,8 +82,8 @@ public sealed class KubernetesWatcherService : BackgroundService
         this.time = time;
         this.logger = logger;
 
-        trends = new PodTrendTracker(this.options.RestartStormWindow, this.options.ReadinessFlapWindow);
-        thresholds = new SignalThresholds(this.options.RestartStormThreshold, this.options.ReadinessFlapThreshold);
+        trends = new PodTrendTracker(this.options.RestartStormWindow);
+        thresholds = new SignalThresholds(this.options.RestartStormThreshold);
 
         var meter = meterFactory.Create(HephaistoTelemetry.MeterName);
         signalsReceived = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.SignalsReceived);
