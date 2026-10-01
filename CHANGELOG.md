@@ -68,7 +68,16 @@ investigation's model loop in a Job; F1 to F4 follow in later candidates.
   watcher fired on a cait-scraper rollout's first scheduler refusal (01a0f29f, 2026-09-30) while
   the `KubernetesPodUnschedulable` rule waits `for: 30m`.
 
+### Fixed
+- **With `auth.enabled`, the console's pages now require sign-in.** They were mapped without the
+  read policy, and the API answers a missing cookie with 401 rather than a redirect, so nothing
+  ever sent a browser to the IdP: the console was readable without OIDC, every viewer was
+  anonymous, and close, approve and deny were disabled for approvers too. Production found it.
+
 ### Upgrading
+- **With `auth.enabled`, the ID token must carry the roles** before this lands, or every reader
+  gets a 403. In Keycloak: client scope `roles`, mapper `realm roles`, "Add to ID token" on - it
+  is off by default. The client also needs `<console>/signin-oidc` as a valid redirect URI.
 - **Nothing changes until `investigation.job.enabled` is set**, and enabling it switches no
   investigation over by itself: the executor defaults to `inprocess`. An install that does not set
   it renders byte-for-byte what v0.11 rendered.

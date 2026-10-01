@@ -91,6 +91,28 @@ public static class HephaistoWebExtensions
                 ? await next(context)
                 : Results.NotFound();
 
+    /// <summary>
+    /// The console's pages and their circuit, behind the read policy.
+    /// </summary>
+    /// <remarks>
+    /// The pages are where a person signs in: the API answers a missing cookie with a 401, never
+    /// a redirect, so a page is the only thing that can send a browser to the IdP. Mapped without
+    /// the policy, nothing ever did - with Auth on, every viewer of the console was anonymous,
+    /// could read it, and held no role, so close and approve were disabled for the approvers
+    /// too. Production found that.
+    /// </remarks>
+    public static WebApplication MapHephaistoConsolePages(this WebApplication app)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+
+        app.MapRazorComponents<Components.App>()
+            .AddInteractiveServerRenderMode()
+            .WithStaticAssets()
+            .RequireAuthorization(AuthenticationExtensions.ReadPolicy);
+
+        return app;
+    }
+
     public static WebApplication MapHephaistoEndpoints(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
