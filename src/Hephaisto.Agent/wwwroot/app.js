@@ -57,19 +57,25 @@ window.hephaisto = {
             });
         }
 
-        // The visible label is a CSS ::after keyed off the attribute above - see app.css for
-        // why. Only the accessible name is set here, and it is re-set on every cycle because
-        // aria-label is the one part a stylesheet cannot express.
-        document.querySelectorAll('[data-theme-control]').forEach(function (el) {
-            el.setAttribute('aria-label', 'Theme: ' + theme + '. Activate to change it.');
+        // Which choice is in force is painted by CSS keyed off the attribute above - see app.css
+        // for why. Only the accessible state is set here, because aria-pressed is the one part
+        // a stylesheet cannot express.
+        document.querySelectorAll('[data-theme-option]').forEach(function (el) {
+            el.setAttribute('aria-pressed', el.getAttribute('data-theme-option') === theme ? 'true' : 'false');
         });
     },
 
-    cycleTheme() {
-        var next = this.THEMES[(this.THEMES.indexOf(this.readTheme()) + 1) % this.THEMES.length];
+    setTheme(theme) {
+        var next = this.THEMES.indexOf(theme) >= 0 ? theme : 'system';
 
         this.storageSet('hephaisto.theme', next);
         this.applyTheme(next);
+    },
+
+    // Catch the page up with the stored choice. Called on load, and by the account page once
+    // the circuit has replaced the buttons the load-time call marked.
+    syncTheme() {
+        this.applyTheme(this.readTheme());
     },
 
     // The other half of the grounding link: clicking a citation must land the reader on the
@@ -137,11 +143,10 @@ window.hephaisto = {
     }).observe(modal, { attributes: true, attributeFilter: ['class'] });
 })();
 
-// Label the control with the theme that is actually in force. The attribute was already
-// stamped in <head>; this only catches the button up, and it is why the button ships with no
-// text of its own - a label rendered server-side would be wrong for every reader who chose.
+// Apply the stored theme's side effects: the browser chrome colour and the pressed state of
+// the choices on the account page. The attribute itself was already stamped in <head>.
 (function () {
-    function sync() { window.hephaisto.applyTheme(window.hephaisto.readTheme()); }
+    function sync() { window.hephaisto.syncTheme(); }
 
     // Not simply an addEventListener: this file is a plain script at the end of <body>, so on
     // a warm cache it can run AFTER DOMContentLoaded has already fired, and the listener would

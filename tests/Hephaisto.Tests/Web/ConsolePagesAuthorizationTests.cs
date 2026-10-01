@@ -130,6 +130,7 @@ public sealed class ConsolePagesAuthorizationTests : IAsyncLifetime
     [Theory]
     [InlineData("/page")]
     [InlineData("/")]
+    [InlineData("/account")]
     [InlineData("/incidents/01a0f157-a77e-7177-ae44-eed0ab2e0554")]
     public async Task A_browser_that_is_not_signed_in_is_sent_to_the_identity_provider(string path)
     {
