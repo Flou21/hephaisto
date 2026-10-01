@@ -35,6 +35,18 @@ public static class AuthenticationExtensions
     public const string ReadPolicy = "hephaisto.read";
 
     /// <summary>
+    /// The read policy for the console's pages: the same requirement, challenged differently.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ReadPolicy"/> names the cookie and the bearer scheme, and a policy that names
+    /// schemes is challenged by exactly those - the bearer's answer is a 401 and it is the last
+    /// word. Right for the API, and for a person opening the console it is a blank 401 where the
+    /// IdP's login page should be: v0.12.0-rc7 shipped exactly that. This one names no scheme, so
+    /// it reads the cookie and challenges with OIDC, the defaults.
+    /// </remarks>
+    public const string PagesPolicy = "hephaisto.read.pages";
+
+    /// <summary>
     /// The policy for the endpoints that change something: approving or denying an action,
     /// closing an incident, re-arming the mode.
     /// </summary>
@@ -69,6 +81,7 @@ public static class AuthenticationExtensions
             // than the one being fixed.
             services.AddAuthorizationBuilder()
                 .AddPolicy(ReadPolicy, p => p.RequireAssertion(_ => true))
+                .AddPolicy(PagesPolicy, p => p.RequireAssertion(_ => true))
                 .AddPolicy(ApprovePolicy, p => p.RequireAssertion(_ => true));
 
             return services;
@@ -102,6 +115,14 @@ public static class AuthenticationExtensions
                 options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
                 options.SlidingExpiration = true;
                 options.ExpireTimeSpan = TimeSpan.FromHours(8);
+
+                // Signed in, without the role: say so. The default is a redirect to
+                // /Account/AccessDenied, a page this app does not have, so it reads as a 404.
+                options.Events.OnRedirectToAccessDenied = context =>
+                {
+                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    return Task.CompletedTask;
+                };
             })
             .AddOpenIdConnect(options =>
             {
@@ -179,6 +200,7 @@ public static class AuthenticationExtensions
 
         services.AddAuthorizationBuilder()
             .AddPolicy(ReadPolicy, policy => Build(policy, auth.ReaderRole, auth.RolesClaim))
+            .AddPolicy(PagesPolicy, policy => Build(policy, auth.ReaderRole, auth.RolesClaim, bearer: false))
             .AddPolicy(ApprovePolicy, policy => Build(policy, auth.ApproverRole, auth.RolesClaim));
 
         // Said once, at startup, for the two settings whose weakening is otherwise invisible.
@@ -196,16 +218,19 @@ public static class AuthenticationExtensions
     /// but has not decided on roles is still far better off than one with no authentication at
     /// all, and refusing to start until roles exist would push people back to no auth.
     /// </remarks>
-    private static void Build(AuthorizationPolicyBuilder policy, string? role, string rolesClaim)
+    private static void Build(AuthorizationPolicyBuilder policy, string? role, string rolesClaim, bool bearer = true)
     {
-        // BOTH schemes, and this is not optional. A policy with no scheme list uses only the
-        // default authenticate scheme - the cookie - so a perfectly valid bearer token is never
-        // examined and every API caller is redirected to a login page it cannot complete. That
-        // is exactly what happened: the token was correct, the roles were correct, and every
-        // request came back 302.
-        policy.AddAuthenticationSchemes(
-            CookieAuthenticationDefaults.AuthenticationScheme,
-            JwtBearerDefaults.AuthenticationScheme);
+        if (bearer)
+        {
+            // BOTH schemes, and this is not optional. A policy with no scheme list uses only the
+            // default authenticate scheme - the cookie - so a perfectly valid bearer token is
+            // never examined and every API caller is redirected to a login page it cannot
+            // complete. That is exactly what happened: the token was correct, the roles were
+            // correct, and every request came back 302.
+            policy.AddAuthenticationSchemes(
+                CookieAuthenticationDefaults.AuthenticationScheme,
+                JwtBearerDefaults.AuthenticationScheme);
+        }
 
         policy.RequireAuthenticatedUser();
 
