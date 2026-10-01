@@ -63,6 +63,10 @@ investigation's model loop in a Job; F1 to F4 follow in later candidates.
   stays not-ready is the `KubePodNotReady` rule's, as `PodNotReady`; the `TargetFlapping` rule
   still raises `ReadinessFlapping` through Alertmanager. `Kubernetes:ReadinessFlapThreshold` and
   `Kubernetes:ReadinessFlapWindow` are removed; a value still set for them is ignored.
+- **`Kubernetes:IgnoredKinds`** - signal kinds the watcher never reports, empty by default. For a
+  cluster whose alert rules cover a kind better: production ignores `Unschedulable`, because the
+  watcher fired on a cait-scraper rollout's first scheduler refusal (01a0f29f, 2026-09-30) while
+  the `KubernetesPodUnschedulable` rule waits `for: 30m`.
 
 ### Upgrading
 - **Nothing changes until `investigation.job.enabled` is set**, and enabling it switches no

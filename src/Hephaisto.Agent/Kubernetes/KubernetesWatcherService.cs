@@ -432,6 +432,12 @@ public sealed class KubernetesWatcherService : BackgroundService
 
     private void Enqueue(Signal signal)
     {
+        // Before the queue, so an ignored kind cannot trip the storm breaker either.
+        if (options.IgnoredKinds.Contains(signal.Kind))
+        {
+            return;
+        }
+
         signalsReceived.Add(
             1,
             new KeyValuePair<string, object?>("kind", signal.Kind.ToString()),

@@ -166,6 +166,7 @@ agent stops acting, on the reasoning that a cluster-wide problem is not one a po
 | `StormAggregateInterval` | TimeSpan | `00:01:00` |
 | `RestartStormThreshold` | int | `3` |
 | `RestartStormWindow` | TimeSpan | `00:10:00` |
+| `IgnoredKinds` | SignalKind[] | `[]` |
 | `ReadinessFlapThreshold` | int | `4` |
 | `ReadinessFlapWindow` | TimeSpan | `00:10:00` |
 | `LogTailLines` | int | `2000` |
