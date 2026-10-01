@@ -1,3 +1,5 @@
+using Hephaisto.Core.Domain;
+
 namespace Hephaisto.Agent.Kubernetes;
 
 /// <summary>
@@ -132,6 +134,14 @@ public sealed class KubernetesOptions
     public int RestartStormThreshold { get; set; } = 3;
 
     public TimeSpan RestartStormWindow { get; set; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// Kinds the watcher never reports, for a cluster where an alert rule covers them better.
+    /// Empty by default: the chaos fixtures and the e2e suite rely on the watcher alone. On
+    /// production <c>Unschedulable</c> is the <c>KubernetesPodUnschedulable</c> rule's, whose
+    /// <c>for: 30m</c> waits out a cait-scraper rollout; the watcher fired on the first refusal.
+    /// </summary>
+    public HashSet<SignalKind> IgnoredKinds { get; set; } = [];
 
     /// <summary>
     /// Lines requested from the kubelet before digestion. Generous because
