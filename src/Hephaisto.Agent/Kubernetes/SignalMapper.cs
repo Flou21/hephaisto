@@ -25,9 +25,12 @@ public readonly record struct PodTrend(int RestartsInWindow)
 /// The counts at which a trend becomes a signal. Passed in rather than read from options so
 /// the mapper has no configuration dependency and a test can state the threshold it means.
 /// </summary>
-public sealed record SignalThresholds(int RestartStormCount = 3)
+public sealed record SignalThresholds(int RestartStormCount = 3, TimeSpan? UnschedulableGrace = null)
 {
     public static SignalThresholds Default { get; } = new();
+
+    /// <summary>How long a pod may sit unschedulable before it is a signal.</summary>
+    public TimeSpan UnschedulableFor => UnschedulableGrace ?? KubernetesOptions.DefaultUnschedulableGrace;
 }
 
 /// <summary>
@@ -73,7 +76,7 @@ public static class SignalMapper
         thresholds ??= SignalThresholds.Default;
 
         var statuses = ContainerStatuses(pod);
-        var classified = Classify(pod, statuses, trend, thresholds);
+        var classified = Classify(pod, statuses, now, trend, thresholds);
         if (classified is not { } outcome)
         {
             return null;
@@ -224,10 +227,10 @@ public static class SignalMapper
     }
 
     /// <summary>
-    /// Warning events. The scheduler's refusal reason exists <b>only</b> here - no metric
-    /// carries it - which is why events are watched at all rather than inferred from pod
-    /// status. Normal-type events are ignored: they are the majority and none of them is a
-    /// problem.
+    /// Warning events: OOM kills, evictions, failed mounts - reasons no metric carries.
+    /// Scheduler refusals are left to the pod's own condition, see step 6 of the pod
+    /// classification. Normal-type events are ignored: they are the majority and none of them
+    /// is a problem.
     /// </summary>
     public static Signal? FromEvent(Corev1Event kubeEvent, string cluster, OwnerLookup? lookup = null)
     {
@@ -305,6 +308,7 @@ public static class SignalMapper
     private static Outcome? Classify(
         V1Pod pod,
         IReadOnlyList<V1ContainerStatus> statuses,
+        DateTimeOffset now,
         PodTrend trend,
         SignalThresholds thresholds)
     {
@@ -377,12 +381,17 @@ public static class SignalMapper
 
         // 6. Pending with the scheduler having refused. The message enumerates every node and
         //    why each was rejected; it is the whole diagnosis and is carried through verbatim.
+        //    Only after the grace: a rollout whose new pods each need a node an old pod still
+        //    holds (one cait-scraper per scraping node) is unschedulable by design until the
+        //    old pod terminates. A pod still pending later is caught by the next relist.
         if (string.Equals(pod.Status?.Phase, "Pending", StringComparison.Ordinal))
         {
             var unschedulable = pod.Status?.Conditions?.FirstOrDefault(c =>
                 string.Equals(c.Reason, "Unschedulable", StringComparison.Ordinal));
 
-            if (unschedulable is not null)
+            var since = Timestamp(unschedulable?.LastTransitionTime) ?? Timestamp(pod.Metadata?.CreationTimestamp) ?? now;
+
+            if (unschedulable is not null && now - since >= thresholds.UnschedulableFor)
             {
                 return new Outcome(
                     SignalKind.Unschedulable,
@@ -503,7 +512,9 @@ public static class SignalMapper
 
     private static SignalKind? EventKind(string reason, string message) => reason switch
     {
-        "FailedScheduling" => SignalKind.Unschedulable,
+        // No FailedScheduling: the pod's PodScheduled condition carries the same scheduler
+        // message, and only the pod path can hold it back for the unschedulable grace. An event
+        // fires on the first refusal, so every rollout that waits for a node opened an incident.
         "OOMKilling" or OomKilledReason => SignalKind.OomKilled,
         EvictedReason or "NodeHasMemoryPressure" or "NodeHasDiskPressure" or "NodeHasPIDPressure"
             or "EvictionThresholdMet" or "FreeDiskSpaceFailed" => SignalKind.NodePressure,

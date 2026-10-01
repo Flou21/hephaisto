@@ -63,6 +63,11 @@ investigation's model loop in a Job; F1 to F4 follow in later candidates.
   stays not-ready is the `KubePodNotReady` rule's, as `PodNotReady`; the `TargetFlapping` rule
   still raises `ReadinessFlapping` through Alertmanager. `Kubernetes:ReadinessFlapThreshold` and
   `Kubernetes:ReadinessFlapWindow` are removed; a value still set for them is ignored.
+- **The watcher reports `Unschedulable` only after 30 minutes** (`Kubernetes:UnschedulableGrace`,
+  the `for: 30m` of `KubernetesPodUnschedulable`). A cait-scraper rollout leaves each new pod
+  pending until its predecessor frees the node, and the watcher opened an incident on the first
+  refusal (01a0f29f, 2026-09-30). `FailedScheduling` events no longer raise a signal; the pod's
+  `PodScheduled` condition carries the same message and waits out the grace.
 
 ### Upgrading
 - **Nothing changes until `investigation.job.enabled` is set**, and enabling it switches no

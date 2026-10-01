@@ -231,6 +231,33 @@ public class SignalMapperTests
         signal.Message.Should().Be("0/1 nodes are available: 1 Insufficient memory.");
     }
 
+    [Theory]
+    [InlineData(29, false)]
+    [InlineData(30, true)]
+    public void Unschedulable_waits_out_the_grace_from_the_condition_transition(int minutes, bool signals)
+    {
+        // A cait-scraper rollout: the new pod needs the node its predecessor still holds.
+        var pod = K8sFixtures.Pod(
+            phase: "Pending",
+            node: string.Empty,
+            containers: [],
+            conditions:
+            [
+                new V1PodCondition
+                {
+                    Type = "PodScheduled",
+                    Status = "False",
+                    Reason = "Unschedulable",
+                    Message = "0/12 nodes are available: 12 Insufficient cpu.",
+                    LastTransitionTime = K8sFixtures.Now.AddMinutes(-minutes).UtcDateTime,
+                },
+            ]);
+
+        var signal = SignalMapper.FromPod(pod, K8sFixtures.Cluster, K8sFixtures.Now, PodTrend.None);
+
+        (signal is not null).Should().Be(signals);
+    }
+
     [Fact]
     public void An_evicted_pod_is_node_pressure_not_a_pod_problem()
     {
@@ -383,12 +410,12 @@ public class SignalMapperTests
     }
 
     [Fact]
-    public void A_FailedScheduling_event_maps_to_Unschedulable()
+    public void A_FailedScheduling_event_is_left_to_the_pod_condition()
     {
-        var signal = SignalMapper.FromEvent(Event("Warning", "FailedScheduling", "0/1 nodes are available"), K8sFixtures.Cluster);
-
-        signal!.Kind.Should().Be(SignalKind.Unschedulable);
-        signal.Source.Should().Be(SignalSource.KubernetesWatch);
+        // It fires on the first refusal, which is every rollout waiting for a node; only the
+        // pod path can wait out the grace.
+        SignalMapper.FromEvent(Event("Warning", "FailedScheduling", "0/1 nodes are available"), K8sFixtures.Cluster)
+            .Should().BeNull();
     }
 
     [Fact]

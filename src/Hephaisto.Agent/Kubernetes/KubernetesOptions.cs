@@ -133,6 +133,16 @@ public sealed class KubernetesOptions
 
     public TimeSpan RestartStormWindow { get; set; } = TimeSpan.FromMinutes(10);
 
+    /// <summary>The <c>for: 30m</c> of the KubernetesPodUnschedulable rule, for the same rollouts.</summary>
+    public static readonly TimeSpan DefaultUnschedulableGrace = TimeSpan.FromMinutes(30);
+
+    /// <summary>
+    /// How long a pod must stay unschedulable before the watcher reports it. A rollout of a
+    /// workload that fills its node (cait-scraper) leaves each new pod pending until the old
+    /// one terminates; that is a scheduling queue, not a fault.
+    /// </summary>
+    public TimeSpan UnschedulableGrace { get; set; } = DefaultUnschedulableGrace;
+
     /// <summary>
     /// Lines requested from the kubelet before digestion. Generous because
     /// <c>LogDigester</c> collapses repetition anyway, and the failure is usually near the
