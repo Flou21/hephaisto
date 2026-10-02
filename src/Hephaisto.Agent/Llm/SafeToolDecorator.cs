@@ -382,6 +382,11 @@ public sealed partial class SafeToolDecorator(
         JsonElement json => json.ValueKind == JsonValueKind.String
             ? json.GetString() ?? string.Empty
             : json.ToString(),
+        // An MCP tool answers in content blocks. Serialising one wraps its text in a JSON string,
+        // which turns every quote of a JSON payload into " - and an excerpt the model quotes
+        // with the quotes it means then never matches the digest grounding checks against.
+        TextContent text => text.Text,
+        IEnumerable<AIContent> blocks => string.Join('\n', blocks.Select(Stringify)),
         _ => JsonSerializer.Serialize(result, ToolJson.Options),
     };
 

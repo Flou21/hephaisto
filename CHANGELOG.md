@@ -50,6 +50,9 @@ the same day.
 ### Fixed
 - **A grounding rejection says why in the log**, at Warning. Its detail was in no log line.
 - **The incident list says who acknowledged a row** ([#165](docs/backlog.md#165)).
+- **A finding that quotes a grafana-mcp result survives grounding.** An MCP text block was stored
+  serialised, so every quote in its JSON read `"` and an excerpt with real quotes never
+  matched: investigations with the right numbers ended `GroundingRejected`.
 
 ## v0.12.0 — 2026-10-02
 
