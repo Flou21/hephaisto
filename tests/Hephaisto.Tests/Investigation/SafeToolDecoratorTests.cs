@@ -185,6 +185,62 @@ public class SafeToolDecoratorTests
     }
 
     [Fact]
+    public async Task An_mcp_text_block_is_shown_as_its_text_so_a_quoted_excerpt_grounds()
+    {
+        // grafana-mcp answers a query in a text block holding JSON. Serialised as a block, every
+        // quote became " and a finding citing "condition":"schedulable" lost its evidence:
+        // four of six investigations of one Longhorn incident ended GroundingRejected that way.
+        const string json = """{"data":[{"metric":{"condition":"schedulable","condition_reason":"DiskPressure"}}]}""";
+
+        var recorder = NewRecorder(out _);
+        var tool = Wrap(new ContentTool("query_prometheus", new TextContent(json)), recorder: recorder);
+
+        var shown = await tool.InvokeAsync(
+            new AIFunctionArguments { ["expr"] = "up", ["endTime"] = "now" }, TestContext.Current.CancellationToken);
+
+        var step = recorder.Steps.Should().ContainSingle().Subject;
+        step.ResultDigest.Should().Be(shown!.ToString());
+        step.ResultDigest.Should().NotContain("\\u0022");
+
+        var finding = new Finding
+        {
+            InvestigationId = step.InvestigationId,
+            Hypothesis = "The disk is under pressure.",
+            Evidence =
+            [
+                new Evidence
+                {
+                    StepId = step.Id,
+                    Excerpt = "\"condition\":\"schedulable\",\"condition_reason\":\"DiskPressure\"",
+                },
+            ],
+        };
+
+        GroundingVerifier.Verify(step.InvestigationId, recorder.Steps, [finding]).Rejections.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Several_mcp_blocks_are_shown_one_after_the_other()
+    {
+        var recorder = NewRecorder(out _);
+        var blocks = new List<AIContent> { new TextContent("{\"a\":\"1\"}"), new TextContent("{\"b\":\"2\"}") };
+        var tool = Wrap(new ContentTool("list_datasources", blocks), recorder: recorder);
+
+        await tool.InvokeAsync([], TestContext.Current.CancellationToken);
+
+        recorder.Steps[0].ResultDigest.Should().Contain("{\"a\":\"1\"}").And.Contain("{\"b\":\"2\"}");
+    }
+
+    /// <summary>Answers as <c>McpClientTool</c> does: in content blocks, not in a string.</summary>
+    private sealed class ContentTool(string name, object result) : AIFunction
+    {
+        public override string Name => name;
+
+        protected override ValueTask<object?> InvokeCoreAsync(
+            AIFunctionArguments arguments, CancellationToken cancellationToken) => new(result);
+    }
+
+    [Fact]
     public async Task Digests_a_large_result_and_keeps_the_raw_blob()
     {
         var recorder = NewRecorder(out _);
