@@ -32,6 +32,10 @@ the same day.
   takes the filters of `search_incidents`; the incident list in the console has the same for its
   own filter. Approver only. The first call counts and closes nothing; the second names that
   count and a reason, and closes only if the count still holds. One audit entry per incident.
+- **Acknowledge many at once, in the console.** "acknowledge all issues" sits beside "close all
+  issues" in the incident list's filter box. It counts first, then acknowledges the open
+  incidents the filter matches that nobody holds yet; one somebody already acknowledged is left
+  alone.
 - **The sweeper has chart values**: `incidents.sweep.enabled`, `expireAfter`, `approvalTimeout`.
   Still off by default.
 

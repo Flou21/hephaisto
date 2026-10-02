@@ -1228,7 +1228,7 @@ public sealed class IncidentQueries(
     /// which. One transaction: all of them close or none does.
     /// </para>
     /// </remarks>
-    public async Task<BulkCloseResult> CloseIncidentsAsync(
+    public async Task<BulkResult> CloseIncidentsAsync(
         Mcp.McpIncidentFilter filter,
         string closedBy,
         string reason,
@@ -1243,7 +1243,7 @@ public sealed class IncidentQueries(
 
         if (IncidentStateMachine.IsForbiddenGranter(actor))
         {
-            return BulkCloseResult.Refused(LifecycleOutcome.ForbiddenActor, $"'{actor}' may not close an incident: closing is a human judgement.");
+            return BulkResult.Refused(LifecycleOutcome.ForbiddenActor, $"'{actor}' may not close an incident: closing is a human judgement.");
         }
 
         await using var scope = scopes.CreateAsyncScope();
@@ -1259,20 +1259,20 @@ public sealed class IncidentQueries(
                 .AsNoTracking()
                 .OrderBy(i => i.OpenedAt)
                 .Take(20)
-                .Select(i => new BulkCloseRow(i.Id, i.Title, i.State, i.OpenedAt))
+                .Select(i => new BulkRow(i.Id, i.Title, i.State, i.OpenedAt))
                 .ToListAsync(ct);
 
-            return new BulkCloseResult { DryRun = true, Matched = matched, Sample = sample };
+            return new BulkResult { DryRun = true, Matched = matched, Sample = sample };
         }
 
         if (string.IsNullOrWhiteSpace(reason))
         {
-            return BulkCloseResult.Refused(LifecycleOutcome.IllegalState, "Give the reason: it is written to every one of them.", matched);
+            return BulkResult.Refused(LifecycleOutcome.IllegalState, "Give the reason: it is written to every one of them.", matched);
         }
 
         if (matched != expect)
         {
-            return BulkCloseResult.Refused(
+            return BulkResult.Refused(
                 LifecycleOutcome.IllegalState,
                 $"{matched} open incidents match now, not the {expect} that were expected. Nothing was closed; look again and name the new count.",
                 matched);
@@ -1280,7 +1280,7 @@ public sealed class IncidentQueries(
 
         if (matched > BulkCloseCeiling)
         {
-            return BulkCloseResult.Refused(
+            return BulkResult.Refused(
                 LifecycleOutcome.IllegalState,
                 $"{matched} is more than one bulk close takes ({BulkCloseCeiling}). Narrow the filter - a time range does it - and close in parts.",
                 matched);
@@ -1314,7 +1314,116 @@ public sealed class IncidentQueries(
         logger.LogInformation(
             "{Actor} closed {Count} incidents at once ({Filter}): {Reason}", actor, closed.Count, filter.Describe(), note);
 
-        return new BulkCloseResult { DryRun = false, Matched = matched, Closed = closed.Count };
+        return new BulkResult { DryRun = false, Matched = matched, Changed = closed.Count };
+    }
+
+    /// <summary>
+    /// Acknowledges every open incident a filter matches that nobody has acknowledged yet, or
+    /// says how many it would.
+    /// </summary>
+    /// <remarks>
+    /// The shape of <see cref="CloseIncidentsAsync"/>: no <paramref name="expect"/> counts, and
+    /// with it the count has to hold. <b>An incident somebody already holds is left alone.</b>
+    /// Acknowledging one of those is a takeover, which is a decision about one incident and one
+    /// colleague, never something to do to a list. Not behind the approver role, as the single
+    /// acknowledge is not: it says "I have seen these", and changes no state.
+    /// </remarks>
+    public async Task<BulkResult> AcknowledgeIncidentsAsync(
+        Mcp.McpIncidentFilter filter,
+        string actorName,
+        int? expect,
+        CancellationToken ct,
+        AuditOrigin? origin = null)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+
+        var actor = actorName?.Trim() ?? string.Empty;
+        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+
+        if (IncidentStateMachine.IsForbiddenGranter(actor))
+        {
+            return BulkResult.Refused(
+                LifecycleOutcome.ForbiddenActor,
+                $"'{actor}' may not acknowledge an incident: the point is that a person is looking at it.");
+        }
+
+        await using var scope = scopes.CreateAsyncScope();
+        var sp = scope.ServiceProvider;
+        var db = sp.GetRequiredService<HephaistoDbContext>();
+
+        var unheld = filter.Apply(db.Incidents)
+            .Where(i => HephaistoDbContext.OpenStates.Contains(i.State) && i.AcknowledgedBy == null);
+        var matched = await unheld.CountAsync(ct);
+
+        if (expect is null)
+        {
+            var sample = await unheld
+                .AsNoTracking()
+                .OrderBy(i => i.OpenedAt)
+                .Take(20)
+                .Select(i => new BulkRow(i.Id, i.Title, i.State, i.OpenedAt))
+                .ToListAsync(ct);
+
+            return new BulkResult { DryRun = true, Matched = matched, Sample = sample };
+        }
+
+        if (matched != expect)
+        {
+            return BulkResult.Refused(
+                LifecycleOutcome.IllegalState,
+                $"{matched} unacknowledged open incidents match now, not the {expect} that were expected. Nothing was acknowledged; look again.",
+                matched);
+        }
+
+        if (matched > BulkCloseCeiling)
+        {
+            return BulkResult.Refused(
+                LifecycleOutcome.IllegalState,
+                $"{matched} is more than one bulk acknowledge takes ({BulkCloseCeiling}). Narrow the filter.",
+                matched);
+        }
+
+        var audit = sp.GetRequiredService<IAuditRepository>();
+        var stateMachine = sp.GetRequiredService<IncidentStateMachine>();
+        var bulk = $"{matched - 1} others ({filter.Describe()})";
+
+        var incidents = await unheld.OrderBy(i => i.OpenedAt).ToListAsync(ct);
+
+        foreach (var incident in incidents)
+        {
+            stateMachine.Acknowledge(incident, actor);
+            incident.AcknowledgedClaimedBy = origin?.ClaimedBy;
+
+            audit.Enlist(new AuditEvent
+            {
+                At = clock.UtcNow,
+                Type = "incident.acknowledged",
+                IncidentId = incident.Id,
+                Actor = actor,
+                Summary = $"acknowledged, with {bulk}",
+                Detail = AuditOrigin.Attach(JsonSerializer.Serialize(
+                    new { state = incident.State.ToString(), previousHolder = (string?)null, bulk }, AuditJson), origin),
+            });
+        }
+
+        await db.SaveChangesAsync(ct);
+
+        foreach (var incident in incidents)
+        {
+            notifier.Publish(new IncidentLiveEvent
+            {
+                IncidentId = incident.Id,
+                Kind = IncidentLiveEventKind.Acknowledged,
+                State = incident.State,
+                Detail = $"acknowledged by {actor}",
+                At = clock.UtcNow,
+            });
+        }
+
+        logger.LogInformation(
+            "{Actor} acknowledged {Count} incidents at once ({Filter}).", actor, incidents.Count, filter.Describe());
+
+        return new BulkResult { DryRun = false, Matched = matched, Changed = incidents.Count };
     }
 
     /// <summary>

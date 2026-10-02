@@ -544,6 +544,15 @@ h4 {
     color: var(--fg-dim);
 }
 
+/* The second step of a bulk operation: a row of its own inside the filter box. */
+.hp-filter-bulk {
+    flex-basis: 100%;
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
 .hp-filter-status {
     margin-left: auto;
     display: flex;

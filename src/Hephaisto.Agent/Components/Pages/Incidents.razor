@@ -46,6 +46,22 @@
         </select>
     </label>
 
+    @if (BulkFilter is not null && _incidents.Count > 0 && _bulkOp is null)
+    {
+        @* By the filter, not by the rows on screen (#161): the table stops at 200 and a backlog
+           does not. Either button only counts; nothing changes until the count is confirmed. *@
+        <button type="button" class="hp-submit" data-testid="bulk-ack-count"
+                disabled="@_bulkBusy" @onclick="() => CountBulkAsync(BulkOp.Acknowledge)">
+            acknowledge all issues
+        </button>
+        <button type="button" class="hp-submit" data-testid="bulk-close-count"
+                disabled="@(_bulkBusy || !_viewer.MayDecide)"
+                title="@(_viewer.MayDecide ? null : NotAnApprover)"
+                @onclick="() => CountBulkAsync(BulkOp.Close)">
+            close all issues
+        </button>
+    }
+
     <span class="hp-filter-status">
         @if (_loading)
         {
@@ -60,55 +76,50 @@
             <span class="hp-error" title="@_error"><span class="glyph">!!</span> query failed</span>
         }
     </span>
-</div>
 
-@if (BulkFilter is not null && _viewer.MayDecide && _incidents.Count > 0)
-{
-    @* Closing by the filter, not by the rows on screen (#161): the table stops at 200 and a
-       backlog does not. Two steps on purpose - the first only counts, and the second closes
-       exactly that many or refuses. *@
-    <div class="hp-retry hp-section" data-testid="bulk-close">
-        <div class="hp-retry-controls">
-            <ActorField Viewer="_viewer" @bind-Name="_closedBy" TestId="bulk-close-actor" />
-            <input class="hp-retry-name" placeholder="reason for closing all of them" aria-label="reason for closing all of them"
-                   data-testid="bulk-close-reason"
-                   @bind="_bulkReason" @bind:event="oninput" />
-            @if (_bulkCount is null)
+    @if (_bulkOp is { } op && _bulkCount is { } count)
+    {
+        @* The second step, on a row of its own inside the same box. *@
+        <div class="hp-filter-bulk" data-testid="bulk-confirm">
+            <ActorField Viewer="_viewer" @bind-Name="_bulkActor" TestId="bulk-actor" />
+            @if (op == BulkOp.Close)
             {
-                <button type="button" class="hp-submit" data-testid="bulk-close-count"
-                        disabled="@_bulkBusy" @onclick="CountBulkAsync">
-                    @(_bulkBusy ? "…" : "close every open incident this filter matches…")
-                </button>
+                <input class="hp-retry-name" placeholder="reason for closing all of them" aria-label="reason for closing all of them"
+                       data-testid="bulk-close-reason"
+                       @bind="_bulkReason" @bind:event="oninput" />
             }
-            else
-            {
-                <button type="button" class="hp-submit" data-testid="bulk-close-confirm"
-                        disabled="@(_bulkBusy || _bulkCount == 0 || string.IsNullOrWhiteSpace(_bulkReason) || string.IsNullOrWhiteSpace(BulkActor))"
-                        @onclick="CloseBulkAsync">
-                    @(_bulkBusy ? "…" : $"close {_bulkCount} open incidents")
-                </button>
-                <button type="button" class="hp-submit" data-testid="bulk-close-cancel"
-                        disabled="@_bulkBusy" @onclick="ResetBulk">
-                    cancel
-                </button>
-            }
-        </div>
-        @if (_bulkCount is { } count)
-        {
-            <span class="hp-muted" data-testid="bulk-close-preview">
-                @count open incidents match (@BulkFilter.Describe()). Each gets its own audit entry, with the reason.
+            <button type="button" class="hp-submit"
+                    data-testid="@(op == BulkOp.Close ? "bulk-close-confirm" : "bulk-ack-confirm")"
+                    disabled="@(!CanConfirmBulk)" @onclick="ConfirmBulkAsync">
+                @(_bulkBusy ? "…" : op == BulkOp.Close ? $"close {count} issues" : $"acknowledge {count} issues")
+            </button>
+            <button type="button" class="hp-submit" data-testid="bulk-cancel"
+                    disabled="@_bulkBusy" @onclick="ResetBulk">
+                cancel
+            </button>
+            <span class="hp-muted" data-testid="bulk-preview">
+                @if (op == BulkOp.Close)
+                {
+                    <text>@count open incidents match (@BulkFilter?.Describe()). Each gets its own audit entry, with the reason.</text>
+                }
+                else
+                {
+                    <text>@count open incidents match (@BulkFilter?.Describe()) and nobody has acknowledged them. One somebody already holds is left alone.</text>
+                }
             </span>
-        }
-        @if (_bulkMessage is { Length: > 0 })
-        {
-            <span class="hp-muted" data-testid="bulk-close-done">@_bulkMessage</span>
-        }
-        @if (_bulkError is { Length: > 0 })
-        {
-            <span class="hp-error" data-testid="bulk-close-error"><span class="glyph">!!</span> @_bulkError</span>
-        }
-    </div>
-}
+        </div>
+    }
+    @if (_bulkMessage is { Length: > 0 })
+    {
+        <div class="hp-filter-bulk"><span class="hp-muted" data-testid="bulk-done">@_bulkMessage</span></div>
+    }
+    @if (_bulkError is { Length: > 0 })
+    {
+        <div class="hp-filter-bulk">
+            <span class="hp-error" data-testid="bulk-error"><span class="glyph">!!</span> @_bulkError</span>
+        </div>
+    }
+</div>
 
 @if (_incidents.Count == 0 && !_loading)
 {
@@ -254,26 +265,41 @@ else
     private CancellationTokenSource? _cts;
 
     // ------------------------------------------------------------------
-    // Closing everything a filter matches (#161)
+    // Everything a filter matches, at once (#161)
     // ------------------------------------------------------------------
+
+    private enum BulkOp
+    {
+        Acknowledge,
+        Close,
+    }
+
+    private const string NotAnApprover = "your account does not hold the approver role";
 
     private ConsoleViewer _viewer = ConsoleViewer.Anonymous;
 
     [Inject]
     private AuthenticationStateProvider? AuthProvider { get; set; }
 
-    private string _closedBy = string.Empty;
+    private string _bulkActor = string.Empty;
     private string _bulkReason = string.Empty;
+    private BulkOp? _bulkOp;
     private int? _bulkCount;
     private bool _bulkBusy;
     private string? _bulkMessage;
     private string? _bulkError;
 
-    private string BulkActor => _viewer.Actor(_closedBy) ?? string.Empty;
+    private string BulkActor => _viewer.Actor(_bulkActor) ?? string.Empty;
+
+    private bool CanConfirmBulk =>
+        !_bulkBusy
+        && _bulkCount > 0
+        && !string.IsNullOrWhiteSpace(BulkActor)
+        && (_bulkOp != BulkOp.Close || (_viewer.MayDecide && !string.IsNullOrWhiteSpace(_bulkReason)));
 
     /// <summary>
-    /// The page's filter as the bulk close takes it, or null when the filter shows incidents
-    /// that are not open: there is nothing to close among those.
+    /// The page's filter as the bulk operations take it, or null when the filter shows incidents
+    /// that are not open: there is nothing to close or acknowledge among those.
     /// </summary>
     private Hephaisto.Agent.Mcp.McpIncidentFilter? BulkFilter
     {
@@ -295,17 +321,19 @@ else
 
     private void ResetBulk()
     {
+        _bulkOp = null;
         _bulkCount = null;
         _bulkError = null;
     }
 
-    private Task CountBulkAsync() => RunBulkAsync(expect: null);
+    private Task CountBulkAsync(BulkOp op) => RunBulkAsync(op, expect: null);
 
-    private Task CloseBulkAsync() => RunBulkAsync(expect: _bulkCount);
+    private Task ConfirmBulkAsync() =>
+        _bulkOp is { } op && CanConfirmBulk ? RunBulkAsync(op, _bulkCount) : Task.CompletedTask;
 
-    private async Task RunBulkAsync(int? expect)
+    private async Task RunBulkAsync(BulkOp op, int? expect)
     {
-        if (BulkFilter is not { } filter || !_viewer.MayDecide)
+        if (BulkFilter is not { } filter || (op == BulkOp.Close && !_viewer.MayDecide))
         {
             return;
         }
@@ -316,26 +344,32 @@ else
 
         try
         {
+            var ct = _cts?.Token ?? CancellationToken.None;
+
             // A dry run records nobody, so it needs no name yet.
-            var result = await Queries.CloseIncidentsAsync(
-                filter,
-                expect is null && BulkActor.Length == 0 ? "console" : BulkActor,
-                _bulkReason,
-                expect,
-                _cts?.Token ?? CancellationToken.None);
+            var actor = expect is null && BulkActor.Length == 0 ? "console" : BulkActor;
+
+            var result = op == BulkOp.Close
+                ? await Queries.CloseIncidentsAsync(filter, actor, _bulkReason, expect, ct)
+                : await Queries.AcknowledgeIncidentsAsync(filter, actor, expect, ct);
 
             if (result.Outcome != LifecycleOutcome.Applied)
             {
                 _bulkError = result.Detail;
+                _bulkOp = null;
                 _bulkCount = null;
             }
             else if (result.DryRun)
             {
+                _bulkOp = op;
                 _bulkCount = result.Matched;
             }
             else
             {
-                _bulkMessage = $"closed {result.Closed} incidents.";
+                _bulkMessage = op == BulkOp.Close
+                    ? $"closed {result.Changed} incidents."
+                    : $"acknowledged {result.Changed} incidents.";
+                _bulkOp = null;
                 _bulkCount = null;
                 _bulkReason = string.Empty;
                 await LoadAsync();
@@ -344,6 +378,7 @@ else
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _bulkError = ex.Message;
+            _bulkOp = null;
             _bulkCount = null;
         }
         finally

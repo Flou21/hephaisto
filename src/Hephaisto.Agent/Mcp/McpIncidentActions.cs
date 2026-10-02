@@ -121,10 +121,10 @@ public sealed class McpIncidentActions(IncidentQueries queries, McpIncidentReade
         {
             Done = result.DryRun
                 ? $"nothing yet: {result.Matched} open incidents would close"
-                : $"closed {result.Closed} incidents",
+                : $"closed {result.Changed} incidents",
             DryRun = result.DryRun,
             Matched = result.Matched,
-            Closed = result.Closed,
+            Closed = result.Changed,
             Filters = filter.Describe(),
             RecordedAs = McpText.Name(actor),
             ClaimedBy = McpText.NameOrNull(origin.ClaimedBy),
