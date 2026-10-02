@@ -75,7 +75,11 @@ if [ -n "$secret" ]; then
 fi
 
 eval "$(KUBECONFIG="$E2E_KUBECONFIG" "$E2E_DIR/mcp-secrets.sh" --context "$PAGER_CONTEXT" --namespace "$PAGER_NS" --print)"
-kc apply -f "$REPO/infra/e2e/pager-fixture.yaml" >/dev/null
+# A pod's containers cannot be changed in place, so a fixture left by an older checkout is replaced.
+kc apply -f "$REPO/infra/e2e/pager-fixture.yaml" >/dev/null 2>&1 || {
+    kc delete -f "$REPO/infra/e2e/pager-fixture.yaml" --ignore-not-found --wait >/dev/null
+    kc apply -f "$REPO/infra/e2e/pager-fixture.yaml" >/dev/null
+}
 
 # An agent that is not in pager mode investigates with a real model and waits out real windows:
 # every scenario would fail slowly and for the wrong reason.

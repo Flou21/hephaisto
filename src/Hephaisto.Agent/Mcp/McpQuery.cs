@@ -112,6 +112,34 @@ public sealed record McpIncidentFilter
         return incidents;
     }
 
+    /// <summary>The filters that are set, in words, for an audit row and a confirmation.</summary>
+    public string Describe()
+    {
+        var parts = new List<string>();
+
+        void Add(string name, object? value)
+        {
+            if (value is not null && value.ToString() is { Length: > 0 } text)
+            {
+                parts.Add($"{name} {text}");
+            }
+        }
+
+        Add("state", Trimmed(State));
+        Add("severity", Trimmed(Severity));
+        Add("cluster", Trimmed(Cluster));
+        Add("namespace", Trimmed(Namespace));
+        Add("alertName", Trimmed(AlertName));
+        Add("workload", Trimmed(Workload));
+        Add("kind", Trimmed(Kind));
+        Add("assignedTo", Trimmed(AssignedTo));
+        Add("acknowledged", Acknowledged);
+        Add("openedAfter", OpenedAfter?.ToString("O", CultureInfo.InvariantCulture));
+        Add("openedBefore", OpenedBefore?.ToString("O", CultureInfo.InvariantCulture));
+
+        return parts.Count == 0 ? "every open incident" : string.Join(", ", parts);
+    }
+
     /// <summary>A short key for the filter, so a cursor cannot be replayed against another search.</summary>
     public string Key(string? text = null) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(this) + "|" + text)))[..12];

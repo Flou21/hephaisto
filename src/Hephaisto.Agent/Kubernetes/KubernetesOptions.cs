@@ -144,6 +144,20 @@ public sealed class KubernetesOptions
     public HashSet<SignalKind> IgnoredKinds { get; set; } = [];
 
     /// <summary>
+    /// How long a workload has to run cleanly - every pod running, ready and without a restart -
+    /// before the watcher reports its fault as over and the incident closes (#158). Zero turns
+    /// that off, and a watcher incident then ends only by hand or by the sweeper.
+    /// </summary>
+    /// <remarks>
+    /// Longer than a crash loop's longest back-off (five minutes), so a container between two
+    /// crashes is never mistaken for a healed one.
+    /// </remarks>
+    public TimeSpan HealedAfter { get; set; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>How often the open watcher incidents are compared with their workloads.</summary>
+    public TimeSpan HealedCheckInterval { get; set; } = TimeSpan.FromMinutes(2);
+
+    /// <summary>
     /// Lines requested from the kubelet before digestion. Generous because
     /// <c>LogDigester</c> collapses repetition anyway, and the failure is usually near the
     /// start of a crash loop rather than the end.

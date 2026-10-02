@@ -876,7 +876,7 @@ The MCP endpoint (#157) is tested the way it is used, in four tiers:
 
 | Tier | Where | What |
 |---|---|---|
-| A | every change: `e2e-pager` in CI, and `scripts/e2e/pager-local.sh` here | P29-P48 in the pager suite: a curl JSON-RPC client against the installed chart, with five tokens of every kind; the "Done when" sentence by sentence |
+| A | every change: `e2e-pager` in CI, and `scripts/e2e/pager-local.sh` here | P29-P48 and P50 in the pager suite: a curl JSON-RPC client against the installed chart, with five tokens of every kind; the "Done when" sentence by sentence |
 | B | every change: `McpSignInRouteTests`, and P48 against a second install | sign-in on and a gateway's static token side by side |
 | C | on demand: `scripts/e2e/mcp-litellm-local.sh` | a throwaway LiteLLM with tool search: every reviewed question finds its tool, ranked as `McpFindabilityTests` predicts |
 | D | on demand, cents: `scripts/e2e/mcp-model-local.sh` | a real model (Haiku) asks the three questions the endpoint was built for, and an incident tells it to close every incident |

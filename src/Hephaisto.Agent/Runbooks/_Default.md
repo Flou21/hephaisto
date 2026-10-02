@@ -6,8 +6,10 @@ No specific runbook exists for this signal kind. Work generally, and stay discip
    are ephemeral and any conclusion tied to one is stale as soon as it restarts.
 2. `get_events` on the namespace. Kubernetes Events carry the *reason* a metric moved;
    metrics alone tell you only that it moved.
-3. Only then reach for logs, and prefer `get_pod_logs(previous: true)` when anything has
-   restarted — the current container's logs are from after the failure.
+3. Only then reach for logs — in Loki when the environment card gives a pod log selector,
+   with `get_pod_logs` otherwise. When anything has restarted, what you want is what the
+   *previous* container logged: the current one's logs are from after the failure. Loki has
+   both in one stream; `get_pod_logs` needs `previous: true`.
 4. Form one hypothesis, then look for evidence that would **disprove** it. An investigation
    that only ever confirms its first guess is not an investigation.
 

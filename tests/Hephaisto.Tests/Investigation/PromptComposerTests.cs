@@ -117,6 +117,27 @@ public class PromptComposerTests
     }
 
     [Fact]
+    public void With_a_pod_log_selector_the_card_sends_pod_logs_to_Loki_first()
+    {
+        // #160. The label names are the install's, so the model is told them rather than left
+        // to list labels until its step budget is gone.
+        var card = Composer(new EnvironmentCardOptions
+        {
+            PodLogSelector = "{namespace=\"<namespace>\", pod=\"<pod>\"}",
+        }).ComposeEnvironmentCard();
+
+        card.Should().Contain("{namespace=\"<namespace>\", pod=\"<pod>\"}");
+        card.Should().Contain("query_loki_logs");
+        card.Should().Contain("Use `get_pod_logs` only when Loki has nothing");
+    }
+
+    [Fact]
+    public void Without_one_the_card_says_nothing_about_where_logs_are()
+    {
+        Composer().ComposeEnvironmentCard().Should().NotContain("Pod logs are in Loki");
+    }
+
+    [Fact]
     public void An_incident_about_another_cluster_is_told_so_and_what_it_loses()
     {
         var incident = new Incident { Title = "t", Target = new TargetRef { Cluster = "eu-west", Namespace = "shop", Kind = "Deployment", Name = "api" } };

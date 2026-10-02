@@ -172,6 +172,18 @@ spec:
               value: {{ .Values.mode | quote }}
 
             # ---------------------------------------------------------------------------
+            # When an incident ends by itself (#158)
+            # ---------------------------------------------------------------------------
+            - name: Kubernetes__HealedAfter
+              value: {{ .Values.incidents.healedAfter | quote }}
+            - name: IncidentSweep__Enabled
+              value: {{ .Values.incidents.sweep.enabled | quote }}
+            - name: IncidentSweep__ExpireAfter
+              value: {{ .Values.incidents.sweep.expireAfter | quote }}
+            - name: IncidentSweep__ApprovalTimeout
+              value: {{ .Values.incidents.sweep.approvalTimeout | quote }}
+
+            # ---------------------------------------------------------------------------
             # The cluster - one name for the fingerprint, the watcher and the model (#139)
             # ---------------------------------------------------------------------------
             - name: Cluster__Name
@@ -328,6 +340,12 @@ spec:
             # these saves a list_datasources call on every investigation that touches Grafana.
             - name: Investigation__Environment__DatasourceUids__{{ $name }}
               value: {{ $uid | quote }}
+            {{- end }}
+
+            {{- with .Values.grafanaMcp.podLogSelector }}
+            # Loki first for pod logs (#160): the selector is the install's, so it is told.
+            - name: Investigation__Environment__PodLogSelector
+              value: {{ . | quote }}
             {{- end }}
 
             {{- if .Values.alertmanager.url }}

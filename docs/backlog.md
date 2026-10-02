@@ -2613,7 +2613,32 @@ watcher.
 **What to do.** The watcher reports a pod that is healthy again, running and Ready with no
 restart for a quiet period, as a resolved signal for the fingerprint it opened. Triage then
 closes the incident exactly as it does for Alertmanager. The sweeper gets a chart value. It
-stays the backstop for a pod that was deleted rather than healed. **Size.** M. Open.
+stays the backstop for a pod that was deleted rather than healed. **Size.** M.
+
+**Fixed in v0.13.0.** The watcher asks the database which open incidents still carry a firing
+signal of its own and compares each with its workload (`Kubernetes/KubernetesWatcherService.cs`,
+`ReportHealedAsync`). It starts from the database because the incidents outlive the process:
+after a restart the watcher remembers nothing it reported. A workload is healed when every pod
+its owner controls is running, ready and unrestarted for `incidents.healedAfter` (ten minutes;
+`SignalMapper.HealedWorkload`), so a crashing pod that a rollout replaced counts and one good
+replica beside a bad one does not. The resolved signal closes the incident through
+`IncidentTriage.ClearWatchedAsync` as `hephaisto/watcher`, with the rules of an alert that
+clears: not under an action in flight, and not while an alert on the same incident still fires.
+
+Three things had to change with it, or a closed incident would have come straight back:
+
+- **An old OOMKill was reported for the life of its pod.** `lastState` keeps it, and every relist
+  classified the pod as `OomKilled` again. A container that has run cleanly for the quiet period
+  is no longer a signal.
+- **A relist replays an hour of events.** After an agent restart a `BackOff` from before the
+  heal would have opened a second incident. Events last seen before the quiet period are dropped.
+- **Closed by its source is two actors now.** The history endings and the Teams card told an
+  alert-cleared closure from a person's by one actor name; `ClosedByItsSource` covers both.
+
+Not healed, on purpose: a workload with no pod left (deleted or scaled to nothing), a failed Job,
+a storm aggregate. Those are the sweeper's, which is now `incidents.sweep.*` in the chart and
+still off by default. Pager scenario P49 is the sentence end to end: a crash-looping Deployment,
+the fix deployed, the incident closed by the watcher and not reopened.
 
 ### 159. Readiness flapping is a lifetime count, not a rate
 
@@ -2650,7 +2675,32 @@ detail was in no log line.
 **What to do.** When no container is named, read the one named by the
 `kubectl.kubernetes.io/default-container` annotation. Failing that, read the first container
 that is not a known sidecar. Say in the result which one was read, and name the others. Log
-each grounding rejection's `Detail` at Warning. **Size.** S. Open.
+each grounding rejection's `Detail` at Warning. **Size.** S.
+
+**Fixed in v0.13.0, and the owner asked for more than the entry did: Loki first.** The
+Kubernetes API reads one container per call and only the last restart; Loki has every container
+of the pod and what it logged before it restarted, in one query. The Loki tools were already on
+the allowlist, and the runbooks sent the model to `get_pod_logs` "always and first" regardless.
+
+- **`grafanaMcp.podLogSelector`** is a LogQL stream selector with `<namespace>` and `<pod>`
+  where those go. Set, the environment card tells the model to read pod logs in Loki first and
+  to keep `get_pod_logs` for what Loki does not have: a container seconds old, a workload whose
+  logs are not shipped. It is a value because the label names are the shipper's (`namespace`,
+  `pod` from promtail; `k8s_namespace_name`, `k8s_pod_name` from the OTel collector), and a
+  model left to discover them spends its step budget on label listings. Empty says nothing, and
+  logs come from the Kubernetes API as before.
+- **The runbooks ask for "the previous container's logs"** and name both sources, where six of
+  them named the one tool.
+- **`get_pod_logs` reads a pod with a sidecar.** With no container named it reads the one in
+  `kubectl.kubernetes.io/default-container`, else the first that is not a known sidecar, and
+  the result says which was read and names the rest. Its description now mentions the parameter.
+- **A grounding rejection's detail is logged at Warning.**
+
+The pager fixture pod has a `linkerd-proxy` container listed first, so P33 and P41, whose
+script reads its log without naming a container, are green only with this. Not measured: how
+often a real model takes the Loki path, and what it costs in steps. One logged caveat for the
+production install: logs shipped over OTLP there carry `service_name` and no pod label, so a
+pod selector finds only what promtail ships.
 
 ### 161. A backlog can only be closed one incident at a time
 
@@ -2663,7 +2713,25 @@ script.
 **What to do.** A bulk close that takes the filters of `search_incidents`, needs the approver
 role and a reason, and offers a dry run that returns the count and a sample before anything
 closes. It writes one audit row per incident, as the single close does. Offer it in the console
-and as an MCP tool. **Size.** M. Open.
+and as an MCP tool. **Size.** M.
+
+**Fixed in v0.13.0.** `IncidentQueries.CloseIncidentsAsync` takes the filter type of
+`search_incidents` (`Mcp/McpIncidentFilter`) and only ever matches open incidents. The dry run
+is not a flag: a call without `expect` closes nothing and returns the count and the oldest few,
+and a call with `expect` closes them only if exactly that many still match. A filter that is
+slightly wrong, or a backlog that grew in between, is refused rather than closed. A reason is
+required, the ceiling is 1,000 per call, and it is one transaction. Each incident gets its own
+transition and its own `incident.closed` audit row, which says how many went with it and by
+which filter.
+
+- **MCP:** `close_incidents`, approver only, the dry run included. Listed after
+  `reinvestigate_incident`, so "close incident" still finds `close_incident` first.
+- **Console:** on the incident list, for a viewer who may decide, when the state filter shows
+  open incidents. It closes by the filter, not by the 200 rows on screen. The page's filters
+  are state, kind and namespace; the rest of the search filters are MCP's.
+- No HTTP API route: nothing asked for one.
+
+Pager scenario P50 is the sentence end to end; `McpWriteTests` holds the four refusals.
 
 ### 162. Through a gateway nobody is anybody
 
@@ -2708,6 +2776,25 @@ checkout of the running revision. Resolve [#118](#118) before enabling it in pro
 flaps whose logs cannot be read. **Size.** L. Built in `v0.12.0-rc1` (2026-09-29): nine stacked
 parts, `feat/v0.12.0-1` to `-9`; `scripts/e2e/investigate-local.sh` I0-I11 green on the dev stack
 with the scripted investigator. Open until a production install has run it on #118's answer.
+
+### 165. The incident list did not say who acknowledged what
+
+**Symptom.** Acknowledge an incident and go back to the list: its row is unchanged. The holder
+was on the detail page, in the audit trail, on the Teams board and in `search_incidents`, and
+not on the one page somebody reads to decide which incident to open.
+
+**Evidence.** Production, 2026-10-02: incident `01a0fb61` was acknowledged at 07:30 UTC,
+`get_incident` returned `acknowledgedBy` at once, and the list showed the same row as before.
+`IncidentListItem` had no such field and `Incidents.razor` nothing that would draw it - the
+list is its own SQL projection (`Web/IncidentQueries.cs`, `ListAsync`), so a column the detail
+view reads is not on the row until it is added there.
+
+**What to do.** Carry `AcknowledgedBy` and its claim on the row and draw it under the state,
+where the escalation reason already sits: acknowledging is not a state, so it gets no column
+and no colour of its own. **Size.** S. **Fixed**, exactly that: `ack <holder>` under the state,
+rendered through `ActorDisplay` so an agent's acknowledgement reads as one, and
+`GET /api/incidents` carries the two fields as a side effect. The assignee is still not on the
+row; nobody has asked.
 
 ## Dead or unreachable code
 

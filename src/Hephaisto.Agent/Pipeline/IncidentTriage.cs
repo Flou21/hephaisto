@@ -58,6 +58,12 @@ public sealed class IncidentTriage(
             return await TriageAlertAsync(signal, ct).ConfigureAwait(false);
         }
 
+        // The watcher saying a workload it reported is healthy again (#158).
+        if (signal.Source == SignalSource.KubernetesWatch && signal.Status == SignalStatus.Resolved)
+        {
+            return await ClearWatchedAsync(signal, clock.UtcNow, ct).ConfigureAwait(false);
+        }
+
         var opts = options.CurrentValue;
         var now = clock.UtcNow;
 
@@ -422,35 +428,83 @@ public sealed class IncidentTriage(
             return new(TriageOutcome.Cleared, open.Id);
         }
 
-        switch (open.State)
-        {
-            case IncidentState.Acting or IncidentState.Verifying:
-                // The verifier reads exactly this - the alert going away after the action - and
-                // decides. Closing underneath it would record a fix as an accident.
-                break;
-
-            default:
-                var eventsBefore = open.Events.Count;
-
-                if (open.State == IncidentState.AwaitingApproval)
-                {
-                    foreach (var action in open.Actions.Where(a => a.State == ActionState.AwaitingApproval))
-                    {
-                        action.State = ActionState.Expired;
-                        action.Error = "The alert cleared before anyone approved this.";
-                    }
-                }
-
-                stateMachine.AlertCleared(open, signal.Reason);
-                incidents.TrackNewIncidentChildren(open, eventsBefore);
-
-                await RecordOutcomeAsync(open, now, ct).ConfigureAwait(false);
-                EnlistAudit(open, "incident.cleared", $"{signal.Reason} resolved and nothing on the incident still fires");
-                break;
-        }
+        await EndClearedAsync(open, byWatcher: false, signal.Reason, now, ct).ConfigureAwait(false);
 
         await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
         return new(TriageOutcome.Cleared, open.Id);
+    }
+
+    /// <summary>
+    /// The watcher's resolve: the workload has run cleanly for the quiet period (#158).
+    /// </summary>
+    /// <remarks>
+    /// One statement covers every watcher signal on the incident. They are facets of one
+    /// workload - an OOMKill and the BackOff event beside it - and the workload is what healed.
+    /// An alert still firing on the incident keeps it open: Alertmanager has not said it is over.
+    /// </remarks>
+    private async Task<TriageResult> ClearWatchedAsync(Signal signal, DateTimeOffset now, CancellationToken ct)
+    {
+        var open = await incidents.FindOpenByFingerprintAsync(signal.Fingerprint, ct).ConfigureAwait(false);
+
+        if (open is null)
+        {
+            metrics.SignalDropped(signal.Source, "resolved-unmatched");
+            return new(TriageOutcome.Ignored, Guid.Empty);
+        }
+
+        if (!await incidents.HasOtherFiringAlertsAsync(open.Id, Guid.Empty, ct).ConfigureAwait(false))
+        {
+            await EndClearedAsync(open, byWatcher: true, signal.Message, now, ct).ConfigureAwait(false);
+        }
+
+        await incidents.SaveChangesAsync(ct).ConfigureAwait(false);
+
+        // After the save, and not in it: if this fails the incident is closed with rows that
+        // still read firing, where the other order would leave it open with nothing to find it by.
+        await incidents.ResolveWatchSignalsAsync(open.Id, ct).ConfigureAwait(false);
+
+        return new(TriageOutcome.Cleared, open.Id);
+    }
+
+    /// <summary>Closes an incident whose fault is over, unless an action is in flight.</summary>
+    private async Task EndClearedAsync(Incident open, bool byWatcher, string detail, DateTimeOffset now, CancellationToken ct)
+    {
+        // The verifier reads exactly this - the fault going away after the action - and
+        // decides. Closing underneath it would record a fix as an accident.
+        if (open.State is IncidentState.Acting or IncidentState.Verifying)
+        {
+            return;
+        }
+
+        var eventsBefore = open.Events.Count;
+
+        if (open.State == IncidentState.AwaitingApproval)
+        {
+            foreach (var action in open.Actions.Where(a => a.State == ActionState.AwaitingApproval))
+            {
+                action.State = ActionState.Expired;
+                action.Error = byWatcher
+                    ? "The workload healed before anyone approved this."
+                    : "The alert cleared before anyone approved this.";
+            }
+        }
+
+        if (byWatcher)
+        {
+            stateMachine.FaultCleared(open, detail);
+        }
+        else
+        {
+            stateMachine.AlertCleared(open, detail);
+        }
+
+        incidents.TrackNewIncidentChildren(open, eventsBefore);
+
+        await RecordOutcomeAsync(open, now, ct).ConfigureAwait(false);
+        EnlistAudit(
+            open,
+            "incident.cleared",
+            byWatcher ? detail : $"{detail} resolved and nothing on the incident still fires");
     }
 
     /// <summary>A firing alert on its open incident: its row updated, or a row added.</summary>

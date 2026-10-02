@@ -5,7 +5,8 @@ A Job exhausted its `backoffLimit` without a successful completion.
 ## First moves
 
 1. `get_workload` on the Job → `status.failed`, `backoffLimit`, `completions`.
-2. **List the Job's pods and read the logs of a failed one with `previous: true`.** The Job
+2. **List the Job's pods and read the logs of a failed one** — in Loki when the environment
+   card gives a pod log selector, with `get_pod_logs(previous: true)` otherwise. The Job
    object records that it failed; only the pod says why.
 3. `get_events` → `BackoffLimitExceeded` confirms exhaustion rather than an in-progress retry.
 

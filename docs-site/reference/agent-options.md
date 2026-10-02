@@ -167,6 +167,8 @@ agent stops acting, on the reasoning that a cluster-wide problem is not one a po
 | `RestartStormThreshold` | int | `3` |
 | `RestartStormWindow` | TimeSpan | `00:10:00` |
 | `IgnoredKinds` | SignalKind[] | `[]` |
+| `HealedAfter` | TimeSpan | `00:10:00` (chart: `incidents.healedAfter`; zero turns it off) |
+| `HealedCheckInterval` | TimeSpan | `00:02:00` |
 | `ReadinessFlapThreshold` | int | `4` |
 | `ReadinessFlapWindow` | TimeSpan | `00:10:00` |
 | `LogTailLines` | int | `2000` |
@@ -225,6 +227,7 @@ What the agent is told about *your* cluster.
 | `InScopeNamespaces` | list | `[]` — chart value `investigation.inScopeNamespaces`; empty omits the line |
 | `ProtectedNamespaces` | list | `[]` — empty names `Policy:ProtectedNamespaces`, the enforced list |
 | `DatasourceUids` | map | `{}` |
+| `PodLogSelector` | string | empty (chart: `grafanaMcp.podLogSelector`) |
 | `WorkloadOwners` | map | `{}` |
 | `Notes` | list | `[]` |
 

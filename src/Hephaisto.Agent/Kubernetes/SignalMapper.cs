@@ -25,8 +25,14 @@ public readonly record struct PodTrend(int RestartsInWindow)
 /// The counts at which a trend becomes a signal. Passed in rather than read from options so
 /// the mapper has no configuration dependency and a test can state the threshold it means.
 /// </summary>
-public sealed record SignalThresholds(int RestartStormCount = 3)
+/// <param name="HealedAfter">
+/// How long a container has to run, ready and without a restart, before the fault it had is
+/// over (#158). The same period decides when an incident's workload has healed.
+/// </param>
+public sealed record SignalThresholds(int RestartStormCount = 3, TimeSpan? HealedAfter = null)
 {
+    public TimeSpan Healed => HealedAfter ?? TimeSpan.FromMinutes(10);
+
     public static SignalThresholds Default { get; } = new();
 }
 
@@ -73,7 +79,7 @@ public static class SignalMapper
         thresholds ??= SignalThresholds.Default;
 
         var statuses = ContainerStatuses(pod);
-        var classified = Classify(pod, statuses, trend, thresholds);
+        var classified = Classify(pod, statuses, trend, thresholds, now);
         if (classified is not { } outcome)
         {
             return null;
@@ -229,7 +235,16 @@ public static class SignalMapper
     /// status. Normal-type events are ignored: they are the majority and none of them is a
     /// problem.
     /// </summary>
-    public static Signal? FromEvent(Corev1Event kubeEvent, string cluster, OwnerLookup? lookup = null)
+    /// <param name="notBefore">
+    /// Events last seen before this are dropped (#158). A relist returns everything inside the
+    /// API server's retention, about an hour, so after an agent restart a warning about a pod
+    /// that has since healed would reopen the incident its healing closed.
+    /// </param>
+    public static Signal? FromEvent(
+        Corev1Event kubeEvent,
+        string cluster,
+        OwnerLookup? lookup = null,
+        DateTimeOffset? notBefore = null)
     {
         ArgumentNullException.ThrowIfNull(kubeEvent);
 
@@ -242,6 +257,16 @@ public static class SignalMapper
         var message = kubeEvent.Message ?? string.Empty;
 
         if (EventKind(reason, message) is not { } kind)
+        {
+            return null;
+        }
+
+        var last = Timestamp(kubeEvent.LastTimestamp)
+            ?? Timestamp(kubeEvent.EventTime)
+            ?? Timestamp(kubeEvent.FirstTimestamp)
+            ?? DateTimeOffset.UtcNow;
+
+        if (last < notBefore)
         {
             return null;
         }
@@ -264,11 +289,6 @@ public static class SignalMapper
         // falls back to the pod itself, so a caller that has an API to hand should supply one.
         var involvedMeta = lookup?.Invoke(target.Kind, ns, target.Name);
         Apply(target, OwnerWalker.TopController(involvedMeta, ns, lookup));
-
-        var last = Timestamp(kubeEvent.LastTimestamp)
-            ?? Timestamp(kubeEvent.EventTime)
-            ?? Timestamp(kubeEvent.FirstTimestamp)
-            ?? DateTimeOffset.UtcNow;
 
         return Finish(
             new Signal
@@ -306,7 +326,8 @@ public static class SignalMapper
         V1Pod pod,
         IReadOnlyList<V1ContainerStatus> statuses,
         PodTrend trend,
-        SignalThresholds thresholds)
+        SignalThresholds thresholds,
+        DateTimeOffset now)
     {
         // 1. OOMKilled, before anything else. See the remarks on this class: the same
         //    container is simultaneously in CrashLoopBackOff, and whichever test runs first
@@ -315,6 +336,14 @@ public static class SignalMapper
         {
             var terminated = status.LastState?.Terminated ?? status.State?.Terminated;
             if (terminated is null || !string.Equals(terminated.Reason, OomKilledReason, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            // lastState keeps the kill for the life of the pod. A container that has run
+            // cleanly since is not being OOMKilled, and reporting it at every relist kept its
+            // incident open for as long as the pod lived (#158).
+            if (RunsCleanly(status, now, thresholds.Healed))
             {
                 continue;
             }
@@ -412,6 +441,73 @@ public static class SignalMapper
 
         return null;
     }
+
+    /// <summary>
+    /// Whether a pod the watcher reported is healthy again: running, every container ready and
+    /// none restarted inside <paramref name="quiet"/> (#158).
+    /// </summary>
+    /// <remarks>
+    /// A pod being deleted is not healed, and neither is one with no container status yet.
+    /// A finished pod (Succeeded) is not either: this answers for workloads that keep running.
+    /// </remarks>
+    public static bool IsHealed(V1Pod pod, DateTimeOffset now, TimeSpan quiet)
+    {
+        ArgumentNullException.ThrowIfNull(pod);
+
+        return pod.Metadata?.DeletionTimestamp is null
+            && string.Equals(pod.Status?.Phase, "Running", StringComparison.Ordinal)
+            && pod.Status?.ContainerStatuses is { Count: > 0 } statuses
+            && statuses.All(s => RunsCleanly(s, now, quiet));
+    }
+
+    /// <summary>
+    /// Whether the workload an incident is about has healed, in words for the audit trail, or
+    /// null when it has not or cannot be said (#158).
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="pods"/> are the pods of the target's namespace. A workload with an owner
+    /// is every pod that owner controls, so a crash-looping pod that a rollout replaced counts as
+    /// healed and one healthy replica beside a broken one does not. No pod at all is not healed:
+    /// the workload was deleted or scaled to nothing, which is the sweeper's to expire. A Job is
+    /// never healed here, because its pods finish rather than keep running.
+    /// </remarks>
+    public static string? HealedWorkload(
+        TargetRef target,
+        IEnumerable<V1Pod> pods,
+        OwnerLookup? lookup,
+        DateTimeOffset now,
+        TimeSpan quiet)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(pods);
+
+        var owned = target.OwnerKind is { Length: > 0 } && target.OwnerName is { Length: > 0 };
+
+        if (!owned && !string.Equals(target.Kind, "Pod", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var its = pods
+            .Where(p => owned
+                ? OwnerWalker.TopController(p.Metadata, target.Namespace, lookup) is { } top
+                    && string.Equals(top.Kind, target.OwnerKind, StringComparison.Ordinal)
+                    && string.Equals(top.Name, target.OwnerName, StringComparison.Ordinal)
+                : string.Equals(p.Metadata?.Name, target.Name, StringComparison.Ordinal))
+            .ToList();
+
+        if (its.Count == 0 || !its.TrueForAll(p => IsHealed(p, now, quiet)))
+        {
+            return null;
+        }
+
+        return $"{its.Count} pod(s) of {target.WorkloadKey} running and ready, none restarted for {quiet}";
+    }
+
+    private static bool RunsCleanly(V1ContainerStatus status, DateTimeOffset now, TimeSpan quiet) =>
+        status.Ready
+        && Timestamp(status.State?.Running?.StartedAt) is { } started
+        && now - started >= quiet;
 
     private static IReadOnlyList<V1ContainerStatus> ContainerStatuses(V1Pod pod)
     {

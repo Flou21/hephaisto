@@ -39,6 +39,13 @@ policy:
 
 mode: DryRun
 
+incidents:
+  healedAfter: "00:15:00"
+  sweep:
+    enabled: true
+    expireAfter: "7.00:00:00"
+    approvalTimeout: "12:00:00"
+
 secrets:
   postgres: hephaisto-postgres
   llm: hephaisto-llm
@@ -60,6 +67,7 @@ otel:
   environment: ci
 
 grafanaMcp:
+  podLogSelector: '{namespace="<namespace>", pod="<pod>"}'
   url: http://grafana-mcp.hephaisto-obs:8000/mcp
 
 alerts:

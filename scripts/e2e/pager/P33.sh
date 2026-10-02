@@ -28,4 +28,7 @@ scenario() {
 
     text=$(mcp_json "$(mcp_call "$PAGER_MCP_TOKEN_READER" fetch_evidence_blob "$(jq -cn --arg b "$blob" '{blobId:$b}')")" | jq -r '.text // empty')
     want "the blob is the log behind the excerpt" "$(grep -c 'payment failed' <<<"$text")" -ge 1
+    # #160: the pod has a mesh proxy beside the application, and the script named no container.
+    want "the application container was read, and the result names the proxy beside it" \
+        "$(grep -c 'the pod also has: linkerd-proxy' <<<"$text")" -ge 1
 }

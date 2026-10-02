@@ -452,6 +452,150 @@ public class SignalMapperTests
             .Should().BeNull();
     }
 
+    // ------------------------------------------------------------------
+    // Healed (#158)
+    // ------------------------------------------------------------------
+
+    private static readonly TimeSpan Quiet = TimeSpan.FromMinutes(10);
+
+    private static V1ContainerState RunningSince(TimeSpan ago) =>
+        new() { Running = new V1ContainerStateRunning { StartedAt = K8sFixtures.Now.Subtract(ago).UtcDateTime } };
+
+    [Fact]
+    public void A_pod_running_ready_and_unrestarted_for_the_quiet_period_is_healed()
+    {
+        var pod = K8sFixtures.Pod(containers: [K8sFixtures.Container(state: RunningSince(TimeSpan.FromMinutes(11)))]);
+
+        SignalMapper.IsHealed(pod, K8sFixtures.Now, Quiet).Should().BeTrue();
+    }
+
+    [Fact]
+    public void A_container_between_two_crashes_is_not_healed()
+    {
+        // Up for three minutes: a crash loop's back-off is up to five, so this proves nothing.
+        var pod = K8sFixtures.Pod(containers: [K8sFixtures.Container(state: RunningSince(TimeSpan.FromMinutes(3)))]);
+
+        SignalMapper.IsHealed(pod, K8sFixtures.Now, Quiet).Should().BeFalse();
+    }
+
+    [Fact]
+    public void A_pod_that_is_not_ready_or_not_running_or_going_away_is_not_healed()
+    {
+        var old = RunningSince(TimeSpan.FromHours(1));
+
+        var notReady = K8sFixtures.Pod(containers: [K8sFixtures.Container(ready: false, state: old)]);
+        var pending = K8sFixtures.Pod(phase: "Pending", containers: [K8sFixtures.Container(state: old)]);
+        var finished = K8sFixtures.Pod(phase: "Succeeded", containers: [K8sFixtures.Container(state: old)]);
+        var noStatus = K8sFixtures.Pod(containers: []);
+        var deleting = K8sFixtures.Pod(containers: [K8sFixtures.Container(state: old)]);
+        deleting.Metadata.DeletionTimestamp = K8sFixtures.Now.UtcDateTime;
+
+        foreach (var pod in new[] { notReady, pending, finished, noStatus, deleting })
+        {
+            SignalMapper.IsHealed(pod, K8sFixtures.Now, Quiet).Should().BeFalse();
+        }
+    }
+
+    /// <summary>
+    /// lastState keeps an OOMKill for the life of the pod, and every relist reported it again:
+    /// the incident never went quiet, and closing it would have reopened it at the next relist.
+    /// </summary>
+    [Fact]
+    public void An_old_OOMKill_on_a_container_that_has_run_cleanly_since_is_no_signal()
+    {
+        var pod = K8sFixtures.Pod(containers:
+        [
+            K8sFixtures.Container(
+                restartCount: 1,
+                state: RunningSince(TimeSpan.FromHours(3)),
+                lastState: K8sFixtures.Terminated(137, "OOMKilled")),
+        ]);
+
+        SignalMapper.FromPod(pod, K8sFixtures.Cluster, K8sFixtures.Now, PodTrend.None, thresholds: new(HealedAfter: Quiet))
+            .Should().BeNull();
+    }
+
+    [Fact]
+    public void An_OOMKill_minutes_ago_is_still_a_signal_while_the_container_runs()
+    {
+        var pod = K8sFixtures.Pod(containers:
+        [
+            K8sFixtures.Container(
+                restartCount: 1,
+                state: RunningSince(TimeSpan.FromMinutes(2)),
+                lastState: K8sFixtures.Terminated(137, "OOMKilled")),
+        ]);
+
+        SignalMapper.FromPod(pod, K8sFixtures.Cluster, K8sFixtures.Now, PodTrend.None, thresholds: new(HealedAfter: Quiet))!
+            .Kind.Should().Be(SignalKind.OomKilled);
+    }
+
+    [Fact]
+    public void A_workload_is_healed_when_every_pod_its_owner_controls_is()
+    {
+        var replicaSet = K8sFixtures.Meta("api-7d4c9f8b6", K8sFixtures.OwnedBy("Deployment", "api"));
+        var lookup = K8sFixtures.LookupOf(replicaSet);
+        var target = new TargetRef { Namespace = K8sFixtures.Namespace, Kind = "Pod", Name = "api-7d4c9f8b6-gone", OwnerKind = "Deployment", OwnerName = "api" };
+
+        V1Pod Replica(string name, TimeSpan up) => K8sFixtures.Pod(
+            name,
+            containers: [K8sFixtures.Container(state: RunningSince(up))],
+            owners: [K8sFixtures.OwnedBy("ReplicaSet", "api-7d4c9f8b6")]);
+
+        var stranger = K8sFixtures.Pod("other-1", containers: [K8sFixtures.Container(ready: false)]);
+
+        // The pod the incident names is gone - a rollout replaced it - and its successors are fine.
+        SignalMapper.HealedWorkload(
+                target,
+                [Replica("api-7d4c9f8b6-a", TimeSpan.FromHours(1)), Replica("api-7d4c9f8b6-b", TimeSpan.FromHours(1)), stranger],
+                lookup, K8sFixtures.Now, Quiet)
+            .Should().Contain("2 pod(s)");
+
+        // One healthy replica beside one that restarted a minute ago is not a healed workload.
+        SignalMapper.HealedWorkload(
+                target,
+                [Replica("api-7d4c9f8b6-a", TimeSpan.FromHours(1)), Replica("api-7d4c9f8b6-b", TimeSpan.FromMinutes(1))],
+                lookup, K8sFixtures.Now, Quiet)
+            .Should().BeNull();
+    }
+
+    [Fact]
+    public void A_workload_with_no_pod_left_is_not_healed()
+    {
+        // Deleted or scaled to nothing. Nothing healed; that one is the sweeper's to expire.
+        var target = new TargetRef { Namespace = K8sFixtures.Namespace, Kind = "Pod", Name = "api-x", OwnerKind = "Deployment", OwnerName = "api" };
+
+        SignalMapper.HealedWorkload(target, [], null, K8sFixtures.Now, Quiet).Should().BeNull();
+    }
+
+    [Fact]
+    public void A_bare_pod_is_judged_by_itself_and_a_Job_never()
+    {
+        var pod = K8sFixtures.Pod("solo", containers: [K8sFixtures.Container(state: RunningSince(TimeSpan.FromHours(1)))]);
+
+        SignalMapper.HealedWorkload(
+                new TargetRef { Namespace = K8sFixtures.Namespace, Kind = "Pod", Name = "solo" }, [pod], null, K8sFixtures.Now, Quiet)
+            .Should().NotBeNull();
+
+        SignalMapper.HealedWorkload(
+                new TargetRef { Namespace = K8sFixtures.Namespace, Kind = "Job", Name = "nightly" }, [pod], null, K8sFixtures.Now, Quiet)
+            .Should().BeNull();
+    }
+
+    /// <summary>
+    /// A relist returns an hour of events. After an agent restart a BackOff from before the pod
+    /// healed would otherwise open the incident its healing closed.
+    /// </summary>
+    [Fact]
+    public void An_event_last_seen_before_the_quiet_period_is_dropped()
+    {
+        var stale = Event("Warning", "BackOff", "Back-off restarting failed container");
+
+        SignalMapper.FromEvent(stale, K8sFixtures.Cluster, notBefore: K8sFixtures.Now.AddMinutes(1)).Should().BeNull();
+        SignalMapper.FromEvent(stale, K8sFixtures.Cluster, notBefore: K8sFixtures.Now.AddMinutes(-1)).Should().NotBeNull();
+        SignalMapper.FromEvent(stale, K8sFixtures.Cluster).Should().NotBeNull();
+    }
+
     private static Corev1Event EventWithCount(string type, string reason, string message, int? count)
     {
         var e = Event(type, reason, message);

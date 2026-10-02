@@ -3,6 +3,8 @@ using Hephaisto.Agent.Web;
 using Hephaisto.Core.Safety;
 using ModelContextProtocol;
 
+using Hephaisto.Agent.Persistence;
+
 namespace Hephaisto.Agent.Mcp;
 
 /// <summary>
@@ -75,6 +77,65 @@ public sealed class McpIncidentActions(IncidentQueries queries, McpIncidentReade
         var result = await queries.CloseIncidentAsync(incidentId, actor, UntrustedText.Clean(reason).Trim(), ct, origin).ConfigureAwait(false);
 
         return await AnswerAsync(result, incidentId, actor, origin, "closed", ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The bulk close (#161): a dry run without <paramref name="expect"/>, the close with it.
+    /// </summary>
+    public async Task<BulkCloseAnswer> CloseManyAsync(
+        McpCaller caller, McpIncidentFilter filter, string? reason, int? expect, string? onBehalfOf, CancellationToken ct)
+    {
+        var (actor, origin) = Authorise(caller, onBehalfOf, approver: true, claimRequired: false, "Closing");
+
+        // Only open incidents close, so a state that names none is a mistake worth saying.
+        var state = string.IsNullOrWhiteSpace(filter.State) || string.Equals(filter.State.Trim(), "any", StringComparison.OrdinalIgnoreCase)
+            ? "open"
+            : filter.State.Trim();
+
+        if (!string.Equals(state, "open", StringComparison.OrdinalIgnoreCase)
+            && !(Enum.TryParse<Hephaisto.Core.Domain.IncidentState>(state, ignoreCase: true, out var exact) && HephaistoDbContext.OpenStates.Contains(exact)))
+        {
+            throw new McpException($"state '{McpQuery.Echo(state)}' names no open incident. Leave it out for every open one, or name an open state such as Escalated.");
+        }
+
+        filter = filter with { State = state };
+
+        if (expect is not null && string.IsNullOrWhiteSpace(reason))
+        {
+            throw new McpException("Give the reason: why these need no more attention. It is written to every one of them.");
+        }
+
+        var result = await queries.CloseIncidentsAsync(
+            filter, actor, UntrustedText.Clean(reason ?? string.Empty).Trim(), expect, ct, origin).ConfigureAwait(false);
+
+        if (result.Outcome != LifecycleOutcome.Applied)
+        {
+            throw new McpException($"Nothing was closed ({result.Outcome}): {result.Detail}");
+        }
+
+        var sample = result.DryRun && result.Matched > 0
+            ? (await reader.SearchAsync(filter, null, 10, null, ct).ConfigureAwait(false)).Incidents
+            : [];
+
+        return new BulkCloseAnswer
+        {
+            Done = result.DryRun
+                ? $"nothing yet: {result.Matched} open incidents would close"
+                : $"closed {result.Closed} incidents",
+            DryRun = result.DryRun,
+            Matched = result.Matched,
+            Closed = result.Closed,
+            Filters = filter.Describe(),
+            RecordedAs = McpText.Name(actor),
+            ClaimedBy = McpText.NameOrNull(origin.ClaimedBy),
+            ClaimVerified = false,
+            Sample = sample,
+            Note = result.DryRun
+                ? result.Matched == 0
+                    ? "No open incident matches these filters."
+                    : $"To close them, call again with the same filters, a reason and expect: {result.Matched}. The sample is the newest ten."
+                : "Each has its own audit trail entry. An incident reopens by itself when its alert fires again.",
+        };
     }
 
     public async Task<WriteResult> AddNoteEntryAsync(

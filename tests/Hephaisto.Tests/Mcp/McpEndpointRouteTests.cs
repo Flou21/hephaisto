@@ -158,7 +158,7 @@ public sealed class McpEndpointRouteTests : IAsyncLifetime
     public async Task Each_token_is_shown_the_writes_it_may_make_and_no_others()
     {
         string[] writes = ["acknowledge_incident", "assign_incident", "add_alert_note_entry", "submit_incident_feedback"];
-        string[] approver = ["close_incident", "reinvestigate_incident"];
+        string[] approver = ["close_incident", "reinvestigate_incident", "close_incidents"];
 
         (await Tools(ReadOnly)).Should().NotContain(writes).And.NotContain(approver);
         (await Tools(Reader)).Should().Contain(writes).And.NotContain(approver);

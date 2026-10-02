@@ -1,7 +1,10 @@
 @page "/"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
 @inject IncidentQueries Queries
 @inject IIncidentNotifier Notifier
 @inject NavigationManager Nav
+@inject IAuthorizationService Authorization
 @implements IDisposable
 
 <PageTitle>hephaisto — incidents</PageTitle>
@@ -59,6 +62,54 @@
     </span>
 </div>
 
+@if (BulkFilter is not null && _viewer.MayDecide && _incidents.Count > 0)
+{
+    @* Closing by the filter, not by the rows on screen (#161): the table stops at 200 and a
+       backlog does not. Two steps on purpose - the first only counts, and the second closes
+       exactly that many or refuses. *@
+    <div class="hp-retry hp-section" data-testid="bulk-close">
+        <div class="hp-retry-controls">
+            <ActorField Viewer="_viewer" @bind-Name="_closedBy" TestId="bulk-close-actor" />
+            <input class="hp-retry-name" placeholder="reason for closing all of them" aria-label="reason for closing all of them"
+                   data-testid="bulk-close-reason"
+                   @bind="_bulkReason" @bind:event="oninput" />
+            @if (_bulkCount is null)
+            {
+                <button type="button" class="hp-submit" data-testid="bulk-close-count"
+                        disabled="@_bulkBusy" @onclick="CountBulkAsync">
+                    @(_bulkBusy ? "…" : "close every open incident this filter matches…")
+                </button>
+            }
+            else
+            {
+                <button type="button" class="hp-submit" data-testid="bulk-close-confirm"
+                        disabled="@(_bulkBusy || _bulkCount == 0 || string.IsNullOrWhiteSpace(_bulkReason) || string.IsNullOrWhiteSpace(BulkActor))"
+                        @onclick="CloseBulkAsync">
+                    @(_bulkBusy ? "…" : $"close {_bulkCount} open incidents")
+                </button>
+                <button type="button" class="hp-submit" data-testid="bulk-close-cancel"
+                        disabled="@_bulkBusy" @onclick="ResetBulk">
+                    cancel
+                </button>
+            }
+        </div>
+        @if (_bulkCount is { } count)
+        {
+            <span class="hp-muted" data-testid="bulk-close-preview">
+                @count open incidents match (@BulkFilter.Describe()). Each gets its own audit entry, with the reason.
+            </span>
+        }
+        @if (_bulkMessage is { Length: > 0 })
+        {
+            <span class="hp-muted" data-testid="bulk-close-done">@_bulkMessage</span>
+        }
+        @if (_bulkError is { Length: > 0 })
+        {
+            <span class="hp-error" data-testid="bulk-close-error"><span class="glyph">!!</span> @_bulkError</span>
+        }
+    </div>
+}
+
 @if (_incidents.Count == 0 && !_loading)
 {
     <p class="hp-empty">
@@ -105,6 +156,13 @@ else
                         @if (incident.State == IncidentState.Suppressed && incident.SuppressionReason != SuppressionReason.None)
                         {
                             <span class="hp-sub">@incident.SuppressionReason</span>
+                        }
+                        @if (incident.AcknowledgedBy is { Length: > 0 } holder)
+                        {
+                            @* Not a state: acknowledging changes none, so it sits under whichever
+                               one the incident is in. Without it an acknowledged incident and an
+                               untouched one are the same row (#165). *@
+                            <span class="hp-sub" data-testid="row-acknowledged-by">ack @ActorDisplay.Render(holder, incident.AcknowledgedClaimedBy)</span>
                         }
                     </td>
                     <td class="c-sev">
@@ -195,6 +253,105 @@ else
 
     private CancellationTokenSource? _cts;
 
+    // ------------------------------------------------------------------
+    // Closing everything a filter matches (#161)
+    // ------------------------------------------------------------------
+
+    private ConsoleViewer _viewer = ConsoleViewer.Anonymous;
+
+    [Inject]
+    private AuthenticationStateProvider? AuthProvider { get; set; }
+
+    private string _closedBy = string.Empty;
+    private string _bulkReason = string.Empty;
+    private int? _bulkCount;
+    private bool _bulkBusy;
+    private string? _bulkMessage;
+    private string? _bulkError;
+
+    private string BulkActor => _viewer.Actor(_closedBy) ?? string.Empty;
+
+    /// <summary>
+    /// The page's filter as the bulk close takes it, or null when the filter shows incidents
+    /// that are not open: there is nothing to close among those.
+    /// </summary>
+    private Hephaisto.Agent.Mcp.McpIncidentFilter? BulkFilter
+    {
+        get
+        {
+            var open = _state == "open"
+                || (Enum.TryParse<IncidentState>(_state, ignoreCase: true, out var s) && HephaistoDbContext.OpenStates.Contains(s));
+
+            return open
+                ? new Hephaisto.Agent.Mcp.McpIncidentFilter
+                {
+                    State = _state,
+                    Kind = string.IsNullOrEmpty(_kind) ? null : _kind,
+                    Namespace = string.IsNullOrEmpty(_namespace) ? null : _namespace,
+                }
+                : null;
+        }
+    }
+
+    private void ResetBulk()
+    {
+        _bulkCount = null;
+        _bulkError = null;
+    }
+
+    private Task CountBulkAsync() => RunBulkAsync(expect: null);
+
+    private Task CloseBulkAsync() => RunBulkAsync(expect: _bulkCount);
+
+    private async Task RunBulkAsync(int? expect)
+    {
+        if (BulkFilter is not { } filter || !_viewer.MayDecide)
+        {
+            return;
+        }
+
+        _bulkBusy = true;
+        _bulkError = null;
+        _bulkMessage = null;
+
+        try
+        {
+            // A dry run records nobody, so it needs no name yet.
+            var result = await Queries.CloseIncidentsAsync(
+                filter,
+                expect is null && BulkActor.Length == 0 ? "console" : BulkActor,
+                _bulkReason,
+                expect,
+                _cts?.Token ?? CancellationToken.None);
+
+            if (result.Outcome != LifecycleOutcome.Applied)
+            {
+                _bulkError = result.Detail;
+                _bulkCount = null;
+            }
+            else if (result.DryRun)
+            {
+                _bulkCount = result.Matched;
+            }
+            else
+            {
+                _bulkMessage = $"closed {result.Closed} incidents.";
+                _bulkCount = null;
+                _bulkReason = string.Empty;
+                await LoadAsync();
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _bulkError = ex.Message;
+            _bulkCount = null;
+        }
+        finally
+        {
+            _bulkBusy = false;
+        }
+    }
+
     /// <summary>
     /// The fallback tick. Live updates arrive through <see cref="IIncidentNotifier"/> the
     /// moment the pipeline publishes one, but nothing publishes when an incident is merely
@@ -206,6 +363,8 @@ else
     protected override async Task OnInitializedAsync()
     {
         _cts = new CancellationTokenSource();
+
+        _viewer = await ConsoleViewer.ResolveAsync(AuthProvider, Authorization);
 
         await LoadAsync();
 
@@ -332,18 +491,21 @@ else
     private async Task OnStateChanged(ChangeEventArgs e)
     {
         _state = e.Value?.ToString() ?? "open";
+        ResetBulk();
         await LoadAsync();
     }
 
     private async Task OnKindChanged(ChangeEventArgs e)
     {
         _kind = e.Value?.ToString() ?? string.Empty;
+        ResetBulk();
         await LoadAsync();
     }
 
     private async Task OnNamespaceChanged(ChangeEventArgs e)
     {
         _namespace = e.Value?.ToString() ?? string.Empty;
+        ResetBulk();
         await LoadAsync();
     }
 
