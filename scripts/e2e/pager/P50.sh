@@ -1,10 +1,15 @@
-# pager: P50 | mcp | shared | a backlog closes in two calls: a dry run that counts, and a close that takes exactly that count
+# pager: P50 | mcp | exclusive | a backlog closes in two calls: a dry run that counts, and a close that takes exactly that count
 #
 # Backlog #161. Clearing production on 2026-09-29 took 326 separate close_incident calls through
 # a gateway, in a script. close_incidents takes the filters of search_incidents. Without
 # `expect` it closes nothing and says how many would close; with it, it closes them only if
 # exactly that many still match - so a filter that is slightly wrong, or a backlog that grew in
 # between, is refused rather than closed. Approver only, a reason required, one audit entry each.
+#
+# Exclusive, though it disturbs nobody: it fires three alerts, and the shared scenarios all fire
+# in the same second into an investigation queue of 32. On 2026-10-02 CI's P41 found its
+# incident settled four seconds after firing with no investigation, which is what a full queue
+# does to the alert that arrives last. Three alerts fewer in that burst is this line.
 
 scenario() {
     mcp_ready || return
