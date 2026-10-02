@@ -1131,9 +1131,36 @@ public sealed class IncidentQueries(
             return new LifecycleResult { Outcome = LifecycleOutcome.NotFound };
         }
 
+        var note = string.IsNullOrWhiteSpace(reason) ? "Closed by an operator" : reason.Trim();
+
+        if (CloseTracked(db, audit, stateMachine, incident, actor, note, origin, bulk: null) is { } refused)
+        {
+            return new LifecycleResult { Outcome = LifecycleOutcome.IllegalState, Detail = refused };
+        }
+
+        await db.SaveChangesAsync(ct);
+
+        AnnounceClosed(sp.GetRequiredService<HephaistoMetrics>(), incident, actor);
+
+        return new LifecycleResult { Outcome = LifecycleOutcome.Applied, Detail = note };
+    }
+
+    /// <summary>
+    /// Stages one closure into the unit of work: the transition, its event and its audit row.
+    /// Returns why not, for an incident the state machine will not close.
+    /// </summary>
+    private string? CloseTracked(
+        HephaistoDbContext db,
+        IAuditRepository audit,
+        IncidentStateMachine stateMachine,
+        Incident incident,
+        string actor,
+        string note,
+        AuditOrigin? origin,
+        string? bulk)
+    {
         var from = incident.State;
         var eventsBefore = incident.Events.Count;
-        var note = string.IsNullOrWhiteSpace(reason) ? "Closed by an operator" : reason.Trim();
 
         try
         {
@@ -1141,7 +1168,7 @@ public sealed class IncidentQueries(
         }
         catch (InvalidStateTransitionException ex)
         {
-            return new LifecycleResult { Outcome = LifecycleOutcome.IllegalState, Detail = ex.Message };
+            return ex.Message;
         }
 
         // Before any save touches the graph - the appended event carries a client-assigned
@@ -1153,29 +1180,141 @@ public sealed class IncidentQueries(
         {
             At = clock.UtcNow,
             Type = "incident.closed",
-            IncidentId = incidentId,
+            IncidentId = incident.Id,
             Actor = actor,
-            Summary = $"closed from {from}",
-            Detail = AuditOrigin.Attach(JsonSerializer.Serialize(new { from = from.ToString(), reason = note }, AuditJson), origin),
+            Summary = bulk is null ? $"closed from {from}" : $"closed from {from}, with {bulk}",
+            Detail = AuditOrigin.Attach(JsonSerializer.Serialize(new { from = from.ToString(), reason = note, bulk }, AuditJson), origin),
         });
 
-        await db.SaveChangesAsync(ct);
+        return null;
+    }
 
+    /// <summary>After the save: the closed counter and the live event, as every ending does.</summary>
+    private void AnnounceClosed(HephaistoMetrics metrics, Incident incident, string actor)
+    {
         // Every other path that ends an incident records it; this one did not, so every incident
         // a person closed stayed in hephaisto.incidents.open for good (#154).
-        sp.GetRequiredService<HephaistoMetrics>().IncidentClosed(
-            incident.Kind, incident.Severity, IncidentState.Closed, clock.UtcNow - incident.OpenedAt);
+        metrics.IncidentClosed(incident.Kind, incident.Severity, IncidentState.Closed, clock.UtcNow - incident.OpenedAt);
 
         notifier.Publish(new IncidentLiveEvent
         {
-            IncidentId = incidentId,
+            IncidentId = incident.Id,
             Kind = IncidentLiveEventKind.StateChanged,
             State = IncidentState.Closed,
             Detail = $"closed by {actor}",
             At = clock.UtcNow,
         });
+    }
 
-        return new LifecycleResult { Outcome = LifecycleOutcome.Applied, Detail = note };
+    /// <summary>The most one bulk close takes. More than this is narrowed, not paged.</summary>
+    public const int BulkCloseCeiling = 1_000;
+
+    /// <summary>
+    /// Closes every open incident a filter matches, or says how many it would (#161).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Clearing production on 2026-09-29 took 326 separate closes through a gateway, in a script.
+    /// </para>
+    /// <para>
+    /// <b>Two calls, and the second names the first's count.</b> Without <paramref name="expect"/>
+    /// nothing closes: the answer is the count and the oldest few. With it, the incidents close
+    /// only if exactly that many still match - a filter typed slightly wrong, or a backlog that
+    /// grew in between, is refused rather than closed. Only open incidents are ever matched.
+    /// </para>
+    /// <para>
+    /// One audit row and one transition per incident, as the single close writes them, each
+    /// carrying the filter - so the trail of any one incident says it went in a bulk close and
+    /// which. One transaction: all of them close or none does.
+    /// </para>
+    /// </remarks>
+    public async Task<BulkCloseResult> CloseIncidentsAsync(
+        Mcp.McpIncidentFilter filter,
+        string closedBy,
+        string reason,
+        int? expect,
+        CancellationToken ct,
+        AuditOrigin? origin = null)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+
+        var actor = closedBy?.Trim() ?? string.Empty;
+        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+
+        if (IncidentStateMachine.IsForbiddenGranter(actor))
+        {
+            return BulkCloseResult.Refused(LifecycleOutcome.ForbiddenActor, $"'{actor}' may not close an incident: closing is a human judgement.");
+        }
+
+        await using var scope = scopes.CreateAsyncScope();
+        var sp = scope.ServiceProvider;
+        var db = sp.GetRequiredService<HephaistoDbContext>();
+
+        var open = filter.Apply(db.Incidents).Where(i => HephaistoDbContext.OpenStates.Contains(i.State));
+        var matched = await open.CountAsync(ct);
+
+        if (expect is null)
+        {
+            var sample = await open
+                .AsNoTracking()
+                .OrderBy(i => i.OpenedAt)
+                .Take(20)
+                .Select(i => new BulkCloseRow(i.Id, i.Title, i.State, i.OpenedAt))
+                .ToListAsync(ct);
+
+            return new BulkCloseResult { DryRun = true, Matched = matched, Sample = sample };
+        }
+
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            return BulkCloseResult.Refused(LifecycleOutcome.IllegalState, "Give the reason: it is written to every one of them.", matched);
+        }
+
+        if (matched != expect)
+        {
+            return BulkCloseResult.Refused(
+                LifecycleOutcome.IllegalState,
+                $"{matched} open incidents match now, not the {expect} that were expected. Nothing was closed; look again and name the new count.",
+                matched);
+        }
+
+        if (matched > BulkCloseCeiling)
+        {
+            return BulkCloseResult.Refused(
+                LifecycleOutcome.IllegalState,
+                $"{matched} is more than one bulk close takes ({BulkCloseCeiling}). Narrow the filter - a time range does it - and close in parts.",
+                matched);
+        }
+
+        var audit = sp.GetRequiredService<IAuditRepository>();
+        var stateMachine = sp.GetRequiredService<IncidentStateMachine>();
+        var note = reason.Trim();
+        var bulk = $"{matched - 1} others ({filter.Describe()})";
+
+        var incidents = await open.Include(i => i.Events).OrderBy(i => i.OpenedAt).ToListAsync(ct);
+        var closed = new List<Incident>(incidents.Count);
+
+        foreach (var incident in incidents)
+        {
+            if (CloseTracked(db, audit, stateMachine, incident, actor, note, origin, bulk) is null)
+            {
+                closed.Add(incident);
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
+
+        var metrics = sp.GetRequiredService<HephaistoMetrics>();
+
+        foreach (var incident in closed)
+        {
+            AnnounceClosed(metrics, incident, actor);
+        }
+
+        logger.LogInformation(
+            "{Actor} closed {Count} incidents at once ({Filter}): {Reason}", actor, closed.Count, filter.Describe(), note);
+
+        return new BulkCloseResult { DryRun = false, Matched = matched, Closed = closed.Count };
     }
 
     /// <summary>

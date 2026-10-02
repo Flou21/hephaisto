@@ -2713,7 +2713,25 @@ script.
 **What to do.** A bulk close that takes the filters of `search_incidents`, needs the approver
 role and a reason, and offers a dry run that returns the count and a sample before anything
 closes. It writes one audit row per incident, as the single close does. Offer it in the console
-and as an MCP tool. **Size.** M. Open.
+and as an MCP tool. **Size.** M.
+
+**Fixed in v0.13.0.** `IncidentQueries.CloseIncidentsAsync` takes the filter type of
+`search_incidents` (`Mcp/McpIncidentFilter`) and only ever matches open incidents. The dry run
+is not a flag: a call without `expect` closes nothing and returns the count and the oldest few,
+and a call with `expect` closes them only if exactly that many still match. A filter that is
+slightly wrong, or a backlog that grew in between, is refused rather than closed. A reason is
+required, the ceiling is 1,000 per call, and it is one transaction. Each incident gets its own
+transition and its own `incident.closed` audit row, which says how many went with it and by
+which filter.
+
+- **MCP:** `close_incidents`, approver only, the dry run included. Listed after
+  `reinvestigate_incident`, so "close incident" still finds `close_incident` first.
+- **Console:** on the incident list, for a viewer who may decide, when the state filter shows
+  open incidents. It closes by the filter, not by the 200 rows on screen. The page's filters
+  are state, kind and namespace; the rest of the search filters are MCP's.
+- No HTTP API route: nothing asked for one.
+
+Pager scenario P50 is the sentence end to end; `McpWriteTests` holds the four refusals.
 
 ### 162. Through a gateway nobody is anybody
 

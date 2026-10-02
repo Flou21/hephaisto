@@ -175,6 +175,109 @@ public sealed class McpWriteTests(PostgresFixture pg)
         retry.Done.Should().Contain("queued");
     }
 
+    // ------------------------------------------------------------------
+    // Many at once (#161)
+    // ------------------------------------------------------------------
+
+    private async Task<(Guid One, Guid Two, Guid Elsewhere, Guid AlreadyClosed)> BacklogAsync()
+    {
+        await pg.ResetAsync();
+
+        return (
+            await McpGiven.IncidentAsync(pg, "Flap", Severity.Warning, IncidentState.Escalated, "shop", "one", Now.AddHours(-3)),
+            await McpGiven.IncidentAsync(pg, "Flap", Severity.Warning, IncidentState.Investigating, "shop", "two", Now.AddHours(-2)),
+            await McpGiven.IncidentAsync(pg, "Flap", Severity.Warning, IncidentState.Escalated, "billing", "three", Now.AddHours(-1)),
+            await McpGiven.IncidentAsync(pg, "Flap", Severity.Warning, IncidentState.Closed, "shop", "four", Now.AddHours(-4)));
+    }
+
+    [Fact]
+    public async Task A_dry_run_names_how_many_would_close_and_which_and_closes_nothing()
+    {
+        var (one, two, _, _) = await BacklogAsync();
+        await using var provider = Services();
+
+        var dry = await Actions(provider).CloseManyAsync(Lead, new McpIncidentFilter { Namespace = "shop" }, null, null, null, Ct);
+
+        dry.DryRun.Should().BeTrue();
+        dry.Matched.Should().Be(2, "the closed one and the one in another namespace do not match");
+        dry.Closed.Should().Be(0);
+        dry.Sample.Select(r => r.Id).Should().BeEquivalentTo([one, two]);
+        dry.Note.Should().Contain("expect: 2");
+
+        await using var db = pg.CreateContext();
+        (await db.Incidents.CountAsync(i => i.State == IncidentState.Closed, Ct)).Should().Be(1, "nothing closed");
+        (await db.AuditEvents.CountAsync(a => a.Type == "incident.closed", Ct)).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task The_close_takes_exactly_what_the_dry_run_counted_and_writes_one_audit_row_each()
+    {
+        var (one, two, elsewhere, _) = await BacklogAsync();
+        await using var provider = Services();
+
+        var done = await Actions(provider).CloseManyAsync(
+            Lead, new McpIncidentFilter { Namespace = "shop" }, "the rollout finished; these were its flaps", 2, null, Ct);
+
+        done.DryRun.Should().BeFalse();
+        done.Closed.Should().Be(2);
+        done.RecordedAs.Value.Should().Be("lead");
+
+        await using var db = pg.CreateContext();
+
+        foreach (var id in new[] { one, two })
+        {
+            var incident = await db.Incidents.AsNoTracking().Include(i => i.Events).SingleAsync(i => i.Id == id, Ct);
+            incident.State.Should().Be(IncidentState.Closed);
+            incident.ClosedBy.Should().Be("lead");
+            incident.Events.Should().ContainSingle(e => e.To == IncidentState.Closed);
+
+            var audit = await db.AuditEvents.AsNoTracking().SingleAsync(a => a.IncidentId == id && a.Type == "incident.closed", Ct);
+            audit.Actor.Should().Be("lead");
+            audit.Summary.Should().Contain("1 others").And.Contain("namespace shop");
+            audit.Detail.Should().Contain("the rollout finished");
+            McpIncidentReader.Origin(audit.Detail)!.Source.Should().Be("mcp");
+        }
+
+        (await db.Incidents.AsNoTracking().SingleAsync(i => i.Id == elsewhere, Ct)).State
+            .Should().Be(IncidentState.Escalated, "another namespace was not asked for");
+    }
+
+    [Fact]
+    public async Task A_count_that_no_longer_holds_closes_nothing()
+    {
+        var (one, _, _, _) = await BacklogAsync();
+        await using var provider = Services();
+
+        // The dry run said 2; a third opened in the meantime.
+        await McpGiven.IncidentAsync(pg, "Flap", Severity.Critical, IncidentState.Escalated, "shop", "five", Now);
+
+        var close = () => Actions(provider).CloseManyAsync(Lead, new McpIncidentFilter { Namespace = "shop" }, "flaps", 2, null, Ct);
+        await close.Should().ThrowAsync<McpException>().WithMessage("*3 open incidents match now*");
+
+        await using var db = pg.CreateContext();
+        (await db.Incidents.AsNoTracking().SingleAsync(i => i.Id == one, Ct)).State.Should().Be(IncidentState.Escalated);
+    }
+
+    [Fact]
+    public async Task A_bulk_close_refuses_a_reader_a_missing_reason_and_a_state_that_is_not_open()
+    {
+        await BacklogAsync();
+        await using var provider = Services();
+        var shop = new McpIncidentFilter { Namespace = "shop" };
+
+        var reader = () => Actions(provider).CloseManyAsync(Flo, shop, null, null, null, Ct);
+        await reader.Should().ThrowAsync<McpException>().WithMessage("*approver*", "even the dry run is the approver's");
+
+        var noReason = () => Actions(provider).CloseManyAsync(Lead, shop, " ", 2, null, Ct);
+        await noReason.Should().ThrowAsync<McpException>().WithMessage("*reason*");
+
+        var closedState = () => Actions(provider).CloseManyAsync(Lead, shop with { State = "closed" }, null, null, null, Ct);
+        await closedState.Should().ThrowAsync<McpException>().WithMessage("*names no open incident*");
+
+        await using var db = pg.CreateContext();
+        (await db.Incidents.CountAsync(i => i.State == IncidentState.Closed, Ct)).Should().Be(1);
+    }
+
     private static McpIncidentActions Actions(ServiceProvider provider) =>
         new(provider.GetRequiredService<IncidentQueries>(), McpGiven.Reader(new PostgresFixtureHandle(provider).Pg, Now), new HttpContextAccessor());
 

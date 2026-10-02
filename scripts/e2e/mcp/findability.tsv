@@ -34,6 +34,8 @@ acknowledge incident	acknowledge_incident
 ack the incident	acknowledge_incident
 assign incident to me	assign_incident
 close incident	close_incident
+close all open incidents in a namespace at once	close_incidents
+bulk close the backlog	close_incidents
 add a note entry for the alert	add_alert_note_entry
 feedback on the diagnosis	submit_incident_feedback
 reinvestigate incident	reinvestigate_incident

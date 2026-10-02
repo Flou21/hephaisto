@@ -98,13 +98,13 @@ public sealed class McpToolSurfaceTests
     }
 
     [Fact]
-    public void The_write_facade_has_exactly_the_six_changes()
+    public void The_write_facade_has_exactly_the_six_changes_and_the_bulk_close()
     {
         typeof(McpIncidentActions)
             .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
             .Select(m => m.Name)
             .Should().BeEquivalentTo(
-                "AcknowledgeAsync", "AssignAsync", "CloseAsync", "AddNoteEntryAsync", "FeedbackAsync", "ReinvestigateAsync");
+                "AcknowledgeAsync", "AssignAsync", "CloseAsync", "CloseManyAsync", "AddNoteEntryAsync", "FeedbackAsync", "ReinvestigateAsync");
     }
 
     [Fact]

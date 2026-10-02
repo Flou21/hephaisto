@@ -7,11 +7,11 @@ using ModelContextProtocol.Server;
 namespace Hephaisto.Agent.Mcp.Tools;
 
 /// <summary>
-/// The six changes an agent may make (#157, F4). Listed only to a token that may write, the two
+/// The changes an agent may make (#157, F4; the bulk close is #161). Listed only to a token that may write, the two
 /// that need it only to an approver; <see cref="McpIncidentActions"/> checks the same again.
 /// </summary>
 [McpServerToolType]
-public sealed class McpWriteTools(McpIncidentActions actions, McpIncidentReader reader)
+public sealed class McpWriteTools(McpIncidentActions actions, McpIncidentReader reader, Hephaisto.Core.Abstractions.IClock clock)
 {
     private const string IdHelp = "The incident's id, at least its first 8 hex digits, or a console URL containing it.";
     private const string OnBehalfOfHelp = "The person who asked for this, as the console names them. Required to acknowledge through a shared token; recorded as a claim, never as the actor. A person's own token acts as that person and needs none.";
@@ -107,6 +107,47 @@ public sealed class McpWriteTools(McpIncidentActions actions, McpIncidentReader 
         var incident = await reader.ResolveAsync(id, cancellationToken).ConfigureAwait(false);
 
         return McpAnswer.Of(await actions.ReinvestigateAsync(Caller(user), incident, onBehalfOf, cancellationToken).ConfigureAwait(false));
+    }
+
+    [McpServerTool(Name = "close_incidents", Title = "Close many", Destructive = true, Idempotent = false, OpenWorld = false)]
+    [Authorize(Policy = McpExtensions.ApprovePolicy)]
+    [Description("Close many incidents at once (bulk close): every open incident that matches the filters of search_incidents - namespace, alert name, workload, kind, severity, cluster, assignee, acknowledged, time range. Needs the approver role. Call it first without expect: nothing closes, and it returns how many would close and the oldest of them (a dry run). Then call it again with the same filters, a reason and expect set to that count; it closes them only if exactly that many still match. One audit trail entry per incident, written as this token. To close one incident, use close_incident.")]
+    public async Task<string> CloseIncidentsAsync(
+        ClaimsPrincipal user,
+        [Description("Why these need no more attention. Shown to people as written, on every one of them. Required with expect.")] string? reason = null,
+        [Description("The count the dry run returned. Leave it out for the dry run; with it, the incidents close if exactly this many still match.")] int? expect = null,
+        [Description("open (the default), or one open state exactly: Investigating, AwaitingApproval, Escalated.")] string? state = null,
+        [Description("critical, warning or info; several separated by commas.")] string? severity = null,
+        [Description("The cluster label, exactly.")] string? cluster = null,
+        [Description("The Kubernetes namespace, exactly.")] string? @namespace = null,
+        [Description("The alertname, exactly, or a prefix ending in *.")] string? alertName = null,
+        [Description("A Deployment, StatefulSet, DaemonSet, Job or pod name, exactly.")] string? workload = null,
+        [Description("The kind of problem, as lookup_incident_filters lists them.")] string? kind = null,
+        [Description("nobody (unassigned), or a person's name as the console shows it; me for a token that identifies a person.")] string? assignedTo = null,
+        [Description("true for acknowledged incidents only, false for unacknowledged only.")] bool? acknowledged = null,
+        [Description("Opened at or after: an ISO 8601 time, or a duration back from now such as 24h or 7d.")] string? openedAfter = null,
+        [Description("Opened before: an ISO 8601 time, or a duration back from now such as 24h or 7d.")] string? openedBefore = null,
+        [Description(OnBehalfOfHelp)] string? onBehalfOf = null,
+        CancellationToken cancellationToken = default)
+    {
+        var now = clock.UtcNow;
+
+        var filter = new McpIncidentFilter
+        {
+            State = state,
+            Severity = severity,
+            Cluster = cluster,
+            Namespace = @namespace,
+            AlertName = alertName,
+            Workload = workload,
+            Kind = kind,
+            AssignedTo = McpIncidentTools.ResolveAssignee(user, assignedTo),
+            Acknowledged = acknowledged,
+            OpenedAfter = McpQuery.Time(openedAfter, now, "openedAfter"),
+            OpenedBefore = McpQuery.Time(openedBefore, now, "openedBefore"),
+        };
+
+        return McpAnswer.Of(await actions.CloseManyAsync(Caller(user), filter, reason, expect, onBehalfOf, cancellationToken).ConfigureAwait(false));
     }
 
     private static McpCaller Caller(ClaimsPrincipal user) =>

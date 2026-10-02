@@ -76,7 +76,7 @@ public sealed partial class McpToolCatalogueTests
     }
 
     [Fact]
-    public void The_writes_are_the_six_the_roadmap_names()
+    public void The_writes_are_the_six_the_roadmap_names_and_the_bulk_close()
     {
         McpSpecification.Golden().Where(t => !t.ReadOnly).Select(t => t.Name).Should().Equal(
             "acknowledge_incident",
@@ -84,10 +84,11 @@ public sealed partial class McpToolCatalogueTests
             "close_incident",
             "add_alert_note_entry",
             "submit_incident_feedback",
-            "reinvestigate_incident");
+            "reinvestigate_incident",
+            "close_incidents");
 
         McpSpecification.Golden().Where(t => t.Needs == "approver").Select(t => t.Name)
-            .Should().Equal("close_incident", "reinvestigate_incident");
+            .Should().Equal("close_incident", "reinvestigate_incident", "close_incidents");
     }
 
     [Fact]

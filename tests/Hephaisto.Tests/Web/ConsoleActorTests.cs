@@ -91,10 +91,10 @@ public sealed class ConsoleActorTests
     {
         // `Queries.CloseIncidentAsync(Id, _submittedBy, ...)` records what was typed. It has to
         // be `Actor`, which is the token's name when there is one.
-        var typed = new Regex(@"Queries\.\w+Async\((?:[^;]|\n)*?\b(_submittedBy|_approvalActor|_actor|_typedName)\b", RegexOptions.Compiled);
+        var typed = new Regex(@"Queries\.\w+Async\((?:[^;]|\n)*?\b(_submittedBy|_approvalActor|_actor|_typedName|_closedBy)\b", RegexOptions.Compiled);
 
         var offenders = Razor()
-            .Where(f => Path.GetFileName(f) is "IncidentDetail.razor" or "Status.razor" or "AlertNoteSection.razor")
+            .Where(f => Path.GetFileName(f) is "IncidentDetail.razor" or "Incidents.razor" or "Status.razor" or "AlertNoteSection.razor")
             .SelectMany(f => typed.Matches(File.ReadAllText(f)).Select(m => $"{Path.GetFileName(f)}: {m.Groups[1].Value}"));
 
         offenders.Should().BeEmpty();

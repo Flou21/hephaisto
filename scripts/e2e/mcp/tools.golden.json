@@ -61,6 +61,12 @@
       "description": "Re-investigate an incident (retry): put it back on the investigation queue for another attempt. This spends the model budget (tokens and cost). Needs the approver role. Refused while an investigation is running, while the kill switch is off or when the queue is full."
     },
     {
+      "name": "close_incidents",
+      "needs": "approver",
+      "readOnly": false,
+      "description": "Close many incidents at once (bulk close): every open incident that matches the filters of search_incidents - namespace, alert name, workload, kind, severity, cluster, assignee, acknowledged, time range. Needs the approver role. Call it first without expect: nothing closes, and it returns how many would close and the oldest of them (a dry run). Then call it again with the same filters, a reason and expect set to that count; it closes them only if exactly that many still match. One audit trail entry per incident, written as this token. To close one incident, use close_incident."
+    },
+    {
       "name": "get_incident_history",
       "needs": "reader",
       "readOnly": true,

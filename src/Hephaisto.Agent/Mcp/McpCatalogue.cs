@@ -35,6 +35,7 @@ public static class McpCatalogue
         ("add_alert_note_entry", Write),
         ("submit_incident_feedback", Write),
         ("reinvestigate_incident", Approver),
+        ("close_incidents", Approver),
         ("get_incident_history", Reader),
         ("get_incident_findings", Reader),
         ("get_investigation", Reader),

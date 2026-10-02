@@ -51,6 +51,27 @@ test.describe('the incident lifecycle', () => {
     ).toContainText('e2e-oncall', { timeout: 15_000 });
   });
 
+  test('the list counts what a bulk close would take, and closes nothing until told to', async ({ page }) => {
+    // #161. Two steps on purpose: the first only counts. This test stops there - closing every
+    // open incident would take the ones the tests below still need.
+    const before = (await incidents(page)).length;
+    expect(before).toBeGreaterThan(0);
+
+    await open(page, '/');
+
+    await settle(async () => {
+      await page.getByTestId('bulk-close-count').click();
+      await expect(page.getByTestId('bulk-close-preview')).toContainText('open incidents match', { timeout: 5_000 });
+    });
+
+    // A count and no reason: the button that would close them stays off.
+    await expect(page.getByTestId('bulk-close-confirm')).toBeDisabled();
+
+    await page.getByTestId('bulk-close-cancel').click();
+    await expect(page.getByTestId('bulk-close-count')).toBeVisible();
+    expect((await incidents(page)).length).toBe(before);
+  });
+
   test('assigning is a separate act from acknowledging', async ({ page }) => {
     const incident = await firstOpenIncident(page);
 

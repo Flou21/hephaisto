@@ -652,3 +652,29 @@ public sealed record AgentStatusView
 
     public string Commit { get; init; } = "unknown";
 }
+
+/// <summary>One of the incidents a bulk close would take, for the dry run's sample (#161).</summary>
+public sealed record BulkCloseRow(Guid Id, string Title, IncidentState State, DateTimeOffset OpenedAt);
+
+/// <summary>What a bulk close did, or would do.</summary>
+public sealed record BulkCloseResult
+{
+    public LifecycleOutcome Outcome { get; init; } = LifecycleOutcome.Applied;
+
+    /// <summary>Why nothing was closed, when <see cref="Outcome"/> is not Applied.</summary>
+    public string? Detail { get; init; }
+
+    /// <summary>True when nothing was asked to close: the count and the sample are the answer.</summary>
+    public bool DryRun { get; init; }
+
+    /// <summary>Open incidents the filter matches now.</summary>
+    public int Matched { get; init; }
+
+    public int Closed { get; init; }
+
+    /// <summary>The oldest few of a dry run.</summary>
+    public IReadOnlyList<BulkCloseRow> Sample { get; init; } = [];
+
+    public static BulkCloseResult Refused(LifecycleOutcome outcome, string detail, int matched = 0) =>
+        new() { Outcome = outcome, Detail = detail, Matched = matched };
+}

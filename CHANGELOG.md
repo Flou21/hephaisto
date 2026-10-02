@@ -28,6 +28,10 @@ the same day.
   Empty changes nothing.
 - **`get_pod_logs` reads a pod with a sidecar.** With no container named it reads the
   application container and says which other containers the pod has.
+- **Close many incidents at once** ([#161](docs/backlog.md#161)). The MCP tool `close_incidents`
+  takes the filters of `search_incidents`; the incident list in the console has the same for its
+  own filter. Approver only. The first call counts and closes nothing; the second names that
+  count and a reason, and closes only if the count still holds. One audit entry per incident.
 - **The sweeper has chart values**: `incidents.sweep.enabled`, `expireAfter`, `approvalTimeout`.
   Still off by default.
 
