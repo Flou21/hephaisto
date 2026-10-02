@@ -236,6 +236,23 @@ public sealed class AlertLifecycleTests(PostgresFixture pg) : IDisposable
         (await LoadAsync(opened.IncidentId)).State.Should().Be(IncidentState.Acting);
     }
 
+    [Fact]
+    public async Task An_alert_whose_rule_declares_no_kind_is_titled_by_its_name()
+    {
+        await pg.ResetAsync();
+
+        var unlabelled = await TriageAsync(Firing("MongodbHostDiskUsageHigh", ("namespace", "prometheus"), ("service", "mongo")));
+        var labelled = await TriageAsync(
+            Firing("OrdersDown", ("deployment", "orders"), ("hephaisto_kind", nameof(SignalKind.TargetDown))));
+
+        var incident = await LoadAsync(unlabelled.IncidentId);
+        incident.Kind.Should().Be(SignalKind.Unknown);
+        incident.Title.Should().StartWith("MongodbHostDiskUsageHigh on ", "\"Unknown on mongo\" names none of the rules about mongo");
+        incident.Title.Should().EndWith("(prometheus)");
+
+        (await LoadAsync(labelled.IncidentId)).Title.Should().StartWith("TargetDown on ", "a declared kind still leads");
+    }
+
     // --- plumbing -------------------------------------------------------------------------------
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;

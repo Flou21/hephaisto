@@ -719,7 +719,7 @@ public sealed class IncidentTriage(
         var was = incident.Kind;
 
         incident.Kind = signal.Kind;
-        incident.Title = TitleFor(signal.Kind, incident.Target, signal.Labels);
+        incident.Title = TitleFor(signal.Kind, incident.Target, signal.Labels, incident.AlertName);
 
         EnlistAudit(
             incident,
@@ -734,9 +734,12 @@ public sealed class IncidentTriage(
     /// An alert that names no object is titled by the labels that tell its series apart (#132) -
     /// otherwise two providers failing are two lines reading the same - and one about another
     /// cluster says which (#131). The namespace only when there is one: "()" read as a bug.
+    /// An alert whose rule declares no kind is titled by its alert name: "Unknown on mongo" told
+    /// nobody which of the rules about mongo had fired.
     /// </remarks>
-    private string TitleFor(SignalKind kind, TargetRef target, IReadOnlyDictionary<string, string> labels)
+    private string TitleFor(SignalKind kind, TargetRef target, IReadOnlyDictionary<string, string> labels, string? alertName)
     {
+        var what = kind == SignalKind.Unknown && !string.IsNullOrWhiteSpace(alertName) ? alertName : kind.ToString();
         var subject = target.OwnerName ?? target.Name;
 
         if (target.IsAlertOnly && AlertIdentity.Distinguishing(labels) is { Length: > 0 } which)
@@ -750,13 +753,16 @@ public sealed class IncidentTriage(
             target.IsForeignTo(options.CurrentValue.ClusterName) ? $"cluster {target.Cluster}" : string.Empty,
         }.Where(p => p.Length > 0));
 
-        return where.Length > 0 ? $"{kind} on {subject} ({where})" : $"{kind} on {subject}";
+        return where.Length > 0 ? $"{what} on {subject} ({where})" : $"{what} on {subject}";
     }
+
+    private static string? AlertNameOf(Signal signal) =>
+        signal.Source == SignalSource.Alertmanager ? signal.Reason : null;
 
     private Incident OpenIncident(Signal signal, DateTimeOffset now) => new()
     {
         CorrelationKey = SignalFingerprinter.CorrelationKey(signal),
-        Title = TitleFor(signal.Kind, signal.Target, signal.Labels),
+        Title = TitleFor(signal.Kind, signal.Target, signal.Labels, AlertNameOf(signal)),
         Kind = signal.Kind,
         Severity = signal.Severity,
         State = IncidentState.Detected,
@@ -766,7 +772,7 @@ public sealed class IncidentTriage(
         Labels = signal.Labels
             .Where(kv => !AlertIdentity.ScrapeLabels.Contains(kv.Key) && !AlertIdentity.IsAgentLabel(kv.Key))
             .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal),
-        AlertName = signal.Source == SignalSource.Alertmanager ? signal.Reason : null,
+        AlertName = AlertNameOf(signal),
         OpenedAt = now,
         LastSignalAt = now,
         Signals = [signal],
