@@ -22,6 +22,17 @@ scenario() {
     id=$(pager_first "$n")
     pager_wait_settled "$id" 120 || fail "the investigation ended" "state $(pager_state "$id")"
 
+    # Everything below reads a finding, so say first whether there is an investigation to read
+    # one from - and if not, how the incident got where it is. Without this a red run says only
+    # that the envelope check failed, which is not what failed.
+    t=$(pager_incident "$id" | jq -c '{state, escalationReason, investigations: (.investigations | length),
+        transitions: [.transitions[]? | "\(.to): \(.reason)"]}')
+    if [ "$(jq -r '.investigations' <<<"$t")" -ge 1 ]; then
+        pass "the incident was investigated before it settled"
+    else
+        fail "the incident was investigated before it settled" "$t"
+    fi
+
     for tool in get_incident get_incident_signals get_incident_findings get_investigation; do
         case "$tool" in
             get_incident) t=$(mcp_call "$PAGER_MCP_TOKEN_READER" "$tool" "$(jq -cn --arg id "$id" '{id:$id}')" | jq -r '.text') ;;
