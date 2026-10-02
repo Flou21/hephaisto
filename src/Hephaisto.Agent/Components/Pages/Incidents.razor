@@ -106,6 +106,13 @@ else
                         {
                             <span class="hp-sub">@incident.SuppressionReason</span>
                         }
+                        @if (incident.AcknowledgedBy is { Length: > 0 } holder)
+                        {
+                            @* Not a state: acknowledging changes none, so it sits under whichever
+                               one the incident is in. Without it an acknowledged incident and an
+                               untouched one are the same row (#165). *@
+                            <span class="hp-sub" data-testid="row-acknowledged-by">ack @ActorDisplay.Render(holder, incident.AcknowledgedClaimedBy)</span>
+                        }
                     </td>
                     <td class="c-sev">
                         <span class="hp-sev @Display.SeverityClass(incident.Severity)">

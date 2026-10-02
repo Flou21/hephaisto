@@ -40,6 +40,15 @@ test.describe('the incident lifecycle', () => {
     const after = await page.request.get(`/api/incidents/${incident.id}`).then(r => r.json());
     expect(after.state).toBe(before);
     expect(after.acknowledgedBy).toBe('e2e-oncall');
+
+    // And the list says so (#165). It is where somebody decides which incident to open, and
+    // until then an acknowledged row and an untouched one were identical there.
+    await open(page, '/');
+    await expect(
+      page.getByTestId('incident-row')
+        .filter({ has: page.locator(`a[href="incidents/${incident.id}"]`) })
+        .getByTestId('row-acknowledged-by'),
+    ).toContainText('e2e-oncall', { timeout: 15_000 });
   });
 
   test('assigning is a separate act from acknowledging', async ({ page }) => {

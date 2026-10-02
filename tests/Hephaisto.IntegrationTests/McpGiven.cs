@@ -78,14 +78,15 @@ internal static class McpGiven
         return incident.Id;
     }
 
-    public static McpIncidentReader Reader(PostgresFixture pg, DateTimeOffset now, CodeFixMode codeFixMode = CodeFixMode.Off)
+    /// <summary>The console's read model over the test database, with nothing running.</summary>
+    public static IncidentQueries Queries(PostgresFixture pg, DateTimeOffset now)
     {
         var clock = new FixedClock(now);
         var services = new ServiceCollection();
         services.AddScoped(_ => pg.CreateContext());
         var provider = services.BuildServiceProvider();
 
-        var queries = new IncidentQueries(
+        return new IncidentQueries(
             provider.GetRequiredService<IServiceScopeFactory>(),
             new NoKillSwitch(),
             new IncidentNotifier(NullLogger<IncidentNotifier>.Instance),
@@ -96,6 +97,12 @@ internal static class McpGiven
             new ConnectionHealthCache([], clock, NullLogger<ConnectionHealthCache>.Instance),
             clock,
             NullLogger<IncidentQueries>.Instance);
+    }
+
+    public static McpIncidentReader Reader(PostgresFixture pg, DateTimeOffset now, CodeFixMode codeFixMode = CodeFixMode.Off)
+    {
+        var clock = new FixedClock(now);
+        var queries = Queries(pg, now);
 
         var db = pg.CreateContext();
 

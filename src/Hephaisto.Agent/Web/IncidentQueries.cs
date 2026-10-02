@@ -153,6 +153,8 @@ public sealed class IncidentQueries(
                 SignalCount = i.Signals.Count,
                 InvestigationCount = i.Investigations.Count,
                 HasDiagnosis = i.Investigations.Any(v => v.Findings.Any()),
+                AcknowledgedBy = i.AcknowledgedBy,
+                AcknowledgedClaimedBy = i.AcknowledgedClaimedBy,
             })
             .ToListAsync(ct);
 

@@ -95,6 +95,15 @@ public sealed record IncidentListItem
     public bool HasDiagnosis { get; init; }
 
     /// <summary>
+    /// Who acknowledged it, or null (#165). On the row because the list is where somebody
+    /// decides which incident to open, and "is anyone on this" is the first thing they ask.
+    /// </summary>
+    public string? AcknowledgedBy { get; init; }
+
+    /// <summary>The person an agent named when it acknowledged; see <see cref="ActorDisplay"/>.</summary>
+    public string? AcknowledgedClaimedBy { get; init; }
+
+    /// <summary>
     /// Live progress, when a worker is running this incident right now. Null when it is not.
     /// </summary>
     /// <remarks>

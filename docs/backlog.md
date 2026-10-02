@@ -2709,6 +2709,25 @@ flaps whose logs cannot be read. **Size.** L. Built in `v0.12.0-rc1` (2026-09-29
 parts, `feat/v0.12.0-1` to `-9`; `scripts/e2e/investigate-local.sh` I0-I11 green on the dev stack
 with the scripted investigator. Open until a production install has run it on #118's answer.
 
+### 165. The incident list did not say who acknowledged what
+
+**Symptom.** Acknowledge an incident and go back to the list: its row is unchanged. The holder
+was on the detail page, in the audit trail, on the Teams board and in `search_incidents`, and
+not on the one page somebody reads to decide which incident to open.
+
+**Evidence.** Production, 2026-10-02: incident `01a0fb61` was acknowledged at 07:30 UTC,
+`get_incident` returned `acknowledgedBy` at once, and the list showed the same row as before.
+`IncidentListItem` had no such field and `Incidents.razor` nothing that would draw it - the
+list is its own SQL projection (`Web/IncidentQueries.cs`, `ListAsync`), so a column the detail
+view reads is not on the row until it is added there.
+
+**What to do.** Carry `AcknowledgedBy` and its claim on the row and draw it under the state,
+where the escalation reason already sits: acknowledging is not a state, so it gets no column
+and no colour of its own. **Size.** S. **Fixed**, exactly that: `ack <holder>` under the state,
+rendered through `ActorDisplay` so an agent's acknowledgement reads as one, and
+`GET /api/incidents` carries the two fields as a side effect. The assignee is still not on the
+row; nobody has asked.
+
 ## Dead or unreachable code
 
 ### 27. `AddHephaistoLlmWithoutPersistence` has no call sites

@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 
 using Hephaisto.Agent.Persistence;
 using Hephaisto.Agent.Persistence.Repositories;
+using Hephaisto.Agent.Web;
 using Hephaisto.Core;
 using Hephaisto.Core.Abstractions;
 using Hephaisto.Core.Domain;
@@ -161,6 +162,39 @@ public sealed class IncidentClosurePersistenceTests(PostgresFixture pg)
             incident.State.Should().Be(IncidentState.Escalated, "acknowledging is not a transition");
             incident.Events.Should().NotContain(e => e.To == IncidentState.Closed);
         }
+    }
+
+    /// <summary>
+    /// The list row carries the holder (#165).
+    /// </summary>
+    /// <remarks>
+    /// The list is a projection of its own, translated to SQL column by column, so a field the
+    /// detail view has is not on the row until somebody adds it there. Nobody had: an
+    /// acknowledged incident and an untouched one were the same row.
+    /// </remarks>
+    [Fact]
+    public async Task The_incident_list_says_who_acknowledged_each_row()
+    {
+        await pg.ResetAsync();
+
+        var acknowledged = await SeedEscalatedAsync();
+        var untouched = await SeedEscalatedAsync();
+
+        await using (var db = pg.CreateContext())
+        {
+            var incident = await db.Incidents.FirstAsync(i => i.Id == acknowledged, TestContext.Current.CancellationToken);
+
+            new IncidentStateMachine(new FixedClock(Now)).Acknowledge(incident, "flo");
+
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var rows = await McpGiven.Queries(pg, Now).ListAsync(
+            new IncidentListQuery { OpenOnly = true },
+            TestContext.Current.CancellationToken);
+
+        rows.Single(r => r.Id == acknowledged).AcknowledgedBy.Should().Be("flo");
+        rows.Single(r => r.Id == untouched).AcknowledgedBy.Should().BeNull();
     }
 
     /// <summary>Reopening a closed incident clears the closure, durably.</summary>
