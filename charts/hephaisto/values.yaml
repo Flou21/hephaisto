@@ -890,6 +890,17 @@ grafanaMcp:
     # loki: def456
     # tempo: ghi789
 
+  # Where one pod's logs are in Loki: a LogQL stream selector with <namespace> and <pod> where
+  # those go. Set, the model is told to read pod logs in Loki first - every container of the
+  # pod and what it logged before a restart, in one query - and to keep get_pod_logs for what
+  # Loki does not have. Empty, it is told nothing and reads logs from the Kubernetes API.
+  #
+  # The label names are your log shipper's. Include the cluster label if Loki holds several.
+  #
+  #   promtail / alloy:   '{namespace="<namespace>", pod="<pod>"}'
+  #   OTel k8sattributes: '{k8s_namespace_name="<namespace>", k8s_pod_name="<pod>"}'
+  podLogSelector: ""
+
 # -----------------------------------------------------------------------------------------
 # Grafana itself - annotations
 # -----------------------------------------------------------------------------------------

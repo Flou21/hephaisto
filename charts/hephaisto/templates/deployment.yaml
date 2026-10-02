@@ -342,6 +342,12 @@ spec:
               value: {{ $uid | quote }}
             {{- end }}
 
+            {{- with .Values.grafanaMcp.podLogSelector }}
+            # Loki first for pod logs (#160): the selector is the install's, so it is told.
+            - name: Investigation__Environment__PodLogSelector
+              value: {{ . | quote }}
+            {{- end }}
+
             {{- if .Values.alertmanager.url }}
             # Write-only, and the only thing written is a silence. Alerts arrive by webhook.
             - name: Alertmanager__Url

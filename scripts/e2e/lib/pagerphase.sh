@@ -32,7 +32,11 @@ pagerphase_run() {
     # the fixture pod is what P33 and P41 read the log of.
     KUBECONFIG="$E2E_KUBECONFIG" "$E2E_DIR/mcp-secrets.sh" --context "$E2E_CONTEXT" --namespace "$APP_NS" \
         || { fail "pager suite" "the MCP tokens' Secret could not be made"; return; }
-    kc apply -f "$REPO/infra/e2e/pager-fixture.yaml" >/dev/null
+    # A pod's containers cannot be changed in place, so a fixture left by an older checkout is replaced.
+    kc apply -f "$REPO/infra/e2e/pager-fixture.yaml" >/dev/null 2>&1 || {
+        kc delete -f "$REPO/infra/e2e/pager-fixture.yaml" --ignore-not-found --wait >/dev/null
+        kc apply -f "$REPO/infra/e2e/pager-fixture.yaml" >/dev/null
+    }
 
     say "reconfiguring the agent for the pager suite (values-pager.yaml over the install's values)"
     helm_e2e upgrade hephaisto "$CHART_REPO/hephaisto" \

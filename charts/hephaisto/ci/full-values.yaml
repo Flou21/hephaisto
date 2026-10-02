@@ -67,6 +67,7 @@ otel:
   environment: ci
 
 grafanaMcp:
+  podLogSelector: '{namespace="<namespace>", pod="<pod>"}'
   url: http://grafana-mcp.hephaisto-obs:8000/mcp
 
 alerts:

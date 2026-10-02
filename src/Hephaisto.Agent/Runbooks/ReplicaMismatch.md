@@ -28,7 +28,8 @@ the outage worse, and it is the single most tempting wrong move here.
      `FailedScheduling` Event. Insufficient CPU/memory, a node selector nothing matches, an
      unbound PVC.
    - `ImagePullBackOff` / `ErrImagePull` → the new revision's image tag.
-   - `CrashLoopBackOff` → read `get_pod_logs(previous: true)`, always.
+   - `CrashLoopBackOff` → read the previous container's logs, always: Loki when the
+     environment card gives a pod log selector, `get_pod_logs(previous: true)` otherwise.
    - Running but never Ready → a readiness probe or a dependency it is waiting on.
 
 ## The question worth asking early

@@ -15,6 +15,11 @@
 # digest the model sees had to leave something out, and a pod that has logged for a minute has
 # not given it anything to leave out - P33 and P41 read that blob, and in CI the pod is minutes old.
 #
+# It has a second container, named like a mesh's proxy and listed first, the way an injector
+# leaves a pod (#160). The Kubernetes API refuses "logs of this pod" without a container name
+# for such a pod, and the stand-in's script names none - so P33 and P41 are green only while
+# get_pod_logs picks the application container by itself.
+#
 # A bare Pod with a fixed name, so a script can name it. The stand-in's image, because every
 # install the suite runs on already has it (kind loads it, Tilt builds it) and its alpine base
 # has a shell; nothing is pulled.
@@ -30,6 +35,23 @@ spec:
   restartPolicy: Always
   terminationGracePeriodSeconds: 1
   containers:
+    - name: linkerd-proxy
+      image: hephaisto/notification-receiver:dev
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/sh", "-c", "echo 'proxy ready'; while true; do sleep 3600; done"]
+      resources:
+        requests:
+          cpu: 1m
+          memory: 4Mi
+        limits:
+          memory: 16Mi
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1654
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
     - name: payments
       image: hephaisto/notification-receiver:dev
       imagePullPolicy: IfNotPresent

@@ -90,9 +90,13 @@ public sealed class KubernetesReadTools(
         AIFunctionFactory.Create(
             GetPodLogsAsync,
             "get_pod_logs",
-            "Container logs, digested: repeated lines collapsed to a count with an exemplar, "
-            + "every panic/fatal/exception/OOM/refused/timeout line kept verbatim with context, "
-            + "and the last lines kept as-is. "
+            "One container's logs from the Kubernetes API, digested: repeated lines collapsed "
+            + "to a count with an exemplar, every panic/fatal/exception/OOM/refused/timeout line "
+            + "kept verbatim with context, and the last lines kept as-is. "
+            + "If the environment card gives a Loki selector for pod logs, query Loki FIRST and "
+            + "use this only when Loki has nothing for the pod. "
+            + "A pod can have several containers: name one with `container`, or leave it out and "
+            + "the application container is read - the result says which, and names the others. "
             + "IMPORTANT: after any restart, pass previous=true. The current container was "
             + "started AFTER the failure, so its logs cannot contain the crash; the previous "
             + "container's logs are the ones that explain it. Note that an OOMKilled container "
@@ -323,6 +327,17 @@ public sealed class KubernetesReadTools(
 
         return await GuardAsync(nameof(GetPodLogsAsync), async () =>
         {
+            // The API refuses a pod with more than one container unless one is named, and a
+            // mesh injects a second into every pod (#160). The model was never told the
+            // parameter existed, so it spent its steps on that error.
+            string[] others = [];
+
+            if (NullIfBlank(container) is null)
+            {
+                var pod = await api.Core.ReadNamespacedPodAsync(name, @namespace, cancellationToken: ct).ConfigureAwait(false);
+                (container, others) = DefaultContainer(pod);
+            }
+
             await using var stream = await api.Core.ReadNamespacedPodLogAsync(
                 name,
                 @namespace,
@@ -343,16 +358,57 @@ public sealed class KubernetesReadTools(
                 return $"no {(previous ? "previous " : string.Empty)}logs for {@namespace}/{name}"
                     + $"{(container is { Length: > 0 } ? "/" + container : string.Empty)}. "
                     + "A container that was OOMKilled, or that never started (image pull or config "
-                    + "error), writes nothing - absence here is consistent with those causes.";
+                    + "error), writes nothing - absence here is consistent with those causes."
+                    + OtherContainers(others);
             }
 
             var digest = LogDigester.Digest(raw, LogDigestOptions.Default);
 
             return $"{(previous ? "previous" : "current")} container logs for {@namespace}/{name}"
-                + $"{(container is { Length: > 0 } ? "/" + container : string.Empty)}\n"
+                + $"{(container is { Length: > 0 } ? "/" + container : string.Empty)}"
+                + $"{OtherContainers(others)}\n"
                 + digest.Text;
         }).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Containers a mesh or a platform adds beside the application. Never the default when
+    /// anything else is in the pod.
+    /// </summary>
+    private static readonly HashSet<string> KnownSidecars = new(StringComparer.Ordinal)
+    {
+        "linkerd-proxy", "linkerd-init", "istio-proxy", "istio-init", "envoy", "envoy-sidecar",
+        "vault-agent", "cloud-sql-proxy", "cloudsql-proxy", "oauth2-proxy", "config-reloader",
+    };
+
+    /// <summary>
+    /// Which container to read when the caller named none: the one kubectl would pick, from
+    /// <c>kubectl.kubernetes.io/default-container</c>, else the first that is not a known
+    /// sidecar, else the first. With it, the names of the rest.
+    /// </summary>
+    internal static (string? Container, string[] Others) DefaultContainer(V1Pod pod)
+    {
+        var names = pod.Spec?.Containers?.Select(c => c.Name).ToArray() ?? [];
+
+        if (names.Length <= 1)
+        {
+            return (names.FirstOrDefault(), []);
+        }
+
+        string? annotated = null;
+        pod.Metadata?.Annotations?.TryGetValue("kubectl.kubernetes.io/default-container", out annotated);
+
+        var chosen = names.Contains(annotated, StringComparer.Ordinal)
+            ? annotated!
+            : names.FirstOrDefault(n => !KnownSidecars.Contains(n)) ?? names[0];
+
+        return (chosen, [.. names.Where(n => n != chosen)]);
+    }
+
+    private static string OtherContainers(string[] others) =>
+        others.Length == 0
+            ? string.Empty
+            : $" (no container was named, so this one was read; the pod also has: {string.Join(", ", others)})";
 
     // ------------------------------------------------------------------
     // Events

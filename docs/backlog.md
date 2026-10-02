@@ -2675,7 +2675,32 @@ detail was in no log line.
 **What to do.** When no container is named, read the one named by the
 `kubectl.kubernetes.io/default-container` annotation. Failing that, read the first container
 that is not a known sidecar. Say in the result which one was read, and name the others. Log
-each grounding rejection's `Detail` at Warning. **Size.** S. Open.
+each grounding rejection's `Detail` at Warning. **Size.** S.
+
+**Fixed in v0.13.0, and the owner asked for more than the entry did: Loki first.** The
+Kubernetes API reads one container per call and only the last restart; Loki has every container
+of the pod and what it logged before it restarted, in one query. The Loki tools were already on
+the allowlist, and the runbooks sent the model to `get_pod_logs` "always and first" regardless.
+
+- **`grafanaMcp.podLogSelector`** is a LogQL stream selector with `<namespace>` and `<pod>`
+  where those go. Set, the environment card tells the model to read pod logs in Loki first and
+  to keep `get_pod_logs` for what Loki does not have: a container seconds old, a workload whose
+  logs are not shipped. It is a value because the label names are the shipper's (`namespace`,
+  `pod` from promtail; `k8s_namespace_name`, `k8s_pod_name` from the OTel collector), and a
+  model left to discover them spends its step budget on label listings. Empty says nothing, and
+  logs come from the Kubernetes API as before.
+- **The runbooks ask for "the previous container's logs"** and name both sources, where six of
+  them named the one tool.
+- **`get_pod_logs` reads a pod with a sidecar.** With no container named it reads the one in
+  `kubectl.kubernetes.io/default-container`, else the first that is not a known sidecar, and
+  the result says which was read and names the rest. Its description now mentions the parameter.
+- **A grounding rejection's detail is logged at Warning.**
+
+The pager fixture pod has a `linkerd-proxy` container listed first, so P33 and P41, whose
+script reads its log without naming a container, are green only with this. Not measured: how
+often a real model takes the Loki path, and what it costs in steps. One logged caveat for the
+production install: logs shipped over OTLP there carry `service_name` and no pod label, so a
+pod selector finds only what promtail ships.
 
 ### 161. A backlog can only be closed one incident at a time
 

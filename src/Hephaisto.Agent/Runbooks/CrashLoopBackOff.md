@@ -5,9 +5,11 @@ retrying. The restart count is the symptom. It is never the cause.
 
 ## First moves, in this order
 
-1. **`get_pod_logs(previous: true)`** — always, and always first. The current container is
+1. **The previous container's logs** — always, and always first. The current container is
    either not running or has only just started; the logs that explain the failure belong to
-   the *previous* instance. Skipping this is the single most common wasted investigation.
+   the *previous* instance. In Loki when the environment card gives a pod log selector (the
+   crashed instances are in the same stream), `get_pod_logs(previous: true)` otherwise.
+   Skipping this is the single most common wasted investigation.
 2. `describe_pod` → read `lastState.terminated`: `exitCode`, `reason`, `finishedAt`.
 3. `get_events` on the namespace, filtered to this pod.
 

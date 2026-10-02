@@ -23,9 +23,10 @@ you read a single log line. It changes which logs are worth reading.
 
 ## Then
 
-1. **`get_pod_logs(previous: true)`, always and first.** The current container started after
-   the failure; its logs describe a process that has not failed yet. This is the single most
-   common wasted step in this investigation.
+1. **The previous container's logs, always and first.** The current container started after
+   the failure; its logs describe a process that has not failed yet. In Loki when the
+   environment card gives a pod log selector, `get_pod_logs(previous: true)` otherwise. This
+   is the single most common wasted step in this investigation.
 
 2. If it is OOM, this is really `OomKilled` — use that reasoning. The limit and the actual
    usage are the finding, not the restart count.

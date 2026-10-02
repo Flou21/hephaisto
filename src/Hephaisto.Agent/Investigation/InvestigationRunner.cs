@@ -1079,13 +1079,17 @@ public sealed class InvestigationRunner(
             _ => null,
         };
 
-    private static void RecordRejections(IReadOnlyList<GroundingRejection> rejections)
+    private void RecordRejections(IReadOnlyList<GroundingRejection> rejections)
     {
         foreach (var rejection in rejections)
         {
             LlmInstrumentation.GroundingRejected.Add(
                 1,
                 new TagList { { "reason", rejection.Reason.ToString() } });
+
+            // The detail was in no log line (#160): an investigation ended GroundingRejected and
+            // the only way to learn which citation failed, and why, was to re-run it.
+            logger.LogWarning("Grounding rejected ({Reason}): {Detail}", rejection.Reason, rejection.Detail);
         }
     }
 

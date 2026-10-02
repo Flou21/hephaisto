@@ -231,6 +231,21 @@ public sealed class PromptComposer
             }
         }
 
+        if (_environment.PodLogSelector is { Length: > 0 } selector)
+        {
+            // Loki first (#160). It holds every container of a pod and the lines of the
+            // container that crashed, where the Kubernetes API has one container per call and
+            // only the last restart. Said here and not in a runbook because the label names are
+            // this install's.
+            sb.Append("- Pod logs are in Loki. Read them there first, with `query_loki_logs` and this selector:\n")
+                .Append("  `").Append(selector).Append("`\n")
+                .Append("  It returns every container of the pod, and what a container logged before it ")
+                .Append("restarted, so it is also where a runbook's `get_pod_logs(previous: true)` is answered. ")
+                .Append("Narrow it with a line filter (`|= \"error\"`) and a time range around the incident.\n")
+                .Append("  Use `get_pod_logs` only when Loki has nothing for the pod: a container that started ")
+                .Append("seconds ago, or a workload whose logs are not shipped.\n");
+        }
+
         if (_environment.WorkloadOwners.Count > 0)
         {
             sb.Append("- Workload owners (name the owner in a finding; it is what makes an escalation actionable):\n");

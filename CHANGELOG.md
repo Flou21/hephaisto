@@ -21,6 +21,13 @@ the same day.
   (ten minutes), the incident closes as `hephaisto/watcher`. An alert still firing on the same
   incident keeps it open, and so does an action in flight. A workload that was deleted, and a
   failed Job, do not heal: those are the sweeper's.
+- **Pod logs from Loki first** ([#160](docs/backlog.md#160)). Set `grafanaMcp.podLogSelector`
+  to the stream selector for one pod - `'{namespace="<namespace>", pod="<pod>"}'` with promtail's
+  labels - and the model is told to read pod logs in Loki, where every container and the lines
+  from before a restart are one query, and to use `get_pod_logs` only for what Loki lacks.
+  Empty changes nothing.
+- **`get_pod_logs` reads a pod with a sidecar.** With no container named it reads the
+  application container and says which other containers the pod has.
 - **The sweeper has chart values**: `incidents.sweep.enabled`, `expireAfter`, `approvalTimeout`.
   Still off by default.
 
@@ -33,6 +40,7 @@ the same day.
   longer re-reports a warning from before a pod healed.
 
 ### Fixed
+- **A grounding rejection says why in the log**, at Warning. Its detail was in no log line.
 - **The incident list says who acknowledged a row** ([#165](docs/backlog.md#165)).
 
 ## v0.12.0 — 2026-10-02

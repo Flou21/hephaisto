@@ -50,6 +50,70 @@ public class KubernetesReadToolsTests
     /// namespace) - the two most natural opening moves in any investigation.
     /// </para>
     /// </remarks>
+    // ------------------------------------------------------------------
+    // Which container, when none is named (#160)
+    // ------------------------------------------------------------------
+
+    private static k8s.Models.V1Pod PodWith(string? annotated, params string[] containers) => new()
+    {
+        Metadata = new k8s.Models.V1ObjectMeta
+        {
+            Annotations = annotated is null
+                ? null
+                : new Dictionary<string, string> { ["kubectl.kubernetes.io/default-container"] = annotated },
+        },
+        Spec = new k8s.Models.V1PodSpec
+        {
+            Containers = [.. containers.Select(c => new k8s.Models.V1Container { Name = c })],
+        },
+    };
+
+    /// <summary>
+    /// Production, 2026-09-29: a mesh-injected pod, no container named, the API's "a container
+    /// name must be specified", and an investigation that spent its steps on that error.
+    /// </summary>
+    [Fact]
+    public void A_pod_with_a_mesh_sidecar_is_read_from_its_application_container()
+    {
+        var (container, others) = KubernetesReadTools.DefaultContainer(PodWith(null, "linkerd-proxy", "app"));
+
+        container.Should().Be("app");
+        others.Should().Equal("linkerd-proxy");
+    }
+
+    [Fact]
+    public void The_annotation_kubectl_reads_wins()
+    {
+        var (container, others) = KubernetesReadTools.DefaultContainer(PodWith("worker", "app", "worker", "istio-proxy"));
+
+        container.Should().Be("worker");
+        others.Should().Equal("app", "istio-proxy");
+    }
+
+    [Fact]
+    public void An_annotation_naming_no_container_is_ignored()
+    {
+        KubernetesReadTools.DefaultContainer(PodWith("gone", "app", "traffic")).Container.Should().Be("app");
+    }
+
+    [Fact]
+    public void A_pod_with_one_container_has_nothing_to_choose_and_nothing_to_mention()
+    {
+        var (container, others) = KubernetesReadTools.DefaultContainer(PodWith(null, "app"));
+
+        container.Should().Be("app");
+        others.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void The_logs_tool_says_a_container_can_be_named_and_that_Loki_comes_first()
+    {
+        var description = Tools().CreateFunctions().Single(f => f.Name == "get_pod_logs").Description;
+
+        description.Should().Contain("`container`");
+        description.Should().Contain("Loki FIRST");
+    }
+
     [Theory]
     [InlineData("list_pods", "labelSelector")]
     [InlineData("get_events", "objectName")]

@@ -254,6 +254,11 @@
           "additionalProperties": {
             "type": "string"
           }
+        },
+        "podLogSelector": {
+          "type": "string",
+          "pattern": "^$|^\\{.*<pod>.*\\}$",
+          "description": "A LogQL stream selector for one pod's logs, with <namespace> and <pod> as placeholders. Set, the model reads pod logs in Loki first."
         }
       },
       "additionalProperties": false

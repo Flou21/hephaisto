@@ -67,6 +67,8 @@ refuses "the heal period set through extraEnv" \
     --set 'extraEnv[0].name=Kubernetes__HealedAfter' --set 'extraEnv[0].value=00:01:00'
 refuses "a heal period that is not hh:mm:ss" \
     --set incidents.healedAfter=10m
+refuses "a pod log selector that names no pod" \
+    --set-string 'grafanaMcp.podLogSelector={namespace="<namespace>"}'
 refuses "a price without a model" \
     --set 'llm.pricing[0].inputPerMillionUsd=1' --set 'llm.pricing[0].outputPerMillionUsd=1'
 

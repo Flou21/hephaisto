@@ -17,8 +17,9 @@ intermittently failing a probe. Restarting resets the symptom and destroys the e
    ```
 2. `get_service_endpoints` — an empty or oscillating Endpoints list is the user-visible
    impact, and is a top-5 root cause of "the service is down" reports.
-3. Logs **without** `previous` — the container has not restarted, so current logs are the
-   relevant ones. Look for slow dependency calls near probe failures.
+3. Logs of the **running** container — it has not restarted, so there is no previous one to
+   read. Loki when the environment card gives a pod log selector, `get_pod_logs` without
+   `previous` otherwise. Look for slow dependency calls near probe failures.
 4. `describe_pod` → the probe's `timeoutSeconds`, `periodSeconds` and `failureThreshold`.
 
 ## Common causes

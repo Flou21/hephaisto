@@ -54,6 +54,19 @@ public sealed class EnvironmentCardOptions
     public Dictionary<string, string> DatasourceUids { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// The LogQL stream selector that finds one pod's logs in Loki, with <c>&lt;namespace&gt;</c>
+    /// and <c>&lt;pod&gt;</c> where those go (#160). Chart value <c>grafanaMcp.podLogSelector</c>.
+    /// </summary>
+    /// <remarks>
+    /// The label names are the shipper's choice - <c>namespace</c>/<c>pod</c> from promtail,
+    /// <c>k8s_namespace_name</c>/<c>k8s_pod_name</c> from the OTel collector - and a model that
+    /// has to discover them spends its step budget on label listings. Set, the card tells the
+    /// model to read pod logs in Loki first and keeps <c>get_pod_logs</c> for what Loki does not
+    /// have. Empty, the card says nothing and the Kubernetes API stays the source.
+    /// </remarks>
+    public string PodLogSelector { get; set; } = string.Empty;
+
+    /// <summary>
     /// Workload key to the human or team that owns it. The agent cannot page anyone, but
     /// naming the owner in a finding is what makes an escalation actionable rather than a
     /// notification.
