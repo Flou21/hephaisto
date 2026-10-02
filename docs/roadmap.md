@@ -17,14 +17,28 @@ against the code rather than believed — see [backlog #9](backlog.md#9-semantic
 
 ## Where it stands
 
-`v0.11.0-rc1` was cut on 2026-09-29. v0.9.0 (it proposes the fix), v0.10.0 (the only thing that
-tells a person) and v0.11.0 (an agent can ask it) are written up in their own sections below. The
-first production install has now run long enough to set the priorities. Clearing it on
-2026-09-29 meant closing 326 open incidents, one call at a time, and two thirds of all incidents
-it had ever opened were one kind, raised by a detector that counts the wrong thing. So the next
-milestone, [v0.12.0](#v0120--what-production-found), is what production found. The louder
-channel and install ergonomics come right after it, as the
-[next, high-priority items](#next-high-priority--after-production).
+`v0.12.0` shipped on 2026-10-02. **What production found**, and the first full release since
+v0.8.0: v0.9.0 (it proposes the fix), v0.10.0 (the only thing that tells a person) and v0.11.0
+(an agent can ask it) went out as release candidates only, seventeen candidates across the four
+milestones, and are released by this tag. They are written up in their own sections below.
+
+**It was released to draw a line, not because the milestone was finished.** Of
+[v0.12.0](#v0120--what-production-found)'s five items, two shipped: F5, an investigation's model
+loop as Claude Code in a Job, and F2, where the readiness detectors that raised two thirds of
+production's incidents were removed rather than tuned. F1, F3 and F4
+([#158](backlog.md#158), [#160](backlog.md#160), [#161](backlog.md#161)) are open and carry over,
+so that section's "Done when" is not met and a watcher incident still closes only by hand. The
+candidates also carried what production found on the way: a console that never signed anybody in
+with `auth.enabled`, `Kubernetes:IgnoredKinds`, the investigation on the Teams cards.
+
+**What it rests on is the reverse of v0.8.0.** That release came from a green gate without a
+production soak. This one comes from the soak: the candidates ran on the production install as
+they were cut, and `src/` and `charts/` are byte-identical to `v0.12.0-rc9`, whose CI and release
+runs were green. The cluster gates (`run.sh --nightly --full --mode Auto`,
+`investigate-local.sh --strict`) were **not** run again for the tag.
+
+What comes next is the three items carried over, then the louder channel and install ergonomics,
+the [next, high-priority items](#next-high-priority--after-production).
 
 `v0.8.0` shipped on 2026-09-13. **An on-call engineer can actually use it.** The agent diagnosed
 well and said so nowhere a person could act on: an incident could not be closed, acknowledged or
@@ -1607,6 +1621,11 @@ On 2026-09-29 the first production install was cleared by hand, through the MCP 
 
 Closing 326 incidents also showed what is missing for the people working them: there is no way
 to close more than one at a time, and through a shared gateway token nobody is anybody.
+
+**Status (2026-10-02): released as `v0.12.0` with F2 and F5.** F2 shipped by removal: the watcher
+opens no `ReadinessFlapping` incident at all, so the second sentence of "Done when" about four
+failures in a few minutes holds only through the `TargetFlapping` alert rule. F1, F3 and F4 did
+not ship and carry over to the next milestone unchanged.
 
 ### What ships
 

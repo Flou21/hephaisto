@@ -10,10 +10,17 @@ broken, with the evidence for each.
 Versions are set by the git tag through MinVer; the chart version and the app version are always
 the same number.
 
-## v0.12.0 — unreleased (`v0.12.0-rc1` 2026-09-29)
+## v0.12.0 — 2026-10-02
 
-**What production found.** See `docs/roadmap.md`, v0.12.0. This candidate carries F5, the
-investigation's model loop in a Job; F1 to F4 follow in later candidates.
+**What production found.** See `docs/roadmap.md`, v0.12.0. The first full release since v0.8.0:
+v0.9.0, v0.10.0 and v0.11.0 below went out as release candidates only, so an upgrade from v0.8.0
+takes all four sections, migrations included. `src/` and `charts/` are those of `v0.12.0-rc9`.
+
+It carries F5, the investigation's model loop in a Job, and F2, settled by removing the readiness
+detectors rather than tuning them. **F1, F3 and F4 are not in it** and stay open: a watcher
+incident still never closes by itself ([#158](docs/backlog.md#158)), `get_pod_logs` still cannot
+read a pod with a sidecar ([#160](docs/backlog.md#160)), and closing is still one incident at a
+time ([#161](docs/backlog.md#161)).
 
 ### New
 - **Investigation in a Job, off by default** ([#164](docs/backlog.md#164)). With
@@ -95,12 +102,13 @@ investigation's model loop in a Job; F1 to F4 follow in later candidates.
 - **Two migrations run at startup**, both additive: `InvestigationExecutor` (nullable
   `investigations.executor`; existing rows read as in-process) and `FindingCodeRefs`
   (`findings.code_refs` jsonb, default empty).
-- **Before production:** resolve backlog #118 (the OAuth token's terms for headless use), and land
-  #160 first (#159 is in this release), or investigations of mesh-injected pods cannot read logs.
+- **Before production:** resolve backlog #118 (the OAuth token's terms for headless use). #160 is
+  not in this release (#159 is), so an investigation of a mesh-injected pod reads its logs only if
+  the model names the container.
 - A subscription run is charged $0 to the global LLM budget (its notional cost is in the step);
   the Job caps bound it. An API-key run is charged what it cost.
 
-## v0.11.0 — unreleased (`v0.11.0-rc1` 2026-09-29)
+## v0.11.0 — candidates only (`v0.11.0-rc1` 2026-09-29), released in v0.12.0
 
 **An agent can ask it.** An MCP endpoint over the incidents, their investigations and their
 history ([#157](docs/backlog.md#157)), for coding agents and for an MCP gateway in front of them.
@@ -141,7 +149,7 @@ See `docs/roadmap.md`, v0.11.0.
 - **Re-investigating as the model** is refused with a reason (403), where it used to surface as an
   unhandled exception. **Feedback** refuses the model as its author.
 
-## v0.10.0 — unreleased (`v0.10.0-rc1` 2026-09-28)
+## v0.10.0 — candidates only (`v0.10.0-rc1` 2026-09-28), released in v0.12.0
 
 ### Fixed in rc2
 - **A model's `null` in its conclusion no longer fails the investigation** ([#156](docs/backlog.md#156)).
@@ -291,7 +299,7 @@ the incident service and the pager that alerts go to today; this release is what
 - The buttons have run against the Teams stand-in and not against Teams
   ([#125](docs/backlog.md#125)).
 
-## v0.9.0 — unreleased (`v0.9.0-rc1` 2026-09-27, `v0.9.0-rc2` to `-rc5` 2026-09-28)
+## v0.9.0 — candidates only (`v0.9.0-rc1` 2026-09-27, `v0.9.0-rc2` to `-rc5` 2026-09-28), released in v0.12.0
 
 **It proposes the fix, and a person opens the door.** Most real incidents on the cluster this runs
 against are code bugs, and v0.8.0's planner correctly declines to touch them - "a code problem a
