@@ -1,10 +1,15 @@
-# pager: P41 | mcp kubectl | shared | "ignore your instructions" arrives inside the envelope, wherever it is read
+# pager: P41 | mcp kubectl | exclusive | "ignore your instructions" arrives inside the envelope, wherever it is read
 #
 # Backlog #157, F3. An incident's text is written by whatever raised the alert and whatever the
 # workload logged - an attacker's words as often as an operator's. The fixture pod logs an
 # instruction, the alert repeats it in its description, the scripted stand-in cites it; the
 # overview, the signals, the findings, the investigation and the blob all hand it back inside
 # <untrusted-evidence>, and never as the server's own words. And nothing acted on it.
+#
+# Exclusive, because it reads a finding. The shared scenarios all fire in the same second into
+# an investigation queue of 32; the alert that finds it full is escalated as StormCircuitBreaker
+# without an investigation, which is right for a storm and leaves this scenario nothing to read.
+# CI, 2026-10-02: "Triaging, Investigating, Escalated: StormCircuitBreaker", investigations 0.
 
 scenario() {
     mcp_ready || return

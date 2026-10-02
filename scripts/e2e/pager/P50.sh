@@ -8,7 +8,7 @@
 #
 # Exclusive, though it disturbs nobody: it fires three alerts, and the shared scenarios all fire
 # in the same second into an investigation queue of 32. On 2026-10-02 CI's P41 found its
-# incident settled four seconds after firing with no investigation, which is what a full queue
+# incident escalated as StormCircuitBreaker with no investigation, which is what a full queue
 # does to the alert that arrives last. Three alerts fewer in that burst is this line.
 
 scenario() {
