@@ -200,6 +200,9 @@ would also make at startup - rendering is just the earlier, cheaper place to hea
   {{- if hasPrefix "CodeFix__" .name -}}
     {{- fail (printf "extraEnv may not set %q: every CodeFix setting is a codeFix.* value, and the chart validates them TOGETHER - the namespace against the RBAC it grants, mode pr against auth. A CodeFix__ entry here would win silently and skip every one of those checks." .name) -}}
   {{- end -}}
+  {{- if or (hasPrefix "IncidentSweep__" .name) (eq .name "Kubernetes__HealedAfter") -}}
+    {{- fail (printf "extraEnv may not set %q: use incidents.healedAfter and incidents.sweep.*." .name) -}}
+  {{- end -}}
   {{- if hasPrefix "OTEL_" .name -}}
     {{- fail (printf "extraEnv may not set %q: the OTEL_* block is derived from otel.endpoint/protocol/environment, and a half-overridden set exports telemetry to two places or to none." .name) -}}
   {{- end -}}

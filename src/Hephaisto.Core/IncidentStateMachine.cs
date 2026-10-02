@@ -49,6 +49,16 @@ public sealed class IncidentStateMachine(IClock clock)
     public const string AlertmanagerActor = "hephaisto/alertmanager";
 
     /// <summary>
+    /// The actor for a closure because the workload the Kubernetes watcher reported is healthy
+    /// again (#158). The watcher saw it, not a person and not Alertmanager.
+    /// </summary>
+    public const string WatcherActor = "hephaisto/watcher";
+
+    /// <summary>Whether the fault going away closed it, rather than a person deciding to.</summary>
+    public static bool ClosedByItsSource(string? closedBy) =>
+        closedBy is AlertmanagerActor or WatcherActor;
+
+    /// <summary>
     /// The actor for an action the policy engine admitted under L3, with no human involved.
     /// </summary>
     /// <remarks>
@@ -239,7 +249,17 @@ public sealed class IncidentStateMachine(IClock clock)
     /// verifier reads, and closing underneath it would record a fix as an accident.
     /// </para>
     /// </remarks>
-    public IncidentEvent AlertCleared(Incident incident, string detail)
+    public IncidentEvent AlertCleared(Incident incident, string detail) =>
+        Cleared(incident, $"the alert cleared: {detail}", AlertmanagerActor);
+
+    /// <summary>
+    /// The same closure for an incident the Kubernetes watcher opened, once the workload has run
+    /// cleanly for the quiet period (#158). Same states, same reasons as <see cref="AlertCleared"/>.
+    /// </summary>
+    public IncidentEvent FaultCleared(Incident incident, string detail) =>
+        Cleared(incident, $"the fault cleared: {detail}", WatcherActor);
+
+    private IncidentEvent Cleared(Incident incident, string reason, string actor)
     {
         ArgumentNullException.ThrowIfNull(incident);
 
@@ -253,10 +273,10 @@ public sealed class IncidentStateMachine(IClock clock)
                 IncidentState.Escalated,
             ],
             IncidentState.Closed,
-            $"the alert cleared: {detail}");
+            reason);
 
         incident.ClosedAt = clock.UtcNow;
-        incident.ClosedBy = AlertmanagerActor;
+        incident.ClosedBy = actor;
         return evt;
     }
 

@@ -133,8 +133,8 @@ public sealed partial class McpIncidentReader
             Endings = new HistoryEndings
             {
                 Open = rows.Count(r => HephaistoDbContext.OpenStates.Contains(r.State)),
-                ClosedByPerson = rows.Count(r => r.State == IncidentState.Closed && r.ClosedBy != IncidentStateMachine.AlertmanagerActor),
-                EndedByAlert = rows.Count(r => r.State == IncidentState.Closed && r.ClosedBy == IncidentStateMachine.AlertmanagerActor),
+                ClosedByPerson = rows.Count(r => r.State == IncidentState.Closed && !IncidentStateMachine.ClosedByItsSource(r.ClosedBy)),
+                EndedByAlert = rows.Count(r => r.State == IncidentState.Closed && IncidentStateMachine.ClosedByItsSource(r.ClosedBy)),
                 Resolved = rows.Count(r => r.State == IncidentState.Resolved),
                 Expired = rows.Count(r => r.State == IncidentState.Expired),
             },

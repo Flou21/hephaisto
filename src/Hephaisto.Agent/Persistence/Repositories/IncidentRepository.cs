@@ -107,6 +107,35 @@ public sealed class IncidentRepository(HephaistoDbContext db, IClock clock) : II
                 && s.Status == SignalStatus.Firing,
             ct);
 
+    public async Task<IReadOnlyList<WatchedIncident>> GetOpenWatchedAsync(int max, CancellationToken ct)
+    {
+        var rows = await db.Incidents
+            .AsNoTracking()
+            .Where(i => HephaistoDbContext.OpenStates.Contains(i.State)
+                && i.Signals.Any(s => s.Source == SignalSource.KubernetesWatch && s.Status == SignalStatus.Firing))
+            .OrderBy(i => i.LastSignalAt)
+            .Take(max)
+            .Select(i => new
+            {
+                Incident = i,
+                Fingerprint = i.Signals
+                    .Where(s => s.Source == SignalSource.KubernetesWatch && s.Status == SignalStatus.Firing)
+                    .OrderByDescending(s => s.LastSeen)
+                    .Select(s => s.Fingerprint)
+                    .First(),
+            })
+            .ToListAsync(ct);
+
+        return [.. rows.Select(r => new WatchedIncident(r.Incident.Id, r.Incident.Kind, r.Incident.Target, r.Fingerprint))];
+    }
+
+    public Task<int> ResolveWatchSignalsAsync(Guid incidentId, CancellationToken ct) =>
+        db.Signals
+            .Where(s => s.IncidentId == incidentId
+                && s.Source == SignalSource.KubernetesWatch
+                && s.Status == SignalStatus.Firing)
+            .ExecuteUpdateAsync(set => set.SetProperty(s => s.Status, SignalStatus.Resolved), ct);
+
     public Task<int> CountReopensAsync(Guid incidentId, DateTimeOffset since, CancellationToken ct) =>
         db.IncidentEvents.CountAsync(
             e => e.IncidentId == incidentId

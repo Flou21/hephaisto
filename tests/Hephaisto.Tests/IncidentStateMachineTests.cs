@@ -254,6 +254,20 @@ public sealed class IncidentStateMachineTests
         incident.AssignedTo.Should().Be("flo");
     }
 
+    [Fact]
+    public void FaultCleared_ClosesAsTheWatcher_NotAsAResolutionOrAPerson()
+    {
+        var incident = Given.Incident(IncidentState.Escalated);
+
+        Machine().FaultCleared(incident, "1 pod(s) running and ready");
+
+        incident.State.Should().Be(IncidentState.Closed);
+        incident.ClosedBy.Should().Be(IncidentStateMachine.WatcherActor);
+        incident.ResolvedAt.Should().BeNull("a workload healing is not the agent having fixed it");
+        IncidentStateMachine.ClosedByItsSource(incident.ClosedBy).Should().BeTrue();
+        IncidentStateMachine.ClosedByItsSource("florian").Should().BeFalse();
+    }
+
     [Theory]
     [InlineData(IncidentState.Detected)]
     [InlineData(IncidentState.Triaging)]

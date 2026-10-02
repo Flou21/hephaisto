@@ -10,6 +10,31 @@ broken, with the evidence for each.
 Versions are set by the git tag through MinVer; the chart version and the app version are always
 the same number.
 
+## v0.13.0 — unreleased
+
+**What v0.12.0 left open.** The three items that release carried over, and one production found
+the same day.
+
+### New
+- **A watcher incident ends when its fault does** ([#158](docs/backlog.md#158)). Once every pod
+  of the workload has been running, ready and without a restart for `incidents.healedAfter`
+  (ten minutes), the incident closes as `hephaisto/watcher`. An alert still firing on the same
+  incident keeps it open, and so does an action in flight. A workload that was deleted, and a
+  failed Job, do not heal: those are the sweeper's.
+- **The sweeper has chart values**: `incidents.sweep.enabled`, `expireAfter`, `approvalTimeout`.
+  Still off by default.
+
+### Changed
+- **`IncidentSweep__*` and `Kubernetes__HealedAfter` are refused in `extraEnv`.** An install that
+  set the sweeper there moves it to `incidents.sweep`.
+- **A container that was OOMKilled once and has run cleanly since is no longer reported.** It
+  was, at every relist, for as long as the pod lived.
+- **Kubernetes events older than `incidents.healedAfter` are ignored**, so an agent restart no
+  longer re-reports a warning from before a pod healed.
+
+### Fixed
+- **The incident list says who acknowledged a row** ([#165](docs/backlog.md#165)).
+
 ## v0.12.0 — 2026-10-02
 
 **What production found.** See `docs/roadmap.md`, v0.12.0. The first full release since v0.8.0:

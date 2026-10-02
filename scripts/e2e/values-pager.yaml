@@ -62,6 +62,14 @@ extraEnv:
     value: "00:00:05"
   - name: Notifications__UnansweredInterval
     value: "00:00:05"
+  # P49: the open watcher incidents are compared with their workloads this often.
+  - name: Kubernetes__HealedCheckInterval
+    value: "00:00:05"
+
+# P49: a workload is healed after seconds. Above the ten seconds a first crash-loop back-off
+# lasts, which is all the scenario's own container ever waits.
+incidents:
+  healedAfter: "00:00:20"
 
 # Priced at zero, explicitly: a cost cap with an unpriced model refuses to start (#140), and the
 # stand-in costs nothing.

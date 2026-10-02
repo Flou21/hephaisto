@@ -566,6 +566,8 @@ public static class TeamsBotCards
         // the agent. Saying "Resolved" here would credit it with a fix it never made (#129).
         IncidentState.Closed when incident.ClosedBy == Hephaisto.Core.IncidentStateMachine.AlertmanagerActor =>
             "Cleared - the alert stopped firing",
+        IncidentState.Closed when incident.ClosedBy == Hephaisto.Core.IncidentStateMachine.WatcherActor =>
+            "Cleared - the workload is healthy again",
         IncidentState.Closed when !string.IsNullOrWhiteSpace(incident.ClosedBy) => $"Closed by {ActorDisplay.Render(incident.ClosedBy, incident.ClosedClaimedBy)}",
         IncidentState.Closed => "Closed",
         IncidentState.Expired => "Expired - the signal stopped and nobody answered",

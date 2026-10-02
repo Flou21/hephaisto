@@ -2613,7 +2613,32 @@ watcher.
 **What to do.** The watcher reports a pod that is healthy again, running and Ready with no
 restart for a quiet period, as a resolved signal for the fingerprint it opened. Triage then
 closes the incident exactly as it does for Alertmanager. The sweeper gets a chart value. It
-stays the backstop for a pod that was deleted rather than healed. **Size.** M. Open.
+stays the backstop for a pod that was deleted rather than healed. **Size.** M.
+
+**Fixed in v0.13.0.** The watcher asks the database which open incidents still carry a firing
+signal of its own and compares each with its workload (`Kubernetes/KubernetesWatcherService.cs`,
+`ReportHealedAsync`). It starts from the database because the incidents outlive the process:
+after a restart the watcher remembers nothing it reported. A workload is healed when every pod
+its owner controls is running, ready and unrestarted for `incidents.healedAfter` (ten minutes;
+`SignalMapper.HealedWorkload`), so a crashing pod that a rollout replaced counts and one good
+replica beside a bad one does not. The resolved signal closes the incident through
+`IncidentTriage.ClearWatchedAsync` as `hephaisto/watcher`, with the rules of an alert that
+clears: not under an action in flight, and not while an alert on the same incident still fires.
+
+Three things had to change with it, or a closed incident would have come straight back:
+
+- **An old OOMKill was reported for the life of its pod.** `lastState` keeps it, and every relist
+  classified the pod as `OomKilled` again. A container that has run cleanly for the quiet period
+  is no longer a signal.
+- **A relist replays an hour of events.** After an agent restart a `BackOff` from before the
+  heal would have opened a second incident. Events last seen before the quiet period are dropped.
+- **Closed by its source is two actors now.** The history endings and the Teams card told an
+  alert-cleared closure from a person's by one actor name; `ClosedByItsSource` covers both.
+
+Not healed, on purpose: a workload with no pod left (deleted or scaled to nothing), a failed Job,
+a storm aggregate. Those are the sweeper's, which is now `incidents.sweep.*` in the chart and
+still off by default. Pager scenario P49 is the sentence end to end: a crash-looping Deployment,
+the fix deployed, the incident closed by the watcher and not reopened.
 
 ### 159. Readiness flapping is a lifetime count, not a rate
 

@@ -61,6 +61,12 @@ refuses "a legacy cluster key in extraEnv" \
     --set 'extraEnv[0].name=Ingest__ClusterName' --set 'extraEnv[0].value=eu-1'
 refuses "a price set through extraEnv" \
     --set 'extraEnv[0].name=Llm__Prices__0__Model' --set 'extraEnv[0].value=x'
+refuses "the sweeper set through extraEnv" \
+    --set 'extraEnv[0].name=IncidentSweep__Enabled' --set 'extraEnv[0].value=true'
+refuses "the heal period set through extraEnv" \
+    --set 'extraEnv[0].name=Kubernetes__HealedAfter' --set 'extraEnv[0].value=00:01:00'
+refuses "a heal period that is not hh:mm:ss" \
+    --set incidents.healedAfter=10m
 refuses "a price without a model" \
     --set 'llm.pricing[0].inputPerMillionUsd=1' --set 'llm.pricing[0].outputPerMillionUsd=1'
 

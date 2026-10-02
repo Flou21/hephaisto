@@ -87,6 +87,19 @@ public interface IIncidentRepository
     Task<bool> HasOtherFiringAlertsAsync(Guid incidentId, Guid exceptSignalId, CancellationToken ct);
 
     /// <summary>How many times the incident reopened since <paramref name="since"/>.</summary>
+    /// <summary>
+    /// Open incidents the Kubernetes watcher still has a firing signal on, longest silent first
+    /// (#158). The watcher asks for these because what it opened is not something it can
+    /// remember: its memory ends with the process, and the incidents do not.
+    /// </summary>
+    Task<IReadOnlyList<WatchedIncident>> GetOpenWatchedAsync(int max, CancellationToken ct);
+
+    /// <summary>
+    /// Marks every firing watcher signal on an incident resolved, at once and outside the unit
+    /// of work: a crash loop of a week is thousands of rows.
+    /// </summary>
+    Task<int> ResolveWatchSignalsAsync(Guid incidentId, CancellationToken ct);
+
     Task<int> CountReopensAsync(Guid incidentId, DateTimeOffset since, CancellationToken ct);
 
     /// <summary>
@@ -98,3 +111,6 @@ public interface IIncidentRepository
 
     Task<int> SaveChangesAsync(CancellationToken ct);
 }
+
+/// <summary>An open incident of the watcher's, and one fingerprint that finds it again.</summary>
+public sealed record WatchedIncident(Guid Id, SignalKind Kind, TargetRef Target, string Fingerprint);

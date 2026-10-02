@@ -240,6 +240,111 @@ public sealed class AlertLifecycleTests(PostgresFixture pg) : IDisposable
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    // ------------------------------------------------------------------
+    // The watcher's resolve (#158)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task A_healed_workload_closes_the_incident_the_watcher_opened()
+    {
+        await pg.ResetAsync();
+
+        var opened = await TriageAsync(Watched(SignalKind.OomKilled, "OOMKilled"));
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await TriageAsync(Watched(SignalKind.CrashLoopBackOff, "BackOff"));
+        await EscalateAsync(opened.IncidentId);
+        clock.Advance(TimeSpan.FromHours(2));
+
+        var healed = await TriageAsync(Watched(SignalKind.OomKilled, "OOMKilled", SignalStatus.Resolved));
+
+        healed.Outcome.Should().Be(TriageOutcome.Cleared);
+        healed.IncidentId.Should().Be(opened.IncidentId);
+
+        var incident = await LoadAsync(opened.IncidentId);
+        incident.State.Should().Be(IncidentState.Closed);
+        incident.ClosedBy.Should().Be(IncidentStateMachine.WatcherActor);
+
+        await using var db = pg.CreateContext();
+        var rows = await db.Signals.Where(s => s.IncidentId == opened.IncidentId).ToListAsync(Ct);
+        rows.Should().HaveCount(2, "the resolve is a statement about the rows that exist, not a third one");
+        rows.Should().OnlyContain(s => s.Status == SignalStatus.Resolved, "one workload healed, whatever it was reported as");
+        (await new IncidentRepository(db, clock).GetOpenWatchedAsync(10, Ct)).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task The_watcher_is_asked_about_what_it_opened_and_nothing_else()
+    {
+        await pg.ResetAsync();
+
+        var watched = await TriageAsync(Watched(SignalKind.CrashLoopBackOff, "CrashLoopBackOff"));
+        await TriageAsync(Firing("Mailer", ("deployment", "mailer")));
+
+        await using var db = pg.CreateContext();
+        var open = await new IncidentRepository(db, clock).GetOpenWatchedAsync(10, Ct);
+
+        var only = open.Should().ContainSingle().Subject;
+        only.Id.Should().Be(watched.IncidentId);
+        only.Target.OwnerName.Should().Be("orders");
+        only.Fingerprint.Should().Be(Watched(SignalKind.CrashLoopBackOff, "CrashLoopBackOff").Fingerprint);
+    }
+
+    [Fact]
+    public async Task A_healed_workload_with_an_alert_still_firing_stays_open()
+    {
+        await pg.ResetAsync();
+
+        var opened = await TriageAsync(Watched(SignalKind.CrashLoopBackOff, "CrashLoopBackOff"));
+        clock.Advance(TimeSpan.FromMinutes(1));
+        var alert = await TriageAsync(Firing("OrdersDown", ("namespace", "shop"), ("deployment", "orders")));
+        alert.IncidentId.Should().Be(opened.IncidentId, "the alert is a facet of the same workload");
+
+        var healed = await TriageAsync(Watched(SignalKind.CrashLoopBackOff, "CrashLoopBackOff", SignalStatus.Resolved));
+
+        healed.Outcome.Should().Be(TriageOutcome.Cleared);
+        (await LoadAsync(opened.IncidentId)).State.Should().NotBe(IncidentState.Closed, "Alertmanager has not said it is over");
+
+        var cleared = await TriageAsync(Resolved("OrdersDown", ("namespace", "shop"), ("deployment", "orders")));
+
+        cleared.Outcome.Should().Be(TriageOutcome.Cleared);
+        (await LoadAsync(opened.IncidentId)).State.Should().Be(IncidentState.Closed);
+    }
+
+    [Fact]
+    public async Task A_resolve_for_nothing_the_watcher_has_open_is_ignored()
+    {
+        await pg.ResetAsync();
+
+        var healed = await TriageAsync(Watched(SignalKind.OomKilled, "OOMKilled", SignalStatus.Resolved));
+
+        healed.Outcome.Should().Be(TriageOutcome.Ignored);
+        (await CountAsync()).Should().Be(0);
+    }
+
+    private static Signal Watched(SignalKind kind, string reason, SignalStatus status = SignalStatus.Firing)
+    {
+        var signal = new Signal
+        {
+            Source = SignalSource.KubernetesWatch,
+            Kind = kind,
+            Status = status,
+            Severity = Severity.Critical,
+            Reason = reason,
+            Message = status == SignalStatus.Resolved ? "1 pod(s) of shop/Deployment/orders running and ready" : reason,
+            Target = new TargetRef
+            {
+                Cluster = Cluster,
+                Namespace = "shop",
+                Kind = "Pod",
+                Name = "orders-5d9-x",
+                OwnerKind = "Deployment",
+                OwnerName = "orders",
+            },
+        };
+
+        signal.Fingerprint = SignalFingerprinter.Compute(signal, Cluster);
+        return signal;
+    }
+
     private static Signal Firing(string name, params (string Key, string Value)[] labels) => Map("firing", name, labels);
 
     private static Signal Resolved(string name, params (string Key, string Value)[] labels) => Map("resolved", name, labels);

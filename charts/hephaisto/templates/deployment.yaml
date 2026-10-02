@@ -172,6 +172,18 @@ spec:
               value: {{ .Values.mode | quote }}
 
             # ---------------------------------------------------------------------------
+            # When an incident ends by itself (#158)
+            # ---------------------------------------------------------------------------
+            - name: Kubernetes__HealedAfter
+              value: {{ .Values.incidents.healedAfter | quote }}
+            - name: IncidentSweep__Enabled
+              value: {{ .Values.incidents.sweep.enabled | quote }}
+            - name: IncidentSweep__ExpireAfter
+              value: {{ .Values.incidents.sweep.expireAfter | quote }}
+            - name: IncidentSweep__ApprovalTimeout
+              value: {{ .Values.incidents.sweep.approvalTimeout | quote }}
+
+            # ---------------------------------------------------------------------------
             # The cluster - one name for the fingerprint, the watcher and the model (#139)
             # ---------------------------------------------------------------------------
             - name: Cluster__Name

@@ -72,6 +72,46 @@
         "Auto"
       ]
     },
+    "incidents": {
+      "type": "object",
+      "description": "When an incident ends without anybody touching it.",
+      "required": [
+        "healedAfter",
+        "sweep"
+      ],
+      "properties": {
+        "healedAfter": {
+          "type": "string",
+          "pattern": "^[0-9]{2}:[0-9]{2}:[0-9]{2}$",
+          "description": "hh:mm:ss a workload runs cleanly before the watcher reports it healed. 00:00:00 turns that off."
+        },
+        "sweep": {
+          "type": "object",
+          "required": [
+            "enabled",
+            "expireAfter",
+            "approvalTimeout"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "expireAfter": {
+              "type": "string",
+              "pattern": "^([0-9]+\\.)?[0-9]{2}:[0-9]{2}:[0-9]{2}$",
+              "description": "A .NET TimeSpan, d.hh:mm:ss."
+            },
+            "approvalTimeout": {
+              "type": "string",
+              "pattern": "^([0-9]+\\.)?[0-9]{2}:[0-9]{2}:[0-9]{2}$",
+              "description": "A .NET TimeSpan, d.hh:mm:ss."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "observabilityNamespace": {
       "type": "string",
       "minLength": 1

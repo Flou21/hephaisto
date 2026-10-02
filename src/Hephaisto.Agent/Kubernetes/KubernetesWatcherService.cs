@@ -9,6 +9,7 @@ using k8s.Models;
 
 using Microsoft.Extensions.Options;
 
+using Hephaisto.Agent.Persistence.Repositories;
 using Hephaisto.Agent.Web;
 using Hephaisto.Core.Domain;
 using Hephaisto.Core.Fingerprinting;
@@ -17,7 +18,8 @@ using Hephaisto.Core.Telemetry;
 namespace Hephaisto.Agent.Kubernetes;
 
 /// <summary>
-/// Watches Pods, Events, Nodes and Jobs, classifies what it sees, and feeds the ingest seam.
+/// Watches Pods, Events, Nodes and Jobs, classifies what it sees, and feeds the ingest seam -
+/// and says when a workload it reported has healed.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -51,6 +53,7 @@ public sealed class KubernetesWatcherService : BackgroundService
     private readonly KubernetesOptions options;
     private readonly ISignalSink sink;
     private readonly OwnerCache owners;
+    private readonly IServiceScopeFactory scopes;
     private readonly TimeProvider time;
     private readonly ILogger<KubernetesWatcherService> logger;
 
@@ -67,6 +70,7 @@ public sealed class KubernetesWatcherService : BackgroundService
         KubernetesApi api,
         OwnerCache owners,
         ISignalSink sink,
+        IServiceScopeFactory scopes,
         IOptions<KubernetesOptions> options,
         IMeterFactory meterFactory,
         TimeProvider time,
@@ -78,12 +82,17 @@ public sealed class KubernetesWatcherService : BackgroundService
         this.api = api;
         this.owners = owners;
         this.sink = sink;
+        this.scopes = scopes;
         this.options = options.Value;
         this.time = time;
         this.logger = logger;
 
         trends = new PodTrendTracker(this.options.RestartStormWindow);
-        thresholds = new SignalThresholds(this.options.RestartStormThreshold);
+        // With healing off nothing ever counts as having run cleanly, so an old OOMKill is
+        // reported for the life of its pod, as before.
+        thresholds = new SignalThresholds(
+            this.options.RestartStormThreshold,
+            HealingOn ? this.options.HealedAfter : TimeSpan.MaxValue);
 
         var meter = meterFactory.Create(HephaistoTelemetry.MeterName);
         signalsReceived = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.SignalsReceived);
@@ -129,6 +138,7 @@ public sealed class KubernetesWatcherService : BackgroundService
             WatchEventsAsync(stoppingToken),
             WatchNodesAsync(stoppingToken),
             WatchJobsAsync(stoppingToken),
+            ReportHealedAsync(stoppingToken),
         };
 
         try
@@ -383,7 +393,10 @@ public sealed class KubernetesWatcherService : BackgroundService
             return;
         }
 
-        if (SignalMapper.FromEvent(kubeEvent, options.ClusterName) is null)
+        // See FromEvent: a warning older than the quiet period says nothing about now.
+        DateTimeOffset? notBefore = HealingOn ? time.GetUtcNow() - options.HealedAfter : null;
+
+        if (SignalMapper.FromEvent(kubeEvent, options.ClusterName, notBefore: notBefore) is null)
         {
             return;
         }
@@ -397,7 +410,7 @@ public sealed class KubernetesWatcherService : BackgroundService
             await owners.WarmAsync(meta, ns, ct).ConfigureAwait(false);
         }
 
-        if (SignalMapper.FromEvent(kubeEvent, options.ClusterName, owners.Lookup) is { } signal)
+        if (SignalMapper.FromEvent(kubeEvent, options.ClusterName, owners.Lookup, notBefore) is { } signal)
         {
             Enqueue(signal);
         }
@@ -450,6 +463,144 @@ public sealed class KubernetesWatcherService : BackgroundService
         {
             signalsDropped.Add(1, new KeyValuePair<string, object?>("reason", "writer_closed"));
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Healed workloads (#158)
+    // ------------------------------------------------------------------
+
+    /// <summary>Ceiling per pass; the longest silent come first, which are the likeliest healed.</summary>
+    private const int MaxWatchedPerPass = 500;
+
+    private bool HealingOn => options.HealedAfter > TimeSpan.Zero;
+
+    /// <summary>
+    /// Reports a workload the watcher opened an incident for as resolved once it has run cleanly
+    /// for <see cref="KubernetesOptions.HealedAfter"/>.
+    /// </summary>
+    /// <remarks>
+    /// The watches above only ever say that something is wrong, so an incident they opened had
+    /// nothing to end it: production held 326 open ones, a crash loop of last week among them.
+    /// This is the other half. It starts from the database and not from the pod stream because
+    /// the incidents outlive the process: after a restart the watcher remembers nothing it
+    /// reported, and those are exactly the incidents that would stay open for ever.
+    /// </remarks>
+    private async Task ReportHealedAsync(CancellationToken ct)
+    {
+        if (!HealingOn)
+        {
+            logger.LogInformation(
+                "Kubernetes:HealedAfter is zero: an incident the watcher opens ends only by hand or by the sweeper.");
+            return;
+        }
+
+        using var timer = new PeriodicTimer(options.HealedCheckInterval, time);
+
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
+            {
+                try
+                {
+                    await ReportHealedOnceAsync(ct).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+                {
+                    // One pass lost. The incidents stay open and the next pass asks again.
+                    logger.LogWarning(ex, "Could not compare the open watcher incidents with their workloads.");
+                }
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Shutdown.
+        }
+    }
+
+    private async Task ReportHealedOnceAsync(CancellationToken ct)
+    {
+        IReadOnlyList<WatchedIncident> watched;
+
+        await using (var scope = scopes.CreateAsyncScope())
+        {
+            watched = await scope.ServiceProvider
+                .GetRequiredService<IIncidentRepository>()
+                .GetOpenWatchedAsync(MaxWatchedPerPass, ct)
+                .ConfigureAwait(false);
+        }
+
+        var now = time.GetUtcNow();
+
+        // One list per namespace per pass, however many incidents the namespace has.
+        var podsByNamespace = new Dictionary<string, IList<V1Pod>>(StringComparer.Ordinal);
+
+        foreach (var incident in watched)
+        {
+            if (await HealedAsync(incident.Target, podsByNamespace, now, ct).ConfigureAwait(false) is not { } detail)
+            {
+                continue;
+            }
+
+            await sink.SubmitAsync(
+                new Signal
+                {
+                    Source = SignalSource.KubernetesWatch,
+                    Status = SignalStatus.Resolved,
+                    Kind = incident.Kind,
+                    Target = incident.Target.Clone(),
+                    Reason = "Healed",
+                    Message = detail,
+                    FirstSeen = now,
+                    LastSeen = now,
+                    Fingerprint = incident.Fingerprint,
+                },
+                ct).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<string?> HealedAsync(
+        TargetRef target,
+        Dictionary<string, IList<V1Pod>> podsByNamespace,
+        DateTimeOffset now,
+        CancellationToken ct)
+    {
+        if (string.Equals(target.Kind, "Node", StringComparison.Ordinal))
+        {
+            try
+            {
+                var node = await api.Core.ReadNodeAsync(target.Name, cancellationToken: ct).ConfigureAwait(false);
+
+                return SignalMapper.FromNode(node, options.ClusterName, now) is null
+                    ? $"node {target.Name} is Ready and reports no pressure"
+                    : null;
+            }
+            catch (HttpOperationException ex) when (ex.Response?.StatusCode == HttpStatusCode.NotFound)
+            {
+                // A node that is gone did not heal.
+                return null;
+            }
+        }
+
+        if (target.Namespace.Length == 0)
+        {
+            return null;
+        }
+
+        if (!podsByNamespace.TryGetValue(target.Namespace, out var pods))
+        {
+            var list = await api.Core.ListNamespacedPodAsync(target.Namespace, cancellationToken: ct).ConfigureAwait(false);
+            pods = list.Items ?? [];
+
+            // The walk from a pod to its Deployment passes a ReplicaSet the cache has to hold.
+            foreach (var pod in pods)
+            {
+                await owners.WarmAsync(pod.Metadata, target.Namespace, ct).ConfigureAwait(false);
+            }
+
+            podsByNamespace[target.Namespace] = pods;
+        }
+
+        return SignalMapper.HealedWorkload(target, pods, owners.Lookup, now, options.HealedAfter);
     }
 
     // ------------------------------------------------------------------
