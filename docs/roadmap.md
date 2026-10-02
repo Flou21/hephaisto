@@ -17,6 +17,11 @@ against the code rather than believed — see [backlog #9](backlog.md#9-semantic
 
 ## Where it stands
 
+`v0.13.0` is in release candidates since 2026-10-02. **What v0.12.0 left open**: the three
+items that release carried over and one production found the same day, all four built and green
+on the dev cluster. See [v0.13.0](#v0130--what-v0120-left-open). It is not released until a
+candidate has run on the production install.
+
 `v0.12.0` shipped on 2026-10-02. **What production found**, and the first full release since
 v0.8.0: v0.9.0 (it proposes the fix), v0.10.0 (the only thing that tells a person) and v0.11.0
 (an agent can ask it) went out as release candidates only, seventeen candidates across the four
@@ -37,8 +42,9 @@ they were cut, and `src/` and `charts/` are byte-identical to `v0.12.0-rc9`, who
 runs were green. The cluster gates (`run.sh --nightly --full --mode Auto`,
 `investigate-local.sh --strict`) were **not** run again for the tag.
 
-What comes next is the three items carried over, then the louder channel and install ergonomics,
-the [next, high-priority items](#next-high-priority--after-production).
+What came next was the three items carried over, which are [v0.13.0](#v0130--what-v0120-left-open).
+After it: the louder channel and install ergonomics, the
+[next, high-priority items](#next-high-priority--after-production).
 
 `v0.8.0` shipped on 2026-09-13. **An on-call engineer can actually use it.** The agent diagnosed
 well and said so nowhere a person could act on: an incident could not be closed, acknowledged or
@@ -1693,10 +1699,53 @@ green with an empty known-red list. F5's are `scripts/e2e/investigate-local.sh` 
 
 ---
 
+## v0.13.0 — What v0.12.0 left open
+
+v0.12.0 was released to draw a line, with three of its five items open. This is those three,
+and a fourth that production found on the day of the release.
+
+### What ships
+
+| # | Item | Backlog | State |
+|---|---|---|---|
+| F1 | **A watcher incident ends when its fault does.** The watcher asks the database what it has open and reports a workload that has run cleanly for `incidents.healedAfter` as resolved; triage closes it as `hephaisto/watcher` | [#158](backlog.md#158) | built |
+| F3 | **Pod logs from Loki first, and from a pod with a sidecar.** `grafanaMcp.podLogSelector` sends the model to Loki; `get_pod_logs` picks the application container when none is named; a grounding rejection says why in the log | [#160](backlog.md#160) | built |
+| F4 | **Many at once.** `close_incidents` and the console's list close by filter: a dry run that counts, then a close that names the count, approver only, one audit row per incident | [#161](backlog.md#161) | built |
+| - | **The incident list says who acknowledged a row** | [#165](backlog.md#165) | built |
+
+F3 is wider than v0.12.0 planned it. The owner decided on 2026-10-02 that pod logs should come
+from Loki first and the Kubernetes API second, not only that the Kubernetes API should cope
+with a sidecar.
+
+### Done when
+
+v0.12.0's own sentences for F1, F3 and F4, each now a test:
+
+- A pod the watcher opened an incident for, healthy again, closes that incident without anybody
+  touching it: pager scenario P49.
+- An investigation of a pod with a sidecar reads the application container's logs: P33 and P41,
+  whose fixture pod has a mesh proxy listed first.
+- A dry run of a bulk close names how many incidents it would close and which; the close refuses
+  a reader and writes one audit row per incident: P50.
+
+And one this milestone adds, which no test holds yet: with `grafanaMcp.podLogSelector` set, a
+real model reads a crash-looping pod's logs from Loki. The prompt says so and a unit test holds
+the prompt; what a model does with it is measured on the production install.
+
+### What is explicitly not in v0.13.0
+
+- **A Job or a deleted workload healing.** Those end by the sweeper, which now has chart values
+  and is still off by default.
+- **An HTTP route for the bulk close.** MCP and the console have it; nothing asked for a third.
+- **Pod labels on OTLP-shipped logs.** On the production install those carry `service_name`
+  only, so a pod selector finds what promtail ships. That is the shipper's to fix.
+
+---
+
 ## Next, high priority — after production
 
 Both were numbered milestones until 2026-09-29, when production problems took precedence. Each
-gets a version number when v0.12.0 is done, in this order.
+gets a version number when v0.13.0 is done, in this order.
 
 ### SMS and voice through Twilio
 

@@ -338,6 +338,29 @@ Locally: `"investigator": true` (needs `"coder": true`) with `"investigator-sdk"
 be accessed", pre-pull its base image with a stub `docker-credential-osxkeychain` on PATH and
 `tilt trigger` it; never `kubectl apply` a Tilt-built manifest by hand - it replaces the image.
 
+## How an incident ends by itself, as of v0.13.0
+
+- **An alert's incident** closes when Alertmanager resolves its last firing alert.
+- **A watcher's incident** closes when its workload has run cleanly for `incidents.healedAfter`
+  (`KubernetesWatcherService.ReportHealedAsync`, `SignalMapper.HealedWorkload`). The watcher asks
+  the DATABASE what it has open; do not move that to in-memory state, a restart would orphan
+  every incident it opened before. Three things keep a closed incident closed, and removing any
+  of them reopens it: an old OOMKill in `lastState` is not a signal once the container has run
+  cleanly, events older than the quiet period are dropped, and a healed pod produces no signal.
+- **Everything else** - a deleted workload, a failed Job - is the sweeper's (`incidents.sweep`,
+  off by default), which expires and never closes.
+
+The pager install sets `healedAfter` to 20 seconds (P49). Do not copy that anywhere a crash loop
+is real: its back-off reaches five minutes, and a container between two crashes looks healed.
+
+## Pod logs: Loki first, as of v0.13.0
+
+`grafanaMcp.podLogSelector` puts a LogQL selector on the model's environment card and tells it
+to read pod logs in Loki before `get_pod_logs`. The label names are the log shipper's, which is
+why it is a value and not a default: this stack's collector writes `k8s_namespace_name` and
+`k8s_pod_name`, promtail writes `namespace` and `pod`. A runbook that needs logs should say
+"the previous container's logs" and name both sources, never `get_pod_logs` alone.
+
 ## The Teams bot, as of v0.9.0-rc4
 
 `notifications.teamsBot`: one board in a channel, edited in place, and alerts by personal chat.
