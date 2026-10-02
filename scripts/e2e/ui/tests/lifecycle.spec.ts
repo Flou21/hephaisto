@@ -61,15 +61,32 @@ test.describe('the incident lifecycle', () => {
 
     await settle(async () => {
       await page.getByTestId('bulk-close-count').click();
-      await expect(page.getByTestId('bulk-close-preview')).toContainText('open incidents match', { timeout: 5_000 });
+      await expect(page.getByTestId('bulk-preview')).toContainText('open incidents match', { timeout: 5_000 });
     });
 
     // A count and no reason: the button that would close them stays off.
     await expect(page.getByTestId('bulk-close-confirm')).toBeDisabled();
 
-    await page.getByTestId('bulk-close-cancel').click();
+    await page.getByTestId('bulk-cancel').click();
     await expect(page.getByTestId('bulk-close-count')).toBeVisible();
     expect((await incidents(page)).length).toBe(before);
+  });
+
+  test('acknowledge all issues counts first, and the count needs a name', async ({ page }) => {
+    await open(page, '/');
+
+    await settle(async () => {
+      await page.getByTestId('bulk-ack-count').click();
+      await expect(page.getByTestId('bulk-preview')).toContainText('nobody has acknowledged them', { timeout: 5_000 });
+    });
+
+    // Both buttons live in the filter box, and so does the step that confirms.
+    await expect(page.locator('.hp-filters').getByTestId('bulk-confirm')).toBeVisible();
+    await expect(page.getByTestId('bulk-ack-confirm')).toBeDisabled();
+
+    await page.getByTestId('bulk-cancel').click();
+    await expect(page.locator('.hp-filters').getByTestId('bulk-ack-count')).toHaveText('acknowledge all issues');
+    await expect(page.locator('.hp-filters').getByTestId('bulk-close-count')).toHaveText('close all issues');
   });
 
   test('assigning is a separate act from acknowledging', async ({ page }) => {

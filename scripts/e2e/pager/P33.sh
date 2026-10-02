@@ -1,9 +1,14 @@
-# pager: P33 | mcp kubectl | shared | the finding arrives with its evidence, and the evidence is fetched by reference
+# pager: P33 | mcp kubectl | exclusive | the finding arrives with its evidence, and the evidence is fetched by reference
 #
 # Backlog #157, F2: "reads its finding". The model stand-in is scripted (POST /llm/script) to read
 # the fixture pod's log (infra/e2e/pager-fixture.yaml) and cite a line of it, so the finding
 # survives grounding. get_incident_findings returns the excerpt and a blob reference;
 # fetch_evidence_blob returns the full log behind it.
+#
+# Exclusive, because it reads a finding. The shared scenarios all fire in the same second into
+# an investigation queue of 32; the alert that finds it full is escalated as StormCircuitBreaker
+# without an investigation, which is right for a storm and leaves this scenario nothing to read.
+# CI, 2026-10-02: "Triaging, Investigating, Escalated: StormCircuitBreaker", investigations 0.
 
 scenario() {
     mcp_ready || return

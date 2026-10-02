@@ -2730,6 +2730,11 @@ which filter.
   open incidents. It closes by the filter, not by the 200 rows on screen. The page's filters
   are state, kind and namespace; the rest of the search filters are MCP's.
 - No HTTP API route: nothing asked for one.
+- **The same for acknowledging, in the console** (2026-10-02, asked for on the day): "acknowledge
+  all issues" beside "close all issues", both in the filter box. It takes the open incidents
+  nobody has acknowledged and leaves one somebody holds alone - a takeover is a decision about
+  one incident, never something to do to a list. Not behind the approver role, as the single
+  acknowledge is not. No MCP tool for it: nothing asked for one.
 
 Pager scenario P50 is the sentence end to end; `McpWriteTests` holds the four refusals.
 

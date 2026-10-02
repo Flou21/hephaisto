@@ -278,6 +278,44 @@ public sealed class McpWriteTests(PostgresFixture pg)
         (await db.Incidents.CountAsync(i => i.State == IncidentState.Closed, Ct)).Should().Be(1);
     }
 
+    [Fact]
+    public async Task A_bulk_acknowledge_takes_the_open_incidents_nobody_holds_and_leaves_the_rest()
+    {
+        var (one, two, elsewhere, closed) = await BacklogAsync();
+        var held = await McpGiven.IncidentAsync(pg, "Flap", Severity.Warning, IncidentState.Escalated, "shop", "six", Now, acknowledgedBy: "lead");
+        await using var provider = Services();
+        var queries = provider.GetRequiredService<IncidentQueries>();
+        var shop = new McpIncidentFilter { State = "open", Namespace = "shop" };
+
+        var dry = await queries.AcknowledgeIncidentsAsync(shop, "flo", null, Ct);
+        dry.DryRun.Should().BeTrue();
+        dry.Matched.Should().Be(2, "the one somebody holds, the closed one and the other namespace do not match");
+        dry.Sample.Select(r => r.Id).Should().BeEquivalentTo([one, two]);
+
+        var stale = await queries.AcknowledgeIncidentsAsync(shop, "flo", 5, Ct);
+        stale.Outcome.Should().Be(LifecycleOutcome.IllegalState);
+
+        var done = await queries.AcknowledgeIncidentsAsync(shop, "flo", 2, Ct);
+        done.Outcome.Should().Be(LifecycleOutcome.Applied);
+        done.Changed.Should().Be(2);
+
+        await using var db = pg.CreateContext();
+        var rows = await db.Incidents.AsNoTracking().ToDictionaryAsync(i => i.Id, Ct);
+        rows[one].AcknowledgedBy.Should().Be("flo");
+        rows[two].AcknowledgedBy.Should().Be("flo");
+        rows[one].State.Should().Be(IncidentState.Escalated, "acknowledging changes no state");
+        rows[held].AcknowledgedBy.Should().Be("lead", "a takeover is never done to a list");
+        rows[elsewhere].AcknowledgedBy.Should().BeNull();
+        rows[closed].AcknowledgedBy.Should().BeNull();
+
+        (await db.AuditEvents.CountAsync(a => a.Type == "incident.acknowledged" && a.Actor == "flo", Ct)).Should().Be(2);
+        (await db.AuditEvents.AsNoTracking().FirstAsync(a => a.IncidentId == one && a.Type == "incident.acknowledged", Ct))
+            .Summary.Should().Contain("1 others");
+
+        var model = await queries.AcknowledgeIncidentsAsync(shop, "hephaisto/model", null, Ct);
+        model.Outcome.Should().Be(LifecycleOutcome.ForbiddenActor);
+    }
+
     private static McpIncidentActions Actions(ServiceProvider provider) =>
         new(provider.GetRequiredService<IncidentQueries>(), McpGiven.Reader(new PostgresFixtureHandle(provider).Pg, Now), new HttpContextAccessor());
 
