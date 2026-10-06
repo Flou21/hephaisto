@@ -1433,7 +1433,10 @@ install-ergonomics work.** It was renumbered from v0.9.0 through v0.12.0. **High
 theme became operating the agent rather than installing it, on the grounds that installing is
 something you do once and had just been done.
 
-**Size of what is left.** M, and it is a writing job.
+**Not planned for now, 2026-10-06.** The owner's decision: it comes later, other things come
+first ([roadmap](roadmap.md#not-planned-for-now)). The guide is still unwritten.
+
+**Size of what is left.** M, and it is a writing job. Open, and not planned for now.
 
 ### 109. An escalated incident is terminal, so the open list only grows
 
@@ -2259,8 +2262,10 @@ queue", which was the right place for them while something else did the paging.
 v0.10.0 is Teams only. **Moved 2026-09-29** from v0.11.0 to v0.12.0 when the MCP endpoint
 ([#157](#157)) took v0.11.0. **Moved again later that day**: it is out of the numbered
 milestones, **high priority, after [roadmap v0.12.0](roadmap.md)**, when production problems
-took precedence.
-**Size.** L. Open.
+took precedence. **Not planned for now, 2026-10-06**: the owner chose a more direct
+way to communicate with Hephaisto as the next thing instead
+([roadmap](roadmap.md#next--a-more-direct-way-to-talk-to-hephaisto)). The symptom stands.
+**Size.** L. Open, and not planned for now.
 
 ### 144. A rollout is an outage of the pager, and the chart calls that cheap
 

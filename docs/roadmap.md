@@ -43,8 +43,9 @@ runs were green. The cluster gates (`run.sh --nightly --full --mode Auto`,
 `investigate-local.sh --strict`) were **not** run again for the tag.
 
 What came next was the three items carried over, which are [v0.13.0](#v0130--what-v0120-left-open).
-After it: the louder channel and install ergonomics, the
-[next, high-priority items](#next-high-priority--after-production).
+After it, as decided on 2026-10-06: [a more direct way to talk to
+Hephaisto](#next--a-more-direct-way-to-talk-to-hephaisto). The louder channel and install
+ergonomics, which stood here until then, are [not planned for now](#not-planned-for-now).
 
 `v0.8.0` shipped on 2026-09-13. **An on-call engineer can actually use it.** The agent diagnosed
 well and said so nowhere a person could act on: an incident could not be closed, acknowledged or
@@ -1363,7 +1364,7 @@ and dropped.**
 ### What is explicitly not in v0.8.0
 
 - **The getting-started guide** (M, [#108](backlog.md#108)) — deferred to v0.13.0 (renumbered from v0.9.0, v0.10.0, v0.11.0 and then from v0.12.0) with the rest of
-  the install-ergonomics work.
+  the install-ergonomics work. *(Superseded on 2026-10-06: [not planned for now](#not-planned-for-now).)*
 - **Failure mode B**, Kafka consumer throughput after an update: a broker, a `SignalKind`, an
   alert, a runbook, a fixture, and a Prometheus-backed verification predicate, because
   `WorkloadIsHealthyAsync` reports **Passed** for a scaled consumer whose lag is still climbing.
@@ -1532,6 +1533,7 @@ green with an empty known-red list.
 - **An on-call rota and quiet hours.** Neither system being replaced has one. Escalation steps
   go to routes, and a route is a list.
 - **A louder channel than Teams.** SMS and a phone call come right after v0.12.0 ([#143](backlog.md#143)).
+  *(Superseded on 2026-10-06: [not planned for now](#not-planned-for-now).)*
   Until then, whether a personal chat from the bot rings a phone ([#125](backlog.md#125)) is the
   question the cutover rests on.
 - **A second replica.** See [#144](backlog.md#144).
@@ -1604,7 +1606,8 @@ incident. `docs/verification.md` lists what is not tested.
 
 Decided on 2026-09-29: production problems and missing features come before anything new. The
 louder channel and install ergonomics were v0.12.0 and v0.13.0. They are still high priority,
-and they come [right after this](#next-high-priority--after-production).
+and they come right after this. *(Superseded on 2026-10-06: both are
+[not planned for now](#not-planned-for-now).)*
 
 ### The finding it rests on
 
@@ -1742,12 +1745,37 @@ the prompt; what a model does with it is measured on the production install.
 
 ---
 
-## Next, high priority — after production
+## Next — a more direct way to talk to Hephaisto
 
-Both were numbered milestones until 2026-09-29, when production problems took precedence. Each
-gets a version number when v0.13.0 is done, in this order.
+Decided by the owner on 2026-10-06, in place of the louder channel: the next thing is a more
+direct way for a person to communicate with Hephaisto. **Only the direction is decided.** What
+it is, where it lives and what a person may say through it are not, and it gets a version number
+and a "Done when" once they are.
+
+What exists to build on, so the shaping starts from the code:
+
+- **The Teams bot already receives what people write to it, and drops it.**
+  `POST /api/teams/messages` authenticates every activity and acts on a button click only; a
+  message typed to the bot is answered 200 and nothing else
+  (`Notifications/TeamsBot/TeamsBotActions.cs`).
+- **An agent can already ask.** The MCP endpoint of v0.11.0 serves an incident's signals,
+  findings, investigation and history, and takes acknowledge, assign, close, feedback and
+  reinvestigate. A person reaches it only through an agent of their own.
+- **The console** has a page per incident and no way to ask a question on it.
+
+---
+
+## Not planned for now
+
+Both were numbered milestones until 2026-09-29 and the next, high-priority items after that.
+Decided by the owner on 2026-10-06: neither is planned for now. Their backlog entries stay open,
+because what they describe is still true.
 
 ### SMS and voice through Twilio
+
+**Not planned for now** (2026-10-06): the owner chose a more direct way to communicate with
+Hephaisto as the next thing instead. What follows is the design as it stood, kept so it is not
+argued twice.
 
 Decided on 2026-09-28: v0.10.0 reaches people through Teams alone. The service being replaced
 also sends an SMS and places a call when nobody answers, and that is the one thing v0.10.0 does
@@ -1765,6 +1793,8 @@ not replace ([#143](backlog.md#143)).
   Twilio's API once per recipient, and an acknowledged one does not.
 
 ### Install ergonomics
+
+**Not planned for now** (2026-10-06): it comes later, other things come first.
 
 The getting-started guide and the rest of [#108](backlog.md#108). Renumbered four times between
 2026-09-27 and 2026-09-29, then moved out of the numbered milestones on 2026-09-29.
