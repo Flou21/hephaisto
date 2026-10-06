@@ -202,7 +202,7 @@ curl -fsSL https://raw.githubusercontent.com/Flou21/hephaisto/main/demo/compose.
 ## Links
 
 - [Source, and the documentation](https://github.com/Flou21/hephaisto)
-- [What is known to be broken](https://github.com/Flou21/hephaisto/blob/main/docs/backlog.md)
+- [What is known to be broken](https://github.com/Flou21/hephaisto/issues)
 - [How it is verified](https://github.com/Flou21/hephaisto/blob/main/docs/verification.md)
 
 Licensed AGPL-3.0-only.

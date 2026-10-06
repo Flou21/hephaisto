@@ -1,0 +1,1943 @@
+# Hephaisto roadmap, the released milestones
+
+Moved out of [`roadmap.md`](roadmap.md) on 2026-10-06, when planning moved to GitHub issues and
+milestones. The text is as it stood: each milestone as it was planned and as it turned out, the
+release-by-release record, the project track and the menu of later ideas (now issues labelled
+`idea`). Nothing here is edited to match what happened later; [`history.md`](history.md) and the
+[changelog](../CHANGELOG.md) say that.
+
+---
+
+## Where it stood, release by release
+
+`v0.12.0` shipped on 2026-10-02. **What production found**, and the first full release since
+v0.8.0: v0.9.0 (it proposes the fix), v0.10.0 (the only thing that tells a person) and v0.11.0
+(an agent can ask it) went out as release candidates only, seventeen candidates across the four
+milestones, and are released by this tag. They are written up in their own sections below.
+
+**It was released to draw a line, not because the milestone was finished.** Of
+[v0.12.0](#v0120--what-production-found)'s five items, two shipped: F5, an investigation's model
+loop as Claude Code in a Job, and F2, where the readiness detectors that raised two thirds of
+production's incidents were removed rather than tuned. F1, F3 and F4
+([#158](backlog.md#158), [#160](backlog.md#160), [#161](backlog.md#161)) are open and carry over,
+so that section's "Done when" is not met and a watcher incident still closes only by hand. The
+candidates also carried what production found on the way: a console that never signed anybody in
+with `auth.enabled`, `Kubernetes:IgnoredKinds`, the investigation on the Teams cards.
+
+**What it rests on is the reverse of v0.8.0.** That release came from a green gate without a
+production soak. This one comes from the soak: the candidates ran on the production install as
+they were cut, and `src/` and `charts/` are byte-identical to `v0.12.0-rc9`, whose CI and release
+runs were green. The cluster gates (`run.sh --nightly --full --mode Auto`,
+`investigate-local.sh --strict`) were **not** run again for the tag.
+
+What came next was the three items carried over, which are [v0.13.0](roadmap.md#v0130--what-v0120-left-open).
+After it, as decided on 2026-10-06: [a more direct way to talk to
+Hephaisto](roadmap.md#next--a-more-direct-way-to-talk-to-hephaisto). The louder channel and install
+ergonomics, which stood here until then, are [not planned for now](roadmap.md#not-planned-for-now).
+
+`v0.8.0` shipped on 2026-09-13. **An on-call engineer can actually use it.** The agent diagnosed
+well and said so nowhere a person could act on: an incident could not be closed, acknowledged or
+assigned, every actor in the audit trail was a string somebody typed, and every dependency was
+probed once at startup and the result thrown into a log line. All four are addressed, shaped by
+the first production deployment on 2026-09-11 — installing it is something you do once and it had
+just been done; working the incidents is daily.
+
+**The release gate also became one run that confirms acting**, which it had never done.
+`--full --mode Auto` had defeated itself since v0.5.0: twelve simultaneous fixtures put more than
+`clusterUnhealthyCeiling` of the cluster's pods in a bad state, so gate 7 correctly refused every
+action and the act phase reported "the agent did not act" — measuring the harness, not the agent.
+The act phase now clears the other fixtures, waits for the cluster-wide unhealthy fraction to fall
+back below the ceiling, and asks for a fresh plan, because policy is evaluated when a plan is
+*made* and a recorded denial cannot be un-made. Measured: `c13 was acted on`, `available after the
+restart`, `incident reached Resolved`, in the same run as the twelve-fixture diagnosis corpus, at
+83 assertions and 0 failures. **Nothing was weakened to get there** — not the ceiling, not the
+fixture, not the assertion ([#97](backlog.md#97)).
+
+**One thing this release did not get, and it is worth stating plainly.** v0.7.0 was promoted after
+`0.7.0-rc1` ran on `cait-eu-cluster` in Observe mode; `v0.8.0` was released directly from a green
+gate, on a deliberate decision, without that production soak. The upgrade was checked statically
+instead — the production values file renders clean against the chart despite the new
+`additionalProperties: false`, `/webhooks` did not move off 8080, `auth` stays off so the
+fail-closed IdP path is not engaged, and the mode is still `Observe` — but a static check is not a
+day of running, and this release carries more operator-facing surface than v0.7.0 did.
+
+`v0.7.0` shipped on 2026-09-11. **It survives a bad deploy.** The first release in three to add a
+capability: the `RollbackDeployment` executor arm, whose policy gate, facts, RBAC, prompt text and
+runbook guidance had all shipped a release early and never once fired — and `c14-bad-deploy`, the
+first fixture whose setup has a timeline rather than a steady-state fault.
+
+`v0.6.0` shipped on 2026-09-03. **Someone else can run it.** Three public sites, a demo that comes
+up on a laptop with one command and no API key, and — for the first time in the project's life —
+an incident the agent acted on reaching `Resolved`: `c13-wedged-lock`, 41 seconds after the
+restart, granted by `hephaisto/verifier`, reproduced on the release gate at 70 assertions in
+24m37s. That retires v0.5.0's "not established" paragraph below. It is one run on one fixture, so
+the acting path is **demonstrated end to end rather than reliable**, and the docs say which.
+
+It also established that **the release gate is two runs, not one**. `--full` applies its fixtures
+simultaneously, which on a single node crosses `policy.clusterUnhealthyCeiling` — so the policy
+engine correctly refuses every action as a cluster-wide event, and the acting path cannot be
+tested in the same run that tests diagnosis ([#97](backlog.md#97)). Diagnosis scored **8/8** over
+85 assertions. *(Superseded in v0.8.0: the act phase now clears the other fixtures and waits for the
+cluster to fall back below the ceiling, so one run covers both. The ceiling was not changed.)*
+
+`v0.5.0` shipped on 2026-09-01. **The list got shorter, and the gate went green.** The release
+whose feature was that it shipped no feature: eighteen fixes, most of them in the instrument that
+measures everything else, and `scripts/e2e/run.sh` exiting **0** on the full ten-fixture corpus for
+the first time in the project's life — 77 assertions, 98 minutes, $0.115 on a local `gpt-oss-120b`.
+
+**The MVP bar became evaluable, and was met.** `root cause 8/10 correct` against a bar of
+≥ 7/10 over ≥ 10 scenarios, quoted since v0.1.0 and never before gradeable: a truncated
+investigation produces no finding, and no finding cannot be scored. The accuracy was never short —
+the denominator was. [#2](backlog.md#2-six-of-ten-chaos-fixtures-never-run-in-an-automated-gate)
+closed on it after five releases.
+
+**What it did not establish is the more useful sentence.** The planner proposed nothing for c12 on
+that run, so `acted on`, `available after the restart` and `reached Resolved` were all reported
+untested rather than passed. Nothing is broken that this run could test — which is not the same as
+having seen the agent resolve an incident. [#66](backlog.md#66-the-planner-acts-on-half-of-a-fair-fixture)
+and [#72](backlog.md#72-an-incident-that-was-successfully-acted-on-sits-in-verifying-forever) carry
+that, and they are what v0.6.0 has to answer before the site can say otherwise.
+
+`v0.4.0` shipped on 2026-08-30. **The console has a written design language**: one token set that
+the app and a landing page both consume from the same file, canonical by test rather than by
+convention, and a visual safety net that photographs every component in both themes on every pull
+request. Light mode stopped being "a courtesy". The app has a favicon, and the repository has its
+first images.
+
+It also found that the safety net the milestone depended on could not see a stylesheet at all, and
+that the console suite's one failing spec was not the product bug it looked like — see
+[#48](backlog.md#48-the-console-suite-interacts-with-a-page-the-circuit-has-not-taken-over-yet).
+
+**Running the harness end to end is what made the release worth it.** It found that
+`_framework/blazor.web.js` had returned 404 in every published image — the console was a static
+page in every released build, and every button on it was dead. One flag in the Dockerfile, four
+releases, and nothing had ever been able to see it.
+[#53](backlog.md#53-the-console-was-never-interactive-in-any-released-image).
+
+`v0.3.0` shipped on 2026-08-30. **The agent reaches people**: an escalation is written to a
+Postgres outbox in the same transaction as the state change that caused it, and delivered to a
+generic HTTP endpoint or a Teams card with retry, rate limiting and a link back to the incident.
+It ships delivering nowhere — an empty routing table and no channel configured, two independent
+things to change.
+
+**The delivery path is measured, not claimed.** It ran against a real cluster and every assertion
+passed, including the one the design exists for: the receiver taken down, the agent restarted
+mid-flight, the receiver brought back, and the delivery arriving anyway.
+
+**v0.2.0's acting criterion is still unmet**, and the three attempts at it are worth reading as a
+sequence: gate 9 refused the restart; that was fixed; then the planner proposed no action at all.
+[#41](backlog.md#41-c11-has-never-been-run-against-a-cluster) has the detail. It is not a safety
+gate problem and never was after the first attempt.
+
+`v0.2.0` shipped on 2026-08-30. **The agent can act**: it executes a narrow allowlist of
+reversible actions, verifies them at T+60s / T+5m / T+15m with deterministic predicates,
+reverts or escalates when they do not hold, and closes the incident when they do. It ships
+configured to act nowhere — an empty namespace list, an empty autonomy list and `mode:
+Observe`, three independent things to change.
+
+The v0.2.0 acceptance test **has been run once, and it found three bugs.** Detection,
+investigation and diagnosis are verified against a real cluster - 5 fixtures, 5 incidents, all
+classified correctly, 2/2 graded correct for $0.56. **Acting is not yet demonstrated end to
+end**, because the run stopped at the point it exists to test:
+
+- Gate 9 refused every restart the feature exists for. It fired at `ReadyReplicas <= 1`, which
+  includes zero, so it protected a replica that was not there - and a crash-looping pod is by
+  definition not Ready. `RestartPod`, the one type promoted to auto, could never have fired.
+- Verification passed on a still-crash-looping workload, which fails toward *yes*: no readiness
+  probe means Ready the instant the container is Running, so a pod that runs two seconds per
+  cycle reports one available replica for part of it.
+- The harness made the identical mistake and reported "c11 is available after the restart"
+  while the pod sat in CrashLoopBackOff with six restarts.
+
+All three are fixed and unit-tested. **None of the fixes has been re-run against a cluster**,
+which is deliberate: end-to-end re-verification is deferred to before v0.4.0, and until it
+happens "the agent restarts a pod and closes the incident" remains built rather than observed.
+See [backlog #41](backlog.md#41-c11-has-never-been-run-against-a-cluster).
+
+`v0.1.0` shipped on 2026-08-29 after six release candidates, meeting its gate at **22/24
+correct root cause** over cassette replay and 7/8 live. It took six candidates and the agent
+was not the cause of any of them — five failed on the harness's own instrumentation rather than
+on the thing being measured, which is worth remembering now that a second harness mode exists.
+
+`v0.0.1` shipped the same week: multi-arch image and Helm chart on GHCR, build provenance
+attested, both verified pulling anonymously.
+
+---
+
+---
+
+## v0.1.0 — Diagnosis you can trust
+
+**The gate on everything after it — and, measured on 2026-08-29, it is met.**
+
+| | |
+|---|---|
+| **Cassette replay**, 3 passes over 8 scenarios | **22/24 correct**, 0 wrong, 2 no-finding, 180 steps, $1.92 |
+| Excluding c10, which the harness itself flags as unmeasurable | **21/21** |
+| **Live against the dev cluster**, one pass while recording | **7/8 correct** |
+
+Per fixture, over three passes: c1, c2, c3, c4, c5, c7 and c8 are **3/3 each**, at 4.3 to 9.0 steps.
+c10 is 1/3, and every c10 attempt failed the replay-coverage assertion, so the harness reports those
+verdicts as unsound rather than as a score. **Nothing was ever diagnosed wrongly** — the two
+failures are both "produced no finding at all", which stays the failure mode worth watching.
+
+**Re-measured on the rc2 tree: 22/24 again**, 183 steps, $1.97 — c1, c2, c3, c4, c5, c7 and c8 all
+3/3, c10 still 1/3. Two differences from the baseline row, both worth stating rather than rounding
+away. The instrument came out *sounder* — 21 of 24 attempts passed every structural assertion,
+against 19 — and one c10 attempt that produced no finding in the baseline produced a **wrong** one
+here, so "nothing was ever diagnosed wrongly" is now a statement about the baseline run and not
+about every run. Both c10 attempts that were not correct were flagged UNSOUND at 55–68% replay
+miss, which is the harness saying those verdicts are not evidence about the agent — but the honest
+version is that c10 has now been observed producing a wrong answer, not merely no answer.
+
+Mean cost is **$0.080 per investigation** and mean length **7.5 steps**, against a `MaxSteps` of 12.
+Both numbers matter for what comes next: the step ceiling is not the binding constraint, so the
+experiment that assumed it was has already been answered.
+
+**The previous number was 3 findings from 11 runs, and it is superseded rather than improved.**
+Those eleven runs predate the transient-retry fix: 9 of 12 investigations were terminating
+`Faulted` on the provider's own "high demand" wording, each discarding a complete run's tokens and
+producing nothing. What looked like a reasoning problem was a retry problem. The full record stays
+in [`history.md`](history.md#the-first-accuracy-measurement--2026-08-28) because a wrong diagnosis
+that survived a week is worth keeping.
+
+**So the four planned experiments are no longer gating work.** Raising `MaxSteps`, ordering tools
+by `SignalKind`, capping discovery calls and runbook memory were all aimed at a number that has
+already cleared the bar. They remain worth running — as **cost** experiments, against a baseline
+that now exists, since 7.5 steps and $0.080 per investigation is the thing left to improve — but
+nothing downstream waits on them.
+
+### Done
+
+1. **The eval harness.** `hephaisto-eval` with three commands: `record` runs a real investigation
+   against the live cluster and captures every tool declaration and untruncated result; `run`
+   replays a corpus and scores it, needing only the model; `inspect` reads a cassette. Recording is
+   **in-process**, wrapping tools inside `SafeToolDecorator`, because a Postgres exporter cannot
+   work — tool declarations are persisted nowhere, only 43 of 297 tool calls carried an untruncated
+   blob, and arguments are stored post-redaction. It adopted
+   [backlog #27](backlog.md#27-addhephaistollmwithoutpersistence-has-no-call-sites).
+
+   Two decisions in it carry the number's credibility:
+
+   - **The denominator is scenarios, not gradeable scenarios.** Both pre-existing instruments treat
+     "no primary finding" as a *skip*, and no-finding was the dominant failure mode — so a
+     regression that stopped producing findings would have pushed the reported score **up**.
+   - **A high replay miss rate invalidates the instrument, not the agent.** Over 25% and the
+     scenario is reported unsound; the answer is "re-record", never "it got worse". This is what
+     flags c10 rather than quietly scoring it 1/3.
+
+2. **[backlog #9](backlog.md#9-semantic-search-returns-nothing-and-the-recorded-cause-was-wrong) —
+   fixed**, which was the dependency for runbook memory. The vector arm had never executed; a
+   `pg_trgm` word-similarity arm was added beside it, and `q=crash` went from 0 hits to 10.
+
+3. **Grafana annotations on state transitions — built in rc2.** `GrafanaAnnotator` marks the open
+   as a point and the outcome as a region carrying the primary hypothesis, so a diagnosis is read
+   against the graph it came from. It closes
+   [backlog #20](backlog.md#20-the-mvp-acceptance-test-requires-grafana-annotations-which-are-unbuilt),
+   whose instruction was "build the annotations or restate the test, do not silently drop the
+   clause" — and the e2e now asserts them, so the clause in `verification.md` is checked rather
+   than assumed. The token is a separate Editor service account: this is the only Grafana
+   credential in the system that may write.
+
+### Still open here
+
+1. **Widen the corpus from 8 back toward 10 — deferred to v0.1.1.** c6 does not fire on
+   `local-path` and c9 would evict the observability stack, so both need replacement fixtures that
+   do not exist yet. That is open-ended design work against a gate already met at 22/24, so it is
+   the one v0.1.0 item deliberately carried forward rather than finished. **The number stays n/8
+   and says so.**
+
+   Two defects found while recording bear on the fixtures that *are* in the corpus.
+   [#31](backlog.md#31-grafana-mcp-exposes-no-tempo-tools-so-c10s-whole-reason-for-existing-is-untestable)
+   (c10 cannot reach Tempo, so the correlation walk it exists to prove is untestable) is still open.
+   [#34](backlog.md#34-c1-oomkill-never-produces-an-oomkill-on-this-node) (c1 presents as
+   `CrashLoopBackOff`, never `OomKilled`) is open and documented as non-blocking.
+
+   What rc2 *did* fix here is narrower and was blocking the widened e2e run:
+   [#32](backlog.md#32-chaossh-maps-c10-to-sloburn-which-is-not-a-signalkind) mapped c10 to a
+   `SignalKind` that does not exist, and nothing in `scripts/e2e/` ever built or `kind load`ed
+   c10's image despite a comment saying it must — so asking for c10 produced an `ImagePullBackOff`
+   and graded the agent on the test rig. All eight recordable fixtures now run in the harness,
+   which also closes most of
+   [#2](backlog.md#2-six-of-ten-chaos-fixtures-never-run-in-an-automated-gate).
+
+### The experiments, now cost rather than accuracy
+
+Kept because the method is worth running and the baseline exists; demoted because nothing waits on
+them. One variable at a time, three repeats, against `results/baseline-*.json`:
+
+- **Raise `MaxSteps`** from 12 — **probably pointless, and the baseline is why**: mean length is 7.5
+  steps and the longest successful run was 13. Investigations are concluding, not running out. If
+  it is tried anyway, `MaxWallClock` (10 min) and `MaxOuterTurns` (8) must move with it or they
+  silently become the binding constraint, and exceeding `MaxOuterTurns` returns `Stalled`, which
+  has no reserved-step rescue.
+- **Rewrite `Runbooks/Unschedulable.md`**, which tells the model to query Loki and never mentions
+  `get_events` or `list_nodes`. Note the baseline argues against this mattering much: c3 is 3/3 in
+  5.7 steps despite it.
+- **Cap discovery calls** in `SafeToolDecorator`, the only enforcement point that sees a tool name
+  at decrement time.
+- **Runbook memory** — retrieve the top-3 similar resolved incidents. The card must state that past
+  incidents are **not citable**, or grounding discards anything quoted from them and the change
+  *lowers* the finding count.
+
+### Measurement integrity — done in rc2
+
+A milestone whose entire purpose is producing a trustworthy number cannot ship on broken
+instruments. All five landed:
+
+- [#1](backlog.md#1-the-e2e-playwright-phase-reports-pass-on-a-zero-assertion-run) the console phase
+  passed without asserting anything — 5 tests, 0 expected, 5 skipped, reported green. It now reads
+  the JSON reporter's `stats` and fails on `expected == 0` or `skipped != 0`, and a lost exec bit no
+  longer turns the phase into a silent skip.
+- [#3](backlog.md#3-hephaistohumanfeedback-is-never-recorded) the false-positive rate is recorded.
+  The instrument had to change on the way in: it emitted `helpful`/`unhelpful`, which the
+  precision panel's `verdict=~"correct|incorrect|partial"` matches nothing of — so adding the
+  missing call alone would have produced a metric that was recorded and still unreadable.
+- [#4](backlog.md#4-hephaistoincidentsclosed-and-hephaistoincidentduration-are-never-recorded) MTTR
+  is recorded, on **every terminal transition including `Escalated`**. That is what makes it
+  measurable without [#11](backlog.md#11-there-is-no-production-path-to-resolved): in Observe mode
+  nothing is fixed, so scoring only `Resolved` would have left the histogram exactly as empty.
+- [#5](backlog.md#5-hephaistoincidentsopen-and-hephaistobudgetremaining-have-no-instrument-at-all)
+  both instruments exist and are moved by production code. The guard test asserts *is recorded*,
+  not *is created* — it drives the real `IncidentTriage` and listens through a `MeterListener` —
+  and was itself verified by deleting a call site and watching it go red.
+- [#6](backlog.md#6-audit-immutability-is-not-enforced-in-the-deployed-database) audit immutability
+  is enforced. The agent serves on a **separate, non-owner role**, which is the only form this fix
+  could ever have taken: Postgres cannot restrain a table's owner, so every version of this that
+  kept the agent connected as `hephaisto` was enforcing nothing. "No audit, no action" is a
+  standing constraint and now holds in the database as well as in the DbContext.
+
+One decision inside #4/#5 is worth stating, because it makes two numbers deliberately disagree.
+`hephaisto.incidents.open` decrements only when an incident leaves `OpenStates`, which does **not**
+include `Escalated` — so it tracks `/api/status.openIncidents`, the number an operator will
+cross-check it against. `hephaisto.incidents.closed` *does* count an escalation, because reaching a
+human is an outcome. So `opened - closed != open`, on purpose. The dashboard's own spec table
+claimed otherwise and was corrected rather than the code bent to match it.
+
+### Exit criterion
+
+**≥ 7/10 correct root cause over ≥ 10 seeded scenarios**, plus cost per investigation, time to
+diagnosis, and the false-positive rate from the thumbs-up/down.
+
+**Restated as n/8, and met.** Two of the ten fixtures cannot be recorded here and the reason is
+written down for each: c6 does not fire on `local-path`, and c9 is node-wide and would evict the
+observability stack along with the agent. Reporting n/10 while running eight would be the same
+dishonesty the harness was built to remove. **Widening the corpus back toward ten is the one piece
+of this criterion carried into v0.1.1** — it is about the denominator, not the ratio, and the ratio
+is not in doubt.
+
+**Which instrument produced which number, always.** The 22/24 is cassette replay. The 7/8 is live
+against the dev cluster while recording. They were cross-checked on c4: recorded live, then
+replayed, verdicts agreed with a **0% miss rate** — which is what makes the cheap instrument usable
+for the rest. The two instruments disagree on nothing except c10, where replay recovered a finding
+once in three attempts that the live run did not.
+
+**All four numbers are now instrumented.** Cost per investigation has a baseline ($0.080 mean);
+time to diagnosis is `hephaisto.incident.duration` and the false-positive rate is
+`hephaisto.human.feedback`, both recorded by production code as of rc2. This criterion is defined
+by all four, and until rc2 two of them had no value at all.
+
+A caveat that belongs next to the claim rather than buried: instrumented is not the same as
+populated. The false-positive rate needs a human to press the button — it is the one number in this
+milestone the agent cannot generate for itself, which is exactly why it is worth having — so the
+series exists and stays empty until someone reviews an incident.
+
+**The gate that was set — if it lands at 4/10, v0.2.0 does not start — is passed.** It stays
+written here because the executor being unbuilt until this held is the reason it can be trusted.
+
+---
+
+## v0.2.0 — It acts, carefully — **done**
+
+**The executor exists, and the loop closes.** Investigating → Acting → Verifying → Resolved,
+or → rollback → Escalated. Every edge in that sentence was implemented in
+`IncidentStateMachine` a release early and called only from its own unit tests.
+
+The roadmap's reading of this milestone — "almost everything except the executor already
+exists, waiting for a caller" — was right about the inventory and wrong about the work. Four
+things in that waiting machinery were **silently inert**, each failing in the direction that
+looks fine, and none of them were in this file or the backlog:
+
+| Found | Consequence |
+|---|---|
+| `PolicyOptions` was bound to configuration **nowhere** | The engine ran on a default-constructed instance, so `AllowedNamespaces` was empty and gate 2 denied everything — the right-looking answer for the wrong reason. The chart had been setting `Policy__AllowedNamespaces__N` since the write Role existed and nothing read it. |
+| `ClusterFacts` was built with the clock, the mode and the quarantine stamp | Gates 3, 7, 8-fractional, 9, 10 and 13's budget downgrade were **all dead**, while passing their unit tests — the tests supply the facts the caller did not. |
+| The database mode arm declared the seeded `agent_mode.mode` column | `mode: Auto` in the chart resolved to `Observe` on **every database that had ever been migrated**. The only way to lift it was a hand-written UPDATE. |
+| `appsettings.json` — which ships in the image — named `hephaisto-chaos` | Binding `PolicyOptions` alone would have made the published default permit acting somewhere, with the chart's `actionableNamespaces` empty. |
+
+None of these were visible from either side alone, which is the same shape as most of what
+this project has already found. The first two would have been discovered by whoever first
+turned autonomy on and watched the safety gates fail to fire.
+
+**Gate 14 needed a decision, not an implementation.** It downgrades any action without a
+rollback spec, and a pod delete has no inverse — the controller recreates the pod, which *is*
+the restart. So `RestartPod`, the action this milestone exists to automate, could only reach
+`Allow` if the model invented a fictional rollback spec, or stayed at `RequireApproval` forever
+if it followed the prompt's own instruction to say plainly that an action cannot be undone.
+Whether autonomy worked would have depended on how a model worded a JSON field. There is now a
+named `SelfHealing` exemption, two types wide and pinned by a test, with the reasoning in the
+code: **the recourse on a failed verification for these types is escalation, not rollback.**
+
+### What shipped
+
+| | |
+|---|---|
+| `ActionExecutor` | Snapshot → admit → mutate → record, over a closed enum. Five action types: `RestartPod`, `RolloutRestart`, `ScaleWorkload`, `DeleteStuckJob`, `DeleteFailedJobPods`. |
+| `TryAdmitActionAsync` | Has a caller. It also had a latent duplicate-key bug — it always `Add`ed, and the coordinator already persists proposed actions — so it now transitions the row a proposal created. |
+| `VerificationScheduler` | T+60s / T+5m / T+15m, deterministic C# predicates, only the last may conclude a failure. |
+| `ActionRollback` | Typed reverts only; the model's rollback spec is read for values and never executed as written. |
+| Approval | `POST .../approve` and `/deny`, UI buttons, `ApprovalSource.NotApplicable`. |
+| Oscillation → quarantine | Against the **workload**, on the row admission already locks. |
+| Path to `Resolved` | Granted by `hephaisto/verifier` once every executed action is verified. |
+| Kubernetes Events | The action, on the object, for `kubectl describe`. |
+| `c11-transient` | The only fixture a restart fixes. See [#41](backlog.md#41-c11-has-never-been-run-against-a-cluster). |
+| Chart | `policy.autoEnabledActionTypes` as a first-class value, and the RBAC self-check's first positive assertion about writes. |
+
+Closed: backlog [#7](backlog.md#7-the-planning-prompt-claims-a-verification-and-rollback-mechanism-that-does-not-exist),
+[#8](backlog.md#8-nothing-writes-the-database-mode-arm) (by reclassification),
+[#10](backlog.md#10-hephaistoiodestructive-actions-allowed-is-read-by-no-code),
+[#11](backlog.md#11-there-is-no-production-path-to-resolved),
+[#12](backlog.md#12-unbounded-label-cardinality-on-hephaistogroundingrejected),
+[#16](backlog.md#16-four-declared-spans-are-never-started),
+[#18](backlog.md#18-two-audit-event-types-are-named-and-never-written) (half), and
+[#38](backlog.md#38-approval_source-reads-ui-on-actions-nobody-approved).
+
+Also fixed because they stopped being harmless once the gates could fire: the maintenance
+window had a gate and no producer, and `PolicyOptions` hot-reloads with nothing recording that
+it moved.
+
+### Mode is GitOps, and the database can only ever say no
+
+The decision that shaped most of this milestone. The mode is a Helm value; it reaches the pod
+on the env var and the projected ConfigMap, so raising autonomy is a reviewed commit. There is
+deliberately **no endpoint and no UI control that sets it** — `SetModeAsync` is deleted, not
+wired, and backlog #8 is resolved by reclassification rather than by building what it asked
+for. The database arm restrains only: it carries the runaway latch and is otherwise silent.
+
+The one write the switch exposes is **re-arm**, which clears a tripped latch and cannot name a
+mode or exceed the deployment's ceiling. It writes `mode.changed` — the first thing ever to.
+
+### What did not ship, and why
+
+- **`PatchResources` and `RollbackDeployment`** — [#39](backlog.md#39-the-executor-covers-five-action-types-three-are-refused).
+  `PatchResources` is the real remediation for c4 and c7, and doing it safely means a typed,
+  restricted vocabulary rather than applying a model-authored merge patch verbatim. That is
+  design work, not typing, and rushing it would hand the model the mutating handle the
+  three-phase split exists to deny it. Refused before any call is made, so an approved one
+  fails visibly rather than doing something unintended.
+- **`SilenceAlert`** — needs an outbound client bound to Alertmanager, and a policy gate
+  strict enough for an action whose whole effect is to stop a human being told. It arrives
+  naturally with v0.3.0. (This bullet used to say the outbound HTTP client "does not exist in
+  `src/`". It does — see the v0.3.0 section.)
+- **A closed policy reason code** — [#40](backlog.md#40-policyresult-has-no-closed-reason-code-so-the-metric-cannot-say-why).
+  Taking the free text out of the metric labels was urgent and is done; putting a safe
+  breakdown back touches every gate in the safety argument and wants its own pass.
+- **A cluster run of c11** — [#41](backlog.md#41-c11-has-never-been-run-against-a-cluster).
+  The fixture is verified by simulating its container logic, not by running it. Until
+  `--mode Auto` has been run once, the acceptance test below is written and unexecuted.
+
+### Done when — status
+
+A transiently-failing pod is auto-restarted, verification passes, the incident reaches
+`Resolved`, and the audit trail reconstructs the decision **without reading a log file**; and a
+seeded oscillating workload is quarantined after 3 attempts instead of looping forever.
+
+**Half measured, half still a claim.** The run on 2026-08-30 proved the first half against a
+real cluster: c11 applies, classifies as `CrashLoopBackOff`, and the agent proposes exactly the
+right action for it. It then found three bugs that stood between the proposal and the restart -
+see [Where it stands](roadmap.md#where-it-stands) - and those are fixed, unit-tested at 855 plus 28, and
+**not re-run**.
+
+So the honest state of the criterion is: everything up to and including "the agent decides to
+restart the pod" is observed; everything after it is built and untested. Re-verification is
+deferred to before v0.4.0 by decision, not by oversight.
+
+---
+
+## v0.3.0 — It reaches people — **done**
+
+**Escalation leaves the process now.** An `INotificationChannel` abstraction, routing rules, a
+Postgres outbox with retry, and two channels on it: a generic outbound HTTP endpoint and
+Microsoft Teams. It ships delivering nowhere — an empty routing table and no channel configured,
+two independent things to change, the same shape as `actionableNamespaces` plus
+`autoEnabledActionTypes` plus `mode`.
+
+**The premise this milestone was scoped on was wrong, and checking it made the work smaller.**
+This file, `README.md` and backlog #39 all said there was no outbound HTTP anywhere in `src/`.
+`GrafanaAnnotator` had been POSTing to Grafana through a client registered with `AddHttpClient`
+since `v0.1.0-rc2`. What was missing was a *notification stack*, not the ability to make a
+request — and the distinction mattered, because it made the annotator the **template** rather
+than a counterexample: conditional registration, a `Null*` no-op, a per-call timeout linked to
+the caller's token, a `Describe()` line at startup, and a standing rule that nothing in it may
+fail an investigation. Corrected first, in its own commit, before any code — the discipline
+backlog #7 established.
+
+| Found | Consequence |
+|---|---|
+| `GrafanaAnnotator.Describe` is documented as *"reported once at startup"* and **had no caller** | Every outbound integration here degrades silently when unconfigured, so "nothing happened" read the same whether it was never switched on or was broken. Shipping notifications on that would have built the same trap one storey higher. Filed and fixed as [#43](backlog.md#43-grafanaannotatordescribe-is-documented-as-a-startup-line-and-has-no-caller). |
+| `SilenceAlert` was in the policy engine's **LowRisk** set | Allow-eligible, so an operator could have promoted it and had the agent silence its own alerts unattended. It satisfies every word of that set's description; what it fails is subtler — every other low-risk action fails *visibly* when wrong, and a wrong silence fails by making the cluster look quiet. |
+| `Notifications:GrafanaUrl` had no reader | Would have shipped as the third instance of [#19](backlog.md#19-maxautoscalereplicas-and-maxautoscalestep-have-no-readers), in the same release that closed the first two. Caught before the commit that introduced it. |
+| `alertmanager.maxDuration` was written `2h` | What every other duration in a Kubernetes values file looks like, and `TimeSpan.Parse` rejects it outright. The agent would have failed to start with a binding error naming a key nobody would connect to that line. |
+| `Math.Clamp` **propagates** `NaN` | A jitter value from a random source could throw out of `TimeSpan` multiplication on the delivery path. Found by a test written to assert the clamp, not the bug. |
+
+### What shipped
+
+| | |
+|---|---|
+| `NotificationEvent`, routing, rate limit, backoff | `Hephaisto.Core`, zero I/O, pure. Six events; `Unspecified = 0` so a default row cannot claim to be an escalation. |
+| `notification_deliveries` | One row per (event × channel). Snapshot frozen at enqueue as `jsonb`; no FK to incidents, matching `audit_events`. |
+| **Enqueue by construction** | A `SaveChanges` interceptor over new `IncidentEvent` rows. An incident cannot reach a notifiable state without a delivery row, because one commit writes both. |
+| `NotificationDispatcher` | `VerificationScheduler`'s shape: prime once, `PeriodicTimer`, scope per tick, bounded read off `(status, next_attempt_at)`. The **only** retry authority — channels opt out of `AddStandardResilienceHandler`. |
+| `HttpNotificationChannel` | Optional HMAC-SHA256 over the exact bytes sent, plus a stable delivery id for receiver-side dedup. |
+| `TeamsNotificationChannel` | Power Automate Workflows, Adaptive Card 1.5. Links out; a test asserts no `Action.Submit` exists anywhere in the card. |
+| `SilenceAlert` | Executor arm, always requiring approval, duration clamped, no call at all on a dry run. Closes a third of [#39](backlog.md#39-the-executor-covers-five-action-types-three-are-refused). |
+| Chart | First-class values, closed enums in the schema, the Teams URL as a `secretRef` that a negative test proves can never render as a value. Egress NetworkPolicy, off by default. |
+| e2e | A `notification-receiver` the harness builds and `kind load`s, and a `notify` phase whose fourth assertion restarts the agent mid-delivery. |
+
+Closed: [#14](backlog.md#14-escalateonlyinvestigator-does-not-escalate),
+[#17](backlog.md#17-hephaistokuberneteswatch_reconnects-bypasses-the-constants-file),
+[#19](backlog.md#19-maxautoscalereplicas-and-maxautoscalestep-have-no-readers) (by deletion),
+[#33](backlog.md#33-alertmanager-signals-lose-their-namespace-when-the-alert-labels-it-k8s_namespace_name),
+[#35](backlog.md#35-allowedtools-is-documented-in-order-and-the-order-is-the-servers),
+[#36](backlog.md#36-the-environment-card-never-names-a-datasource-uid-because-nothing-sets-them),
+[#40](backlog.md#40-policyresult-has-no-closed-reason-code-so-the-metric-cannot-say-why),
+[#43](backlog.md#43-grafanaannotatordescribe-is-documented-as-a-startup-line-and-has-no-caller),
+and a third of [#39](backlog.md#39-the-executor-covers-five-action-types-three-are-refused).
+
+### The decision that shaped the rest: enqueue is a consequence, not a call
+
+The obvious design is an enqueue call at each of the ten places an incident commits a
+transition. The obvious failure of that design was **already in this codebase**: `IncidentTriage`
+reaches `Escalated` twice — the self-signal arm and the storm circuit breaker — and published no
+live event at all. Nobody noticed, because nothing asserted it. An eleventh call site added next
+year would have gone the same way.
+
+`IncidentStateMachine.Transition` appends an `IncidentEvent` on every edge without exception, so
+watching those rows gives the property directly rather than by diligence. The two silent triage
+paths were covered the day the interceptor landed, without being touched.
+
+**The guard test is the deliverable, not the interceptor.** It drives the real state machine
+against a real database over all thirteen escalation reasons — and it was verified the way
+`IncidentMetricsTests` was: commenting out the enqueue turns 15 tests red.
+
+### What did not ship, and why
+
+- **In-card approval.** Teams' interactive paths need a registered bot or Power Automate, and
+  both mean accepting inbound calls on a service whose only inbound route is deliberately
+  unauthenticated. A security change, not a feature increment. The identity story converges
+  anyway: approving in Hephaisto's UI makes the free-text `ApprovedBy` the weak point, and the
+  fix is OIDC — for a Teams shop, the same Entra ID the card was delivered through.
+- **Slack, email/SMTP, PagerDuty.** Deferred as scoped. Two channels was the right number to
+  design against; a third would have been designing against consumers that exist.
+- **An approval-timeout sweeper.** `EscalationReason.ApprovalTimedOut` still has no producer, and
+  now matters more: once a card says "approve this", *"awaiting approval and nobody was
+  reminded"* is the slow-motion form of the failure this release fixed. Deciding what a timeout
+  *does* is a policy question. [#44](backlog.md#opened-by-v030).
+- **`PatchResources` and `RollbackDeployment`.** Unchanged from v0.2.0's reasoning.
+- **A cluster run of anything.** See below.
+
+### Done when — status
+
+A fixture escalates, a card arrives in Teams and a body arrives at the outbound receiver each
+carrying a working link; the receiver is taken down, the agent restarted, the receiver brought
+back, and the delivery arrives anyway; a burst is rate-limited rather than repeated; and a stock
+install delivers nowhere.
+
+**Measured, against a real cluster, on 2026-08-30.** Every delivery assertion passed on two
+independent runs:
+
+```
+pass  a notification reaches the receiver
+pass  deliveries carry a stable delivery id
+pass  deliveries carry a link back to the incident
+pass  the delivered incident exists in the API
+pass  a delivery survives an agent restart
+```
+
+The last one is the criterion. The receiver was taken to 503, an escalation queued against it,
+the agent pod restarted **mid-flight**, the receiver brought back — and the delivery arrived. An
+outbox that has never survived a restart is an outbox in name only.
+
+Alongside it: 5/5 fixtures classified correctly, root cause **3/3 correct**, cost and token
+ledgers reconciling with their per-step sums, 27 Grafana annotations, RBAC bounded, read-only and
+non-root. 993 unit and 53 integration tests, and 45 chart checks.
+
+**Three of the four clauses are met; two are not tested here and say so.** Teams needs a tenant
+the harness does not have, and a signed delivery needs a Secret the chart deliberately will not
+create — both are covered by unit tests, and neither is on the critical path.
+See [#45](backlog.md#45-nothing-has-been-delivered-from-a-cluster).
+
+**Three runs were needed to test one thing, and only one of the three failures was in the
+product.** The first tested nothing, because the receiver image could not build against a
+`.dockerignore` rule whose own comment describes that exact trap. The next two failed the
+startup-line assertions while the agent emitted them perfectly — a container log is not a durable
+record, and neither `--tail=400` nor `--tail=-1` can grep a startup line out of a rotated one.
+That ratio is this harness's oldest pattern and it has not improved since v0.1.0's six release
+candidates.
+
+**v0.2.0's acting criterion is still not met**, and now for a third distinct reason: the planner
+proposes no action for c11 at all. See
+[#41](backlog.md#41-c11-has-never-been-run-against-a-cluster), which is a much sharper entry than
+it was this morning.
+
+
+---
+## v0.4.0 — A design language — **done**
+
+Three surfaces were coming — the console that exists, a landing page and a docs site — with
+nothing shared between them to build against. The app already had a design system; it was a
+comment at the top of one 1268-line stylesheet, next to 108 classes and a 20-token `:root` block,
+and nothing else could consume it.
+
+**The milestone's stated prerequisite was half of the real one.** The roadmap promoted
+[#46](backlog.md#46-the-console-suite-cannot-pass-in-observe-so-a-green-run-needs---mode-auto) to
+a hard dependency on the grounds that a red safety net is not a safety net. True — and fixing it
+would still have left the refactor unprotected, because the Playwright suite asserts *behaviour*.
+Every one of its 34 read-only assertions passes against a console whose layout has collapsed.
+There was no screenshot comparison of any kind in the repository. The net had to be built, not
+repaired.
+
+| Found | Consequence |
+|---|---|
+| The console suite was red in `--mode Auto` too, for a failure nowhere in the backlog: `acting.spec.ts` ran and failed, asserting the approve button never enabled | Read at face value it said v0.3.0's approval control was broken — the thing its Teams card deep-links to. It was not. `open()` returned ~600ms before the Blazor circuit took the page over, so every interaction dispatched into an inert DOM. [#48](backlog.md#48-the-console-suite-interacts-with-a-page-the-circuit-has-not-taken-over-yet) |
+| Two of the suite's assertions selected on CSS class names *and asserted absence* | A rename during the refactor would not have broken them. It would have made them pass forever, on a page no longer containing the alarm they watched for — #1's defect again |
+| `#10131a` was written twice as the text colour on a `var(--red)` ground | Correct in dark, where `--red` is a light pink; wrong in light, where it is a dark crimson. The error banner had rendered near-black on dark red for three releases |
+| Forge's ember accent lands inside its own severity ramp | The first palette put `--accent` and `--orange` **1.24:1** apart — a link and a warning the same colour. Now a test asserts >1.5:1 against every severity, in both themes |
+| `a:focus-visible` did not exist | Links are most of what a keyboard user moves between here, and they fell back to a UA outline that is near-invisible on a dark ground |
+| `.hp-main` carried a comment claiming a 1200px floor | Above `min-width: 0`, which does the opposite. No such rule existed, or ever had |
+| The favicon's own comment named the token it used | A double hyphen is illegal inside an XML comment. The mark was invalid XML and rendered as nothing, silently |
+
+### What shipped
+
+**[`docs/design.md`](design.md)** — the guideline, and what a contributor is pointed at before
+touching CSS. Four rules, each with a test behind it, plus `Display.cs` documented as a first-class
+half of the system and an honest list of what the language does not cover.
+
+**One canonical token set**, `src/Hephaisto.Agent/wwwroot/tokens.css`, consumed by the console and
+by `website/`'s landing page from a byte-identical copy. Canonical **by test**: a colour written
+anywhere else fails the build, the two copies must not differ, both font binaries must not differ,
+and the `theme-color` metas — the one place a colour genuinely cannot be a `var()` — must still
+equal `--bg` in each theme.
+
+**Forge.** Chosen from three complete directions rendered side by side in both themes with measured
+contrast. Heat as an encoding rather than an ornament; ember accent, warmed neutrals, no anvils.
+Archivo and JetBrains Mono, **self-hosted** — 66KB of latin subsets — because the pod may have no
+egress and a CDN font fails silently into a system stack.
+
+**A visual safety net that can see the stylesheet.** `design/gallery.html` renders every component
+the language has to keep working — all ten states, three severities, four risk tiers, six callouts,
+a broken citation, a meter past 100%, the form controls — and `scripts/visual-test.sh` photographs
+it in both themes, in a pinned container, on every pull request. 28 baselines.
+
+**Brand.** A mark, a wordmark, a favicon and a generated social card, in a repository that had
+contained no image of any kind. The mark is the console's own `^` glyph for *escalated*.
+
+**Light mode stopped being "a courtesy, not the design target"** — its own words, for three
+releases. Both themes are contrast-asserted and both are photographed.
+
+Closed: [#46](backlog.md#46-the-console-suite-cannot-pass-in-observe-so-a-green-run-needs---mode-auto),
+[#48](backlog.md#48-the-console-suite-interacts-with-a-page-the-circuit-has-not-taken-over-yet).
+**There is no `test.skip` left in the console suite.**
+
+### The decision that shaped the rest: refactor first, choose second
+
+The tokens were extracted, the scales named and `app.css` moved onto them **with every value left
+byte-identical** — and the baselines proved that pass pixel-for-pixel, twice. Only then was Forge
+applied, as a data edit whose diff was exactly the intended change: 13 of 20 shots moved, and the
+light theme did not move where it overrides a token separately.
+
+That ordering is why a 1268-line refactor and a total palette change could land in the same
+release without either being unattributable. It also caught its own mistake: `maxDiffPixelRatio:
+0.01` sounded tight and was not — changing `--accent` to hot pink gave **sixteen passes**, because
+the accent is about 0.2% of a section's pixels. It is `maxDiffPixels: 0` now.
+
+### What did not ship, and why
+
+- **The VitePress docs site**, and the rest of the project track. `website/` is one page whose job
+  is to prove the token pipeline survives a second consumer. Building the site before the language
+  existed would have meant building it twice.
+- **A spacing scale.** There is no latent one to extract — the paddings are hand-tuned per
+  component and no ratio joins them. Inventing one means renumbering ~30 declarations and changing
+  every surface, which is a decision, not a side effect of moving tokens. Density is adjusted
+  through `--root-size` instead, which works because every length is already in `rem`.
+- **A theme toggle.** Both themes are first-class and selection is still delegated entirely to the
+  OS, so a reader on a dark OS who wants light cannot ask.
+  [#50](backlog.md#50-both-themes-are-first-class-and-neither-can-be-chosen).
+- **Responsive layout.** Still zero width breakpoints. Recorded as a limitation in `design.md`
+  rather than left to be discovered.
+
+### Done when — status
+
+| Criterion | Status |
+|---|---|
+| `docs/design.md` exists | **done** — and covers `Display.cs`, not only the CSS |
+| One token source feeds all three surfaces | **two of three.** Console and landing page, byte-identical and test-enforced. The docs theme is the project track — and is now a copy of a proven step rather than a leap |
+| `app.css` refactored onto it, UI unchanged except where the direction says | **done, and measured.** Zero-diff proven across the extraction; the Forge change is attributable shot by shot |
+| The app has a favicon | **done** — plus wordmark, social card, `theme-color` and a description |
+| Accessibility in acceptance | **done** — contrast asserted in both themes, focus ring baselined with real keyboard focus, reduced motion honoured |
+| `scripts/e2e/run.sh` exits 0 in its default mode | **done, measured.** `PASSED — 71 assertions, 5 skipped`, exit 0, in one run against CI-built `0.4.0-main.0.24`. Every phase zero failures; the console phase 9/9. It is also what found [#53](backlog.md#53-the-console-was-never-interactive-in-any-released-image) |
+
+**The last row is why the distinction between "the specs pass" and "the harness passes" was worth
+insisting on.** Everything outside the console phase passed on the first run. The console phase
+failed all nine specs, and underneath a regression of my own and a stray port-forward was
+[#53](backlog.md#53-the-console-was-never-interactive-in-any-released-image): **`blazor.web.js`
+returned 404 in every image this project has ever published.** The console was a static page in
+every released build — approve, deny, re-arm, retry and the feedback form all dead — and nothing
+had ever noticed, because until this milestone the suite asserted only read-only content and a
+static render reads identically to a live one.
+
+One flag in the Dockerfile. `--no-restore` on the publish, reusing a restore performed before any
+Razor component existed, so the Blazor static web assets were never resolved.
+
+---
+
+## v0.5.0 — Paying the debt down — **done**
+
+**A release whose feature is that the list gets shorter.** Deliberately scheduled rather than
+hoped for: every milestone so far has closed backlog items *alongside* a feature, which works
+until the ones left are the ones no feature happens to touch. Three releases in, those are
+accumulating.
+
+The number is provisional — if v0.4.0 splits, this follows it regardless of what it ends up
+called. What is not provisional is that it comes **after** v0.4.0 and before any new capability.
+
+**Its contents are [`backlog.md`](backlog.md), not a list copied here.** A second ordering in this
+file would drift from the first within a release, which is the reason priority lives in one place
+and evidence in the other. What belongs here is the shape:
+
+### The three that block a claim someone has already made
+
+These are not the biggest, they are the ones that make an existing statement untrue:
+
+- **[#41](backlog.md#41-c11-has-never-been-run-against-a-cluster)** — the planner proposes no
+  action for c11, so v0.2.0's acceptance criterion remains unmet across three attempts and three
+  distinct causes. Until it is settled, "the agent can act" is a statement about code rather than
+  about behaviour. It is also the one item here that is genuinely open-ended: it asks whether the
+  fixture is unfair or the planner is under-reading, and those want different fixes.
+- **[#46](backlog.md#46-the-console-suite-cannot-pass-in-observe-so-a-green-run-needs---mode-auto)**
+  — `run.sh` cannot exit 0 in its default mode. A harness that always fails is one people learn
+  to read past, which is how #1 survived as long as it did.
+- **[#2](backlog.md#2-six-of-ten-chaos-fixtures-never-run-in-an-automated-gate)** — the corpus is
+  still n/8 against a bar written as n/10, carried since v0.1.0 and honestly labelled every time.
+
+### The cheap ones that keep costing
+
+**[#47](backlog.md#47-the-act-phase-reports-two-failures-that-are-consequences-of-the-first)**
+(a report that is confidently wrong about why), **[#44](backlog.md#44-nothing-sweeps-awaitingapproval-so-approvaltimedout-has-no-producer)**
+(nothing sweeps `AwaitingApproval`, which v0.3.0 made worse by putting an "approve this" card in
+front of people), **[#13](backlog.md#13-the-retry-path-has-never-been-observed-firing-in-production)**,
+**[#15](backlog.md#15-duplicate-instrument-registrations-with-conflicting-types-and-units)**,
+**[#22](backlog.md#22-the-charts-budget-values-are-write-only)**,
+**[#28](backlog.md#28-list_alert_rules-returns-empty-here-and-is-worked-around-in-the-prompt)**,
+**[#31](backlog.md#31-grafana-mcp-exposes-no-tempo-tools-so-c10s-whole-reason-for-existing-is-untestable)**,
+**[#34](backlog.md#34-c1-oomkill-never-produces-an-oomkill-on-this-node)**,
+**[#37](backlog.md#37-the-judge-grades-a-different-incident-than-the-one-the-run-asserted-on)**.
+
+### The rule this release exists to enforce
+
+**An item leaves `backlog.md` by being fixed, or by being reclassified as a deliberate limitation
+and written down somewhere permanent. It does not leave by being ignored.** That sentence has
+been at the top of the file since it was written, and a scheduled release is what makes it
+enforceable rather than aspirational.
+
+### Done when
+
+The blocking three are closed or reclassified with the reasoning recorded, `scripts/e2e/run.sh`
+exits 0 in its default mode, and every remaining entry has been looked at once and either fixed
+or given a fresh sentence saying why it is still there. **No new capability ships in it** — the
+moment it grows a feature it becomes a release that also did some tidying, which is what every
+release so far has been.
+
+### Where it stands — shipped 2026-09-01
+
+Scoped by decision to what blocks a claim or what the site would otherwise inherit and have to be
+built twice: #41, #2, #47, #37, #50, #52. The rest of the backlog sweep this section asks for is
+**carried**, and that is recorded here rather than discovered later by somebody reading the file.
+[#39](backlog.md#39-the-executor-covers-five-action-types-three-are-refused) stays out under this
+release's own rule — `PatchResources` is capability, and #41 needs no new action type.
+
+**Closed:** [#47](backlog.md#47-the-act-phase-reports-two-failures-that-are-consequences-of-the-first),
+[#37](backlog.md#37-the-judge-grades-a-different-incident-than-the-one-the-run-asserted-on),
+[#50](backlog.md#50-both-themes-are-first-class-and-neither-can-be-chosen),
+[#52](backlog.md#52-two-components-are-implemented-twice),
+[#54](backlog.md#54-a-depleted-api-budget-is-retried-five-times-as-a-transport-failure) — opened
+and fixed here — and [#13](backlog.md#13-the-retry-path-has-never-been-observed-firing-in-production),
+answered after four releases by the retry path firing on an error it should have refused.
+
+**What #41 turned out to be**, and it is the finding this milestone is actually worth reading for.
+The entry asked whether c11 is unfair or the planner under-reads. Making it reproducible offline —
+a cassette plus the first answer key in the corpus where acting is correct — turned that from an
+argument into a measurement: **twelve replays across four arms declined twelve times out of
+twelve**, and every hypothesis reasoned the same correct way. The state is on a PersistentVolumeClaim,
+PVC contents survive a pod replacement, so replacing the pod cannot help. c11 defeats that because
+the thing that makes a replacement work is a *second* volume, and the model never reconciles the
+two — with `describe_pod`'s output, the `emptyDir` and the entrypoint's own condition all in hand.
+
+Three prompt improvements shipped from that work and none of them moved it: the action vocabulary
+now describes what each action does rather than naming it, `RestartPod` says it deletes the pod,
+and the planner has a positive case and a rule for reading a workload's claims about itself. All
+three are net improvements measured against the whole corpus — **8/8 `CorrectlyDeclined`, zero
+harmful proposals** — which is the assertion that matters more, because a change that talks about
+when to act is exactly the one that could make the agent restart a missing Secret.
+
+**A cheaper provider was pulled forward mid-milestone**, from the bottom of the Later menu, because
+the account ran out of credit and the three remaining measurements all needed a model. It is
+recorded here as the rule-bend it is: this release said *"no new capability ships in it"*, and the
+defence is that a provider seam is infrastructure — no new `ActionType`, no new tool, nothing the
+agent can do that it could not do before.
+
+`Llm:Provider=openai` reaches DeepSeek, OpenRouter and a local Ollama or LM Studio server through
+one factory, at **$0.031 per investigation against $0.080**. Three things that only appeared once
+something other than Gemini ran:
+
+- **The seam had never been able to work.** The embedding registration cast `IChatClientFactory`
+  to the Gemini implementation, so any other provider threw `InvalidCastException` at the first
+  service resolution. Four releases of documented portability, never once exercised.
+- **A provider that cannot enforce a JSON schema diagnosed correctly and never proposed anything**
+  — [#56](backlog.md#56-the-planner-assumed-every-provider-can-enforce-a-json-schema). It reads
+  exactly like a cautious agent, which is the one failure this release is trying to disprove.
+- **The cassette corpus grades the model that recorded it** —
+  [#55](backlog.md#55-the-cassette-corpus-grades-the-model-that-recorded-it). Sound runs scored
+  9/9, unsound runs 11/18; accuracy tracked replay coverage, not model quality. The plan for this
+  work asserted the corpus was provider-neutral because the format is. The format is; the coverage
+  is not.
+
+**And a second model family declines c11 too.** DeepSeek graded it `MissedAnAction` 3 of 3 with a
+correct diagnosis each time — 15 of 15 across two vendors, which removes "this model under-reads"
+as an explanation and leaves the fixture, exactly where #41 suspected it was.
+
+The fixture was deliberately **not** edited to make it pass. c12 was built instead: the same fault
+with one volume and one comparison, verified against a cluster before being relied on, and the act
+phase now names its fixture rather than hardcoding c11.
+
+**c12 is recorded and measured, and it answers half of #41.** Eight replays, all eight
+structurally sound: **c12 proposes the action 4 times in 8, against c11's 0 in 15.** So the
+fixture was the problem, and a fair fixture moves the planner from never to half the time — it did
+not get there by being easy, and the diagnosis was correct in every run of both. `Reasonable` had
+never once been graded across ten scenarios, so "can the agent act" has gone from untestable to
+measured at 50%. That is not a number the landing page's central claim can rest on, and it is now
+a planner question on a fair fixture rather than an argument about a fixture.
+
+**The harness was then made able to run that, and four ways it could have lied were closed.** The
+gate needed a model it could afford to run ten fixtures against, and `gpt-oss-120b` locally is
+free — but nothing in the harness could actually reach it. `deps_secrets` probed the endpoint only
+when an API key was set, so a keyless local server reported no model and every investigation, act,
+judge and budget assertion **skipped while the run exited 0** (#61); and the probe ran on the host
+while the agent runs in a pod, which for a local model is a different machine entirely (#62).
+Alongside those: an acting run dropped the fixture it asserts about whenever fixtures were named,
+which is exactly the shape of `--full` (#63); `DryRun` asserted a condition `DryRun` cannot produce
+and so was unrunnable rather than untested (#64); and a run resumed past `deps` skipped every model
+assertion and still exited 0 (#65).
+
+Three of those five fail as a **pass**, which is the recurring shape here and the reason they are
+written down individually rather than as one tidying commit.
+
+`--full` now runs ten fixtures — the MVP bar's own denominator — with a deadline that clears c8's
+thirty-minute window, and the report states whether the bar was met instead of printing a ratio
+that reads as a pass at `7/9`.
+
+**The gate is green, on the full corpus, for the first time.** On 2026-09-01,
+`scripts/e2e/run.sh --tag 0.5.0-rc5 --full --mode Auto` exited **0**: 77 assertions, 0 failed,
+8 skipped, 98 minutes, **$0.115** on a local `gpt-oss-120b`. Every phase clean — deps 14/14,
+deploy 26/26 against the published image, validate 20/0, notify 6/0, console 7 run and 2 stated
+skips.
+
+`root cause 8/10 correct — MVP bar met (>= 7/10 over >= 10 scenarios)`. That bar has been quoted
+since v0.1.0 and had never been **evaluable**: a scenario whose investigation was truncated
+produces no finding, and no finding cannot be graded. Three earlier full runs scored 7/8, 7/7 and
+7/7 — the accuracy was never short, the denominator was. #78 let the reserved concluding step
+finish; ceilings fell to 1 of 20 and the count reached ten. #2 closes on that.
+
+**Getting there cost eighteen fixes, and most were in the instrument.** The harness could exit 0
+having skipped everything (#61), probe the model from the wrong machine (#62), drop the fixture it
+asserts about (#63), assert a condition `DryRun` cannot produce (#64), silently disarm on resume
+(#65), release before the fixture it was waiting for had concluded (#76), abort on its own timeout,
+report a killed run as `PASSED` (#73), and gate a deterministic claim on a model's judgement (#79).
+Three product bugs sat underneath: an unattributed auto action (#71), a cooldown that refused an
+action as its own precedent (#77) — which had been **dormant on the entire L3 path** — and a
+`RestartPod` that could never be verified because its target carried no owner (#72).
+
+**What the green does not say, and this matters more than the tick.** The planner proposed nothing
+for c12, so the acting assertions skipped: `acted on`, `available after the restart` and `reached
+Resolved` were all reported as untested rather than passed. **#72's fix is unconfirmed on a
+cluster.** The agent has been observed acting exactly twice in this milestone, both before that fix
+existed. So the honest sentence is that nothing is broken which this run could test — not that the
+agent was seen resolving an incident.
+
+That is also why the acting assertion no longer gates on it. Whether the planner acts is a model
+judgement measured at 0 of 4 on a cluster and 4 of 8 in replay; those two numbers disagree, and
+#66 now says so rather than letting either stand as the rate.
+
+---
+
+## v0.6.0 — Someone else can run it — **done**
+
+**The first release aimed at a reader rather than at the author.** Every milestone so far made the
+agent better at its job. This one makes the project usable by somebody who did not write it — which
+is a different skill, and one this repo has never practised.
+
+The repository has been public since before v0.0.1. That is worth stating plainly, because it means
+this is not a launch: it is a **first impression that already exists and is currently wrong**.
+`README.md` announces `Status: v0.2.0` on a repo tagged v0.5.0 and tells a visitor to install
+`--version 0.2.0`, which is a three-release-old chart. The description, topics and homepage are
+empty. There is no screenshot of the product anywhere, and `website/` — finished in v0.4.0 — has
+never been deployed.
+
+### Why now, and not earlier
+
+The project track below was deferred for a reason that has expired. It said *"deliberately last:
+every page here is an application of the design language, so building it first means building it
+twice."* v0.4.0 shipped that design language, and v0.5.0 shipped a harness that can drive a real
+console full of real incidents. Both preconditions are now met, so the track stops being a
+non-versioned appendix and becomes this milestone.
+
+### The two claims that gate it
+
+The backlog has exactly two open entries carrying a `Blocks:` field, and neither blocks a feature —
+both block a **sentence somebody wants to publish**:
+
+- **[#66](backlog.md#66-the-planner-acts-on-half-of-a-fair-fixture)** blocks claiming an action
+  rate. Replay says 4 of 8; a cluster says 0 of 4. Those disagree, and until they are reconciled
+  neither is *the* rate.
+- **[#72](backlog.md#72-an-incident-that-was-successfully-acted-on-sits-in-verifying-forever)**
+  blocks claiming the agent resolves incidents. Fixed on 2026-09-01 and **never confirmed on a
+  cluster**; the agent has been observed acting exactly twice, both times before the fix existed.
+
+v0.5.0 had a section called *"The three that block a claim someone has already made"* and closed all
+three. These are their successors, and the same rule applies: the site does not get to say it until
+the instrument does. `website/index.html` currently leads with **"It fixes what it can prove"** —
+the one claim in the repo whose evidence is still outstanding.
+
+> **Both are closed, and the paragraphs above are left as they were written.** #72 was confirmed on
+> a cluster on 2026-09-02 and #66 closed on 2026-09-03. The description of #66 above is itself
+> superseded twice over: "replay says 4 of 8, a cluster says 0 of 4" was never an instrument
+> disagreement — it was DeepSeek against gpt-oss — and the per-model p-value that correction
+> produced did not survive counting a denominator that had nine budget-truncated runs in it
+> ([#88](backlog.md#88-noplan-pools-four-outcomes-and-the-action-rate-counted-all-four-as-declines)).
+> What actually closed it was neither: a fixture that could separate *willingness to act* from *an
+> inference the model gets wrong*
+> ([#90](backlog.md#90-the-acting-path-had-no-fixture-that-could-measure-it)). The hero sentence is
+> now behind its evidence rather than ahead of it.
+
+### What ships
+
+**Truth first.** The roadmap and the README describe the release they ship with. The README is
+restructured so a visitor reaches *what it is → what it looks like → try it → install* before the
+safety argument, which stays but moves; today the install command is at line 184, behind it.
+
+**A demo that needs no cluster.** Trying this today requires Kubernetes, Prometheus, Alertmanager,
+prometheus-operator, Postgres with pgvector and a model key. That is a reasonable production
+dependency list and an unreasonable evaluation one, and the gap is why nobody has evaluated it.
+
+The blocker is structural rather than effort, and it is worth stating because it rules out the
+obvious approach: **a cassette records the tools, not the model** — deliberately, since the model is
+the thing under test. So replaying a cassette is a live, paid, non-deterministic model run, and no
+key-free demo can be built from the corpus as it stands. What is missing is the *output* half —
+`InvestigationOutcome`, the steps, findings, evidence and plan — which `hephaisto-eval` computes and
+throws away after scoring. Recording those as committed **transcripts** makes every demo option
+key-free at once, including the console itself.
+
+Two containers, then: Postgres and the published image, seeded from transcripts, with every seeded
+incident stamped with the model and date that produced it so it can never read as live data. A
+by-product: the console **cannot currently boot without a cluster at all** — the Kubernetes stack
+registers unconditionally and its RBAC self-check fires 40+ access reviews before anything else
+happens. A stranger has never been able to start this on a laptop.
+
+**An embedding endpoint that is not Google's.**
+[#57](backlog.md#57-production-needs-a-google-api-key-so-the-search-box-has-a-semantic-arm) splits.
+The seam ships — any OpenAI-compatible `/v1/embeddings` endpoint, which is what Ollama and vLLM
+already serve — and Gemini **stays the default**, so this is not a swap and needs no search-quality
+measurement it does not have. Choosing a bundled local model is the half that stays blocked, and it
+stays blocked on the same missing measurement.
+
+**Screenshots, generated.** Captured by the e2e harness against a live console with real seeded
+incidents, on the `brand-assets.sh` contract: render, refuse if a precondition fails, write a
+committed PNG, never gate CI. Opt-in and refreshed once a release — nothing compares them, because
+the subject is model-written prose and a comparison would be a build gate on a language model.
+
+**The rest of the checklist below**, which has been written down and unscheduled since v0.4.0:
+`SECURITY.md` first, since there is no vulnerability reporting path at all for an agent that holds
+cluster credentials.
+
+### The decision that shaped the rest
+
+**Prove the claim rather than soften it.** The alternative was available and cheaper: rewrite the
+hero to say only what is measured — diagnosis at 8/10 — and describe acting as present but
+unquantified. That would have shipped immediately and stayed honest.
+
+It was rejected because the claim is not decoration. "It fixes what it can prove" is the reason this
+project is different from a diagnosis bot, and retiring it to make a launch date would mean the
+first public version of the project understates the thing it spent v0.2.0 building. So #66 and #72
+gate the copy, and if they will not reconcile, the measured sentence ships instead — that is a real
+possible outcome of this milestone rather than a failure of it.
+
+**No new capability**, again. `PatchResources`
+([#39](backlog.md#39-the-executor-covers-five-action-types-three-are-refused)) is the largest gap
+and the actual remediation for c4 and c7 — the two fixtures where diagnosis succeeds and the planner
+has nothing to offer. It is capability, and it waits. The notification channels wait too, which is
+the harder call: Slack is genuinely cheap and Teams-only excludes most of the audience this
+milestone is trying to reach.
+
+### Done when
+
+A stranger can find the page, see what the console actually looks like, run a real recorded
+investigation on their laptop with one command and no API key, and install the current chart from a
+README that describes the release it ships with — and every claim on that page names its
+measurement, its denominator and the instrument that produced it.
+
+### Done when — status
+
+| Clause | |
+|---|---|
+| find the page | **met.** Three sites on `hephaisto.dev`, `docs.` and `demo.`, live since 2026-09-02. |
+| see what the console actually looks like | **met.** Five frames in `design/shots/`, photographed by `scripts/console-shots.sh` from the published `v0.6.0-rc2` image running `demo/compose.yaml`, consumed in the README, the landing page and the chart's Artifact Hub tile. |
+| run a real recorded investigation, one command, no key | **met.** `demo/compose.yaml` — two containers, twelve investigations, no cluster and no API key. |
+| install the current chart from a README that describes the release | **met at the tag.** The README describes v0.6.0 and pins it; both become true the hour `v0.6.0` publishes. |
+| every claim names its measurement, its denominator and its instrument | **met.** This is the clause #66 and #88 were both gating, and it is the one that cost the most: the action rate is now quoted per fixture and per model with the denominator named, the published `p = 0.0047` is retired with the reason it did not survive, and the demo corpus states which of its two sets carries the accuracy figure. |
+
+**Five of five.** The last one was sequenced after the rc rather than skipped, and taking it
+found a product bug — see below.
+
+### Where it stands — shipped 2026-09-03
+
+**Shipped.** The demo works and was verified rather than assumed: the agent booted with no cluster
+against a scratch database, seeded ten recorded investigations, and served them — 10 incidents, 30
+transitions, 31 evidence blobs, 10 digests, with each diagnosis citing evidence that resolves back
+to the step that produced it. `Kubernetes:Enabled` is the fix that made a console without a cluster
+possible at all, and it is strictly *less* capable: skipping the Kubernetes layer leaves the
+executor that refuses everything, which the registration comment had already anticipated.
+
+Alongside it: the embedding seam (#57 split, the half that needed no measurement), `SECURITY.md`
+and the rest of the community files, a chart README, the Pages workflow, and repository metadata —
+description, fourteen topics, wiki off. The README no longer announces v0.2.0 or installs a
+three-release-old chart.
+
+**Two things the work found, both now written down.** Every cassette is stale against the shipped
+prompts ([#80](backlog.md#80-every-cassette-in-the-corpus-is-stale-against-the-shipped-prompts)),
+which nothing had said out loud and which bears directly on #66. And a transcript is published
+evidence carrying the same raw tool output that keeps `cassettes/` untracked
+([#81](backlog.md#81-a-demo-transcript-is-published-evidence-and-only-its-addresses-are-redacted)) —
+scanned before the first commit, no credentials, but addresses were present and are now removed by
+a redactor that runs over the serialized document. The first version of that redactor walked a list
+of fields and missed one, which is the argument against field lists.
+
+**The three sites, shipped 2026-09-02.** `docs-site/` is VitePress, and it answers the objection
+that deferred it — that a second rendering surface is a second place for documentation to rot —
+structurally rather than by discipline. Nothing that already exists is copied: the eleven runbooks,
+the four prompt fragments, `values.yaml`, the CI values files, `architecture.md` and `CHANGELOG.md`
+are transcluded from where they live, and `ignoreDeadLinks` is false so a repo link that stops
+resolving fails the build. Written from scratch: the promotion path from `Observe` to `Auto` as a
+walkthrough, and a troubleshooting page organised by symptom — that material existed but was
+scattered across `NOTES.txt`, README gotchas and `values.yaml` comments, and `NOTES.txt` in
+particular was invisible until after a successful install.
+
+`demo-site/` renders the ten transcripts to static HTML. The console itself could not be hosted: it
+is Blazor Server, so every page is a SignalR circuit against a process holding a database
+connection, and hosting that publicly would mean running an agent on the internet to show what an
+agent looks like. It ships the console's own `app.css` and its `hp-*` vocabulary, so it is the
+product's appearance rather than a reconstruction, and it parses the domain enums out of `Enums.cs`
+at build time rather than carrying a second copy that would drift.
+
+**The domain is `hephaisto.dev`, and the label prefix followed it.** Bought 2026-09-02.
+`.com` was taken; `.io` was available and carried the one genuinely project-specific argument —
+`hephaisto.io/` had been this project's Kubernetes label prefix since v0.1.0, and the convention is
+that a prefix is a DNS domain **you control**. It was not one. `.io` now renews at roughly four
+times `.dev`, so the cheaper fix was to move the prefix rather than to buy the name it already
+claimed.
+
+So `hephaisto.io/` became `hephaisto.dev/` across the policy defaults, the namespace manifests, the
+chart, its schema, the e2e assertion and the docs — 33 occurrences, all of them live. No
+compatibility shim and no dual-prefix read: there are no installations to migrate, so accepting
+both would have been permanent complexity bought for nobody.
+
+Two files keep the old name on purpose. `backlog.md`'s
+[#10](backlog.md#10-hephaistoiodestructive-actions-allowed-is-read-by-no-code) is titled after the
+label, and its own second line already says the heading stays because these titles are the anchors
+this file links by — so the entry gained a note that the prefix moved, and kept its name. That is
+the same rule that governs every other closed entry here: the record says what was true when it was
+filed.
+
+**Where the dev cluster stands.** The kind cluster's namespaces were re-applied and carry the new
+labels; `kubectl`'s three-way merge pruned the old ones cleanly. The agent running there does not
+match yet, and cannot be made to from a working copy: the e2e harness installs the **published**
+chart and image from GHCR rather than building locally, so the pod carries whatever the last
+nightly compiled. The mismatch fails closed — the old binary looks for a label that is no longer
+there, so the policy engine denies — and it resolves on the next published build.
+
+**The design system needed generalising, and would have failed silently otherwise.**
+`DesignTokenTests` named `website/` in three places. Two more surfaces would have been exempt from
+the no-colour-literals rule while appearing covered, so the token-file and font assertions are now
+a theory over a list of surfaces. Verified by injecting a hex literal and watching it fail by file
+and line before reverting — a test never seen failing is not yet a test.
+
+**A real bug fell out of it, and how it was found is the useful part.**
+[#84](backlog.md#84-the-redactors-word-boundary-missed-an-address-and-mangled-a-version-string):
+the redactor anchors on `\b`, and it runs over a *serialized* document where a newline is the two
+characters `\` and `n` — so an address beginning a line inside an evidence blob read as
+`...\n10.42.0.68` and never matched. It reached a rendered page. The same `\b` also matched
+`2.3.4.5` inside `v1.2.3.4.5`, which is redaction becoming editing.
+
+This is [#81](backlog.md#81-a-demo-transcript-is-published-evidence-and-only-its-addresses-are-redacted)'s
+own fix creating its successor: scrubbing the whole document cured the field list that missed a
+field, and introduced a bug that only exists because the escapes are now part of the text being
+matched. **The redactor and the scan that checked it agreed the corpus was clean because they
+shared the pattern.** Unrelated code rendering the same files is what disagreed — a check that
+inherits its subject's bug is not a second opinion.
+
+**The sites are live, on hephaisto.dev, docs.hephaisto.dev and demo.hephaisto.dev.** Three
+Cloudflare Pages projects, deployed by `deploy.yml` on push to `main`, first proven green on
+2026-09-02. The landing page has been finished since v0.4.0 and undeployed ever since.
+
+**And the decision this section existed to force was made twice, in opposite directions, inside
+thirty hours. Both are recorded, because the first one was published.**
+
+On 2026-09-02 this section read: *"#72 did not [resolve]. It is still unconfirmed on a cluster, and
+confirming it needs a model that acts, which the standing model constraints rule out locally."* The
+site went up with *"It fixes what it can prove"* on it and that sentence's evidence outstanding —
+**the claim published ahead of its evidence**, chosen deliberately on the grounds that this is v0.x,
+and named here rather than softened.
+
+**That is no longer true, and the paragraph above is kept because it was.** #72 was confirmed on a
+cluster the same evening and closed: `Detected → Triaging → Investigating → Acting → Verifying →
+Resolved`, 41 seconds after the restart, granted by `hephaisto/verifier`. What made it reachable
+was not a different model. It was
+[#90](backlog.md#90-the-acting-path-had-no-fixture-that-could-measure-it) — a fixture that could
+measure the acting path at all. c11 and c12 both put the wedged state on a PVC, so acting means
+overriding a rule that is *correct*, and a decline there is ambiguous between "will not act" and
+"did not make the inference". c13 puts the same fault on an `emptyDir`, which the planning prompt
+already calls pod-scoped. The confirming run stopped being a one-in-eleven event and became
+something that happens on demand.
+
+**The standing model constraint was wrong, and it was wrong because of an instrument.** "gpt-oss
+never acts" rested on 0 of 18, and nine of those runs had ended on a token budget before the planner
+ran and were counted as declines
+([#88](backlog.md#88-noplan-pools-four-outcomes-and-the-action-rate-counted-all-four-as-declines)).
+On c13 the same model proposed an acceptable action on six of six cluster runs, and on a seventh it
+executed one and saw the incident through to `Resolved`.
+
+**The v0.6.0 gate run then found the last piece of this, and it is not a defect.** `--full --mode
+Auto` failed its act assertion because eleven simultaneous fixtures put 31% of the cluster unhealthy,
+past `ClusterUnhealthyCeiling`, so the policy engine correctly refused every action as a cluster-wide
+event ([#97](backlog.md#97-full-and-mode-auto-defeat-each-other-and-the-release-gate-cannot-confirm-acting)).
+The breadth that makes `--full` the diagnosis gate is what makes the acting assertion impossible, and
+the release procedure is therefore two runs rather than one. The focused run passed: 70 assertions,
+24m37s.
+
+**The demo site no longer has the gap this section used to describe.** It had one, honestly: ten
+transcripts with `plan.actions[]` empty in every one, on a site whose hero says *"It fixes what it
+can prove."* The reason was structural rather than a model choice — `hephaisto-eval run` constructs
+an investigation runner and no executor, no policy engine and no state machine, so a replay has
+nothing to act with. The answer was a new verb rather than a different model: `hephaisto-eval
+export` lifts a finished incident out of the database, and the corpus is now twelve in two disjoint
+sets — ten replays carrying the 9-of-10 grading, and two live captures, one where the agent acted
+and reached `Resolved` and one where policy refused the same fix. Neither capture is scored against
+the answer key, because a replay and a cluster run are not the same measurement.
+
+**The product screenshots exist, three releases after they were first wanted.** The `shots` e2e
+phase is deliberately **not** built: it wanted the one `--full --mode Auto` run, which is the most
+expensive and least repeatable run in the project and, per [#97](backlog.md#97), cannot demonstrate
+acting anyway. `scripts/console-shots.sh` photographs the shipping console against
+`demo/compose.yaml` instead — two containers, no cluster, no key, and reproducible by anyone who
+read the README.
+
+**Taking them found a product bug, which is the argument for doing it more often than once a
+release.** The console told every escalated incident that *"no diagnosis was produced"*, on a page
+whose primary finding sat directly below the banner at 0.92 confidence
+([#102](backlog.md#102-the-console-told-every-escalated-incident-that-no-diagnosis-was-produced)).
+`CanReinvestigate` checked the state and never checked for an answer; the block's own comment had
+said "for the incidents that never got an answer" since it was written. Nothing automated could
+have caught it — `scripts/e2e/ui` asserts behaviour against a live agent, and this is a correct
+statement about a rendered element that is lying about a different element.
+
+That is also what the two release candidates were for. `v0.6.0-rc1` was photographed, the bug was
+found in the photograph, and `v0.6.0-rc2` was cut with the fix and photographed again. A candidate
+that never finds anything is a candidate nobody needed.
+
+---
+
+## v0.7.0 — It survives a bad deploy — **done**
+
+**The first release in three to add a capability, and the one that gives the corpus a fault with a
+cause.** v0.5.0 was debt paydown and v0.6.0 was an audience release; both said "no new capability"
+out loud and meant it. A third freeze would have been a decision about the project rather than
+about the release.
+
+The scope proposal this was agreed from is [`v0.7.0.md`](v0.7.0.md), kept as the argument rather
+than duplicated here.
+
+### The finding the release is built on
+
+**The machinery for "a bad deploy caused this, roll it back" was already built, and had never once
+fired.** `ActionType.RollbackDeployment`, a policy gate with two tuned windows and its own unit
+tests, `CurrentRevisionAge` / `PreviousRevisionHealthyFor` already gathered, the
+`get_rollout_history` tool, the RBAC grant, the model-facing description, and runbook guidance in
+`HighErrorRate.md` telling the model *"a sharp edge is a deploy"* and pointing it at
+`rollback_deployment`. All of it shipped a release ahead of the action, the way the policy engine
+itself did.
+
+`ActionCapability.IsImplemented` returned false, so the planning prompt rendered that action as
+**"Not available in this build."** The gap was at the two ends: an executor arm, and a fixture with
+a history.
+
+### The second finding, which decided the shape
+
+**Every fault this project could detect was one that was simply *there*.** All thirteen chaos
+fixtures inject a steady-state fault and wait; across all thirteen files the only occurrence of the
+word "rollout" is an incidental comment in c6. So the corpus could not ask the question an on-call
+engineer asks first — **what changed?** — and an agent cannot be measured on an answer it was never
+asked for.
+
+### What ships
+
+Six features: the `RollbackDeployment` executor arm and its revision-aware verification;
+`c14-bad-deploy`, the first fixture whose setup has a timeline; change correlation as a free fact in
+the incident card; the console rendering an action's verifications ([#96](backlog.md#96)); five
+runbooks for kinds that shipped an alert rule and no runbook; and an absent allowlisted tool
+becoming a warning that names the capability lost.
+
+Ten bug fixes, of which **two were found while planning the release and reached every install of
+the chart** — [#103](backlog.md#103), a shipped alert rule naming a chaos fixture and firing forever
+on anyone else's cluster, and [#104](backlog.md#104), three latency rules aggregating away the
+namespace and making every latency incident un-actionable by construction.
+
+### The two production failure modes it was asked to cover
+
+**An API stops returning successful requests after an update** ships, as c14 plus the rollback.
+
+**A service's throughput drops after an update — a Kafka consumer falling behind — is deferred to
+v0.8.0**, and the reasoning is recorded so it is argued once. It is entirely greenfield: a broker in
+the chaos namespace, a producer, a consumer whose second revision is slower, a new `SignalKind` and
+its runbook in the same commit, new alert rules, and a scrape path that attaches the consumer's
+namespace rather than the exporter's.
+
+The part that makes it a release rather than a fixture is verification.
+`VerificationChecks.WorkloadIsHealthyAsync` reports **Passed** for a consumer that has been scaled
+up while its lag is still climbing — every replica is Ready and nothing restarted. An action that
+verifies green while the incident continues is the one failure mode this project's safety argument
+cannot tolerate, and fixing it means `VerificationChecks` reaching outside the Kubernetes API to
+Prometheus for the first time. That is a design decision, not a line of code, and it is the c10 trap
+one layer down.
+
+### What did not ship, and why
+
+**`PatchResources`**, [#39](backlog.md#39)'s other half. It is the actual remediation for c4 and c7
+— the two fixtures where diagnosis succeeds and the planner has nothing to offer — and it needs a
+restricted, typed vocabulary rather than an arbitrary merge patch, because applying a model-authored
+JSON patch verbatim would hand the model the mutating handle the three-phase split exists to deny
+it. Doing both halves of #39 in one release makes the executor the whole release.
+
+**[#23](backlog.md#23)**, NetworkPolicy enforcement. It needs Calico under kind; it is an
+`--enforce-netpol` tier rather than a fix, and it remains the harness's own printed uncovered limit.
+
+### Done when
+
+An error-rate spike that began at a rollout is detected, correlated to the revision that caused it,
+remediated by a `RollbackDeployment` that the policy engine admitted on its freshness gate and the
+executor carried out, and verified through to `Resolved` — **observed on a cluster, with the run's
+assertion count and duration recorded the way c13's were**.
+
+The release gate becomes **three runs**, extending [#97](backlog.md#97) rather than contradicting
+it:
+
+```sh
+scripts/e2e/run.sh --tag <version> --full                        # diagnosis
+scripts/e2e/run.sh --tag <version> --fixtures c13 --mode Auto    # acting: RestartPod
+scripts/e2e/run.sh --tag <version> --fixtures c14 --mode Auto    # acting: RollbackDeployment
+```
+
+Per #97 the acting assertion cannot pass inside a `--full` run: simultaneous fixtures cross
+`policy.clusterUnhealthyCeiling`, so the policy engine correctly refuses every action as a
+cluster-wide event. **That is a working safety gate and must not be "fixed" by widening the
+ceiling.**
+
+> **Down to two in v0.8.0, and the ceiling still was not touched.** The act phase clears the act
+> fixture's neighbours and waits for the cluster-wide unhealthy fraction to fall back below the
+> ceiling before it asserts, so `--full --mode Auto` covers diagnosis and one action type in a
+> single run. The second action type still needs its own run, because `ACT_FIXTURE` names one
+> fixture and the action types promoted to unattended follow it.
+
+---
+
+## v0.8.0 — An on-call engineer can actually use it — **done**
+
+v0.6.0's goal was *"someone else can run it"*. On **2026-09-11** Hephaisto was deployed to a real
+production cluster for the first time — `0.7.0-rc1`, Observe mode, through Rancher Fleet onto
+`cait-eu-cluster` — and then promoted to `v0.7.0` the same day with `src/` and `charts/`
+byte-identical to the candidate. That deployment is the first evidence this project has ever had
+about what the product is like to *operate*, as opposed to what it scores on a gate.
+
+It found two classes of thing, and the second is the release.
+
+**Install ergonomics** ([#108](backlog.md#108)) — installing it took a day of reading the chart's
+source to answer questions the documentation does not, and the guide that came out of it contained
+three mistakes made by someone who had just read the whole repository. Most of that is a writing
+job and is deferred to v0.13.0 (renumbered from v0.9.0, v0.10.0, v0.11.0 and then from v0.12.0). Two pieces are not, and are in scope here because other work depends
+on them.
+
+**Operability** — and this is the theme. The agent diagnoses well and says so nowhere a person can
+act on. An incident cannot be closed, acknowledged or assigned; there is no identity, so every
+actor in the audit trail is a string somebody typed; and every dependency is probed once at startup
+and the result thrown into a log line. Installing it is a thing you do once. Working the incidents
+is daily, and it is the part nobody has done until now.
+
+### What ships
+
+| | Item | Backlog | Size | After |
+|---|---|---|---|---|
+| **F1** | Incident lifecycle: **close, acknowledge, reopen** | [#109](backlog.md#109) | M | — |
+| **F2** | **OIDC** against a real IdP, and identity on every actor | [#110](backlog.md#110) | M | — |
+| **F3** | **Connections panel** on the status page | [#111](backlog.md#111) | S/M | — |
+| **F4** | **Assignment**, with a "mine" filter and routed notification | [#112](backlog.md#112) | S | F2 |
+| **F5** | Serve **`/webhooks` on its own port** | [#108](backlog.md#108) | S | — |
+| **F6** | **`additionalProperties: false`** on the values schema root | [#108](backlog.md#108) | S | — |
+
+Order: **F1 and F3 first.** F1 because the production install is accumulating escalated incidents
+right now and nothing can clear them; F3 because it is cheap and pays back on the next install.
+Then F2, with F4 behind it. F5 and F6 are small and can land whenever.
+
+### F1 — the one that is already hurting
+
+Three of the ten `IncidentState` members have no producer. `Expire()` and `Reopen()` have **zero
+callers**, and `Resolve()` has exactly one — `VerificationScheduler`, after an action it took was
+verified to have worked. In Observe the agent takes no action, and both escalation paths in
+`InvestigationCoordinator` are unconditional, so **every incident ends `Escalated` and `Escalated`
+has no exit.** `openIncidents` climbs for as long as the agent runs.
+
+Pull [#44](backlog.md#44) in with it — nothing sweeps `AwaitingApproval`, so `ApprovalTimedOut` has
+no producer either. Same defect class, one state over, and the roadmap has said "#44 first — a
+sweeper is an afternoon" for two releases.
+
+### F2 — why OIDC is the keystone rather than a feature
+
+The audit trail's integrity story is careful: the app serves as a non-owner Postgres role holding
+INSERT but not UPDATE or DELETE on `audit_events`, enforced in the migration. And then the `actor`
+column records whatever name somebody typed into a form. The immutability is real; the identity is
+not. F4 is a sticky note without it, F1's acknowledgement means nothing if anyone can claim to be
+anyone, and exposing the console currently needs an external identity proxy.
+
+Cheap on the first production cluster specifically: Keycloak is already operator-managed on
+`cait-eu-cluster`, so this is client configuration rather than new infrastructure.
+
+**Decided, 2026-09-11: it fails closed.** If Keycloak is unreachable, Hephaisto is unavailable.
+The alternative — dropping to an unauthenticated console whenever the IdP is down — makes the
+control decorative and hands an attacker the timing of it. The cost is accepted rather than
+overlooked: reading the console during an outage now depends on Keycloak, so Keycloak is inside the
+blast radius of one, and the mitigation is its availability rather than a bypass here.
+
+### F3 — mostly surfacing what is already computed
+
+`OutboundStartupReport` already asks every outbound dependency to describe itself and logs the
+answers once, at startup. `Describe()` exists on `AlertSilencer`, `GrafanaAnnotator`,
+`TeamsNotificationChannel`, `HttpNotificationChannel` and `ModeArm`. `RbacSelfCheck` fires forty
+access reviews and only logs. The v0.7.0 missing-tool warning only logs. Meanwhile the status page
+already renders the mode arms *for exactly this reason* — *"so the status page can show why without
+a debugger."*
+
+Extend that page rather than adding one, and get two things right that the wiring does not give
+for free:
+
+- **Three states.** *Not configured* is a deliberate choice and must not render as a fault, or the
+  panel trains people to ignore it. *Configured but unreachable* is red. *Reachable but degraded*
+  is amber — a grafana-mcp that is connected but missing the Tempo tools is
+  [#31](backlog.md#31) and would otherwise show green.
+- **Live, with a last-checked time.** Startup-only is the defect being fixed.
+
+It does not get a Prometheus row: the agent never talks to Prometheus directly, only through
+grafana-mcp, and claiming otherwise would be the kind of status display this entry exists to stop.
+
+### Notifications
+
+Teams already works and needs no code — a channel and a route in the values file, and its iOS app
+pushes. That is available today and is not a release item. **Squadcast enrichment was considered
+and dropped.**
+
+### What is explicitly not in v0.8.0
+
+- **The getting-started guide** (M, [#108](backlog.md#108)) — deferred to v0.13.0 (renumbered from v0.9.0, v0.10.0, v0.11.0 and then from v0.12.0) with the rest of
+  the install-ergonomics work. *(Superseded on 2026-10-06: [not planned for now](roadmap.md#not-planned-for-now).)*
+- **Failure mode B**, Kafka consumer throughput after an update: a broker, a `SignalKind`, an
+  alert, a runbook, a fixture, and a Prometheus-backed verification predicate, because
+  `WorkloadIsHealthyAsync` reports **Passed** for a scaled consumer whose lag is still climbing.
+- **Multi-cluster.** Five clusters exist; only `cait-eu-cluster` has Alertmanager and Grafana, and
+  everything remote-writes to Mimir with a `cluster` label — so one agent could *diagnose* all five
+  today and can only *act* where it holds RBAC. Whether Hephaisto is one-per-cluster or
+  one-observer-many-clusters is a product question, not a fix, and it deserves its own release.
+- **[#101](backlog.md#101)** (c13 has no cassette) and the **malformed-response fault class** —
+  carried, not scheduled. The latter is a response *shape* the SDK cannot parse, so the
+  status-based retry v0.7.0 added does not cover it.
+
+### Done when
+
+An on-call engineer signs in with their own account, sees at a glance which of the agent's
+dependencies are healthy, picks up an incident, acknowledges it, and closes it — and the audit
+trail names *them* rather than a string they typed.
+
+### The gate before Auto is ever considered
+
+Not v0.8.0's theme, but worth keeping written down in one place, because three of these are now
+scheduled above: [#70](backlog.md#70) (narrowed in v0.7.0, still open — a race can still decide an
+incident's kind), [#44](backlog.md#44), [#110](backlog.md#110) (an identity proxy is currently the
+only thing in front of `POST …/approve`), and re-establishing the acting path on the exact artifact
+being deployed rather than on the one before it.
+
+---
+
+## v0.9.0 — It proposes the fix, and a person opens the door
+
+The biggest real source of production incidents on the cluster this runs against is not the
+cluster. It is **code**: a null the service never guarded, a config key it reads under the wrong
+name, a cache that grows until the OOM-killer ends it. v0.8.0's planner handles those exactly as
+its prompt tells it to — *"a code, config or image problem a human must fix"* →
+`no_action_required: true` → `Escalated(NoPlanProduced)` — and the diagnosis, often grounded and
+right, stops there.
+
+v0.9.0 takes the next step without widening what the agent may do to the cluster. When an
+escalation's grounded primary finding points at application code and the workload is mapped to a
+repository, Hephaisto starts a **coder** — Claude Code through the Agent SDK, in a Kubernetes Job
+with no cluster identity — which clones the repository at the commit the running image was built
+from, analyses it read-only and writes a fix plan. A human approves the plan in the console; a
+fresh Job implements it on an assigned branch, the *driver* (not the model) builds and tests it,
+and a **Draft PR** is opened. A human reviews, merges and deploys. Nothing else changes.
+
+### The finding it rests on
+
+Since 2026-09-27 CI tags every image with its commit sha, so "the code that is failing" is no
+longer a guess: the running image's tag is the exact commit to analyse. Without that, a coder
+would be reading `main` and explaining a bug that may not be deployed.
+
+### The decisions that shaped it
+
+- **A second stage, not a new action type.** An `ActionType.ProposeCodeFix` would be denied at
+  gate 2/4 on every install that runs in Observe — the deployment it is for — take a workload
+  lock for something that never touches the workload, and change `ActionDescriptions`, which
+  changes `PromptHash` and stales every cassette. The stage consumes the planner's existing
+  `no_action_required` answer instead: **zero prompt changes**.
+- **Its own axis.** `CodeFixMode { Off, Plan, Pr }` beside `AgentMode`, resolved the same way
+  (most restrictive arm wins) except that silence means Off. The agent's kill switch overrides it
+  by arm: Off, the emergency stop and the runaway latch all stop coders, even though the stop and
+  the latch read as Observe on the agent axis. **`AgentMode.Observe` does not refuse** — that is
+  the property the design rests on.
+- **Pull, not callback.** The coder has no Hephaisto credential and no inbound surface. It
+  answers by printing a framed, sha256-checked block as the last thing in its log, which Hephaisto
+  reads with the `get pods/log` it already holds.
+- **Double opt-in.** `codeFix.repositories` in the chart (the operator's authorization) and
+  `coderEnabled` in dev-context's `repos.yaml` (the coder's willingness). Either missing, nothing
+  runs.
+- **`create jobs` in exactly one namespace.** The chart grants it in the coder namespace and
+  nowhere else; `RbacSelfCheck` refuses to boot if it is held cluster-wide, in `kube-system` or in
+  any actionable namespace.
+- **Pr needs a login.** `Mode=Pr` refuses to start without `Auth:Enabled`: a repository write on
+  the strength of a click needs an authenticated human, not an attributed string.
+
+### What ships
+
+| # | Item | Size |
+|---|---|---|
+| F1 | `CodeFixEligibility` — pure, default-deny, 21 closed reason codes; `codefix.evaluated` on every escalation, including "would have started, but the mode is Off" | M |
+| F2 | `code_fix_attempts` with its own lifecycle (never an `IncidentState`), one open attempt per incident enforced by a partial unique index | S |
+| F3 | Plan Job → framed result → `PlanReady` → approve (row lock, re-resolved mode) → implement Job → post-conditions → `PrOpened` | L |
+| F4 | `coder/` — the runner: TypeScript driver around the Agent SDK, authoritative tool guard, fake SDK for $0 plumbing runs, `gh` shim, image uid 64198 | L |
+| F5 | `dev-context` — the coder's user scope: runner CLAUDE.md, `repos.yaml`, settings and guard hook, rules, skills, curated memory, prompts | M |
+| F6 | Chart: coder namespace Role, unbound ServiceAccount, NetworkPolicy, egress proxy with a domain allowlist, `codeFixMode` switch key | M |
+| F7 | Console: a **code fixes** page listing running attempts, plans awaiting approval and opened PRs, and a code-fix section on every incident | M |
+| F8 | Teams/HTTP events `CodeFixPlanReady`, `CodeFixPrOpened`, `CodeFixFailed`; a Grafana annotation when a PR opens | S |
+| F9 | Fixture repo `hephaisto-fixture-dotnet` with c15 (null-deref at startup) and c19 (c15 plus prompt-injection bait in the log); `CodeFixAnswerKey` + parity | M |
+| F10 | `scripts/e2e/run.sh --codefix` tier with the c13-declined, forged-result and c19-canary negatives | M |
+| F11 | **Added in rc4, on the way to production:** a Teams bot - one board in a channel, edited in place, and alerts by personal chat. Outbound only; it never deletes. | M |
+
+### Done when
+
+An alert against c15 on a throwaway cluster is investigated; its grounded `application` finding
+maps to the fixture repository; a plan Job runs non-root without a ServiceAccount token and
+returns a plan naming `src/Shop.Api/Startup/Endpoints.cs`; a human approves through the API; an
+implement Job opens a Draft PR from a `hephaisto/…` branch whose planted test passes on head and
+fails on base; the base branch is byte-identical before and after. In the same run c13 is declined
+with `CategoryNotEligible`, a forged result block is rejected with an audit row, and c19's
+injected commands appear in `denied_tool_calls` with the canary untouched. `Off` never creates a
+Job, proven against Postgres with a positive control. Nothing in `ci.yml` needs a model or a
+GitHub token.
+
+### What is explicitly not in v0.9.0
+
+- **Auto-merge, deploy, or any write to a default branch.** Draft PRs only; branch protection on
+  every mapped repository is an operator prerequisite, not a code property.
+- **The `image` category.** A bad image is a build or deploy problem.
+- **Multi-repo fixes.** A plan that needs a Cait change is `PlanReady` but not implementable:
+  staged delivery, Cait first, by a human.
+- **Non-GitHub hosts, streaming progress, a GitHub App identity** (v2: per-attempt tokens minted
+  by Hephaisto), and the two-container split of the coder pod ([#116](backlog.md#116)).
+- **c16–c18, cassettes for the coder (`codefix run/inspect`), the LLM judge for fixes, the
+  dashboard row** — deferred to v0.9.x.
+
+---
+
+## v0.10.0 — It is the only thing that tells a person
+
+Decided on 2026-09-28: on the first production install Hephaisto **replaces** the incident
+service and the paging service that alerts go to today. It does not run beside them. Every alert
+rule is then routed to `/webhooks/alertmanager`, most of them about a pipeline rather than a
+workload, from five clusters told apart by a `cluster` label.
+
+### The finding it rests on
+
+Hephaisto was built as an agent beside a pager, and the code says so in a dozen places that were
+each right at the time: a resolve is a signal, a repeat is a new incident, the first message
+follows the investigation, the webhook answers before it writes, and a rollout's downtime is
+covered by `repeat_interval`. Read as the pager, every one of them is a way to page for nothing
+or not at all. None was found by a failure. All seventeen entries were found by reading, in one
+afternoon, and that is the reason to do them before the traffic arrives instead of after.
+
+### What ships
+
+In the order it has to happen. Each group is safe to release without the next.
+
+| # | Item | Backlog | Size |
+|---|---|---|---|
+| F0 | **Paging is tested end to end, on every change.** A pager suite that posts alerts through a real Alertmanager into the installed chart, with stand-ins for the model and for Teams, and asserts who was told what and when. Built first; every group below is accepted by its scenarios | [#146](backlog.md#146) | M |
+| F1 | **It is configured for the cluster it runs in.** The chart names the cluster, prices the model, and the webhook can check a credential | [#139](backlog.md#139), [#140](backlog.md#140), [#138](backlog.md#138) | S |
+| F2 | **An alert is one incident for as long as it fires.** A resolve is a resolve, a repeat is absorbed, identity comes from the alert's labels and includes the cluster, and the target of a kube-state-metrics alert is the workload | [#129](backlog.md#129), [#130](backlog.md#130), [#131](backlog.md#131), [#132](backlog.md#132), [#126](backlog.md#126) | L |
+| F3 | **It cannot lose an alert or fail silently.** Written before answered, a readiness probe that means it, and an alert for its own absence that does not pass through it | [#136](backlog.md#136), [#137](backlog.md#137), [#144](backlog.md#144) | M |
+| F4 | **A person hears first, and the model second.** An opened event, an investigation that is a property of the rule, a kind and a runbook for pipeline alerts, and the labels in the prompt | [#133](backlog.md#133), [#134](backlog.md#134), [#135](backlog.md#135) | L |
+| F5 | **The right person, and then somebody else.** Label matchers and recipients on a route, escalation steps when nobody answers, buttons that act, and the bot against a real tenant | [#141](backlog.md#141), [#123](backlog.md#123), [#142](backlog.md#142), [#124](backlog.md#124), [#125](backlog.md#125) | L |
+| F6 | **What people learned stays.** A note per alert name | [#145](backlog.md#145) | M |
+
+### Done when
+
+On a throwaway cluster, with Alertmanager routing to Hephaisto and nothing else: an alert that
+fires, repeats twice and resolves is **one** incident, which a person was told about before its
+investigation ended, and which is no longer open after the resolve. The same rule firing for two
+label sets is two incidents. An alert labelled for another cluster is shown as such and is
+offered no Kubernetes tool. A rule labelled not to be investigated costs no tokens. An incident
+nobody acknowledges reaches a second route. With the database stopped, the webhook is not
+answered 2xx and the alert arrives after the database is back. With the agent scaled to zero, a
+person is told, by a path the agent is not on.
+
+Every sentence above is a scenario in the pager suite (`scripts/e2e/pager/`), and the suite is
+green with an empty known-red list.
+
+### What is explicitly not in v0.10.0
+
+- **Acting on another cluster.** [#131](backlog.md#131) makes an incident about another cluster
+  honest; it does not give the agent RBAC there. One-per-cluster against one-observer-many is
+  still its own release.
+- **An on-call rota and quiet hours.** Neither system being replaced has one. Escalation steps
+  go to routes, and a route is a list.
+- **A louder channel than Teams.** SMS and a phone call come right after v0.12.0 ([#143](backlog.md#143)).
+  *(Superseded on 2026-10-06: [not planned for now](roadmap.md#not-planned-for-now).)*
+  Until then, whether a personal chat from the bot rings a phone ([#125](backlog.md#125)) is the
+  question the cutover rests on.
+- **A second replica.** See [#144](backlog.md#144).
+- **Switching the old systems off.** That is a change to the install, made after a period of
+  running beside them, and it is not a property of a release.
+
+---
+
+## v0.11.0 — An agent can ask it
+
+Decided on 2026-09-29. Hephaisto answers a person in a browser and nobody else. This release
+lets a model ask: an MCP endpoint over the incidents, their investigations and their history
+([#157](backlog.md#157)). It took this number from the louder channel, which now comes right
+after v0.12.0.
+
+### The finding it rests on
+
+Everything worth knowing about an incident is already in the database, and the expensive part -
+the investigation, grounded in evidence - is already paid for by the time anybody wants it. What
+is missing is a way to reach it that is not a person reading a page. The people who work these
+incidents do it with coding agents, and the agent about to change a service is the reader that
+most needs "this alert fired eleven times this month, and this is what was done each time".
+
+It is also parity. The incident service Hephaisto replaces offers an MCP endpoint, so that
+service cannot be switched off while anything still asks it.
+
+### What ships
+
+| # | Item | Size |
+|---|---|---|
+| F0 | **It is tested the way it is used.** A real MCP client against the installed chart, as scenarios in the pager suite. Built first; every group below is accepted by its scenarios | M |
+| F1 | **The endpoint.** MCP over streamable HTTP at `/mcp`, on a port of its own, off by default. A bearer token always: the identity provider's when there is one, a Secret's when there is not | M |
+| F2 | **Reading.** Search, one incident in full, an investigation's steps and evidence, the history of an alert name or a workload, the note kept for an alert name, the agent's status | L |
+| F3 | **What is handed over is marked as data.** Log lines, annotations and hypotheses are untrusted and go to a model that may hold a shell: wrapped, redacted, capped, blobs by reference | M |
+| F4 | **The changes that are safe to make.** Acknowledge, assign, a line on an alert's note, feedback; close and re-investigate with the approver role. Recorded as the token's subject, with a source of its own | M |
+| F5 | **The doors stay shut.** No tool approves or denies an action or a code-fix plan, re-arms, or names a mode - absent, not refused, and asserted | S |
+
+### Done when
+
+On a throwaway cluster, an MCP client with a reader's token lists the tools, finds an incident
+that a scenario opened, and reads its finding with the evidence behind it. It is told how often
+that alert fired before and how each time ended. With the same token it cannot close the
+incident; with an approver's it can, and the audit row names the token's subject and says the
+call came through MCP. Without a token it is refused. A log line that says "ignore your
+instructions" arrives inside the wrapper that marks it as data. The tool list holds nothing that
+approves, denies, re-arms or sets a mode.
+
+Every sentence above is a scenario, and the suite is green with an empty known-red list.
+
+**Status (2026-09-29): shipped in `v0.11.0-rc1`.** F0-F5 are in, the pager suite is green with an
+empty known-red list, and two tiers beyond it ran locally: a LiteLLM gateway with tool search
+ranks every reviewed question's tool as the unit tests predict, and a real model (Haiku) answered
+the three questions the endpoint was built for without following the instruction planted in an
+incident. `docs/verification.md` lists what is not tested.
+
+### What is explicitly not in v0.11.0
+
+- **Approving anything.** A caller here is a model by construction. The two doors a person is
+  meant to open stay in the console and behind the approver's own sign-in.
+- **A way in for the coder.** The coder Job has no route to Hephaisto and gets none from this.
+- **Prompts and sampling.** Tools and resources only. Hephaisto does not ask the caller's model
+  for anything.
+- **Writing incidents.** An incident opens because an alert fired or a watcher saw something,
+  not because an agent said so.
+- **A second transport.** No stdio server: Hephaisto runs in a cluster, and the caller does not.
+
+---
+
+## v0.12.0 — What production found
+
+Decided on 2026-09-29: production problems and missing features come before anything new. The
+louder channel and install ergonomics were v0.12.0 and v0.13.0. They are still high priority,
+and they come right after this. *(Superseded on 2026-10-06: both are
+[not planned for now](roadmap.md#not-planned-for-now).)*
+
+### The finding it rests on
+
+On 2026-09-29 the first production install was cleared by hand, through the MCP endpoint:
+**326 open incidents**, closed one call at a time. The numbers behind the backlog:
+
+- **They were open because nothing could close them.** Most of them came from the Kubernetes
+  watcher, and the watcher never says that a fault is over. Only an Alertmanager resolve closes
+  an incident. The sweeper that would expire a silent one is off by default and is not a chart
+  value. A pod that crash-looped last week still has an open incident today
+  ([#158](backlog.md#158)).
+- **Two thirds of everything it ever opened was one kind.** 217 of 331 incidents were
+  `ReadinessFlapping`, raised on a readiness event's lifetime count. A probe that times out a
+  few times a day on a pod whose Ready condition never changes counts as flapping
+  ([#159](backlog.md#159)).
+- **The investigations of those incidents could not read the logs.** `get_pod_logs` names no
+  container unless the model does, and Kubernetes refuses that for any pod with a sidecar.
+  The investigation spends its steps and ends without evidence, rejected by grounding
+  ([#160](backlog.md#160)).
+
+Closing 326 incidents also showed what is missing for the people working them: there is no way
+to close more than one at a time, and through a shared gateway token nobody is anybody.
+
+**Status (2026-10-02): released as `v0.12.0` with F2 and F5.** F2 shipped by removal: the watcher
+opens no `ReadinessFlapping` incident at all, so the second sentence of "Done when" about four
+failures in a few minutes holds only through the `TargetFlapping` alert rule. F1, F3 and F4 did
+not ship and carry over to the next milestone unchanged.
+
+### What ships
+
+| # | Item | Backlog | Size |
+|---|---|---|---|
+| F1 | **A watcher incident ends when its fault does.** The watcher reports a pod that is healthy again, and an incident whose every signal has cleared closes like an Alertmanager one | [#158](backlog.md#158) | M |
+| F2 | **Flapping means flapping.** Readiness failures are counted in a window, not over the event's life | [#159](backlog.md#159) | S |
+| F3 | **Logs from a pod with a sidecar.** The default container is read when none is named, and a grounding rejection says why in the log | [#160](backlog.md#160) | S |
+| F4 | **Many at once.** Close by the filters of a search, approver only, with a reason and a dry run, one audit row per incident, in the console and over MCP | [#161](backlog.md#161) | M |
+| F5 | **Investigate with the model the subscription pays for.** An opt-in executor runs the investigation's model loop as Claude Code in a Job next to the coder; Hephaisto stays the tools, the grounding and everything after | [#164](backlog.md#164) | L |
+
+### F5 — the investigation's model loop in a Job
+
+Production showed the in-process investigation over the Gemini API working. The code-fix stage
+showed a Job running Claude Code working. F5 puts the two together, so an investigation can use
+Fable or Opus on the Anthropic subscription with the dev-context notes, **without giving up
+anything the in-process loop guarantees**. Decided with the owner on 2026-09-29:
+
+- **The Job is the model loop; Hephaisto stays the tools.** The Job reaches evidence only through
+  an internal endpoint of Hephaisto's (its own port, 8084, route `/investigate`), which serves
+  exactly the tools the in-process loop has, through the same `SafeToolDecorator`, recorded as
+  steps of that investigation. Grounding therefore still checks citations against bytes
+  Hephaisto saw, not bytes the Job reports. The Job holds no cluster RBAC and no Grafana token;
+  the public `/mcp` surface is untouched.
+- **All investigations, capped, with a fallback.** When the executor is `job`, every
+  investigation goes to a Job, bounded in concurrency and per hour. Overflow, a failed or
+  vanished Job, a missing credential or a subscription limit falls back to the in-process
+  investigation, which still works exactly as before.
+- **Source access, read-only and separately switched.** When the workload maps to a repository,
+  the Job gets a clone of the running revision and may name file and line. A code reference is
+  never grounding evidence; it rides along to the console and to a code fix.
+- **Backwards compatible.** The executor is its own axis, silence is in-process, and an
+  install that does not set `investigation.job.enabled` renders nothing new.
+
+Delivered as nine stacked parts, the first of which is the suite that accepts the other eight:
+`scripts/e2e/investigate-local.sh`, $0 with the scripted investigator
+(`scripts/e2e/investigate/KNOWN_RED` says which scenario each later part turns green).
+
+To decide, and not yet committed to this milestone:
+
+- **Who a gateway's caller is** ([#162](backlog.md#162)): forwarded user identity or a person
+  token per operator.
+- **Correcting an incident** ([#163](backlog.md#163)): editing severity and title, and deleting.
+- **Who may re-arm** ([#128](backlog.md#128)).
+
+The list grows with what production shows. An item joins it by the same rule as these: a
+backlog entry with evidence.
+
+### Done when
+
+A pod the watcher opened an incident for, healthy again, closes that incident without anybody
+touching it. A readiness probe that fails a few times a day opens no incident, and one that
+fails four times in a few minutes still does. An investigation of a pod with a sidecar reads the
+application container's logs. A dry run of a bulk close names how many incidents it would close
+and which; the close itself refuses a reader and writes one audit row per incident.
+
+F5: with the executor at `job`, an investigation runs in a Job, calls Hephaisto's own tools,
+and its finding is grounded against steps Hephaisto recorded; a Job that disappears is replaced by
+the in-process investigation; with every Job slot taken the next investigation runs in-process at
+once; an agent restart leaves one investigation and no running Job; with source access a finding
+names file and line at the running commit, and its evidence is still tool steps.
+
+Every sentence above is a test, a pager-suite scenario where it can be one, and the suite is
+green with an empty known-red list. F5's are `scripts/e2e/investigate-local.sh` I0-I11.
+
+---
+
+## The project track — landing page, docs, and the rest
+
+**Scheduled into v0.6.0 above**; this section is retained as the reference material for it, because
+its decisions were argued once and should not be re-argued. It was deferred on the grounds that
+"every page here is an application of the design language, so building it first means building it
+twice" — v0.4.0 shipped that design language, so the deferral has expired. A website still does not
+version with the agent; the work of first publishing it does.
+
+### Where the site lives
+
+**Same repository, `website/`. Not a separate repo.**
+
+The argument for splitting is that a VitePress toolchain sits oddly in a .NET repo, and that site
+commits add noise to the history. The argument against is decisive: **documentation in a separate
+repo goes stale.** A PR that changes the HTTP surface should change the page describing the HTTP
+surface, in the same diff and the same review. This repo documents itself unusually well and
+unusually honestly; splitting the docs away is the most reliable way to lose that. The toolchain
+objection is weak — `scripts/e2e/ui/` already carries a `package.json`.
+
+**Hosting: ~~GitHub Pages first~~ Cloudflare Pages, revised 2026-09-02.** The original reasoning
+still holds for one site and was overturned by a requirement it never considered: three of them, on
+three subdomains. **A GitHub Pages site binds exactly one custom domain** — `CNAME` holds one
+hostname and the settings UI has one field, with apex+www the only special case — so
+`hephaisto.tld`, `docs.` and `demo.` cannot come from one repository's Pages. The alternatives were
+three repositories, which the section above rejects for the reason it gives, or a different host.
+
+Three Cloudflare Pages projects from this one repository, deployed by direct upload from one
+workflow, keeps the "same repository" rule intact. The exit remains what it was: these are static
+files, so moving them is a DNS change rather than a rewrite. The cost is a stored deploy
+credential, discussed in `deploy.yml`'s own header, because Cloudflare has no OIDC path for
+wrangler and `pages.yml`'s minted-per-run token was a property worth not losing quietly.
+
+### Content mostly exists already
+
+| Site section | Source |
+|---|---|
+| Landing / pitch | `README.md`'s one-liner and ASCII pipeline diagram |
+| Architecture | `docs/architecture.md` |
+| Install / operate | `README.md` "Running it", the chart's `values.schema.json` |
+| Safety model | `README.md` "The safety model", plus the kill-switch material in [`history.md`](history.md) |
+| Verification runbook | `docs/verification.md` |
+| Incident reference | `src/Hephaisto.Agent/Runbooks/*.md` — 11 shipped runbooks |
+| Chaos scenarios | `infra/chaos/README.md` |
+
+### Screenshots should be generated, not taken
+
+The repo now contains images, all of them generated. It also has a Playwright suite driving a UI with `data-testid`
+attributes against a kind cluster full of real seeded incidents. So screenshots should be **captured
+by a script in the e2e harness** — the alternative is a landing page showing a UI that shipped four
+versions ago.
+
+[backlog #1](backlog.md#1-the-e2e-playwright-phase-reports-pass-on-a-zero-assertion-run) is fixed,
+and v0.4.0 built most of the rest of this: `scripts/visual-test.sh` already drives a browser at a
+fixed viewport in a pinned container and writes PNGs, and `scripts/brand-assets.sh` already renders
+a page to a committed image and refuses to do it if the fonts did not load. Site screenshots are
+those two scripts pointed at a live console rather than new machinery.
+
+### Branding
+
+**Settled.** v0.4.0 chose *Forge* and shipped the mark, the wordmark, the favicon and a generated
+social card; `docs/design.md` carries the rules and `design/brand/` the assets. The site consumes
+them, and consumes `tokens.css` the same way `website/index.html` already does — which is now a
+copy of a proven step rather than an untested claim.
+
+### The rest — a checklist, all currently absent
+
+- **Community files** — `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md` (there is no
+  vulnerability reporting path at all today), `SUPPORT.md`, `CHANGELOG.md`, issue and PR templates,
+  `CODEOWNERS`.
+- **Repo metadata** — description, topics and homepage are empty. Discussions off. Wiki on and
+  unused; turn it off rather than leave a second place for docs to rot.
+- **Discoverability** — no `artifacthub-repo.yml`, so the chart publishes and nothing announces it.
+  `Chart.yaml` now has an `icon` — v0.4.0 gave it something to point at — but still no
+  `maintainers` and no `screenshots`.
+- **CI quality gates** — no `.editorconfig`, no `dotnet format`, no coverage, no link check, no
+  spell check, no markdown lint, no CodeQL, no SBOM, no image scanning. Build provenance attestation
+  is currently the only supply-chain signal.
+- **README** — no badges, no screenshots.
+
+---
+
+## Housekeeping — three of four done in v0.2.0
+
+1. ~~**The false verification claim in `Prompts/30-planning.md`.**~~ Corrected, in its own
+   commit, *before* the mechanism was built — doing it the other way round would have meant a
+   window in which the fix justified the lie.
+2. ~~**`README.md`'s "Nothing is published yet".**~~ Replaced with the `helm install` line and,
+   more usefully, with what it takes to make the agent able to act at all: four deliberate
+   changes, in git.
+3. **The GitHub description, topics and homepage.** Still empty. Ten minutes; the repo is
+   already public. The one item here nobody can do from inside the repository.
+4. ~~**The `grounding.rejected` cardinality bug.**~~ Fixed — and it turned up a worse instance
+   of the same class on `hephaisto.policy.decisions`, which was writing timestamps into a label
+   on a counter that fires for every proposed action.
+
+---
+
+## Later — a menu, not a queue
+
+Roughly in order of value:
+
+- **OIDC for approvals.** No schema change; `ApprovedBy` is populated from a verified claim instead
+  of a text box. Stops being optional the moment more than one person operates this, or it points at
+  anything that matters.
+- **The deferred notification channels** — Slack, email/SMTP, PagerDuty/Opsgenie. The abstraction
+  exists now: a channel is a `Name`, a `Describe()` and a `SendAsync` returning a
+  `DeliveryResult`, with the outbox, routing, retry and rate limiting already behind it. Slack's
+  incoming webhooks are the cheapest of the three.
+- **Interactive in-card approval** — approve a `restart_pod` from the Teams card it arrived in,
+  rather than following a link. Possible, and it is the payoff that joins this project's
+  notification and approval halves; it is also the one item on this menu that changes the
+  security posture rather than extending it. Written up below.
+- **Change correlation** — "this started 4 minutes after the rollout of `x:sha`".
+- **Postmortem generation**, drawing on the digest index for "this has happened N times".
+- **Leading indicators** — PVC fill projection, memory trending to limit, cert expiry, HPA pinned at
+  max.
+- **Widen autonomy** to `rollout_restart` and `rollback_deployment`; widen namespaces.
+- **Alert-noise reduction** — find chronically flapping rules, propose changes as PRs.
+- **Topology and blast-radius reasoning** from the service graph.
+- ~~**MCP server mode**, so an agent can query incidents.~~ — **pulled into v0.11.0 on
+  2026-09-29** ([#157](backlog.md#157)): the service being replaced offers one, and the agents
+  that would ask are already at work.
+- **`--enforce-netpol`** tier in the e2e harness — Calico under kind, closing
+  [backlog #23](backlog.md#23-networkpolicy-enforcement-is-unproven).
+- Chaos self-testing, natural-language history queries, Pyroscope, multi-cluster.
+- ~~**Cheaper LLM providers**~~ — **pulled into v0.5.0 on 2026-08-31**, when it stopped being a
+  preference and became the blocker: the account ran out of credit with three measurements
+  outstanding. `Llm:Provider=openai` now reaches DeepSeek, OpenRouter and a local Ollama or
+  LM Studio server through one factory. Measured at **$0.031 against $0.080 per investigation**.
+- **More expensive LLM providers**, Gemini Flash is pretty solid, but for real production usage a
+  model like Opus or Fable are more appropriate. Cheaper by the same seam now — a provider is
+  `Llm:Endpoint` plus `Llm:Model` and a price entry, not code.
+
+### Interactive in-card approval — what it would actually cost
+
+The payoff is obvious: an escalation arrives in Teams, and the person who reads it approves the
+restart without leaving the conversation. v0.3.0 deliberately shipped a **link** instead, and
+that decision is worth revisiting only with the price written down, because the price is not the
+card.
+
+**The card is the easy part.** An Adaptive Card supports `Action.Submit` today, and the payload
+Hephaisto already builds would need one more element. Nothing in `TeamsNotificationChannel`
+resists this — there is a test asserting no `Action.Submit` exists anywhere in the card, and it
+exists to make removing it a decision rather than a detail.
+
+**The hard part is that Hephaisto would have to accept an inbound call from outside the
+cluster.** Today its only inbound route is `/webhooks/alertmanager`, and the comment on it is
+unusually blunt:
+
+> That means the NetworkPolicy is load-bearing, not defence in depth. If it is ever removed or
+> the pod is exposed through an Ingress, anything on the network can inject signals — which is a
+> way to make the agent investigate whatever an attacker names, and in a future non-observe mode,
+> to steer what it acts on. **Do not add an Ingress for /webhooks.**
+
+Every interactive path requires Hephaisto to be reachable from Microsoft's side, which inverts
+that posture. Doing it safely is a piece of security work, not a feature increment — which is
+the whole reason v0.3.0 linked out.
+
+#### Two mechanisms, and only one of them is cheap
+
+**A — Power Automate holds the interaction.** The flow posts the card with
+*"Post adaptive card and wait for a response"*, blocks, and on a click calls Hephaisto's existing
+`POST /api/incidents/{id}/actions/{actionId}/approve`. Teams never talks to Hephaisto; the flow
+does.
+
+This is the cheap option and it has one genuinely useful property: **unlike Alertmanager, a Power
+Automate HTTP action can set headers.** The reason `/webhooks` was unauthenticated was the belief
+that Alertmanager cannot send a credential — wrong, as [#138](backlog.md#138) found, but in any
+case not a constraint here, so the new
+route can require a bearer token from a Secret and be a normal authenticated endpoint rather than
+a second network-layer-only one. The exposure narrows to one authenticated path.
+
+The costs are a flow that holds state for the life of an approval (with its own timeout, which
+must not silently disagree with [#44](backlog.md#44-nothing-sweeps-awaitingapproval-so-approvaltimedout-has-no-producer)'s),
+and Hephaisto being routable from Azure at all — an Ingress, or a tunnel.
+
+**B — a registered bot.** Azure Bot Service, an Entra app registration, a Teams app package, and
+Bot Framework JWT validation on an invoke endpoint. This is the only path to **Universal Actions
+/ `Action.Execute`**, and therefore the only one that can *refresh the card in place*. Full-fat,
+and a much larger surface.
+
+#### The problem nobody thinks of first: stale cards
+
+A card is delivered to a channel, and it stays there. Three people can open the same
+already-approved action and press the button, and the second and third presses need to do
+something sensible rather than something alarming.
+
+The API is close to ready for this — `ReArmAsync` already sets the precedent with
+`ReArmOutcome.NotLatched`, on the reasoning that *"a button that reports 'done' when it did
+nothing teaches an operator that pressing it is meaningless"*. Approve and deny would need the
+same treatment: idempotent, and able to say **"already decided by X at Y"** distinctly from
+"approved just now". Only mechanism B can then update the card to show it; mechanism A can only
+reply.
+
+#### It could improve the identity story, or quietly wreck it
+
+`ApprovedBy` is free text today — attribution, not authentication. A Teams click *knows who
+clicked*, so in principle this is an upgrade.
+
+In practice it is only an upgrade if the path is authenticated end to end. A Power Automate flow
+can put any string in that field, so mechanism A without a verified claim moves the trust from
+"whoever typed a name into a console" to "whoever can invoke the flow" — different, and not
+obviously better. **OIDC should land first**, and for a Teams shop that is Entra ID, the same
+directory the card was delivered through. The two converge, which is exactly why linking out cost
+nothing.
+
+#### What changed on 2026-09-28
+
+Mechanism B's **outbound** half shipped in v0.9.0-rc4, for a reason this section did not
+anticipate: not approval, but a channel that was filling up. A bot can edit what it posted, so
+the channel now holds one board instead of a card per event. Its buttons are still links.
+
+Two things measured then change the reasoning above. **A card cannot be taken back** - deleting
+leaves "This message has been deleted." behind - so "stale cards" is solved by editing and only
+by editing. And **an edit notifies nobody**, so a card that refreshes in place is the wrong
+vehicle for anything that needs a person: that has to be a new message.
+
+The inbound half - buttons that act - is [#124](backlog.md#124), and the ordering below still
+holds for it.
+
+#### What was built, and what it cost (v0.10.0)
+
+Mechanism B's inbound half, for the two read-level verbs only: **Acknowledge** and **Assign to
+me**. The price above turned out to be what was paid, and no more:
+
+- **One route, on a port of its own.** `POST /api/teams/messages` answers only on
+  `notifications.teamsBot.actions.port`, and nothing else answers there, so the NetworkPolicy can
+  open that port to the internet without opening the console or the receiver. The webhook's
+  posture is unchanged.
+- **Its own authentication scheme**, not the console's: a Bot Framework token for this bot's app
+  id, signed by a key endorsed for `msteams`, whose `serviceurl` names the activity's service,
+  from this tenant, by a member of the team. The actor is the roster's name for the clicker.
+- **Stale cards need nothing new.** The invoke answers with the refreshed card, and the
+  reconciler's comparison already edits every copy.
+
+Approve and deny are still links, for the reason in the section above: a Teams click is an Entra
+identity, and the approver role lives in whatever `auth.authority` names. That map is the next
+step, behind its own flag. Whether any of it works against a real tenant is [#125](backlog.md#125).
+
+#### Ordering, if this is ever picked up
+
+1. **[#44](backlog.md#44-nothing-sweeps-awaitingapproval-so-approvaltimedout-has-no-producer)
+   first.** The common failure is not that approving is inconvenient, it is that **nobody clicks
+   at all** and nothing says so again. A sweeper is an afternoon; a bot is not.
+2. **OIDC second**, so the identity the card asserts is one Hephaisto can verify.
+3. **Then mechanism A**, with an authenticated route and idempotent approve/deny — most of the
+   value, a fraction of the surface.
+4. **Mechanism B only if card refresh proves necessary**, which is a question about how the cards
+   read in a busy channel, and is unanswerable until people have lived with the link-out version.

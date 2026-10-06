@@ -4,8 +4,9 @@ What changed in each release, for someone deciding whether to upgrade.
 
 Two companions carry the rest, and this file deliberately does not duplicate them:
 [`docs/history.md`](docs/history.md) is the engineering record — what was learned doing the work,
-including the wrong turns — and [`docs/backlog.md`](docs/backlog.md) is everything known to be
-broken, with the evidence for each.
+including the wrong turns — and the [issues](https://github.com/Flou21/hephaisto/issues) are everything known to be broken, with the
+evidence for each. Until 2026-10-06 that was [`docs/backlog.md`](docs/backlog.md), frozen since;
+the links to it below are to that record.
 
 Versions are set by the git tag through MinVer; the chart version and the app version are always
 the same number.

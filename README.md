@@ -179,7 +179,8 @@ times where the planner ran, against `deepseek-v4-flash`'s 4 of 8
 willingness to act; c12 measures an inference. If you need the agent to propose remediations on
 the harder shape, that is a model-selection decision.
 
-`docs/roadmap.md` has the detail, and `docs/backlog.md` has everything known to be broken.
+`docs/roadmap.md` says where the project stands, and the [issues](https://github.com/Flou21/hephaisto/issues) have everything known to
+be broken; `docs/backlog.md` is the frozen list they were moved from.
 
 The executor covers exactly the verbs the write `Role` grants: `RestartPod`,
 `RolloutRestart`, `ScaleWorkload`, `DeleteStuckJob` and `DeleteFailedJobPods`. Anything
@@ -600,7 +601,7 @@ docs/                          architecture, roadmap, backlog, history, verifica
 
 Start with [`docs/architecture.md`](docs/architecture.md) for how it works,
 [`docs/roadmap.md`](docs/roadmap.md) for where it is going,
-[`docs/backlog.md`](docs/backlog.md) for what is known-broken and unfixed, and
+the [issues](https://github.com/Flou21/hephaisto/issues) for what is known-broken and unfixed, and
 [`docs/history.md`](docs/history.md) for why it is shaped the way it is.
 
 **`Hephaisto.Core` has zero I/O dependencies, on purpose.** Every safety-critical decision —

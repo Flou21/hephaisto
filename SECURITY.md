@@ -42,8 +42,8 @@ Anything that lets someone reach a cluster through the agent, or make it act aga
 
 ## Known and documented, so not a finding
 
-These are deliberate, written down, and reachable from
-[`docs/backlog.md`](docs/backlog.md). Reports that restate them are welcome as improvements to
+These are deliberate, written down, and reachable from the
+[issues](https://github.com/Flou21/hephaisto/issues?q=is%3Aissue). Reports that restate them are welcome as improvements to
 the reasoning, but they are not vulnerabilities:
 
 - **The Alertmanager webhook is unauthenticated.** See above. It is why the shipped NetworkPolicy
@@ -51,7 +51,7 @@ the reasoning, but they are not vulnerabilities:
   `/webhooks`.
 - **`values-dev.yaml` disables that NetworkPolicy.** It is a development file and says so.
 - **NetworkPolicy enforcement is unproven in the test harness**, because kind does not enforce
-  it. [#23](docs/backlog.md).
+  it. [#188](https://github.com/Flou21/hephaisto/issues/188).
 - **Approval identity is attribution, not authentication.** `ApprovedBy` is free text and the
   console has no login; it is intended to run behind your own access control until OIDC lands.
 - **The console has no authentication of its own.** Do not expose it.
