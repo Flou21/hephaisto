@@ -1730,6 +1730,25 @@ on the gate.
 pinned commit of one service, graded on plan location only (no push). Needs `codefix run`, which is
 deferred to v0.9.x. **Size.** M. Open.
 
+**What production found, 2026-10-06: every code fix it started failed, and the same way.** Three
+plans for one incident on a service that pins Cait, on 2026-10-02, -05 and -06, each ended after
+ten minutes with `git log --format=%H -G<Version>51\.30\.0</Version> -- Cait.csproj exited 137`.
+The coder clones Cait without file contents and then searches every version of its project file
+for the pinned one. A blobless clone fetches a missing file the moment it is read, one request
+each, and Cait's project file has 974 versions: the search ran into its limit, was killed, and
+took the plan with it. The fixture repository has a history of a handful of commits and no
+sibling to look up, so the gate could not have shown this - which is this entry.
+
+**Fixed in v0.13.0, the failure and not the entry.** `prefetchPathHistory` lists the ids of a
+path's versions from the trees, which the clone has, and asks for them in one request, as git
+itself asks for a missing object. Measured against github.com on a public repository: 126
+versions in 2 s, and no request during the search that followed. And a lookup that fails is a
+note on the plan, like a clone that fails already was: the sibling is a convenience, and Release
+builds from the pinned package without it. Three tests in `coder/test/workspace.test.ts`, on a
+blobless clone of a local remote, all red on the old code. **Not measured: Cait itself, from a
+coder pod, through the egress proxy.** The next plan production starts is that measurement. The
+gate still runs one fixture repository. Open.
+
 ### 118. The subscription OAuth token's headless terms and lifetime are unverified
 
 **Symptom.** The coder authenticates with `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`: a
@@ -1739,6 +1758,32 @@ unconfirmed lifetime. `cost_usd` under it is nominal — the caps bound behaviou
 **What to do.** Confirm the lifetime and headless-use terms before `Pr` goes to production; keep an
 API key as the documented fallback (`ANTHROPIC_API_KEY` is an optional key of the same Secret); treat
 the first `RateLimited` failure as a data point. **Size.** S. Open.
+
+**What the documentation says, read on 2026-10-06.** The lifetime is answered and the terms are
+not ours to answer.
+
+- **Lifetime: one year.** "For CI pipelines, scripts, or other environments where interactive
+  browser login isn't available, generate a one-year OAuth token with `claude setup-token`", and
+  of `CLAUDE_CODE_OAUTH_TOKEN`: "Use this for CI pipelines and scripts where browser login isn't
+  available" ([Authentication](https://code.claude.com/docs/en/authentication)). The page names
+  no way to list or revoke such a token. So the Secret needs a date beside it: the token
+  production holds stops working a year after it was made, and nothing here warns before it does.
+- **Headless use is documented; a service for a team is a different sentence.** "Advertised
+  usage limits for Pro and Max plans assume ordinary, individual usage of Claude Code and the
+  Agent SDK", and "Developers building products or services that interact with Claude's
+  capabilities, including those using the Agent SDK, should use API key authentication through
+  Claude Console or a supported cloud provider"
+  ([Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)). The same page
+  sends questions about a use case to Anthropic's sales contact. Whether an incident agent that
+  one team runs for itself is "ordinary, individual usage" is the owner's to settle with
+  Anthropic, not something this file can decide.
+- **The limits are the person's.** The token shares its usage window with the same person's
+  interactive sessions, as the symptom says; nothing found says otherwise.
+
+**What that leaves.** A decision, the owner's: stay on the subscription token, or move the
+investigation Job and the coder to `ANTHROPIC_API_KEY`, which the Secret and the runner already
+take and which makes `cost_usd` real money that the caps bound. The investigation Job has run on
+the subscription token in production since v0.12.0. Open, a decision.
 
 ### 119. Three chart assertions matched a name no render produces, and passed for that reason
 

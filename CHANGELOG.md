@@ -70,6 +70,12 @@ the same day.
   or denying an action that still said it was waiting, on an incident somebody had closed in the
   meantime, left `POST /api/incidents/{id}/actions/{actionId}/approve` and `/deny` as a 500. Both
   answer 409 with the reason now, and nothing is changed - as for an action already decided.
+- **A code fix for a service that pins Cait gets as far as planning**
+  ([#117](docs/backlog.md#117)). Every plan production started ended after ten minutes in
+  `git log -G<Version>… -- Cait.csproj exited 137`: the coder looked for the pinned commit in a
+  clone without file contents, and git fetched each of the project file's 974 versions with a
+  request of its own. They are fetched in one request now, and a lookup that still fails is a
+  note on the plan and no longer the end of it. Needs the coder image of this version.
 - **One metric name is one instrument** ([#15](docs/backlog.md#15)). Six names were registered
   twice. `hephaisto_signals_received_total{source="Kubernetes"}`,
   `hephaisto_investigation_terminations_total` and `hephaisto_grounding_rejected_total` each
