@@ -128,7 +128,10 @@ switch still stops the stage.
 
 **What the coder can reach.** No cluster identity: its ServiceAccount is bound to nothing and its
 token is never mounted. No Hephaisto credential and no inbound surface: it answers by printing a
-framed result to its own log, which Hephaisto reads. Egress only through a squid allowlist proxy
+framed result to its own log, which Hephaisto reads. The model runs in a container that is
+handed its own credential and no GitHub or NuGet token: those go to an init container that has
+ended before the model starts (`prepare`) and, for the push and the Draft PR, to one that starts
+after it has ended (`publish`). Egress only through a squid allowlist proxy
 (`codeFix.egressProxy`), enforced by a NetworkPolicy that is independent of the top-level one —
 DNS and the proxy, nothing else — and every request it makes is a line in the proxy's log.
 

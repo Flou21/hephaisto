@@ -179,9 +179,11 @@ The outermost layer is the one that survives a compromised process.
 13. **Coder isolation.** A coder pod has no ServiceAccount token (its identity is bound to
     nothing), no Hephaisto credential, no inbound surface, a read-only root, no capabilities, and
     egress only to DNS and an allowlist proxy that logs every request. Its credentials arrive by
-    `secretKeyRef` from a Secret Hephaisto can name and cannot read. The investigator's read
-    tools are denied the coder namespace, so a coder's output never becomes the next
-    investigation's evidence.
+    `secretKeyRef` from a Secret Hephaisto can name and cannot read, each key to the one
+    container that needs it: the container the model runs in is handed the model's credential
+    and no GitHub or NuGet token, and no container can read another's processes. The
+    investigator's read tools are denied the coder namespace, so a coder's output never becomes
+    the next investigation's evidence.
 
 ### Why L3 is safe enough to enable, in four sentences
 
@@ -242,13 +244,33 @@ database, or see a credential Hephaisto holds. The only model-influenced input t
 ConfigMap of JSON the coder treats as data; the image and the spec are chart values and golden-
 tested C#.
 
-**The same-uid caveat, stated rather than hidden.** Inside the coder pod the driver (which holds
-the GitHub token to push) and the agent's Bash tool run as the same uid, so a determined agent
-could read the driver's environment through `/proc`. The controls that actually bound that are
-outside the pod: the token's repository scope, branch protection, the proxy allowlist and its log,
-and the guard hook's denial record. The v2 hardening is a two-container split — a driver container
-holding the tokens and an agent container without them, sharing `/work` — deferred because the
-first version has to prove the flow before it is worth splitting.
+**Three containers, so that the separation is the kernel's** (v0.13.0, backlog #116).
+Until v0.13.0 the driver that held the GitHub token and the agent's Bash tool were one uid in one
+PID namespace, and a guard over shell commands stood between the model and
+`/proc/<driver>/environ`. Now a coder Job is the same image in up to three containers with no
+shared process namespace:
+
+| | when | holds | does |
+|---|---|---|---|
+| `prepare` | init | `GITHUB_TOKEN`, `NUGET_GITHUB_TOKEN` | clones, the open-PR and branch checks, the package restore |
+| `coder` | the regular container of a plan; the second init container of an implementation | the model credential | the agent, and the build and tests of what it wrote |
+| `publish` | implementation only, the regular container | `GITHUB_TOKEN` | push, Draft PR, the result |
+
+An init container has ended before the next container starts, so nothing of `coder` is running
+when `publish` holds the token. `publish` does not trust the volume the model worked on either:
+it never runs git in that repository - where a hook or a line of `.git/config` would run beside
+the token - but imports the branch as a bundle into a repository in its own `/tmp`, checks there
+that the commit is the one the driver verified, descends from the base and passes the publishing
+policy, and pushes it by id to the URL in the request. What `prepare` decided reaches it on a
+volume the `coder` container does not mount. Hephaisto reads an implementation's result from
+`publish`, a container the model never ran in.
+
+**What is left of the caveat, stated rather than hidden.** The model's own credential is in the
+container the model runs in - the CLI needs it there - so a determined agent could reach *that*;
+it calls a model and pushes nothing, and the proxy allowlist and the guard's denial record bound
+it. And the verification verdict a PR carries is that container's word: code that defeated the
+guard could report a green build for a tree it did not test, though it could not push anywhere but
+the assigned branch, nor a diff the policy refuses.
 
 ## Investigating in a Job (v0.12.0 F5)
 

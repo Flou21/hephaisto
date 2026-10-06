@@ -144,6 +144,18 @@ Hephaisto may now create Jobs in {{ $ns }}, and nowhere else. Before the first a
      NUGET_GITHUB_TOKEN: read:packages only.
      CLAUDE_CODE_OAUTH_TOKEN: from `claude setup-token`; or ANTHROPIC_API_KEY instead.
 
+     No container of a Job is handed all of it. The model runs in `coder`, which gets the
+     model's key and neither token; the tokens go to `prepare` (clones and the package
+     restore, before the model starts) and GITHUB_TOKEN to `publish` (push and Draft PR,
+     after it has ended). To read a Job:
+
+       kubectl -n {{ $ns }} logs job/<job> -c coder      # the agent, the build, an unpushed patch
+       kubectl -n {{ $ns }} logs job/<job> -c publish    # an implementation's result
+       kubectl -n {{ $ns }} logs job/<job> -c prepare    # a clone or a restore that failed
+
+     The coder image must be the one of this chart version ({{ include "hephaisto.codeFixImage" . }}):
+     an older one does not know the three roles.
+
   3. BRANCH PROTECTION on the default branch of EVERY mapped repository - no direct push, no
      force push, no deletion, for everyone including the token above. The coder only ever
      pushes hephaisto/codefix-* and opens DRAFT PRs, but a token that can write can write

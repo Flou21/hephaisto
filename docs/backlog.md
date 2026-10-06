@@ -1717,7 +1717,68 @@ prerequisite; egress goes only through the allowlist proxy, whose log is the per
 Hephaisto re-checks branch, repository and host before believing a PR exists.
 
 **Fix (v2).** Two containers sharing `/work`: the driver with the tokens, the agent without, so the
-separation is the kernel's rather than the guard's. **Size.** M. Open.
+separation is the kernel's rather than the guard's. **Size.** M.
+
+**Fixed in v0.13.0, as three containers and not two.** Two would have left the driver's own
+verification - the build, and a test suite the model had just written - running beside the token,
+which is the same read of `/proc/<driver>/environ` one step later. So the driver is cut where
+the model starts and again where it ends, and each piece is the same image in a container of its
+own, with no shared process namespace:
+
+| | when | holds | does |
+|---|---|---|---|
+| `prepare` | init | `GITHUB_TOKEN`, `NUGET_GITHUB_TOKEN` | clones, the open-PR and remote-branch checks, the assigned branch, the pre-restore |
+| `coder` | plan, investigate: the regular container. implement: the second init container | the model credential | the agent, then build and tests |
+| `publish` | implement only, the regular container | `GITHUB_TOKEN` | push, Draft PR, prints the result |
+
+`coder` is an init container when there is a `publish` because an init container has ended -
+every process of it - before the next one starts. Nothing waits on a file, and the token is in no
+live process while the model runs. The runner refuses the `coder` role beside any git or NuGet
+variable, so a Job rendered wrongly does not run the model next to a token; it fails.
+
+`publish` is the part that could have undone it: `/work` is where the model worked, and a
+`git push` in that repository honours its hooks, `core.fsmonitor`, `credential.helper`,
+`url.*.insteadOf` and a dozen more. It never opens that repository. It takes two files from
+`/work` as bytes - no symbolic links, size-capped, never quoted - builds a bare repository in a
+`/tmp` of its own, fetches the default branch from the request's URL, imports the branch as a
+bundle, and derives everything a push depends on from that copy: the tip is the commit the driver
+verified, it descends from the base, every commit carries the attempt's trailer, the publishing
+policy holds, the remote branch is absent or this attempt's own. What `prepare` decided reaches
+it on a volume `coder` does not mount. The list of what that closes, and of what remains, is the
+header of `coder/src/publish.ts`.
+
+Hephaisto reads an implementation's result from `publish` and a plan's or an investigation's
+from `coder`, as the Job's `hephaisto.dev/result-container` annotation says; a frame in the
+coder container's log of an implement Job is not read at all. The investigator Job got the same
+`prepare`, in every run: its context clone needs the token whether or not source access is on.
+
+**Verified.** `coder/scripts/test.sh`: 488 tests (433 before). Each role is run as its own
+`main()` with only its container's environment. One test plants hooks, `core.fsmonitor`,
+`core.hooksPath`, `credential.helper`, `url.insteadOf`, a `pushurl`, an `include` and a poisoned
+`HOME` in the shared repository, shows that the old `git push origin` there runs the hook with
+the token in its environment and sends the branch to a fork, and then that `publish` runs none of
+it and pushes only to the request's remote. Eighteen more tamper with the handoff or the bundle -
+a later commit, a workflow file, a link to a file of credentials, a claimed PR - and each ends in
+a refusal and an untouched remote. `./scripts/test.sh`: 2200 (2179 before); the golden tests pin
+each container's Secret keys by exact list, that `coder` has no git or NuGet variable under any
+name, that `prepare` and `publish` have no model credential, and that `shareProcessNamespace` is
+absent from the object and from its JSON.
+
+**Not verified, and what would.** Nothing here ran in a cluster when it was written.
+`scripts/e2e/codefix-local.sh` (c15) and `scripts/e2e/investigate-local.sh` (I12) assert the pod
+spec and, from inside the running `coder` container, that no process there holds a git or NuGet
+variable or belongs to another container - and then expect the push and the PR. Until they have
+been run: whether the kubelet starts the pod as rendered, and whether a .NET build is content with
+a read-only package cache. Never run by anything: `gh pr create` from outside a git repository
+against github.com (the tests use the shim), and a restore without feed credentials on a service
+with a private feed (the fixture has none, which is #117).
+
+**What remains, on purpose.** The model credential is in the container the model runs in; the CLI
+needs it there, and the guard and the egress allowlist are what bound it - but it calls a model,
+it does not push. The verification verdict in a PR is that container's word: code that defeated
+the guard there could report green for a tree it did not test. It could not push anywhere but the
+assigned branch, nor a diff the policy refuses. And `CODEFIX_ROLE` unset - `docker run`, the
+tests - is every role in one process, with none of this.
 
 ### 117. The code-fix gate exercises one fixture repository, never a True Relevance service
 

@@ -13,7 +13,7 @@
 # c15 also holds the Job to backlog #116: the coder container is handed no git or NuGet key, no
 # process inside it holds one (read from inside it while the agent works), and the implement
 # result is printed by the publish container. It needs an agent and a coder image of the same
-# version - `tilt trigger coder` after pulling, the agent does not rebuild that image.
+# version - `tilt trigger coder-image` after pulling; rebuilding the agent does not rebuild it.
 #
 # SAFETY. This machine's default kube context is a production cluster. The runner never reads
 # ~/.kube/config after its first line: it extracts ONE context into a private kubeconfig, checks
