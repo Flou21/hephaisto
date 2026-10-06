@@ -68,6 +68,14 @@ Hephaisto's own approval UI, where the audit row already lives.
 There is a test asserting no `Action.Submit` exists anywhere in the card. It exists to make
 removing it a decision rather than a detail.
 
+The registered bot (`notifications.teamsBot`) is the one channel where that decision was made, and
+it is opt-in: with `notifications.teamsBot.actions.enabled`, an alert carries **Acknowledge**,
+**Assign to me** and **Reinvestigate** for any member of the team, and **Close** for the people
+`notifications.teamsBot.actions.approvers` names by Microsoft Entra object id. The inbound route
+that makes this possible is on a port of its own and takes a Bot Framework token; see
+[the chart's values](/reference/helm-values) for what turning it on exposes. Approving an action
+is still a link.
+
 ## Signing
 
 An unsigned outbound webhook means your receiver cannot tell a delivery from Hephaisto apart from

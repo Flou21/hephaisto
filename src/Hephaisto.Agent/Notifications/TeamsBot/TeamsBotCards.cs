@@ -66,11 +66,30 @@ public sealed record TeamsIncident
     /// <summary>What the newest investigation found, when the incident was investigated.</summary>
     public TeamsDiagnosis? Diagnosis { get; init; }
 
+    /// <summary>
+    /// Whether ANY investigation of this incident produced a primary finding - not only the
+    /// newest, which is all <see cref="Diagnosis"/> shows.
+    /// </summary>
+    public bool Diagnosed { get; init; }
+
     public bool IsOpen => State is not (
         IncidentState.Resolved
         or IncidentState.Expired
         or IncidentState.Suppressed
         or IncidentState.Closed);
+
+    /// <summary>
+    /// Whether a card offers another investigation: where the console's retry banner does, and
+    /// the card is still kept in step.
+    /// </summary>
+    /// <remarks>
+    /// The console (<c>IncidentDetail.razor</c>, <c>CanReinvestigate</c>) offers the retry for an
+    /// Escalated or Expired incident none of whose investigations has a primary finding, and
+    /// offers "reopen" on a Closed one. Only the first of those is an open incident. A card for an
+    /// incident that is over is edited once to say how it ended and then left alone, so a button
+    /// on it would outlive the state it was drawn for; reopening stays a link into the console.
+    /// </remarks>
+    public bool CanReinvestigate => State is IncidentState.Escalated && !Diagnosed;
 }
 
 /// <summary>The addresses a card links to. All optional; a card without one is thinner, not broken.</summary>
@@ -90,6 +109,17 @@ public sealed record TeamsCardLinks
     /// where it will be read: with it off no card can need Microsoft to call this process.
     /// </summary>
     public bool Actions { get; init; }
+
+    /// <summary>
+    /// Whether an open alert also carries Close: <see cref="Actions"/>, and somebody is mapped to
+    /// the approver role (<c>Notifications:TeamsBot:Actions:Approvers</c>). With nobody mapped
+    /// every click on it would be refused, so it is not drawn.
+    /// </summary>
+    /// <remarks>
+    /// By configuration, never by reader: a card is the same for everybody who sees it, so who may
+    /// close is decided at the click.
+    /// </remarks>
+    public bool Closing { get; init; }
 }
 
 /// <summary>
@@ -133,8 +163,15 @@ public sealed record TeamsDiagnosis
 /// The verbs a button can send, which are the only ones the inbound route answers.
 /// </summary>
 /// <remarks>
-/// Both are read-level acts in the console: saying you have seen something, and saying it is
-/// yours. Closing, approving and denying stay links (backlog #124).
+/// <para>
+/// Three are read-level acts in the console, and any member of the team may click them: saying
+/// you have seen something, saying it is yours, and asking for another investigation.
+/// </para>
+/// <para>
+/// <see cref="Close"/> sits with approval in the console, so here it takes somebody the install
+/// maps to the approver role (<c>Notifications:TeamsBot:Actions:Approvers</c>). Approving and
+/// denying stay links (backlog #124).
+/// </para>
 /// </remarks>
 public static class TeamsBotVerbs
 {
@@ -142,7 +179,17 @@ public static class TeamsBotVerbs
 
     public const string AssignToMe = "assignToMe";
 
-    public static readonly IReadOnlyList<string> All = [Acknowledge, AssignToMe];
+    public const string Reinvestigate = "reinvestigate";
+
+    public const string Close = "close";
+
+    /// <summary>The id of the Close card's text input, which Teams merges into the button's data.</summary>
+    public const string ReasonInput = "reason";
+
+    public static readonly IReadOnlyList<string> All = [Acknowledge, AssignToMe, Reinvestigate, Close];
+
+    /// <summary>The verbs only a mapped approver may send.</summary>
+    public static readonly IReadOnlyList<string> Approver = [Close];
 }
 
 /// <summary>
@@ -153,8 +200,8 @@ public static class TeamsBotVerbs
 /// <b>Every button is an <c>Action.OpenUrl</c>, unless <see cref="TeamsCardLinks.Actions"/>.</b> A
 /// button that acts needs Microsoft to call this process, through the one authenticated route on
 /// its own port (<c>TeamsBotActions</c>). With it off, a test asserts that nothing here can need
-/// that route; with it on, that only an open alert carries the two verbs in
-/// <see cref="TeamsBotVerbs"/>, and nothing else.
+/// that route; with it on, that only an open alert carries verbs, that every one of them is in
+/// <see cref="TeamsBotVerbs"/>, and which state and which configuration draws each.
 /// </para>
 /// <para>
 /// Times are absolute. "Open for 20 min" would change every minute and turn a board that is
@@ -193,6 +240,9 @@ public static class TeamsBotCards
     private const int MaxEvidenceShown = 2;
 
     private const int MaxCodeRefsShown = 3;
+
+    /// <summary>The longest reason the Close card accepts, and the route keeps.</summary>
+    public const int MaxReasonLength = 500;
 
     /// <summary>
     /// The board: every open incident the caller passed, and a line for the ones it did not.
@@ -386,6 +436,16 @@ public static class TeamsBotCards
             }
 
             actions.Add(Execute("Assign to me", TeamsBotVerbs.AssignToMe, incident.Id));
+
+            if (incident.CanReinvestigate)
+            {
+                actions.Add(Execute("Reinvestigate", TeamsBotVerbs.Reinvestigate, incident.Id));
+            }
+
+            if (links.Closing)
+            {
+                actions.Add(CloseCard(incident.Id));
+            }
         }
 
         foreach (var link in Links(incident, links).ToArray())
@@ -933,8 +993,8 @@ public static class TeamsBotCards
 
     /// <summary>
     /// A button Teams delivers to <c>POST /api/teams/messages</c> as an <c>adaptiveCard/action</c>
-    /// invoke. The incident id is the only data it carries; who clicked comes from the token and
-    /// the team's roster, never from the card.
+    /// invoke. The incident id is the only data the button itself carries; who clicked comes from
+    /// the token and the team's roster, never from the card.
     /// </summary>
     private static JsonObject Execute(string title, string verb, Guid incidentId) => new()
     {
@@ -942,6 +1002,36 @@ public static class TeamsBotCards
         ["title"] = title,
         ["verb"] = verb,
         ["data"] = new JsonObject { ["incidentId"] = incidentId.ToString() },
+    };
+
+    /// <summary>
+    /// Close, as a card that unfolds in the client and asks why first.
+    /// </summary>
+    /// <remarks>
+    /// <c>Action.ShowCard</c> sends nothing; the <c>Action.Execute</c> inside it does, and Teams
+    /// merges the input's value into that button's data under the input's id. The reason is
+    /// required in the card, where the person is told at once, and again by the route, because a
+    /// card is not the only thing that can send an invoke.
+    /// </remarks>
+    private static JsonObject CloseCard(Guid incidentId) => new()
+    {
+        ["type"] = "Action.ShowCard",
+        ["title"] = "Close",
+        ["card"] = new JsonObject
+        {
+            ["type"] = "AdaptiveCard",
+            ["body"] = new JsonArray(new JsonObject
+            {
+                ["type"] = "Input.Text",
+                ["id"] = TeamsBotVerbs.ReasonInput,
+                ["label"] = "Why is this closed?",
+                ["isRequired"] = true,
+                ["errorMessage"] = "Give a reason: it is written to the incident.",
+                ["isMultiline"] = true,
+                ["maxLength"] = MaxReasonLength,
+            }),
+            ["actions"] = new JsonArray(Execute("Close the incident", TeamsBotVerbs.Close, incidentId)),
+        },
     };
 
     private static JsonObject OpenUrl(string title, string url) => new()

@@ -7,7 +7,6 @@ using Hephaisto.Agent.Web;
 using Hephaisto.Core.Notifications;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
@@ -111,20 +110,24 @@ public sealed class TeamsBotActionsTests
         await target.Received(1).AcknowledgeAsync(IncidentId, "oncall@example.com", Arg.Any<CancellationToken>());
     }
 
-    [Theory]
-    [InlineData(TeamsBotVerbs.Acknowledge)]
-    [InlineData(TeamsBotVerbs.AssignToMe)]
-    public async Task Every_verb_a_button_can_send_changes_the_incident(string verb)
+    [Fact]
+    public async Task Every_verb_a_button_can_send_changes_the_incident()
     {
-        TeamsBotVerbs.All.Should().Contain(verb);
+        // Over TeamsBotVerbs.All itself, not a list beside it: a verb added there without a
+        // handler would otherwise be a button that answers "not something a button here can do".
+        TeamsBotVerbs.All.Should().NotBeEmpty();
 
-        var (handler, target, _) = Handler();
+        foreach (var verb in TeamsBotVerbs.All)
+        {
+            var (handler, target, _) = Handler(approvers: [ObjectId]);
 
-        var answer = await handler.HandleAsync(Caller(), Click(verb), TestContext.Current.CancellationToken);
+            var answer = await handler.HandleAsync(Caller(), Click(verb, reason: "the rollout finished"), TestContext.Current.CancellationToken);
 
-        answer.Status.Should().Be(200);
-        answer.Body!["statusCode"]!.GetValue<int>().Should().Be(200);
-        target.ReceivedCalls().Should().Contain(c => c.GetMethodInfo().Name != nameof(ITeamsActionTarget.CardAsync));
+            answer.Status.Should().Be(200, verb);
+            answer.Body!["statusCode"]!.GetValue<int>().Should().Be(200, verb);
+            answer.Body!["type"]!.GetValue<string>().Should().Be("application/vnd.microsoft.card.adaptive", verb);
+            target.ReceivedCalls().Should().Contain(c => c.GetMethodInfo().Name != nameof(ITeamsActionTarget.CardAsync), verb);
+        }
     }
 
     [Fact]
@@ -197,12 +200,15 @@ public sealed class TeamsBotActionsTests
     }
 
     [Theory]
-    [InlineData("close")]
+    [InlineData("reopen")]
     [InlineData("approve")]
+    [InlineData("deny")]
+    [InlineData("Close")]
     [InlineData("")]
     public async Task A_verb_no_button_sends_changes_nothing(string verb)
     {
-        var (handler, target, _) = Handler();
+        // An approver, so that what refuses these is the verb and not who sent it.
+        var (handler, target, _) = Handler(approvers: [ObjectId]);
 
         var answer = await handler.HandleAsync(Caller(), Click(verb), TestContext.Current.CancellationToken);
 
@@ -240,6 +246,219 @@ public sealed class TeamsBotActionsTests
     }
 
     // ---------------------------------------------------------------------------------------
+    // Reinvestigate: read-level, like the console
+    // ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task Any_member_may_ask_for_another_investigation_and_is_recorded_as_the_roster_names_them()
+    {
+        // Nobody is mapped to the approver role here, and it does not matter: asking for another
+        // attempt carries no approver policy in the console either.
+        var (handler, target, _) = Handler();
+
+        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Reinvestigate, displayName: "Somebody Else"), TestContext.Current.CancellationToken);
+
+        answer.Status.Should().Be(200);
+        answer.Body!["type"]!.GetValue<string>().Should().Be("application/vnd.microsoft.card.adaptive");
+        await target.Received(1).ReinvestigateAsync(IncidentId, "oncall@example.com", Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData(ReinvestigateOutcome.AlreadyRunning, "Nothing changed", "already running")]
+    [InlineData(ReinvestigateOutcome.Disabled, "Nothing changed", "switched off")]
+    [InlineData(ReinvestigateOutcome.IllegalState, "Nothing changed", "the detail")]
+    [InlineData(ReinvestigateOutcome.QueueFull, "Not started yet", "the detail")]
+    [InlineData(ReinvestigateOutcome.NotFound, "no longer exists", "incident")]
+    public async Task Each_way_a_reinvestigation_does_not_start_is_said_in_words(
+        ReinvestigateOutcome outcome, string says, string and)
+    {
+        var (handler, target, _) = Handler();
+        target.ReinvestigateAsync(default, default!, TestContext.Current.CancellationToken).ReturnsForAnyArgs(new ReinvestigateResult
+        {
+            Outcome = outcome,
+            Detail = outcome is ReinvestigateOutcome.AlreadyRunning ? "An investigation is already running for this incident." : "the detail",
+        });
+
+        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Reinvestigate), TestContext.Current.CancellationToken);
+
+        answer.Status.Should().Be(200);
+        answer.Body!["type"]!.GetValue<string>().Should().Be("application/vnd.microsoft.activity.message");
+        answer.Body!["value"]!.GetValue<string>().Should().Contain(says).And.Contain(and);
+
+        // A message, never the card: a refreshed card would read as "it worked".
+        await target.DidNotReceiveWithAnyArgs().CardAsync(default, TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task A_saturated_queue_is_not_reported_as_nothing_changed()
+    {
+        // The one outcome where something did change: the incident is marked Investigating and
+        // nothing is working it yet. "Nothing changed" would be untrue.
+        var (handler, target, _) = Handler();
+        target.ReinvestigateAsync(default, default!, TestContext.Current.CancellationToken).ReturnsForAnyArgs(
+            new ReinvestigateResult { Outcome = ReinvestigateOutcome.QueueFull, Detail = "The investigation queue is saturated." });
+
+        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Reinvestigate), TestContext.Current.CancellationToken);
+
+        answer.Body!["value"]!.GetValue<string>().Should().Contain("saturated").And.NotContain("Nothing changed");
+    }
+
+    [Fact]
+    public async Task A_reinvestigation_the_console_would_forbid_the_actor_is_refused()
+    {
+        var (handler, target, _) = Handler();
+        target.ReinvestigateAsync(default, default!, TestContext.Current.CancellationToken).ReturnsForAnyArgs(
+            new ReinvestigateResult { Outcome = ReinvestigateOutcome.ForbiddenActor, Detail = "may not" });
+
+        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Reinvestigate), TestContext.Current.CancellationToken);
+
+        answer.Status.Should().Be(403);
+        answer.Body.Should().BeNull();
+    }
+
+    [Fact]
+    public void Every_reinvestigate_outcome_has_an_answer_of_its_own()
+    {
+        // The theory above names them by hand. A new outcome must be decided, not defaulted into
+        // the 403 that only a forbidden actor should get.
+        Enum.GetValues<ReinvestigateOutcome>().Should().BeEquivalentTo(
+        [
+            ReinvestigateOutcome.Queued,
+            ReinvestigateOutcome.NotFound,
+            ReinvestigateOutcome.AlreadyRunning,
+            ReinvestigateOutcome.IllegalState,
+            ReinvestigateOutcome.QueueFull,
+            ReinvestigateOutcome.Disabled,
+            ReinvestigateOutcome.ForbiddenActor,
+        ]);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Close: an approver's, as in the console
+    // ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task An_approvers_click_closes_with_the_reason_from_the_card_as_the_roster_names_them()
+    {
+        var (handler, target, log) = Recording(approvers: [ObjectId]);
+
+        var answer = await handler.HandleAsync(
+            Caller(),
+            Click(TeamsBotVerbs.Close, displayName: "Somebody Else", reason: "  the rollout finished  "),
+            TestContext.Current.CancellationToken);
+
+        answer.Status.Should().Be(200);
+        answer.Body!["type"]!.GetValue<string>().Should().Be("application/vnd.microsoft.card.adaptive");
+        await target.Received(1).CloseAsync(IncidentId, "oncall@example.com", "the rollout finished", Arg.Any<CancellationToken>());
+        log.Warnings.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task The_approver_map_is_matched_whatever_case_the_id_was_written_in()
+    {
+        var (handler, target, _) = Handler(approvers: [" " + ObjectId.ToUpperInvariant() + " "]);
+
+        await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Close, reason: "done"), TestContext.Current.CancellationToken);
+
+        await target.ReceivedWithAnyArgs(1).CloseAsync(default, default!, default!, TestContext.Current.CancellationToken);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("5f0c0000-0000-0000-0000-0000000000ff")]
+    public async Task A_member_who_is_not_an_approver_cannot_close_and_is_told_why(string? somebodyElse)
+    {
+        // In the team, so the route believes who they are - and not on the list, or the list is
+        // empty, which is the default and means nobody.
+        var (handler, target, log) = Recording(approvers: somebodyElse is null ? [] : [somebodyElse]);
+
+        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Close, reason: "done"), TestContext.Current.CancellationToken);
+
+        answer.Status.Should().Be(200, "the person has to be able to read why");
+        answer.Body!["type"]!.GetValue<string>().Should().Be("application/vnd.microsoft.activity.message");
+        answer.Body!["value"]!.GetValue<string>().Should()
+            .Contain("approver role")
+            .And.Contain("notifications.teamsBot.actions.approvers")
+            .And.Contain("Nothing was changed");
+
+        target.ReceivedCalls().Should().BeEmpty();
+        log.Warnings.Should().ContainSingle().Which.Should().Contain("oncall@example.com").And.Contain("close");
+    }
+
+    [Fact]
+    public async Task Being_on_the_approver_list_does_not_replace_being_in_the_team()
+    {
+        var (handler, target, _) = Handler(
+            member: new TeamsBotResult<TeamsMember>(HttpStatusCode.OK, null, "not a member"),
+            approvers: [ObjectId]);
+
+        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Close, reason: "done"), TestContext.Current.CancellationToken);
+
+        answer.Status.Should().Be(403);
+        target.ReceivedCalls().Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("\u202e \u0007")]
+    public async Task A_close_without_a_reason_changes_nothing_and_says_so(string? reason)
+    {
+        // The card requires it; a card is not the only thing that can send an invoke.
+        var (handler, target, log) = Recording(approvers: [ObjectId]);
+
+        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Close, reason: reason), TestContext.Current.CancellationToken);
+
+        answer.Status.Should().Be(200);
+        answer.Body!["type"]!.GetValue<string>().Should().Be("application/vnd.microsoft.activity.message");
+        answer.Body!["value"]!.GetValue<string>().Should().Contain("Give a reason").And.Contain("Nothing was changed");
+        target.ReceivedCalls().Should().BeEmpty();
+        log.Warnings.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task A_reason_is_cut_to_what_the_card_would_have_allowed()
+    {
+        var (handler, target, _) = Handler(approvers: [ObjectId]);
+
+        await handler.HandleAsync(
+            Caller(),
+            Click(TeamsBotVerbs.Close, reason: new string('x', TeamsBotCards.MaxReasonLength + 200)),
+            TestContext.Current.CancellationToken);
+
+        await target.Received(1).CloseAsync(IncidentId, "oncall@example.com", new string('x', TeamsBotCards.MaxReasonLength), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Closing_what_is_already_closed_says_nothing_changed()
+    {
+        var (handler, target, _) = Handler(approvers: [ObjectId]);
+        target.CloseAsync(default, default!, default!, TestContext.Current.CancellationToken).ReturnsForAnyArgs(
+            new LifecycleResult { Outcome = LifecycleOutcome.IllegalState, Detail = "already closed" });
+        target.CardAsync(default, TestContext.Current.CancellationToken).ReturnsForAnyArgs((JsonObject?)null);
+
+        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Close, reason: "done"), TestContext.Current.CancellationToken);
+
+        answer.Body!["value"]!.GetValue<string>().Should().Contain("Nothing changed").And.Contain("already closed");
+    }
+
+    [Fact]
+    public void Nobody_is_an_approver_until_somebody_is_named()
+    {
+        var actions = new TeamsBotActionsOptions();
+
+        actions.Approvers.Should().BeEmpty();
+        actions.IsApprover(ObjectId).Should().BeFalse();
+        actions.IsApprover(null).Should().BeFalse();
+        actions.IsApprover(" ").Should().BeFalse();
+
+        actions.Approvers.Add(ObjectId);
+        actions.IsApprover(ObjectId.ToUpperInvariant()).Should().BeTrue();
+        actions.IsApprover("5f0c0000-0000-0000-0000-0000000000ff").Should().BeFalse();
+    }
+
+    // ---------------------------------------------------------------------------------------
     // Startup
     // ---------------------------------------------------------------------------------------
 
@@ -274,6 +493,45 @@ public sealed class TeamsBotActionsTests
         act.Should().Throw<InvalidOperationException>().WithMessage("*port of its own*");
     }
 
+    [Theory]
+    [InlineData("oncall@example.com")]
+    [InlineData("On Call")]
+    [InlineData("{5f0c0000-0000-0000-0000-000000000001}")]
+    [InlineData("5f0c0000000000000000000000000001")]
+    [InlineData("")]
+    public void An_approver_that_is_not_an_object_id_refuses_to_start(string approver)
+    {
+        // A click is matched by from.aadObjectId. An address or a name would map nobody, and a
+        // list that names nobody looks like one that works until somebody has to close something.
+        var act = () => new ServiceCollection().AddHephaistoTeamsBotActions(Config(
+            [.. Bot(), ("Notifications:TeamsBot:Actions:Enabled", "true"),
+             ("Notifications:TeamsBot:Actions:Approvers:0", ObjectId),
+             ("Notifications:TeamsBot:Actions:Approvers:1", approver)]));
+
+        act.Should().Throw<InvalidOperationException>().WithMessage("*Approvers*object id*");
+    }
+
+    [Fact]
+    public void Approvers_are_read_from_the_configuration_the_chart_writes()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+
+        var config = Config(
+            [.. Bot(), ("Notifications:TeamsBot:Actions:Enabled", "true"),
+             ("Notifications:TeamsBot:Actions:Approvers:0", ObjectId),
+             ("Notifications:TeamsBot:Actions:Approvers:1", "5F0C0000-0000-0000-0000-0000000000FF")]);
+
+        services.AddHephaistoTeamsBotActions(config);
+        services.Should().Contain(d => d.ServiceType == typeof(TeamsBotActionHandler));
+
+        var bound = config.GetSection(NotificationOptions.SectionName).Get<NotificationOptions>()!.TeamsBot.Actions;
+
+        bound.Approvers.Should().HaveCount(2);
+        bound.IsApprover(ObjectId).Should().BeTrue();
+        bound.IsApprover("5f0c0000-0000-0000-0000-0000000000ff").Should().BeTrue();
+    }
+
     [Fact]
     public void A_configured_bot_with_its_own_port_registers_the_route()
     {
@@ -287,12 +545,36 @@ public sealed class TeamsBotActionsTests
     // ---------------------------------------------------------------------------------------
 
     private static (TeamsBotActionHandler Handler, ITeamsActionTarget Target, ITeamsMemberDirectory Members) Handler(
-        TeamsBotResult<TeamsMember>? member = null)
+        TeamsBotResult<TeamsMember>? member = null,
+        string[]? approvers = null)
+    {
+        var (handler, target, members, _) = Build(member, approvers);
+
+        return (handler, target, members);
+    }
+
+    /// <summary>The same handler, with what it logged: a refusal is one Warning line.</summary>
+    private static (TeamsBotActionHandler Handler, ITeamsActionTarget Target, RecordingLogger Log) Recording(
+        string[]? approvers = null)
+    {
+        var (handler, target, _, log) = Build(null, approvers);
+
+        return (handler, target, log);
+    }
+
+    private static (TeamsBotActionHandler, ITeamsActionTarget, ITeamsMemberDirectory, RecordingLogger) Build(
+        TeamsBotResult<TeamsMember>? member,
+        string[]? approvers)
     {
         var options = Substitute.For<IOptionsMonitor<NotificationOptions>>();
         options.CurrentValue.Returns(new NotificationOptions
         {
-            TeamsBot = new TeamsBotOptions { TenantId = Tenant, AppId = AppId, Actions = new TeamsBotActionsOptions { Enabled = true } },
+            TeamsBot = new TeamsBotOptions
+            {
+                TenantId = Tenant,
+                AppId = AppId,
+                Actions = new TeamsBotActionsOptions { Enabled = true, Approvers = [.. approvers ?? []] },
+            },
         });
 
         var members = Substitute.For<ITeamsMemberDirectory>();
@@ -301,33 +583,73 @@ public sealed class TeamsBotActionsTests
         var target = Substitute.For<ITeamsActionTarget>();
         target.AcknowledgeAsync(default, default!, default).ReturnsForAnyArgs(new LifecycleResult { Outcome = LifecycleOutcome.Applied });
         target.AssignToAsync(default, default!, default).ReturnsForAnyArgs(new LifecycleResult { Outcome = LifecycleOutcome.Applied });
+        target.ReinvestigateAsync(default, default!, default).ReturnsForAnyArgs(new ReinvestigateResult { Outcome = ReinvestigateOutcome.Queued });
+        target.CloseAsync(default, default!, default!, default).ReturnsForAnyArgs(new LifecycleResult { Outcome = LifecycleOutcome.Applied });
         target.CardAsync(default, default).ReturnsForAnyArgs(new JsonObject { ["type"] = "AdaptiveCard" });
 
-        return (new TeamsBotActionHandler(options, members, target, NullLogger<TeamsBotActionHandler>.Instance), target, members);
+        var log = new RecordingLogger();
+
+        return (new TeamsBotActionHandler(options, members, target, log), target, members, log);
+    }
+
+    private sealed class RecordingLogger : Microsoft.Extensions.Logging.ILogger<TeamsBotActionHandler>
+    {
+        public List<string> Warnings { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            Microsoft.Extensions.Logging.LogLevel logLevel,
+            Microsoft.Extensions.Logging.EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel >= Microsoft.Extensions.Logging.LogLevel.Warning)
+            {
+                Warnings.Add(formatter(state, exception));
+            }
+        }
     }
 
     private static ClaimsPrincipal Caller(string serviceUrl = ServiceUrl) =>
         new(new ClaimsIdentity([new Claim(BotFrameworkTokens.ServiceUrlClaim, serviceUrl)], BotFrameworkTokens.Scheme));
 
-    private static JsonObject Click(string verb, string tenant = Tenant, string displayName = "On Call") => new()
+    /// <summary>
+    /// A click as Teams sends it. <paramref name="reason"/> is what the Close card's input held:
+    /// Teams merges an input into the button's data under the input's id.
+    /// </summary>
+    private static JsonObject Click(string verb, string tenant = Tenant, string displayName = "On Call", string? reason = null)
     {
-        ["type"] = "invoke",
-        ["name"] = "adaptiveCard/action",
-        ["channelId"] = "msteams",
-        ["serviceUrl"] = ServiceUrl.TrimEnd('/'),
-        ["from"] = new JsonObject { ["id"] = "29:oncall", ["aadObjectId"] = ObjectId, ["name"] = displayName },
-        ["conversation"] = new JsonObject { ["id"] = "a:oncall" },
-        ["channelData"] = new JsonObject { ["tenant"] = new JsonObject { ["id"] = tenant } },
-        ["value"] = new JsonObject
+        var data = new JsonObject { ["incidentId"] = IncidentId.ToString() };
+
+        if (reason is not null)
         {
-            ["action"] = new JsonObject
+            data[TeamsBotVerbs.ReasonInput] = reason;
+        }
+
+        return new JsonObject
+        {
+            ["type"] = "invoke",
+            ["name"] = "adaptiveCard/action",
+            ["channelId"] = "msteams",
+            ["serviceUrl"] = ServiceUrl.TrimEnd('/'),
+            ["from"] = new JsonObject { ["id"] = "29:oncall", ["aadObjectId"] = ObjectId, ["name"] = displayName },
+            ["conversation"] = new JsonObject { ["id"] = "a:oncall" },
+            ["channelData"] = new JsonObject { ["tenant"] = new JsonObject { ["id"] = tenant } },
+            ["value"] = new JsonObject
             {
-                ["type"] = "Action.Execute",
-                ["verb"] = verb,
-                ["data"] = new JsonObject { ["incidentId"] = IncidentId.ToString() },
+                ["action"] = new JsonObject
+                {
+                    ["type"] = "Action.Execute",
+                    ["verb"] = verb,
+                    ["data"] = data,
+                },
             },
-        },
-    };
+        };
+    }
 
     private static (string, string?)[] Bot() =>
     [

@@ -243,15 +243,7 @@ public sealed class TeamsBotNotificationChannel(
                     .FirstOrDefaultAsync(ct)
                     .ConfigureAwait(false);
 
-                var links = new TeamsCardLinks
-                {
-                    BaseUrl = o.BaseUrl,
-                    GrafanaUrl = o.GrafanaUrl,
-                    BoardUrl = TeamsBotLinks.Board(o.TeamsBot, board),
-                    Actions = o.TeamsBot.Actions.Enabled,
-                };
-
-                var card = TeamsBotCards.Alert(incident, links);
+                var card = TeamsBotCards.Alert(incident, TeamsBotLinks.Alert(o, board));
 
                 return (TeamsBotCards.WithSummary(card, Announcement(message, incident.Title)), id);
             }

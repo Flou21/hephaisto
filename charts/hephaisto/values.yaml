@@ -501,7 +501,8 @@ notifications:
   #     channel post and for a reply alike, and there is no setting that stops it.
   #
   # Every button is a link, unless `actions.enabled` below: then an open alert also carries
-  # Acknowledge and Assign to me, which Microsoft delivers by calling this pod.
+  # buttons that act - Acknowledge, Assign to me, Reinvestigate, and Close for the approvers you
+  # name - which Microsoft delivers by calling this pod.
   #
   # You need, in the SAME Microsoft tenant as your Teams: a single-tenant app registration, an
   # Azure Bot resource (free tier) with the Teams channel on, and a Teams app that names the bot
@@ -526,9 +527,12 @@ notifications:
       # How many incidents the board lists before it says "and N more". At most 40. The board
       # also trims itself to 100 KB whatever this says, because a count is not a size.
       maxIncidents: 20
-    # Buttons that ACT on an alert: Acknowledge and Assign to me. Nothing else - close, approve
-    # and deny stay links into the console, because the click arrives as a Microsoft Entra
-    # identity and your approver role lives in auth.authority.
+    # Buttons that ACT on an alert.
+    #   Any member of the team: Acknowledge, Assign to me, and - on an escalated incident no
+    #     investigation found anything for - Reinvestigate. All three are read-level in the
+    #     console too.
+    #   An approver only: Close, which asks for a reason first. See `approvers` below.
+    # Approve and deny stay links into the console.
     #
     # Turning this on creates the ONE inbound route Microsoft calls: POST /api/teams/messages,
     # on its own port and nowhere else, and nothing else answers on that port. Set your Azure
@@ -541,6 +545,15 @@ notifications:
       enabled: false
       # Must differ from 8080 and from webhookPort.
       port: 8082
+      # Who holds the approver role in Teams, as Microsoft Entra OBJECT IDS - GUIDs, not
+      # addresses. A click arrives as an Entra identity, and the console's approver role lives
+      # in whatever auth.authority names, so the mapping between the two is said here, in a
+      # reviewed file, and nothing in somebody else's directory can grant it.
+      #   az ad user show --id someone@example.com --query id -o tsv
+      # Empty means nobody: Close is then not drawn, and a click that asks for it is refused. A
+      # card is the same for everybody, so with somebody named here everybody SEES Close; who
+      # may press it is decided at the click. An approver must also be a member of the team.
+      approvers: []
 
   # Which events, at which severity, in which namespaces, go where. Additive only - there is
   # no deny rule, because a subtractive routing table is one nobody can reason about and the

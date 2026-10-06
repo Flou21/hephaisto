@@ -191,6 +191,9 @@ would also make at startup - rendering is just the earlier, cheaper place to hea
   {{- if has .name $reserved -}}
     {{- fail (printf "extraEnv may not set %q: the chart manages it, and because extraEnv is appended last a duplicate would silently win rather than conflict. Use the corresponding value instead - mode, secrets.llm, secrets.grafanaMcp, grafanaMcp.url, postgres.* or codeFix.* - or, for an indexed list, the next free index." .name) -}}
   {{- end -}}
+  {{- if hasPrefix "Notifications__TeamsBot__Actions__Approvers__" .name -}}
+    {{- fail (printf "extraEnv may not set %q: who holds the approver role in Teams is notifications.teamsBot.actions.approvers, which the chart numbers and the schema checks - an entry here would add an approver no values file names." .name) -}}
+  {{- end -}}
   {{- if hasPrefix "Mcp__" .name -}}
     {{- fail (printf "extraEnv may not set %q: every Mcp setting is an mcp.* value (and a token is secrets.mcp), and the chart checks them together - the port against the others, a token against its Secret." .name) -}}
   {{- end -}}

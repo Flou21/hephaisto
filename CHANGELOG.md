@@ -36,6 +36,15 @@ the same day.
   issues" in the incident list's filter box. It counts first, then acknowledges the open
   incidents the filter matches that nobody holds yet; one somebody already acknowledged is left
   alone.
+- **Close and Reinvestigate from a Teams card** ([#124](docs/backlog.md#124)). With
+  `notifications.teamsBot.actions.enabled`, an escalated alert that no investigation found
+  anything for carries **Reinvestigate**, for any member of the team, as in the console.
+  **Close** asks for a reason and takes an approver: `notifications.teamsBot.actions.approvers`
+  lists Microsoft Entra object ids (`az ad user show --id <address> --query id -o tsv`) and is
+  empty by default, which draws no Close and refuses a click that asks for it. With somebody
+  named, everybody sees the button; a member who is not on the list is told so and nothing
+  changes. Both go through the console's own close and re-investigate, so the audit row is the
+  same one. Approve and deny are still links.
 - **The sweeper has chart values**: `incidents.sweep.enabled`, `expireAfter`, `approvalTimeout`.
   Still off by default.
 

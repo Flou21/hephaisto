@@ -104,6 +104,77 @@ public sealed class TeamsBotDiagnosisTests(PostgresFixture pg)
         diagnosis.Summary.Should().Be("A code fix is needed; nothing in the cluster to do.");
         diagnosis.Evidence.Should().Equal("at OidcProbe.ProbeAsync");
         diagnosis.CodeRefs.Should().ContainSingle().Which.Line.Should().Be(84);
+
+        // Something was found, so the card offers no second attempt (#124).
+        incidents[incidentId].Diagnosed.Should().BeTrue();
+        incidents[incidentId].CanReinvestigate.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task An_older_finding_still_counts_as_diagnosed_when_the_newest_run_found_nothing()
+    {
+        // The card shows the newest investigation; whether it offers another attempt is the
+        // console's rule, which asks whether ANY investigation has a primary finding (#124).
+        await pg.ResetAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        Guid incidentId;
+        await using (var db = pg.CreateContext())
+        {
+            var incident = new Incident
+            {
+                CorrelationKey = $"cait/Deployment/ledger-{Guid.NewGuid():N}",
+                Title = "ledger is crash looping",
+                Kind = SignalKind.CrashLoopBackOff,
+                Severity = Severity.Warning,
+                State = IncidentState.Escalated,
+                EscalationReason = EscalationReason.NoPlanProduced,
+                Target = new TargetRef { Namespace = "cait", Kind = "Deployment", Name = "ledger" },
+                OpenedAt = Now.AddHours(-2),
+                LastSignalAt = Now.AddHours(-2),
+            };
+            db.Incidents.Add(incident);
+            incidentId = incident.Id;
+
+            var older = new Investigation
+            {
+                IncidentId = incident.Id,
+                ModelId = "claude-opus-5-5",
+                StartedAt = Now.AddMinutes(-30),
+                CompletedAt = Now.AddMinutes(-29),
+                TerminationReason = TerminationReason.Concluded,
+                Executor = InvestigationExecutors.InProcess,
+            };
+            older.Findings.Add(new Finding
+            {
+                InvestigationId = older.Id,
+                Category = "application",
+                Hypothesis = "The ledger cannot reach its database.",
+                Confidence = 0.7,
+                IsPrimary = true,
+            });
+            db.Investigations.Add(older);
+
+            db.Investigations.Add(new Investigation
+            {
+                IncidentId = incident.Id,
+                ModelId = "claude-opus-5-5",
+                StartedAt = Now.AddMinutes(-3),
+                CompletedAt = Now,
+                TerminationReason = TerminationReason.Concluded,
+                Executor = InvestigationExecutors.InProcess,
+            });
+
+            await db.SaveChangesAsync(ct);
+        }
+
+        await using var read = pg.CreateContext();
+        var incident2 = (await new TeamsBotIncidents(read).ByIdAsync([incidentId], ct))[incidentId];
+
+        incident2.Diagnosis.Should().NotBeNull();
+        incident2.Diagnosis!.Grounded.Should().BeFalse("the newest investigation is the one the card shows");
+        incident2.Diagnosed.Should().BeTrue("an earlier one found something");
+        incident2.CanReinvestigate.Should().BeFalse();
     }
 
     [Fact]
@@ -135,6 +206,12 @@ public sealed class TeamsBotDiagnosisTests(PostgresFixture pg)
         await using var read = pg.CreateContext();
         var (listed, _) = await new TeamsBotIncidents(read).OpenAsync(10, ct);
 
-        listed.Should().ContainSingle(i => i.Id == incidentId).Which.Diagnosis.Should().BeNull();
+        var never = listed.Should().ContainSingle(i => i.Id == incidentId).Which;
+
+        never.Diagnosis.Should().BeNull();
+
+        // Escalated with nothing found: where the console offers the retry, the card does (#124).
+        never.Diagnosed.Should().BeFalse();
+        never.CanReinvestigate.Should().BeTrue();
     }
 }

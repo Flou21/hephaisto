@@ -7,6 +7,7 @@ using Hephaisto.Agent.Persistence;
 using Hephaisto.Agent.Web;
 using Hephaisto.Core.Abstractions;
 using Hephaisto.Core.Notifications;
+using Hephaisto.Core.Safety;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -165,13 +166,18 @@ public interface ITeamsActionTarget
 
     Task<LifecycleResult> AssignToAsync(Guid incidentId, string actor, CancellationToken ct);
 
+    Task<ReinvestigateResult> ReinvestigateAsync(Guid incidentId, string actor, CancellationToken ct);
+
+    Task<LifecycleResult> CloseAsync(Guid incidentId, string actor, string reason, CancellationToken ct);
+
     /// <summary>The alert card as it is now, or null when the incident no longer exists.</summary>
     Task<JsonObject?> CardAsync(Guid incidentId, CancellationToken ct);
 }
 
 /// <summary>
-/// The console's own lifecycle calls, so a click and a console button cannot disagree about what
-/// acknowledging or assigning means - the same forbidden-actor rule, the same audit row.
+/// The console's own calls, so a click and a console button cannot disagree about what
+/// acknowledging, assigning, re-investigating or closing means - the same forbidden-actor rule,
+/// the same state machine, the same audit row. Nothing here writes state itself.
 /// </summary>
 public sealed class TeamsActionTarget(
     IncidentQueries queries,
@@ -183,6 +189,12 @@ public sealed class TeamsActionTarget(
 
     public Task<LifecycleResult> AssignToAsync(Guid incidentId, string actor, CancellationToken ct) =>
         queries.AssignIncidentAsync(incidentId, actor, actor, ct);
+
+    public Task<ReinvestigateResult> ReinvestigateAsync(Guid incidentId, string actor, CancellationToken ct) =>
+        queries.RequestReinvestigationAsync(incidentId, actor, ct);
+
+    public Task<LifecycleResult> CloseAsync(Guid incidentId, string actor, string reason, CancellationToken ct) =>
+        queries.CloseIncidentAsync(incidentId, actor, reason, ct);
 
     public async Task<JsonObject?> CardAsync(Guid incidentId, CancellationToken ct)
     {
@@ -209,13 +221,7 @@ public sealed class TeamsActionTarget(
             .FirstOrDefaultAsync(ct)
             .ConfigureAwait(false);
 
-        var activity = TeamsBotCards.Alert(incident, new TeamsCardLinks
-        {
-            BaseUrl = o.BaseUrl,
-            GrafanaUrl = o.GrafanaUrl,
-            BoardUrl = TeamsBotLinks.Board(o.TeamsBot, board),
-            Actions = o.TeamsBot.Actions.Enabled,
-        });
+        var activity = TeamsBotCards.Alert(incident, TeamsBotLinks.Alert(o, board));
 
         return activity["attachments"]?[0]?["content"]?.DeepClone() as JsonObject;
     }
@@ -241,6 +247,13 @@ public sealed record TeamsActionAnswer(int Status, JsonNode? Body, string? Refus
 /// <b>The actor is the roster's, not the click's.</b> An invoke activity carries a display name
 /// the sender chose; the only thing believed from it is the object id, and that only because the
 /// token says Microsoft sent it. The name recorded is what the team's member list says.
+/// </para>
+/// <para>
+/// <b>Who may close is decided here, not on the card.</b> A card is the same for everybody who
+/// reads it, so the Close button is in front of people who may not press it. The object id that
+/// was just found in the roster is looked up in <see cref="TeamsBotActionsOptions.Approvers"/>;
+/// somebody who is not on it is told so in words, because a click that failed silently is a
+/// person who thinks they closed something.
 /// </para>
 /// </remarks>
 public sealed class TeamsBotActionHandler(
@@ -323,13 +336,77 @@ public sealed class TeamsBotActionHandler(
             return Error("the button named no incident");
         }
 
-        var result = verb == TeamsBotVerbs.Acknowledge
-            ? await target.AcknowledgeAsync(incidentId, person.Actor, ct).ConfigureAwait(false)
-            : await target.AssignToAsync(incidentId, person.Actor, ct).ConfigureAwait(false);
+        // The approver role, for the verbs that carry it in the console. Asked of the object id
+        // the roster just vouched for, and before anything the click says is read.
+        if (TeamsBotVerbs.Approver.Contains(verb, StringComparer.Ordinal) && !bot.Actions.IsApprover(objectId))
+        {
+            return Decline(
+                person.Actor,
+                verb,
+                incidentId,
+                $"{Doing(verb)} needs the approver role, and you are not in notifications.teamsBot.actions.approvers.");
+        }
 
+        switch (verb)
+        {
+            case TeamsBotVerbs.Acknowledge:
+                return await LifecycleAsync(
+                    person.Actor,
+                    verb,
+                    incidentId,
+                    await target.AcknowledgeAsync(incidentId, person.Actor, ct).ConfigureAwait(false),
+                    ct).ConfigureAwait(false);
+
+            case TeamsBotVerbs.AssignToMe:
+                return await LifecycleAsync(
+                    person.Actor,
+                    verb,
+                    incidentId,
+                    await target.AssignToAsync(incidentId, person.Actor, ct).ConfigureAwait(false),
+                    ct).ConfigureAwait(false);
+
+            case TeamsBotVerbs.Reinvestigate:
+                return await ReinvestigateAsync(person.Actor, incidentId, ct).ConfigureAwait(false);
+
+            case TeamsBotVerbs.Close:
+                // What the person typed into the card. A person wrote it, in a client this process
+                // does not control, so it is cleaned like any other text from outside and cut to
+                // what the card would have allowed.
+                var reason = UntrustedText.Clean(Text(action?["data"], TeamsBotVerbs.ReasonInput) ?? string.Empty).Trim();
+
+                if (reason.Length == 0)
+                {
+                    return Decline(person.Actor, verb, incidentId, "Give a reason: it is written to the incident.");
+                }
+
+                if (reason.Length > TeamsBotCards.MaxReasonLength)
+                {
+                    reason = reason[..TeamsBotCards.MaxReasonLength];
+                }
+
+                return await LifecycleAsync(
+                    person.Actor,
+                    verb,
+                    incidentId,
+                    await target.CloseAsync(incidentId, person.Actor, reason, ct).ConfigureAwait(false),
+                    ct).ConfigureAwait(false);
+
+            default:
+                // TeamsBotVerbs.All and this switch are the same list; a test holds them together.
+                return Error($"'{verb}' is not something a button here can do");
+        }
+    }
+
+    private async Task<TeamsActionAnswer> LifecycleAsync(
+        string actor,
+        string verb,
+        Guid incidentId,
+        LifecycleResult result,
+        CancellationToken ct)
+    {
         logger.LogInformation(
             "A Teams click by {Actor}: {Verb} on incident {IncidentId} - {Outcome}.",
-            person.Actor, verb, incidentId, result.Outcome);
+            actor, verb, incidentId, result.Outcome);
 
         switch (result.Outcome)
         {
@@ -344,6 +421,46 @@ public sealed class TeamsBotActionHandler(
                     incidentId,
                     $"Nothing changed: {result.Detail ?? "the incident is not in a state this applies to"}",
                     ct).ConfigureAwait(false);
+
+            default:
+                return Refuse(403, result.Detail ?? "the actor may not do this");
+        }
+    }
+
+    /// <summary>
+    /// Another investigation, through the console's own door: its named-requester rule, its
+    /// kill-switch check and its queue. Each way it can decline is said in words - the same reason
+    /// the console gives each its own status code.
+    /// </summary>
+    private async Task<TeamsActionAnswer> ReinvestigateAsync(string actor, Guid incidentId, CancellationToken ct)
+    {
+        var result = await target.ReinvestigateAsync(incidentId, actor, ct).ConfigureAwait(false);
+
+        logger.LogInformation(
+            "A Teams click by {Actor}: {Verb} on incident {IncidentId} - {Outcome}.",
+            actor, TeamsBotVerbs.Reinvestigate, incidentId, result.Outcome);
+
+        switch (result.Outcome)
+        {
+            case ReinvestigateOutcome.Queued:
+                return await CardOrMessageAsync(incidentId, "Another investigation is queued.", ct).ConfigureAwait(false);
+
+            case ReinvestigateOutcome.NotFound:
+                return Message("That incident no longer exists.");
+
+            case ReinvestigateOutcome.AlreadyRunning:
+                return Message($"Nothing changed: {result.Detail ?? "an investigation is already running for this incident."}");
+
+            case ReinvestigateOutcome.Disabled:
+                return Message($"Nothing changed, the agent is switched off: {result.Detail ?? "its mode is Off."}");
+
+            case ReinvestigateOutcome.IllegalState:
+                return Message($"Nothing changed: {result.Detail ?? "the incident is not in a state another investigation can start from."}");
+
+            case ReinvestigateOutcome.QueueFull:
+                // Not "nothing changed": the incident is marked Investigating and nothing is
+                // working it yet. Saying otherwise would be the one untrue answer here.
+                return Message($"Not started yet: {result.Detail ?? "the investigation queue is full."}");
 
             default:
                 return Refuse(403, result.Detail ?? "the actor may not do this");
@@ -382,6 +499,25 @@ public sealed class TeamsBotActionHandler(
             ["value"] = new JsonObject { ["code"] = "BadRequest", ["message"] = message },
         });
     }
+
+    /// <summary>
+    /// A refusal the person reads: a member of the team asked for something they may not have, or
+    /// left out what it needs. Answered in words, logged like every other refusal, nothing changed.
+    /// </summary>
+    private TeamsActionAnswer Decline(string actor, string verb, Guid incidentId, string why)
+    {
+        logger.LogWarning(
+            "A Teams click by {Actor} was refused: {Verb} on incident {IncidentId} - {Reason} Nothing was changed.",
+            actor, verb, incidentId, why);
+
+        return Message($"{why} Nothing was changed.");
+    }
+
+    private static string Doing(string verb) => verb switch
+    {
+        TeamsBotVerbs.Close => "Closing",
+        _ => $"'{verb}'",
+    };
 
     private TeamsActionAnswer Refuse(int status, string why)
     {
@@ -444,6 +580,21 @@ public static class TeamsBotActionsExtensions
                 $"Notifications:TeamsBot:Actions:Port is {actions.Port}. It must be a port of its own - "
                 + $"not the console's ({web.MainPort}) and not the webhook's ({web.WebhookPort}) - so that "
                 + "exposing it to Microsoft exposes nothing else.");
+        }
+
+        // An approver is a Microsoft Entra object id, in the one form a click carries it. Anything
+        // else - a mail address, a display name, a GUID in braces - would never match, and a list
+        // that silently names nobody reads exactly like one that works until somebody has to close
+        // something.
+        foreach (var approver in actions.Approvers)
+        {
+            if (!Guid.TryParseExact(approver?.Trim(), "D", out _))
+            {
+                throw new InvalidOperationException(
+                    $"Notifications:TeamsBot:Actions:Approvers names '{approver}', which is not a Microsoft Entra "
+                    + "object id (a GUID, xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx). A click is matched by its "
+                    + "from.aadObjectId, so an address or a name here would map nobody to the approver role.");
+            }
         }
 
         // With auth off this is the only scheme, and ASP.NET Core would otherwise make a lone

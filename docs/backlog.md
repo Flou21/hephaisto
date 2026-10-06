@@ -1866,8 +1866,24 @@ input and buttons would, `reason` and `actionId`, and answers the object id it c
 **P54 is the wire, not an approval:** the model stand-in answers a planning call with `{}`, so no
 incident of the suite ever waits for approval, and the approval itself has to be a unit test.
 
-**Still open:** close and reinvestigate; approve and deny, which need the Entra-to-approver map;
-and all of it against a real tenant ([#125](#125)). Open.
+**Close and reinvestigate, 2026-10-06.** Reinvestigate is read-level, as in the console: any
+member, drawn where the console's retry banner is and the card is still kept in step - an
+Escalated incident none of whose investigations has a primary finding. Expired and Closed, where
+the console also offers the retry or a reopen, get no button: a card for an incident that is over
+is edited once and then left, so a button on it would outlive the state it was drawn for. Each
+way the request does not start is its own sentence, and a saturated queue is not reported as
+"nothing changed", because the incident is then marked Investigating. Close is an
+`Action.ShowCard` whose card requires a reason, and it takes **the approver map**:
+`notifications.teamsBot.actions.approvers`, Microsoft Entra object ids, empty by default. Empty
+draws no Close and refuses the verb; an entry that is not a GUID is refused by the schema and by
+the agent at startup, because an address there would map nobody and look like it worked. A
+member who is not on the list gets a sentence, one Warning line and no change - a card is the
+same for everybody, so the check is at the click and nothing is hidden per person. Both verbs
+call the console's own `RequestReinvestigationAsync` and `CloseIncidentAsync`. P51-P53 leave
+`KNOWN_RED` with this; none of them had run when it was written.
+
+**Still open:** approve and deny, behind a flag of their own; and all of it against a real
+tenant ([#125](#125)). Open.
 
 ### 125. The agent has never talked to Teams itself
 
@@ -1890,6 +1906,12 @@ document); that a real click's token carries `serviceurl` and its activity `from
 matching the roster's `aadObjectId`; that Teams renders the refreshed card the invoke answers
 with; and that the messaging endpoint, routed to the actions port through an ingress, is
 reachable from the Bot Connector at all.
+
+**Added by #124's close and reinvestigate.** That Teams sends what was typed into the Close
+card's `Input.Text` as `action.data.reason` - the input's id merged into the button's data, as
+Microsoft documents it and as the stand-in imitates it; that a required input stops the click in
+the client; and that Teams shows every action of an alert that now carries up to four acting
+buttons beside its links, rather than dropping the ones past the sixth.
 
 ### 126. An incident from a kube-state-metrics alert names the exporter's pod as its target
 

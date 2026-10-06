@@ -106,6 +106,34 @@ public sealed partial class PagerSuiteTests
         roadmap.Should().Contain(sentence, "the roadmap's Done when is what these scenarios stand for");
     }
 
+    [Theory]
+    [InlineData("scripts/e2e/values-pager.yaml")]
+    [InlineData("charts/hephaisto/values-dev-teams-bot.yaml")]
+    public void The_approver_an_install_maps_is_the_person_the_stand_in_clicks_as(string values)
+    {
+        // #124. An approver is a Microsoft Entra object id, and the stand-in derives one from an
+        // address. The values name the id; the scenarios click by address (P52 as oncall@, P53 as
+        // dev@). If the two drifted apart P52 would be refused as "not an approver" - on a
+        // cluster, minutes in - and P53 would pass for the wrong reason.
+        var standIn = File.ReadAllText(Path.Combine(RepoRoot(), "infra", "e2e", "notification-receiver", "TeamsStandIn.cs"));
+
+        standIn.Should().Contain(
+            "new Guid(SHA256.HashData(Encoding.UTF8.GetBytes(email.Trim().ToLowerInvariant()))[..16]).ToString()",
+            "this test recomputes the stand-in's object id, so it has to be the same computation");
+
+        var text = File.ReadAllText(Path.Combine(RepoRoot(), values));
+        var approvers = ApproversPattern().Match(text);
+
+        approvers.Success.Should().BeTrue($"{values} names its approvers under actions");
+        approvers.Groups[1].Value.Should().Contain(StandInObjectId("oncall@example.com"));
+        approvers.Groups[1].Value.Should().NotContain(StandInObjectId("dev@example.com"), "dev@ is the member who may not");
+        approvers.Groups[1].Value.Should().NotContain(StandInObjectId("lead@example.com"));
+    }
+
+    /// <summary><c>TeamsStandIn.ObjectId</c>: stable per address, and a GUID like a real one.</summary>
+    private static string StandInObjectId(string email) =>
+        new Guid(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(email.Trim().ToLowerInvariant()))[..16]).ToString();
+
     private static bool IsStale(Version milestone, Version floor) => milestone < floor;
 
     private static Version Floor()
@@ -148,6 +176,10 @@ public sealed partial class PagerSuiteTests
 
     [GeneratedRegex(@"^(P[0-9]{2})\s+([0-9]+\.[0-9]+)\s+\S.*$")]
     private static partial Regex EntryPattern();
+
+    /// <summary>The list items under <c>approvers:</c>, comments between them included.</summary>
+    [GeneratedRegex(@"^\s+approvers:\s*\n((?:\s+(?:#.*|- \S+)\s*\n)+)", RegexOptions.Multiline)]
+    private static partial Regex ApproversPattern();
 
     [GeneratedRegex(@"PAGER_CAPS=""(?:\$\{PAGER_CAPS:-)?([a-z -]+)\}?""")]
     private static partial Regex CapsPattern();

@@ -163,7 +163,10 @@ public sealed class TeamsBotIncidents(HephaistoDbContext db)
             return incidents;
         }
 
-        var investigationIds = newest.Values.Select(v => v.Id).ToList();
+        // Every completed investigation's primary finding, not only the newest's: the newest is
+        // what a card shows, and whether ANY of them found something is what decides if the card
+        // offers another attempt - the console's rule, which reads all of them.
+        var investigationIds = investigations.Select(v => v.Id).ToList();
 
         var primaries = await db.Findings.AsNoTracking()
             .Where(f => investigationIds.Contains(f.InvestigationId) && f.IsPrimary)
@@ -183,6 +186,11 @@ public sealed class TeamsBotIncidents(HephaistoDbContext db)
             .GroupBy(f => f.InvestigationId)
             .ToDictionary(g => g.Key, g => g.First());
 
+        var diagnosed = investigations
+            .Where(v => byInvestigation.ContainsKey(v.Id))
+            .Select(v => v.IncidentId)
+            .ToHashSet();
+
         return [.. incidents.Select(i =>
         {
             if (!newest.TryGetValue(i.Id, out var v))
@@ -194,6 +202,7 @@ public sealed class TeamsBotIncidents(HephaistoDbContext db)
 
             return i with
             {
+                Diagnosed = diagnosed.Contains(i.Id),
                 Diagnosis = new TeamsDiagnosis
                 {
                     Hypothesis = f?.Hypothesis,
@@ -240,6 +249,28 @@ public sealed class TeamsBotIncidents(HephaistoDbContext db)
 /// <summary>The links into Teams itself, which only Teams' own ids can build.</summary>
 public static class TeamsBotLinks
 {
+    /// <summary>
+    /// What an alert card is drawn with: its addresses, and which buttons the configuration
+    /// allows. One place, because an alert is rendered in three - when it is posted, when it is
+    /// compared, and when a click answers with it - and the three must draw the same card or the
+    /// comparison edits it back.
+    /// </summary>
+    public static TeamsCardLinks Alert(NotificationOptions options, string? boardActivityId)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        var actions = options.TeamsBot.Actions;
+
+        return new TeamsCardLinks
+        {
+            BaseUrl = options.BaseUrl,
+            GrafanaUrl = options.GrafanaUrl,
+            BoardUrl = Board(options.TeamsBot, boardActivityId),
+            Actions = actions.Enabled,
+            Closing = actions.Enabled && actions.Approvers.Count > 0,
+        };
+    }
+
     /// <summary>
     /// A link that opens the board, or null when the team is not configured.
     /// </summary>

@@ -378,17 +378,23 @@ why it is a value and not a default: this stack's collector writes `k8s_namespac
   channel for the life of the process, so a channel takes `IServiceScopeFactory`, never a
   `HephaistoDbContext` ([#121](docs/backlog.md#121)).
 - **There is exactly one inbound route from Microsoft**, and it is off by default:
-  `POST /api/teams/messages` for the Acknowledge / Assign-to-me buttons
-  (`notifications.teamsBot.actions`, #124). Its own port (8082) where nothing else answers, its own
+  `POST /api/teams/messages` for the buttons that act (`notifications.teamsBot.actions`, #124):
+  acknowledge, assign to me and reinvestigate for any member of the team, close for the Entra
+  object ids in `actions.approvers`. Its own port (8082) where nothing else answers, its own
   `BotFramework` JWT scheme - never the console's - and a key endorsement check a stock validator
   skips. Do not map anything else onto that port, and do not add a verb without a handler and a
   test (`TeamsBotVerbs`).
+- **A card is the same for everybody**, so a button is never hidden per person. What is drawn
+  follows the configuration and the incident's state; who may press it is decided at the click,
+  and each click calls the `IncidentQueries` method the console calls - never the database.
 
 Locally: `tilt_config.json` `"teams-bot": "stand-in"` deploys `teams-stand-in` in `hephaisto-obs`
 and points the agent at it; `curl http://$H:8110/teams/messages` shows what Teams would show, and
 `curl -X POST http://$H:8110/teams/click -H 'content-type: application/json' -d '{"incidentId":"<id>","verb":"acknowledge","user":"oncall@example.com"}'`
 signs a click the way Microsoft would and delivers it to the agent's actions port (vary `appId`,
-`tenant`, `user` or `"endorse": false` to see each refusal).
+`tenant`, `user` or `"endorse": false` to see each refusal). `"verb": "close"` takes a `"reason"`,
+and only `oncall@example.com` is an approver there: the stand-in derives an object id from the
+address, and `values-dev-teams-bot.yaml` names that one.
 `"real"` needs `charts/hephaisto/values-dev-teams-bot.local.yaml` (ignored by git) and the Secret
 `hephaisto-notification-teams-bot`, both made by hand. **Do not test against a channel people
 read**: a test board cannot be removed afterwards.

@@ -31,6 +31,10 @@ public sealed class TeamsBotActionsRouteTests : IAsyncLifetime
     private const string Tenant = "00000000-0000-0000-0000-0000000000d1";
     private const string ServiceUrl = "https://smba.example/teams";
 
+    /// <summary>Two people the roster knows. Only the first is mapped to the approver role.</summary>
+    private const string Approver = "5f0c0000-0000-0000-0000-000000000001";
+    private const string Member = "5f0c0000-0000-0000-0000-000000000002";
+
     private readonly RSA teams = RSA.Create(2048);
     private readonly RSA webchat = RSA.Create(2048);
     private readonly ITeamsActionTarget target = Substitute.For<ITeamsActionTarget>();
@@ -58,6 +62,7 @@ public sealed class TeamsBotActionsRouteTests : IAsyncLifetime
             ["Notifications:TeamsBot:Actions:Port"] = actionsPort.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["Notifications:TeamsBot:Actions:RequireHttpsMetadata"] = "false",
             ["Notifications:TeamsBot:Actions:OpenIdMetadataUrl"] = $"http://127.0.0.1:{otherPort}/openid",
+            ["Notifications:TeamsBot:Actions:Approvers:0"] = Approver,
         });
 
         builder.Services.AddOptions<Hephaisto.Core.Notifications.NotificationOptions>()
@@ -67,6 +72,8 @@ public sealed class TeamsBotActionsRouteTests : IAsyncLifetime
         members.FindAsync(default!, default).ReturnsForAnyArgs(new TeamsBotResult<TeamsMember>(
             HttpStatusCode.OK, new TeamsMember("29:oncall", "oid-1", "On Call", "oncall@example.com", "oncall@example.com"), null));
         target.AcknowledgeAsync(default, default!, default).ReturnsForAnyArgs(new LifecycleResult { Outcome = LifecycleOutcome.Applied });
+        target.ReinvestigateAsync(default, default!, default).ReturnsForAnyArgs(new ReinvestigateResult { Outcome = ReinvestigateOutcome.Queued });
+        target.CloseAsync(default, default!, default!, default).ReturnsForAnyArgs(new LifecycleResult { Outcome = LifecycleOutcome.Applied });
         target.CardAsync(default, default).ReturnsForAnyArgs(new JsonObject { ["type"] = "AdaptiveCard" });
 
         builder.Services.AddSingleton(members);
@@ -120,6 +127,51 @@ public sealed class TeamsBotActionsRouteTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_signed_close_by_a_mapped_approver_closes_with_the_reason_from_the_card()
+    {
+        // The approver map as the pod reads it: bound from configuration, not handed to the
+        // handler by a test. The reason arrives merged into the button's data.
+        var response = await Post(actionsPort, Sign(teams, "teams"), Click(TeamsBotVerbs.Close, Approver, reason: "the rollout finished"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK, await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        await target.Received(1).CloseAsync(Arg.Any<Guid>(), "oncall@example.com", "the rollout finished", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task A_signed_close_by_a_member_who_is_not_mapped_changes_nothing_and_says_why()
+    {
+        var response = await Post(actionsPort, Sign(teams, "teams"), Click(TeamsBotVerbs.Close, Member, reason: "the rollout finished"));
+        var body = JsonNode.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        body!["type"]!.GetValue<string>().Should().Be("application/vnd.microsoft.activity.message");
+        body["value"]!.GetValue<string>().Should().Contain("approver role");
+        target.ReceivedCalls().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task A_signed_reinvestigate_needs_no_approver()
+    {
+        var response = await Post(actionsPort, Sign(teams, "teams"), Click(TeamsBotVerbs.Reinvestigate, Member));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        await target.Received(1).ReinvestigateAsync(Arg.Any<Guid>(), "oncall@example.com", Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData(TeamsBotVerbs.Reinvestigate)]
+    [InlineData(TeamsBotVerbs.Close)]
+    public async Task No_new_verb_is_answered_without_a_token_or_on_another_port(string verb)
+    {
+        var click = Click(verb, Approver, reason: "the rollout finished");
+
+        (await Post(actionsPort, token: null, click)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await Post(actionsPort, Sign(webchat, "webchat"), click)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await Post(otherPort, Sign(teams, "teams"), click)).StatusCode.Should().Be(HttpStatusCode.NotFound);
+        target.ReceivedCalls().Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task A_click_signed_by_a_key_endorsed_for_another_channel_changes_nothing()
     {
         var response = await Post(actionsPort, Sign(webchat, "webchat"));
@@ -155,11 +207,11 @@ public sealed class TeamsBotActionsRouteTests : IAsyncLifetime
         target.ReceivedCalls().Should().BeEmpty();
     }
 
-    private async Task<HttpResponseMessage> Post(int port, string? token)
+    private async Task<HttpResponseMessage> Post(int port, string? token, JsonObject? click = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, $"http://127.0.0.1:{port}{TeamsBotActionsExtensions.Route}")
         {
-            Content = new StringContent(Click().ToJsonString(), Encoding.UTF8, "application/json"),
+            Content = new StringContent((click ?? Click()).ToJsonString(), Encoding.UTF8, "application/json"),
         };
 
         if (token is not null)
@@ -170,23 +222,33 @@ public sealed class TeamsBotActionsRouteTests : IAsyncLifetime
         return await http!.SendAsync(request, TestContext.Current.CancellationToken);
     }
 
-    private static JsonObject Click() => new()
+    private static JsonObject Click(string verb = TeamsBotVerbs.Acknowledge, string objectId = Member, string? reason = null)
     {
-        ["type"] = "invoke",
-        ["name"] = "adaptiveCard/action",
-        ["serviceUrl"] = ServiceUrl,
-        ["from"] = new JsonObject { ["id"] = "29:oncall", ["aadObjectId"] = "oid-1" },
-        ["channelData"] = new JsonObject { ["tenant"] = new JsonObject { ["id"] = Tenant } },
-        ["value"] = new JsonObject
+        var data = new JsonObject { ["incidentId"] = Guid.NewGuid().ToString() };
+
+        if (reason is not null)
         {
-            ["action"] = new JsonObject
+            data[TeamsBotVerbs.ReasonInput] = reason;
+        }
+
+        return new JsonObject
+        {
+            ["type"] = "invoke",
+            ["name"] = "adaptiveCard/action",
+            ["serviceUrl"] = ServiceUrl,
+            ["from"] = new JsonObject { ["id"] = "29:oncall", ["aadObjectId"] = objectId },
+            ["channelData"] = new JsonObject { ["tenant"] = new JsonObject { ["id"] = Tenant } },
+            ["value"] = new JsonObject
             {
-                ["type"] = "Action.Execute",
-                ["verb"] = TeamsBotVerbs.Acknowledge,
-                ["data"] = new JsonObject { ["incidentId"] = Guid.NewGuid().ToString() },
+                ["action"] = new JsonObject
+                {
+                    ["type"] = "Action.Execute",
+                    ["verb"] = verb,
+                    ["data"] = data,
+                },
             },
-        },
-    };
+        };
+    }
 
     private static string Sign(RSA key, string kid, string audience = AppId) =>
         new JsonWebTokenHandler().CreateToken(new SecurityTokenDescriptor

@@ -439,20 +439,30 @@ both leave "This message has been deleted." behind, and nothing switches that of
 `ITeamsBotClient` has no delete, a closed incident leaves the board by being edited out, and an
 alert that is over is edited into its final state and left.
 
-**Two buttons act, and only when asked to.** With `Notifications:TeamsBot:Actions:Enabled` an open
-alert carries Acknowledge and Assign to me as `Action.Execute`, and Teams delivers the click as an
-`adaptiveCard/action` invoke to `POST /api/teams/messages`:
+**Some buttons act, and only when asked to.** With `Notifications:TeamsBot:Actions:Enabled` an open
+alert carries Acknowledge and Assign to me; Reinvestigate where the console offers the retry and
+the card is still kept in step, which is an Escalated incident none of whose investigations has a
+primary finding; and, when `Actions:Approvers` names anybody, Close - an `Action.ShowCard` whose
+card requires a reason before its button. Each is an `Action.Execute`, and Teams delivers the
+click as an `adaptiveCard/action` invoke to `POST /api/teams/messages`:
 
 ```
 Teams --invoke + Bot Framework JWT--> :8082 /api/teams/messages   (nothing else answers on 8082)
   scheme "BotFramework": issuer, audience = app id, signature, key ENDORSED for msteams
   handler: serviceurl claim = activity.serviceUrl, tenant = ours, from.aadObjectId in the roster
-  --> IncidentQueries.Acknowledge/Assign as the roster names the person --> refreshed card
+           close only: that object id in Actions:Approvers, and data.reason not empty
+  --> IncidentQueries.Acknowledge/Assign/RequestReinvestigation/Close
+      as the roster names the person --> refreshed card
 ```
 
 Every check fails closed before an incident is touched, and a roster nobody could read is a 503,
 not a yes. The actor is the member list's name for the object id, never the display name the
-activity carries. Close, approve and deny stay links (backlog #124).
+activity carries. **A card is the same for everybody who reads it**, so nothing is hidden per
+person: what is drawn follows the configuration and the incident's state, and who may close is
+decided at the click from `Actions:Approvers` - Microsoft Entra object ids, because the click
+arrives as an Entra identity and the console's approver role lives in whatever `Auth:Authority`
+names. A member who is not on it is answered in words and nothing changes. Approve and deny stay
+links (backlog #124).
 
 **An edit notifies nobody**, which is why an alert is a new message and why it goes to a personal
 chat: the channel holds one message, and a person's own chat with the bot is where a message per
