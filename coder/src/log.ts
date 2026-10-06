@@ -1,6 +1,8 @@
-// Every byte of progress goes to stderr. stdout carries exactly one thing: the framed result,
-// last. Hephaisto reads the tail of the pod log, and a runner that chatters on stdout is one
-// that can push its own result out of the window it is read from.
+// Every byte of progress goes to stderr. stdout carries the framed result, last - and, for an
+// implementation that opened a pull request, one block before it with that pull request's
+// description (result.ts, emitPrBody): three lines. Hephaisto reads the tail of the pod log, and
+// a runner that chatters on stdout is one that can push its own result out of the window it is
+// read from.
 
 let prefix = '';
 

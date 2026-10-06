@@ -5,6 +5,7 @@ import { APP_ROOT } from '../src/config.js';
 import { readPrepareHandoff } from '../src/handoff.js';
 import { prTitle } from '../src/pr.js';
 import { ISSUE_PROMPT_VARS, ISSUE_PR_BODY_VARS, buildIssueElement, inert, loadTemplate, render, renderIssueBlock } from '../src/prompts.js';
+import { parseLastPrBody } from '../src/result.js';
 import { validate } from '../src/schemas.js';
 import { isWorkItem, prType, subjectOf, trailersOf, untrustedText } from '../src/subject.js';
 import {
@@ -346,10 +347,13 @@ describe('implement for an issue, end to end', () => {
   it('pushes the assigned branch with the issue trailer and opens a draft PR that closes the issue', async () => {
     const w = makeWorld();
     const req = issueImplementRequest(w, { work_item: hostileIssue() });
-    const { doc } = await runRequest(w, req, { CODEFIX_FAKE_SCRIPT_DIR: DEFAULT_SCRIPTS });
+    const { doc, stdout } = await runRequest(w, req, { CODEFIX_FAKE_SCRIPT_DIR: DEFAULT_SCRIPTS });
 
     expect(validate('implement', doc).errors).toEqual([]);
     expect(doc).toMatchObject({ contract_version: '1', outcome: 'pr_opened', pr_number: 1, branch: BRANCH, base_commit: w.mainSha, files: ['src/app.sh'], build_passed: true, tests_passed: true, error: null });
+    // the description, as gh was given it, is printed beside the result - and is not IN the result
+    expect(parseLastPrBody(stdout)).toBe(prBody(w));
+    expect(doc).not.toHaveProperty('pr_body');
 
     // the remote: main untouched, the one branch there
     expect(git(w.remote, 'rev-parse', 'main')).toBe(w.mainSha);

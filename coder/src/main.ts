@@ -5,7 +5,7 @@ import { billingOf, fakeScriptCandidates, prepareInvestigate, runInvestigate } f
 import { addRedaction, log, redact, setLogPrefix } from './log.js';
 import { type PhaseDeps, coderImplement, coderPlan, prepareImplement, preparePlan } from './phases.js';
 import { runPublish } from './publish.js';
-import { NIL_UUID, emitResult, hasEmitted, minimalFailed, validUuid } from './result.js';
+import { NIL_UUID, emitPrBody, emitResult, hasEmitted, minimalFailed, validUuid } from './result.js';
 import { type AnyResult, type CodeFixRequest, type InvestigateRequest, type InvestigateResult, type Phase, SCHEMA_FILES, validate } from './schemas.js';
 import { loadQuery } from './sdk.js';
 
@@ -302,7 +302,17 @@ export async function main(opts: MainOptions = {}): Promise<MainResult> {
   const publish = async (sealed: PrepareHandoff): Promise<AnyResult> => {
     const e = as('publish');
     log.info(`attempt ${identity.attemptId} phase implement role publish`);
-    const result = await runPublish(raw as CodeFixRequest, { env: e, deadline: publishDeadline(deadlineSeconds, sealed.started_at_ms), abort }, sealed);
+    const result = await runPublish(
+      raw as CodeFixRequest,
+      {
+        env: e,
+        deadline: publishDeadline(deadlineSeconds, sealed.started_at_ms),
+        abort,
+        // beside the result and before it, on the stream Hephaisto reads the result from
+        onPrBody: (body) => emitPrBody(body, { write: opts.write }),
+      },
+      sealed,
+    );
     log.info(`outcome ${result.outcome}${result.error ? `: ${result.error}` : ''} (cost $${result.cost_usd.toFixed(4)})`);
     return result;
   };
