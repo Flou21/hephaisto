@@ -281,13 +281,3 @@ pager_ack() {
     _pager_curl -o /dev/null -w '%{http_code}' -X POST "$PAGER_API/api/incidents/$1/acknowledge" \
         -H 'Content-Type: application/json' --data '{"actor":"pager-suite"}'
 }
-
-# Asserts, recording through common.sh's pass/fail.
-#   want <name> <actual> <op> <expected>     op: -eq -ne -ge -le -gt -lt = !=
-want() {
-    local name="$1" actual="$2" op="$3" want="$4"
-    case "$op" in
-        =|!=) [ "$actual" "$op" "$want" ] ;;
-        *)    [ "${actual:-0}" "$op" "$want" ] 2>/dev/null ;;
-    esac && pass "$name" || fail "$name" "got '${actual}', wanted $op '${want}'"
-}
