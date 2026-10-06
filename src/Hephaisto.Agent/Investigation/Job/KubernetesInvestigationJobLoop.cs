@@ -195,8 +195,7 @@ public sealed class KubernetesInvestigationJobLoop(
             var source = j.Source.Enabled ? await SourceForAsync(context.Incident, o, ct).ConfigureAwait(false) : null;
             var request = InvestigateRequestBuilder.Build(attemptId, context, j, o, token, source);
             var json = JsonSerializer.Serialize(request, CodeFixContract.Json);
-            var spec = InvestigateJobSpec.Job(
-                attemptId, context.Incident.Id, context.InvestigationId, withSource: source is not null, j, o);
+            var spec = InvestigateJobSpec.Job(attemptId, context.Incident.Id, context.InvestigationId, j, o);
 
             try
             {

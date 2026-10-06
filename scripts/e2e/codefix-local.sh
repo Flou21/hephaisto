@@ -10,11 +10,10 @@
 # still goes through the real guard, the real driver verification, a real push to the in-cluster
 # git server and a real Draft-PR shape; with "real" it spends subscription quota.
 #
-# RED UNTIL THE JOB IS SPLIT (#116). c15 asserts that the coder container is handed no git or
-# NuGet key, that no process inside it holds one, and that the implement result is printed by
-# the publish container. This suite has no known-red list, so it says so here: those assertions
-# fail against an agent that still starts one container, and this paragraph goes in the commit
-# that starts three.
+# c15 also holds the Job to backlog #116: the coder container is handed no git or NuGet key, no
+# process inside it holds one (read from inside it while the agent works), and the implement
+# result is printed by the publish container. It needs an agent and a coder image of the same
+# version - `tilt trigger coder` after pulling, the agent does not rebuild that image.
 #
 # SAFETY. This machine's default kube context is a production cluster. The runner never reads
 # ~/.kube/config after its first line: it extracts ONE context into a private kubeconfig, checks

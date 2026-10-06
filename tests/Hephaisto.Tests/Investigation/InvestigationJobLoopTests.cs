@@ -501,23 +501,61 @@ public sealed class InvestigationJobLoopTests
 
         var spec = launcher.Spec!;
         var pod = spec.Spec.Template.Spec;
-        var env = pod.Containers[0].Env;
+        var coder = pod.Containers.Single();
+        var env = coder.Env;
 
         spec.Metadata.Name.Should().StartWith("investigate-");
         spec.Spec.Template.Metadata.Labels["app.kubernetes.io/name"].Should().Be("hephaisto-investigator");
         pod.AutomountServiceAccountToken.Should().BeFalse();
-        pod.Containers[0].SecurityContext.ReadOnlyRootFilesystem.Should().BeTrue();
+        coder.Name.Should().Be("coder");
+        coder.SecurityContext.ReadOnlyRootFilesystem.Should().BeTrue();
         spec.Spec.BackoffLimit.Should().Be(0);
         spec.Spec.ActiveDeadlineSeconds.Should().Be(600);
 
         env.Where(e => e.ValueFrom?.SecretKeyRef is not null).Select(e => e.Name)
-            .Should().BeEquivalentTo(["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "GITHUB_TOKEN"],
-                "the context repository is private in production, source access or not; never a NuGet token");
+            .Should().Equal(["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
+                "the container the model runs in holds the model's credential and no GitHub token (#116)");
         env.Should().NotContain(e => e.Value != null && e.Name.Contains("TOKEN"));
         env.Single(e => e.Name == "NO_PROXY").Value.Should().Contain("hephaisto.hephaisto.svc");
         env.Single(e => e.Name == "no_proxy").Value.Should().Contain("hephaisto.hephaisto.svc");
         env.Single(e => e.Name == "CODEFIX_MODEL").Value.Should().Be("claude-opus-5-5");
+        env.Single(e => e.Name == "CODEFIX_ROLE").Value.Should().Be("coder");
         pod.Volumes.Should().NotContain(v => v.PersistentVolumeClaim != null, "an investigator never builds");
+        CodeFixJobSpec.ResultContainer(spec).Should().Be("coder", "the frame is read where it always was");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task The_clones_that_need_a_GitHub_token_happen_in_an_init_container_before_the_model_exists(bool sourceAccess)
+    {
+        job.Source.Enabled = sourceAccess;
+        codeFix.Repositories = [new() { Workload = "hephaisto-chaos/Deployment/shop-api", Url = "https://github.com/Flou21/hephaisto-fixture-dotnet" }];
+        codeFix.AllowedRepositoryHosts = ["github.com"];
+        var (loop, launcher, _, _) = Build();
+        launcher.Log = r => Frame(r, "no_conclusion");
+
+        await loop.RunAsync(Context(NewRecorder(), new InvestigationRunner.ConclusionHolder()), CancellationToken.None);
+
+        var pod = launcher.Spec!.Spec.Template.Spec;
+
+        // In every run, source access or not: the context repository is private in production, so
+        // the clone that needs the token is not optional - and neither is keeping it from the model.
+        var prepare = pod.InitContainers.Should().ContainSingle().Subject;
+        prepare.Name.Should().Be("prepare");
+        prepare.Env.Single(e => e.Name == "CODEFIX_ROLE").Value.Should().Be("prepare");
+        prepare.Env.Where(e => e.ValueFrom?.SecretKeyRef is not null).Select(e => e.Name)
+            .Should().Equal(["GITHUB_TOKEN"], "never the NuGet token, and never the model's");
+        prepare.Env.Should().NotContain(e => e.Name == "CODEFIX_MODEL");
+        prepare.Env.Should().Contain(e => e.Name == "HTTPS_PROXY", "the clone goes through the egress proxy like everything else");
+        prepare.SecurityContext.ReadOnlyRootFilesystem.Should().BeTrue();
+        prepare.SecurityContext.AllowPrivilegeEscalation.Should().BeFalse();
+        prepare.SecurityContext.Capabilities.Drop.Should().Equal("ALL");
+
+        pod.Containers.Single().Env.Select(e => e.Name)
+            .Should().NotContain(["GITHUB_TOKEN", "GH_TOKEN", "NUGET_GITHUB_TOKEN"]);
+        pod.ShareProcessNamespace.Should().BeNull();
+        pod.Volumes.Should().NotContain(v => v.Name == "sealed", "there is no publish to seal anything for");
     }
 
     [Fact]
@@ -529,10 +567,12 @@ public sealed class InvestigationJobLoopTests
 
         await loop.RunAsync(Context(NewRecorder(), new InvestigationRunner.ConclusionHolder()), CancellationToken.None);
 
-        launcher.Spec!.Spec.Template.Spec.Containers[0].Env
-            .Where(e => e.ValueFrom?.SecretKeyRef != null).Select(e => e.Name)
-            .Should().BeEquivalentTo(["GITHUB_TOKEN"],
-                "the runner refuses fake mode beside a model credential, and a $0 run must not become a paid one; the git token clones the context");
+        var pod = launcher.Spec!.Spec.Template.Spec;
+
+        pod.Containers.Single().Env.Where(e => e.ValueFrom?.SecretKeyRef != null)
+            .Should().BeEmpty("the runner refuses fake mode beside a model credential, and a $0 run must not become a paid one");
+        pod.InitContainers.Single().Env.Where(e => e.ValueFrom?.SecretKeyRef != null).Select(e => e.Name)
+            .Should().Equal(["GITHUB_TOKEN"], "the git token clones the context, in prepare");
     }
 
     [Fact]
@@ -570,8 +610,9 @@ public sealed class InvestigationJobLoopTests
         source.Url.Should().Be("https://github.com/Flou21/hephaisto-fixture-dotnet");
         source.DefaultBranch.Should().Be("fixture/c15-null-deref");
         source.Image.Should().Contain("583b1e5b");
-        launcher.Spec!.Spec.Template.Spec.Containers[0].Env.Should().Contain(e => e.Name == "GITHUB_TOKEN",
-            "the driver clones with it; the agent inside never sees it");
+        launcher.Spec!.Spec.Template.Spec.InitContainers.Single().Env.Should().Contain(e => e.Name == "GITHUB_TOKEN",
+            "prepare clones with it; the container the model runs in is never handed it");
+        launcher.Spec!.Spec.Template.Spec.Containers.Single().Env.Should().NotContain(e => e.Name == "GITHUB_TOKEN");
     }
 
     [Theory]
