@@ -7,3 +7,7 @@
 # version whose release needs the scenario green: once Directory.Build.props' floor passes it,
 # the entry is stale and a unit test fails (PagerSuiteTests). pager.sh --strict, the release
 # gate, fails every entry.
+P51 0.13 #124 close and reinvestigate: no card draws Reinvestigate and the route does not know the verb
+P52 0.13 #124 close and reinvestigate: no card draws Close, the route does not know the verb, and no approver is mapped
+P53 0.13 #124 close and reinvestigate: a close by click is refused as an unknown verb, not as a member who is not an approver
+P54 0.13 #124 approve and deny: the route knows neither verb and there is no approvals flag

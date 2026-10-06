@@ -1854,6 +1854,18 @@ and every verb drawn has a handler. The Teams stand-in publishes a key document 
 endorsed for Teams and one that is not, and `POST /teams/click` signs and delivers a click - for
 this bot or another, this tenant or another, a member or an outsider.
 
+**The rest, scenarios first, 2026-10-06.** Pager scenarios P51-P54 say what the remaining verbs
+have to do before any of them exists: a member's click re-investigates an incident nobody
+diagnosed, and the model is asked again (P51); an approver's click closes with the reason typed
+into the card, closed by the roster's name, with one audit row (P52); a member who is not an
+approver is told so and nothing changes (P53); approve and deny answer only an approver, and say
+so for an action that is not waiting (P54). All four are on `KNOWN_RED`, each for a reason only
+its verb removes - P53 asserts the sentence about the approver role, because "nothing changed" is
+also what an unknown verb does. The stand-in's `POST /teams/click` now carries what a card's
+input and buttons would, `reason` and `actionId`, and answers the object id it clicked as.
+**P54 is the wire, not an approval:** the model stand-in answers a planning call with `{}`, so no
+incident of the suite ever waits for approval, and the approval itself has to be a unit test.
+
 **Still open:** close and reinvestigate; approve and deny, which need the Entra-to-approver map;
 and all of it against a real tenant ([#125](#125)). Open.
 
