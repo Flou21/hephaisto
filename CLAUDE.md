@@ -538,6 +538,18 @@ Tiltfile and `infra/`, so anything that rewrites them - `git stash`, a checkout,
 re-renders the chart and replaces the agent's pod, twice, under whatever suite is running. To
 build or test one commit of a stack, use `git worktree add` somewhere else; committing is safe.
 
+`.tiltignore` keeps `src/**/bin` and `src/**/obj` out of that: the agent's image is a
+`custom_build`, which does not read `.dockerignore`, and without the file every local
+`dotnet build` synced a macOS apphost over the pod's Linux one - the pod's next start was
+`Exec format error`, with a green build above it. If you see that, touch a `.cs` file.
+
+Images the agent only NAMES are not rebuilt by a pod restart, and a Tilt-triggered build can
+fail on the macOS keychain in a background session. Build inside the VM:
+`rdctl shell sh -c 'cd ~/hephaisto && docker build -q -t hephaisto/coder:dev coder'` (and
+`-f infra/e2e/notification-receiver/Dockerfile -t hephaisto/notification-receiver:dev .` for the
+stand-in, then delete its pod). The node's image GC removes a locally built tag nothing runs:
+`ImagePullBackOff` on one of these means "rebuild it", not "push it".
+
 ## Verifying a change
 
 Prefer the running cluster over reasoning about it.

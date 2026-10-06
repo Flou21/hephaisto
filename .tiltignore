@@ -1,0 +1,9 @@
+# What Tilt does not watch, and so does not sync into the agent's pod.
+#
+# The agent's image is a custom_build, which - unlike docker_build - does not read
+# .dockerignore, and its live_update syncs all of src/. A `dotnet build` or ./scripts/test.sh
+# on this machine writes src/*/bin and src/*/obj, and without this file those went into the pod
+# beside the ones `dotnet watch` builds there: a macOS apphost over the Linux one, and the pod's
+# next start was "Exec format error". Under src/ only - coder/bin holds source.
+src/**/bin/
+src/**/obj/
