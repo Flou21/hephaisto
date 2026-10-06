@@ -178,6 +178,93 @@ public sealed class TeamsBotDiagnosisTests(PostgresFixture pg)
     }
 
     [Fact]
+    public async Task Only_an_action_that_can_still_be_decided_is_what_a_card_offers()
+    {
+        // #124. The card of an incident awaiting approval names each waiting action above its
+        // Approve and Deny. Not an action already decided, and not one that still says it is
+        // waiting on an incident somebody closed - nobody can decide that one any more.
+        await pg.ResetAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        Guid waitingId, closedId, pendingActionId;
+        await using (var db = pg.CreateContext())
+        {
+            var waiting = new Incident
+            {
+                CorrelationKey = $"cait/Deployment/api-{Guid.NewGuid():N}",
+                Title = "api is crash looping",
+                Kind = SignalKind.CrashLoopBackOff,
+                Severity = Severity.Critical,
+                State = IncidentState.AwaitingApproval,
+                Target = new TargetRef { Namespace = "cait", Kind = "Deployment", Name = "api" },
+                OpenedAt = Now.AddMinutes(-10),
+                LastSignalAt = Now.AddMinutes(-10),
+            };
+            var closed = new Incident
+            {
+                CorrelationKey = $"cait/Deployment/ledger-{Guid.NewGuid():N}",
+                Title = "ledger is crash looping",
+                Kind = SignalKind.CrashLoopBackOff,
+                Severity = Severity.Warning,
+                State = IncidentState.Closed,
+                Target = new TargetRef { Namespace = "cait", Kind = "Deployment", Name = "ledger" },
+                OpenedAt = Now.AddMinutes(-20),
+                LastSignalAt = Now.AddMinutes(-20),
+            };
+            db.Incidents.AddRange(waiting, closed);
+            waitingId = waiting.Id;
+            closedId = closed.Id;
+
+            var pending = new AgentAction
+            {
+                IncidentId = waiting.Id,
+                Type = ActionType.ScaleWorkload,
+                Target = new TargetRef { Namespace = "cait", Kind = "Deployment", Name = "api" },
+                Arguments = """{"replicas":3}""",
+                Risk = RiskTier.Medium,
+                State = ActionState.AwaitingApproval,
+            };
+            pendingActionId = pending.Id;
+
+            db.AgentActions.AddRange(
+                pending,
+                new AgentAction
+                {
+                    IncidentId = waiting.Id,
+                    Type = ActionType.RestartPod,
+                    Target = new TargetRef { Namespace = "cait", Kind = "Pod", Name = "api-7d9f" },
+                    State = ActionState.Denied,
+                },
+                new AgentAction
+                {
+                    IncidentId = closed.Id,
+                    Type = ActionType.RestartPod,
+                    Target = new TargetRef { Namespace = "cait", Kind = "Pod", Name = "ledger-0" },
+                    State = ActionState.AwaitingApproval,
+                });
+
+            await db.SaveChangesAsync(ct);
+        }
+
+        await using var read = pg.CreateContext();
+        var reader = new TeamsBotIncidents(read);
+
+        var asked = await reader.ByIdAsync([waitingId, closedId], ct, withPendingActions: true);
+
+        var offered = asked[waitingId].PendingActions.Should().ContainSingle().Which;
+        offered.Id.Should().Be(pendingActionId);
+        offered.Type.Should().Be(ActionType.ScaleWorkload);
+        offered.Risk.Should().Be(RiskTier.Medium);
+        offered.Target.Should().Be("cait/Deployment/api");
+        offered.Arguments.Should().Contain("replicas").And.Contain("3");
+        asked[closedId].PendingActions.Should().BeEmpty("its incident is closed, so nothing can decide it");
+
+        // Approvals off, the default: the actions are not read at all.
+        var unasked = await reader.ByIdAsync([waitingId], ct);
+        unasked[waitingId].PendingActions.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task An_incident_never_investigated_has_no_diagnosis()
     {
         await pg.ResetAsync();

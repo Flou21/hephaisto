@@ -753,8 +753,15 @@ public sealed class IncidentQueries(
             action.ApprovalSource = ApprovalSource.NotApplicable;
             action.DecisionReasons = [.. action.DecisionReasons, $"denied by {actor}"];
 
-            sp.GetRequiredService<IncidentStateMachine>()
-                .Escalate(incident, EscalationReason.PolicyDenied, $"{action.Type} denied by {actor}");
+            try
+            {
+                sp.GetRequiredService<IncidentStateMachine>()
+                    .Escalate(incident, EscalationReason.PolicyDenied, $"{action.Type} denied by {actor}");
+            }
+            catch (InvalidStateTransitionException ex)
+            {
+                return NoLongerDecidable(ex);
+            }
 
             db.TrackNewIncidentChildren(incident, eventsBefore);
 
@@ -786,8 +793,15 @@ public sealed class IncidentQueries(
         action.ApprovalSource = source;
         action.ApprovedAt = clock.UtcNow;
 
-        sp.GetRequiredService<IncidentStateMachine>()
-            .BeginActing(incident, $"{action.Type} approved by {actor}");
+        try
+        {
+            sp.GetRequiredService<IncidentStateMachine>()
+                .BeginActing(incident, $"{action.Type} approved by {actor}");
+        }
+        catch (InvalidStateTransitionException ex)
+        {
+            return NoLongerDecidable(ex);
+        }
 
         db.TrackNewIncidentChildren(incident, eventsBefore);
 
@@ -831,6 +845,25 @@ public sealed class IncidentQueries(
             DryRun = result.DryRun,
         };
     }
+
+    /// <summary>
+    /// The action still says it is waiting and its incident has moved on - a person closed it,
+    /// or another action of the same plan was decided first - so the state machine will not take
+    /// the decision.
+    /// </summary>
+    /// <remarks>
+    /// A person's close does not expire the incident's waiting actions the way a cleared alert
+    /// does (<c>IncidentTriage</c>), so this is reachable from an ordinary sequence of clicks.
+    /// Nothing has been saved when this is reached: the scope that tracked the half-made decision
+    /// is discarded with it. This used to leave as the state machine's exception, which the
+    /// console's API answered as a 500 and a click on a stale Teams card (#124) would have too. It
+    /// is the same answer as the double-click, for the same reason: nothing is waiting any more.
+    /// </remarks>
+    private static ApprovalResult NoLongerDecidable(InvalidStateTransitionException ex) => new()
+    {
+        Outcome = ApprovalOutcome.NotAwaitingApproval,
+        Detail = $"The incident is {ex.From}, so nothing on it is waiting for a decision any more.",
+    };
 
     /// <summary>
     /// Clears the runaway latch, restoring whatever mode the deployment already grants.

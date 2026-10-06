@@ -1882,8 +1882,36 @@ same for everybody, so the check is at the click and nothing is hidden per perso
 call the console's own `RequestReinvestigationAsync` and `CloseIncidentAsync`. P51-P53 leave
 `KNOWN_RED` with this; none of them had run when it was written.
 
-**Still open:** approve and deny, behind a flag of their own; and all of it against a real
-tenant ([#125](#125)). Open.
+**Approve and deny, 2026-10-06.** Behind `notifications.teamsBot.actions.approvals.enabled`, off
+by default; the chart and the agent both refuse it without the actions route and without an
+approver. An alert whose incident is awaiting approval names each waiting action - type, target,
+arguments, risk, the model-written parts as text Teams never parses - directly above its own
+Approve and Deny, which carry the action's id. Two verbs and two methods behind them, so nothing
+in a payload can turn a denial into an approval. The click calls the console's
+`DecideActionAsync` with a new `ApprovalSource.Teams` (stored by name: no migration), so the
+approval is committed in the roster's name before anything runs. With the switch off the two
+verbs are refused before who is asking is considered. A stale click is answered "already
+decided" in a message, never a refreshed card. **Found on the way:** an action can still say it
+is waiting on an incident somebody closed, and deciding it then left the console's API as a 500
+from the state machine; `DecideActionAsync` answers it as not-awaiting-approval now, for both
+doors. **No new trigger was needed** to put the buttons on a card already sent: the waiting
+actions are part of the card's content, the reconciler compares every live alert each
+`RefreshInterval`, and `ApprovalRequired` posts a new alert rendered from the present. The
+waiting actions are read only when approvals are on, so an install that leaves them off asks
+its database nothing it did not ask before. P54 leaves `KNOWN_RED`.
+
+**What is not proven, beyond the tenant:** an approval that runs, end to end. The pager suite
+cannot make an action wait - its model stand-in plans nothing - so P54 proves the wire (flag,
+verbs, approver map, the stale answer) and the approval itself is unit-tested against a
+substitute for `IncidentQueries`. The integration suite got the card's read of the waiting
+actions (`TeamsBotDiagnosisTests`), not an approval through this door. Before
+`approvals.enabled` is set anywhere that matters it wants one click on the dev cluster against a
+real waiting action. Also still as it was: a plan with two actions awaiting approval can only
+have its first decided, from Teams or the console - the incident leaves `AwaitingApproval` with
+the first decision and the state machine refuses the second, now with a sentence instead of a
+500.
+
+**Still open:** all of it against a real tenant ([#125](#125)), and the click above. Open.
 
 ### 125. The agent has never talked to Teams itself
 
@@ -1912,6 +1940,12 @@ card's `Input.Text` as `action.data.reason` - the input's id merged into the but
 Microsoft documents it and as the stand-in imitates it; that a required input stops the click in
 the client; and that Teams shows every action of an alert that now carries up to four acting
 buttons beside its links, rather than dropping the ones past the sixth.
+
+**Added by #124's approve and deny.** That Teams renders an `ActionSet` with two `Action.Execute`
+inside a card's body and delivers its click like one in the card's own row; that `style`
+`positive` and `destructive` render as intended; and that a card whose buttons were removed by an
+edit cannot still be clicked from a client that has not refreshed - the route answers that click
+"already decided" either way.
 
 ### 126. An incident from a kube-state-metrics alert names the exporter's pod as its target
 

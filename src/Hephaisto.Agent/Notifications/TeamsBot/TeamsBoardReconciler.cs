@@ -201,7 +201,7 @@ public sealed class TeamsBoardReconciler(
         var links = TeamsBotLinks.Alert(o, board?.ActivityId);
 
         var ids = alerts.Where(a => a.IncidentId is not null).Select(a => a.IncidentId!.Value).Distinct().ToList();
-        var known = await incidents.ByIdAsync(ids, ct).ConfigureAwait(false);
+        var known = await incidents.ByIdAsync(ids, ct, links.Approvals).ConfigureAwait(false);
         var now = clock.UtcNow;
 
         foreach (var alert in alerts)

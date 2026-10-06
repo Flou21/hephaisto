@@ -293,6 +293,14 @@ public enum ApprovalSource
 
     /// <summary>Reserved for the OIDC upgrade; populated from a verified claim.</summary>
     Oidc = 4,
+
+    /// <summary>
+    /// A click on a Teams card (#124). ApprovedBy is the team roster's name for the Microsoft Entra
+    /// object id the click carried, and that id is mapped to the approver role in
+    /// <c>Notifications:TeamsBot:Actions:Approvers</c>. Stored by name, like every enum here, so a
+    /// new member needs no migration.
+    /// </summary>
+    Teams = 5,
 }
 
 /// <summary>

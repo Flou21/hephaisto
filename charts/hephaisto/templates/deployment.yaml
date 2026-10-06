@@ -427,6 +427,12 @@ spec:
             - name: Notifications__TeamsBot__Actions__Approvers__{{ $a }}
               value: {{ $approver | quote }}
             {{- end }}
+            {{- if include "hephaisto.teamsApprovals" $ }}
+            # Approve and Deny on a card. Its own switch: the one click here that can end in a
+            # change to the cluster.
+            - name: Notifications__TeamsBot__Actions__Approvals__Enabled
+              value: "true"
+            {{- end }}
             {{- end }}
             {{- range $r, $recipient := .teamsBot.recipients }}
             - name: Notifications__TeamsBot__Recipients__{{ $r }}

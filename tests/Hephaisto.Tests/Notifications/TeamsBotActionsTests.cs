@@ -28,6 +28,7 @@ public sealed class TeamsBotActionsTests
     private const string ObjectId = "5f0c0000-0000-0000-0000-000000000001";
 
     private static readonly Guid IncidentId = Guid.Parse("0192a6f0-0000-7000-8000-0000000000aa");
+    private static readonly Guid ActionId = Guid.Parse("0192a6f0-0000-7000-8000-0000000000ac");
 
     private static readonly TeamsMember Member = new("29:oncall", ObjectId, "On Call", "oncall@example.com", "oncall@example.com");
 
@@ -119,9 +120,12 @@ public sealed class TeamsBotActionsTests
 
         foreach (var verb in TeamsBotVerbs.All)
         {
-            var (handler, target, _) = Handler(approvers: [ObjectId]);
+            var (handler, target, _) = Handler(approvers: [ObjectId], approvals: true);
 
-            var answer = await handler.HandleAsync(Caller(), Click(verb, reason: "the rollout finished"), TestContext.Current.CancellationToken);
+            var answer = await handler.HandleAsync(
+                Caller(),
+                Click(verb, reason: "the rollout finished", actionId: ActionId.ToString()),
+                TestContext.Current.CancellationToken);
 
             answer.Status.Should().Be(200, verb);
             answer.Body!["statusCode"]!.GetValue<int>().Should().Be(200, verb);
@@ -201,14 +205,14 @@ public sealed class TeamsBotActionsTests
 
     [Theory]
     [InlineData("reopen")]
-    [InlineData("approve")]
-    [InlineData("deny")]
+    [InlineData("decide")]
+    [InlineData("Approve")]
     [InlineData("Close")]
     [InlineData("")]
     public async Task A_verb_no_button_sends_changes_nothing(string verb)
     {
-        // An approver, so that what refuses these is the verb and not who sent it.
-        var (handler, target, _) = Handler(approvers: [ObjectId]);
+        // An approver with approvals on, so that what refuses these is the verb and nothing else.
+        var (handler, target, _) = Handler(approvers: [ObjectId], approvals: true);
 
         var answer = await handler.HandleAsync(Caller(), Click(verb), TestContext.Current.CancellationToken);
 
@@ -459,6 +463,206 @@ public sealed class TeamsBotActionsTests
     }
 
     // ---------------------------------------------------------------------------------------
+    // Approve and deny: an approver's, and only when switched on
+    // ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task An_approvers_approve_reaches_the_approval_and_only_the_approval()
+    {
+        var (handler, target, log) = Recording(approvers: [ObjectId], approvals: true);
+
+        var answer = await handler.HandleAsync(
+            Caller(),
+            Click(TeamsBotVerbs.Approve, displayName: "Somebody Else", actionId: ActionId.ToString()),
+            TestContext.Current.CancellationToken);
+
+        answer.Status.Should().Be(200);
+        answer.Body!["type"]!.GetValue<string>().Should().Be("application/vnd.microsoft.card.adaptive");
+        await target.Received(1).ApproveAsync(IncidentId, ActionId, "oncall@example.com", Arg.Any<CancellationToken>());
+        await target.DidNotReceiveWithAnyArgs().DenyAsync(default, default, default!, TestContext.Current.CancellationToken);
+        log.Warnings.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task An_approvers_deny_reaches_the_denial_and_never_the_approval()
+    {
+        var (handler, target, _) = Handler(approvers: [ObjectId], approvals: true);
+
+        // A field that says "approve" beside the verb "deny" is not a thing the route reads: the
+        // verb is the decision, so nothing in the data can turn a denial into an approval.
+        var click = Click(TeamsBotVerbs.Deny, actionId: ActionId.ToString());
+        click["value"]!["action"]!["data"]!["approve"] = true;
+
+        var answer = await handler.HandleAsync(Caller(), click, TestContext.Current.CancellationToken);
+
+        answer.Status.Should().Be(200);
+        await target.Received(1).DenyAsync(IncidentId, ActionId, "oncall@example.com", Arg.Any<CancellationToken>());
+        await target.DidNotReceiveWithAnyArgs().ApproveAsync(default, default, default!, TestContext.Current.CancellationToken);
+    }
+
+    [Theory]
+    [InlineData(TeamsBotVerbs.Approve)]
+    [InlineData(TeamsBotVerbs.Deny)]
+    public async Task With_approvals_off_a_forged_click_is_refused_even_from_an_approver(string verb)
+    {
+        // The default. No card draws the buttons then, and a card is not the only thing that can
+        // send an invoke - so the route refuses on its own.
+        var (handler, target, log) = Recording(approvers: [ObjectId]);
+
+        var answer = await handler.HandleAsync(Caller(), Click(verb, actionId: ActionId.ToString()), TestContext.Current.CancellationToken);
+
+        answer.Status.Should().Be(200);
+        answer.Body!["type"]!.GetValue<string>().Should().Be("application/vnd.microsoft.activity.message");
+        answer.Body!["value"]!.GetValue<string>().Should()
+            .Contain("switched off")
+            .And.Contain("notifications.teamsBot.actions.approvals.enabled")
+            .And.Contain("Nothing was changed");
+        target.ReceivedCalls().Should().BeEmpty();
+        log.Warnings.Should().ContainSingle().Which.Should().Contain("oncall@example.com").And.Contain(verb);
+    }
+
+    [Theory]
+    [InlineData(TeamsBotVerbs.Approve, null)]
+    [InlineData(TeamsBotVerbs.Deny, null)]
+    [InlineData(TeamsBotVerbs.Approve, "5f0c0000-0000-0000-0000-0000000000ff")]
+    [InlineData(TeamsBotVerbs.Deny, "5f0c0000-0000-0000-0000-0000000000ff")]
+    public async Task A_member_who_is_not_an_approver_cannot_decide_an_action(string verb, string? somebodyElse)
+    {
+        var (handler, target, log) = Recording(approvers: somebodyElse is null ? [] : [somebodyElse], approvals: true);
+
+        var answer = await handler.HandleAsync(Caller(), Click(verb, actionId: ActionId.ToString()), TestContext.Current.CancellationToken);
+
+        answer.Status.Should().Be(200);
+        answer.Body!["value"]!.GetValue<string>().Should()
+            .Contain("approver role")
+            .And.Contain("notifications.teamsBot.actions.approvers")
+            .And.Contain("Nothing was changed");
+        target.ReceivedCalls().Should().BeEmpty();
+        log.Warnings.Should().ContainSingle();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("not-a-guid")]
+    public async Task A_decision_that_names_no_action_changes_nothing(string? actionId)
+    {
+        var (handler, target, log) = Recording(approvers: [ObjectId], approvals: true);
+
+        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Approve, actionId: actionId), TestContext.Current.CancellationToken);
+
+        answer.Body!["type"]!.GetValue<string>().Should().Be("application/vnd.microsoft.error");
+        answer.Body!["value"]!["message"]!.GetValue<string>().Should().Contain("named no action");
+        target.ReceivedCalls().Should().BeEmpty();
+        log.Warnings.Should().ContainSingle();
+    }
+
+    [Theory]
+    [InlineData(TeamsBotVerbs.Approve)]
+    [InlineData(TeamsBotVerbs.Deny)]
+    public async Task A_click_on_a_stale_card_is_told_it_was_already_decided(string verb)
+    {
+        // A card stays where it was posted. Three people can press Approve on the same action;
+        // the second and third must be told, and must not see a card that reads as "done".
+        var (handler, target, _) = Handler(approvers: [ObjectId], approvals: true);
+        var stale = new ApprovalResult { Outcome = ApprovalOutcome.NotAwaitingApproval, Detail = "This action is Executed, not awaiting approval." };
+        target.ApproveAsync(default, default, default!, TestContext.Current.CancellationToken).ReturnsForAnyArgs(stale);
+        target.DenyAsync(default, default, default!, TestContext.Current.CancellationToken).ReturnsForAnyArgs(stale);
+
+        var answer = await handler.HandleAsync(Caller(), Click(verb, actionId: ActionId.ToString()), TestContext.Current.CancellationToken);
+
+        answer.Status.Should().Be(200);
+        answer.Body!["type"]!.GetValue<string>().Should().Be("application/vnd.microsoft.activity.message");
+        answer.Body!["value"]!.GetValue<string>().Should()
+            .Contain("Already decided")
+            .And.Contain("This action is Executed")
+            .And.Contain("Nothing was changed");
+        await target.DidNotReceiveWithAnyArgs().CardAsync(default, TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task An_action_that_no_longer_exists_says_so()
+    {
+        var (handler, target, _) = Handler(approvers: [ObjectId], approvals: true);
+        target.ApproveAsync(default, default, default!, TestContext.Current.CancellationToken)
+            .ReturnsForAnyArgs(new ApprovalResult { Outcome = ApprovalOutcome.NotFound });
+
+        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Approve, actionId: ActionId.ToString()), TestContext.Current.CancellationToken);
+
+        answer.Body!["value"]!.GetValue<string>().Should().Contain("no longer exists").And.Contain("Nothing was changed");
+    }
+
+    [Fact]
+    public async Task An_approval_that_was_recorded_and_then_did_not_run_is_not_called_nothing()
+    {
+        // Admission refused it, or the API call failed - after the row saying who approved was
+        // committed. "Nothing was changed" would be untrue, and "approved" alone would be too.
+        var (handler, target, _) = Handler(approvers: [ObjectId], approvals: true);
+        target.ApproveAsync(default, default, default!, TestContext.Current.CancellationToken).ReturnsForAnyArgs(
+            new ApprovalResult { Outcome = ApprovalOutcome.ExecutionRefused, Detail = "the action budget for this workload is spent" });
+
+        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Approve, actionId: ActionId.ToString()), TestContext.Current.CancellationToken);
+
+        answer.Body!["type"]!.GetValue<string>().Should().Be("application/vnd.microsoft.activity.message");
+        answer.Body!["value"]!.GetValue<string>().Should()
+            .Contain("approval is recorded")
+            .And.Contain("did not run")
+            .And.Contain("budget")
+            .And.NotContain("Nothing was changed");
+    }
+
+    [Fact]
+    public async Task A_dry_run_is_said_to_be_one_when_there_is_no_card_to_show_it()
+    {
+        var (handler, target, _) = Handler(approvers: [ObjectId], approvals: true);
+        target.ApproveAsync(default, default, default!, TestContext.Current.CancellationToken)
+            .ReturnsForAnyArgs(new ApprovalResult { Outcome = ApprovalOutcome.Executed, DryRun = true });
+        target.CardAsync(default, TestContext.Current.CancellationToken).ReturnsForAnyArgs((JsonObject?)null);
+
+        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Approve, actionId: ActionId.ToString()), TestContext.Current.CancellationToken);
+
+        answer.Body!["value"]!.GetValue<string>().Should().Contain("dry run");
+    }
+
+    [Fact]
+    public async Task A_decision_the_console_would_forbid_the_actor_is_refused()
+    {
+        var (handler, target, _) = Handler(approvers: [ObjectId], approvals: true);
+        target.ApproveAsync(default, default, default!, TestContext.Current.CancellationToken)
+            .ReturnsForAnyArgs(new ApprovalResult { Outcome = ApprovalOutcome.ForbiddenActor, Detail = "a model identity" });
+
+        var answer = await handler.HandleAsync(Caller(), Click(TeamsBotVerbs.Approve, actionId: ActionId.ToString()), TestContext.Current.CancellationToken);
+
+        answer.Status.Should().Be(403);
+        answer.Body.Should().BeNull();
+    }
+
+    [Fact]
+    public void Every_approval_outcome_has_an_answer_of_its_own()
+    {
+        // A new outcome must be decided, not defaulted into the 403 only a forbidden actor gets.
+        Enum.GetValues<ApprovalOutcome>().Should().BeEquivalentTo(
+        [
+            ApprovalOutcome.Executed,
+            ApprovalOutcome.Denied,
+            ApprovalOutcome.NotFound,
+            ApprovalOutcome.NotAwaitingApproval,
+            ApprovalOutcome.ExecutionRefused,
+            ApprovalOutcome.ForbiddenActor,
+        ]);
+    }
+
+    [Fact]
+    public void An_approval_from_a_card_is_recorded_as_having_come_from_teams()
+    {
+        // The source is stored by name. Renaming the member would orphan every row written with it.
+        Hephaisto.Core.Domain.ApprovalSource.Teams.ToString().Should().Be("Teams");
+        ((int)Hephaisto.Core.Domain.ApprovalSource.Teams).Should().Be(5);
+
+        Enum.GetNames<Hephaisto.Core.Domain.ApprovalSource>().Should().Equal("NotApplicable", "Ui", "Api", "Auto", "Oidc", "Teams");
+    }
+
+    // ---------------------------------------------------------------------------------------
     // Startup
     // ---------------------------------------------------------------------------------------
 
@@ -533,6 +737,54 @@ public sealed class TeamsBotActionsTests
     }
 
     [Fact]
+    public void Approvals_are_off_until_asked_for()
+    {
+        new TeamsBotActionsOptions().Approvals.Enabled.Should().BeFalse();
+        new TeamsBotActionsOptions { Enabled = true, Approvers = [ObjectId] }.Approvals.Enabled.Should().BeFalse(
+            "the buttons and an approver do not turn approvals on");
+    }
+
+    [Fact]
+    public void Approvals_without_the_buttons_refuse_to_start()
+    {
+        // Checked before the early return for "actions off", which is where a switch that reads
+        // as on and does nothing would otherwise hide.
+        var act = () => new ServiceCollection().AddHephaistoTeamsBotActions(Config(
+            [.. Bot(), ("Notifications:TeamsBot:Actions:Approvals:Enabled", "true"),
+             ("Notifications:TeamsBot:Actions:Approvers:0", ObjectId)]));
+
+        act.Should().Throw<InvalidOperationException>().WithMessage("*Approvals:Enabled*Actions:Enabled*nothing for a click to reach*");
+    }
+
+    [Fact]
+    public void Approvals_with_nobody_mapped_refuse_to_start()
+    {
+        var act = () => new ServiceCollection().AddHephaistoTeamsBotActions(Config(
+            [.. Bot(), ("Notifications:TeamsBot:Actions:Enabled", "true"),
+             ("Notifications:TeamsBot:Actions:Approvals:Enabled", "true")]));
+
+        act.Should().Throw<InvalidOperationException>().WithMessage("*Approvals:Enabled*Approvers*empty*");
+    }
+
+    [Fact]
+    public void Approvals_with_the_buttons_and_an_approver_start()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+
+        var config = Config(
+            [.. Bot(), ("Notifications:TeamsBot:Actions:Enabled", "true"),
+             ("Notifications:TeamsBot:Actions:Approvals:Enabled", "true"),
+             ("Notifications:TeamsBot:Actions:Approvers:0", ObjectId)]);
+
+        services.AddHephaistoTeamsBotActions(config);
+
+        services.Should().Contain(d => d.ServiceType == typeof(TeamsBotActionHandler));
+        config.GetSection(NotificationOptions.SectionName).Get<NotificationOptions>()!
+            .TeamsBot.Actions.Approvals.Enabled.Should().BeTrue();
+    }
+
+    [Fact]
     public void A_configured_bot_with_its_own_port_registers_the_route()
     {
         var services = new ServiceCollection();
@@ -546,25 +798,28 @@ public sealed class TeamsBotActionsTests
 
     private static (TeamsBotActionHandler Handler, ITeamsActionTarget Target, ITeamsMemberDirectory Members) Handler(
         TeamsBotResult<TeamsMember>? member = null,
-        string[]? approvers = null)
+        string[]? approvers = null,
+        bool approvals = false)
     {
-        var (handler, target, members, _) = Build(member, approvers);
+        var (handler, target, members, _) = Build(member, approvers, approvals);
 
         return (handler, target, members);
     }
 
     /// <summary>The same handler, with what it logged: a refusal is one Warning line.</summary>
     private static (TeamsBotActionHandler Handler, ITeamsActionTarget Target, RecordingLogger Log) Recording(
-        string[]? approvers = null)
+        string[]? approvers = null,
+        bool approvals = false)
     {
-        var (handler, target, _, log) = Build(null, approvers);
+        var (handler, target, _, log) = Build(null, approvers, approvals);
 
         return (handler, target, log);
     }
 
     private static (TeamsBotActionHandler, ITeamsActionTarget, ITeamsMemberDirectory, RecordingLogger) Build(
         TeamsBotResult<TeamsMember>? member,
-        string[]? approvers)
+        string[]? approvers,
+        bool approvals)
     {
         var options = Substitute.For<IOptionsMonitor<NotificationOptions>>();
         options.CurrentValue.Returns(new NotificationOptions
@@ -573,7 +828,12 @@ public sealed class TeamsBotActionsTests
             {
                 TenantId = Tenant,
                 AppId = AppId,
-                Actions = new TeamsBotActionsOptions { Enabled = true, Approvers = [.. approvers ?? []] },
+                Actions = new TeamsBotActionsOptions
+                {
+                    Enabled = true,
+                    Approvers = [.. approvers ?? []],
+                    Approvals = new TeamsBotApprovalsOptions { Enabled = approvals },
+                },
             },
         });
 
@@ -585,6 +845,8 @@ public sealed class TeamsBotActionsTests
         target.AssignToAsync(default, default!, default).ReturnsForAnyArgs(new LifecycleResult { Outcome = LifecycleOutcome.Applied });
         target.ReinvestigateAsync(default, default!, default).ReturnsForAnyArgs(new ReinvestigateResult { Outcome = ReinvestigateOutcome.Queued });
         target.CloseAsync(default, default!, default!, default).ReturnsForAnyArgs(new LifecycleResult { Outcome = LifecycleOutcome.Applied });
+        target.ApproveAsync(default, default, default!, default).ReturnsForAnyArgs(new ApprovalResult { Outcome = ApprovalOutcome.Executed });
+        target.DenyAsync(default, default, default!, default).ReturnsForAnyArgs(new ApprovalResult { Outcome = ApprovalOutcome.Denied });
         target.CardAsync(default, default).ReturnsForAnyArgs(new JsonObject { ["type"] = "AdaptiveCard" });
 
         var log = new RecordingLogger();
@@ -620,14 +882,25 @@ public sealed class TeamsBotActionsTests
     /// <summary>
     /// A click as Teams sends it. <paramref name="reason"/> is what the Close card's input held:
     /// Teams merges an input into the button's data under the input's id.
+    /// <paramref name="actionId"/> is what an Approve or Deny button carries.
     /// </summary>
-    private static JsonObject Click(string verb, string tenant = Tenant, string displayName = "On Call", string? reason = null)
+    private static JsonObject Click(
+        string verb,
+        string tenant = Tenant,
+        string displayName = "On Call",
+        string? reason = null,
+        string? actionId = null)
     {
         var data = new JsonObject { ["incidentId"] = IncidentId.ToString() };
 
         if (reason is not null)
         {
             data[TeamsBotVerbs.ReasonInput] = reason;
+        }
+
+        if (actionId is not null)
+        {
+            data[TeamsBotVerbs.ActionId] = actionId;
         }
 
         return new JsonObject

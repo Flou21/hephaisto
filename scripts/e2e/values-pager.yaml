@@ -103,6 +103,10 @@ notifications:
       # test, PagerSuiteTests, recomputes it). dev@ and lead@ are members and not approvers.
       approvers:
         - 6bc676d8-34ad-8cef-60ff-07a371204c78
+      # P54: approve and deny are answered at all. No scenario makes an action wait for approval -
+      # the model stand-in plans nothing - so nothing here is ever approved.
+      approvals:
+        enabled: true
   # The routing the scenarios read (P22-P25): team=pager-a and team=pager-b to oncall@, a
   # critical from team=pager-b to lead@ as well, and everything no team owns to dev@ through the
   # fallback. The webhook route is unscoped and hears everything.

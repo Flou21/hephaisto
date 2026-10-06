@@ -245,7 +245,12 @@ public sealed class TeamsBotOptions
 /// read-level acts in the console already. <b>Closing is an approver's</b>, as it is there - and
 /// the click arrives as a Microsoft Entra identity while the console's approver role lives in
 /// whatever <c>Auth:Authority</c> names, so who is an approver here is said explicitly, in
-/// <see cref="Approvers"/>. Approving and denying stay links (backlog #124).
+/// <see cref="Approvers"/>.
+/// </para>
+/// <para>
+/// <b>Approving and denying an action are an approver's too, and behind a switch of their own</b>,
+/// <see cref="Approvals"/>, off by default: they are the only clicks that can change the
+/// cluster, so turning the buttons on does not turn those on (backlog #124).
 /// </para>
 /// </remarks>
 public sealed class TeamsBotActionsOptions
@@ -298,6 +303,25 @@ public sealed class TeamsBotActionsOptions
     public bool IsApprover(string? aadObjectId) =>
         !string.IsNullOrWhiteSpace(aadObjectId)
         && Approvers.Any(a => string.Equals(a?.Trim(), aadObjectId.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Approve and Deny on an alert whose incident has an action awaiting approval.</summary>
+    public TeamsBotApprovalsOptions Approvals { get; set; } = new();
+}
+
+/// <summary>
+/// Approving or denying a proposed action from the card it was announced on.
+/// </summary>
+/// <remarks>
+/// Its own switch, because it is the one click here that ends in a change to the cluster: an
+/// install can let its team acknowledge and close from Teams and still keep every approval in the
+/// console. Startup refuses it without <see cref="TeamsBotActionsOptions.Enabled"/> - there would
+/// be no route - and without a single entry in <see cref="TeamsBotActionsOptions.Approvers"/> -
+/// there would be two buttons nobody may press.
+/// </remarks>
+public sealed class TeamsBotApprovalsOptions
+{
+    /// <summary>Whether the two buttons are drawn and the two verbs answered. Both or neither.</summary>
+    public bool Enabled { get; set; }
 }
 
 /// <summary>

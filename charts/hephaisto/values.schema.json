@@ -353,7 +353,7 @@
             },
             "actions": {
               "type": "object",
-              "description": "Buttons that act on an alert (Acknowledge, Assign to me, Reinvestigate; Close for the approvers named). Creates the one inbound route Microsoft calls, POST /api/teams/messages, on its own port.",
+              "description": "Buttons that act on an alert (Acknowledge, Assign to me, Reinvestigate; Close for the approvers named; Approve and Deny with approvals.enabled). Creates the one inbound route Microsoft calls, POST /api/teams/messages, on its own port.",
               "properties": {
                 "enabled": {
                   "type": "boolean"
@@ -372,6 +372,16 @@
                     "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
                   },
                   "description": "Who holds the approver role in Teams, as Microsoft Entra object ids (GUIDs). Empty means nobody: Close is not drawn and is refused."
+                },
+                "approvals": {
+                  "type": "object",
+                  "description": "Approve and Deny of a proposed action from the card. Its own switch; refused without actions.enabled and without an approver.",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
                 }
               },
               "additionalProperties": false

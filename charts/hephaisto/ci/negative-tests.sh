@@ -157,6 +157,39 @@ else
     fail "the default must map nobody to the approver role"
 fi
 
+# Approve and Deny from a card (#124): the one click that can change the cluster, so a switch of
+# its own - which needs the route to exist and somebody who may press the buttons.
+refuses "approvals from a card without the buttons" \
+    "${BOT[@]}" --set notifications.teamsBot.actions.approvals.enabled=true \
+    --set "notifications.teamsBot.actions.approvers[0]=$APPROVER"
+refuses "approvals from a card with nobody mapped to approve" \
+    "${BOT[@]}" --set notifications.teamsBot.actions.enabled=true \
+    --set notifications.teamsBot.actions.approvals.enabled=true
+refuses "approvals switched on behind the chart's back" \
+    "${BOT[@]}" --set notifications.teamsBot.actions.enabled=true \
+    --set "notifications.teamsBot.actions.approvers[0]=$APPROVER" \
+    --set 'extraEnv[0].name=Notifications__TeamsBot__Actions__Approvals__Enabled' --set-string 'extraEnv[0].value=true'
+
+# The buttons and an approver do not turn approvals on.
+if grep -q 'Actions__Approvals' <<<"$NOBODY" || helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative "${BOT[@]}" \
+    --set notifications.teamsBot.actions.enabled=true \
+    --set "notifications.teamsBot.actions.approvers[0]=$APPROVER" 2>&1 | grep -q 'Actions__Approvals'; then
+    fail "approvals must stay off until notifications.teamsBot.actions.approvals.enabled says otherwise"
+else
+    pass "with the buttons on and an approver named, approvals are still off"
+fi
+
+APPROVALS=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative "${BOT[@]}" \
+    --set notifications.teamsBot.actions.enabled=true \
+    --set "notifications.teamsBot.actions.approvers[0]=$APPROVER" \
+    --set notifications.teamsBot.actions.approvals.enabled=true 2>&1 \
+    | grep -A1 'name: Notifications__TeamsBot__Actions__Approvals__Enabled' | grep -c 'value: "true"')
+if [ "$APPROVALS" = "1" ]; then
+    pass "approvals asked for with the route and an approver reach the pod"
+else
+    fail "approvals must render as Notifications__TeamsBot__Actions__Approvals__Enabled=true, found $APPROVALS"
+fi
+
 ON=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative "${BOT[@]}" --set notifications.teamsBot.actions.enabled=true --set networkPolicy.enabled=true 2>&1)
 ACTION_RULE=$(printf '%s' "$ON" | python3 -c '
 import sys, yaml

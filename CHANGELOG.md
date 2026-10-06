@@ -44,7 +44,16 @@ the same day.
   empty by default, which draws no Close and refuses a click that asks for it. With somebody
   named, everybody sees the button; a member who is not on the list is told so and nothing
   changes. Both go through the console's own close and re-investigate, so the audit row is the
-  same one. Approve and deny are still links.
+  same one.
+- **Approve and Deny from a Teams card, behind their own switch** ([#124](docs/backlog.md#124)).
+  `notifications.teamsBot.actions.approvals.enabled`, off by default, and refused without
+  `actions.enabled` and without at least one entry in `actions.approvers`. An alert whose
+  incident is awaiting approval then says what is proposed - the action, its target, its
+  arguments, its risk - above an **Approve** and a **Deny** for it. Only a mapped approver's
+  click is taken; it is recorded as that person, with `Teams` as the approval's source, and runs
+  through the same admission as an approval in the console. A second click on a card that is
+  still on somebody's screen is answered "already decided" and changes nothing. With the switch
+  off, both stay links and a forged click is refused.
 - **The sweeper has chart values**: `incidents.sweep.enabled`, `expireAfter`, `approvalTimeout`.
   Still off by default.
 
@@ -57,6 +66,10 @@ the same day.
   longer re-reports a warning from before a pod healed.
 
 ### Fixed
+- **Deciding an action whose incident has moved on is a conflict, not a server error.** Approving
+  or denying an action that still said it was waiting, on an incident somebody had closed in the
+  meantime, left `POST /api/incidents/{id}/actions/{actionId}/approve` and `/deny` as a 500. Both
+  answer 409 with the reason now, and nothing is changed - as for an action already decided.
 - **One metric name is one instrument** ([#15](docs/backlog.md#15)). Six names were registered
   twice. `hephaisto_signals_received_total{source="Kubernetes"}`,
   `hephaisto_investigation_terminations_total` and `hephaisto_grounding_rejected_total` each

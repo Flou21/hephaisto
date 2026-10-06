@@ -252,6 +252,13 @@ public static class TeamsStandIn
             }.ToJsonString(),
             "application/json"));
 
+        // Who is in the team, and the Entra object id a click as each of them carries - the id an
+        // install has to list under notifications.teamsBot.actions.approvers to make that person
+        // an approver. Not authenticated, like /teams/messages: it is the harness's window. It is
+        // also how pager-local.sh tells a stand-in that knows the click's reason and actionId
+        // from an older pod that would silently drop them.
+        app.MapGet("/teams/members", () => Results.Json(members.Select(m => new { email = m, objectId = ObjectId(m) })));
+
         // {incidentId, verb, user, reason?, actionId?, tenant?, appId?, endorse?, serviceUrl?,
         //  claimedServiceUrl?}
         // user is an email: a member of the team, or anybody else. reason is what the person typed

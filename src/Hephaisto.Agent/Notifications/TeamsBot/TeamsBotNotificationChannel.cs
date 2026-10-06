@@ -230,7 +230,9 @@ public sealed class TeamsBotNotificationChannel(
 
         if (s.IncidentId is { } id)
         {
-            var known = await incidents.ByIdAsync([id], ct).ConfigureAwait(false);
+            var known = await incidents
+                .ByIdAsync([id], ct, withPendingActions: TeamsBotLinks.Alert(o, null).Approvals)
+                .ConfigureAwait(false);
 
             if (known.TryGetValue(id, out var incident))
             {

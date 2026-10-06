@@ -72,6 +72,12 @@ public sealed record TeamsIncident
     /// </summary>
     public bool Diagnosed { get; init; }
 
+    /// <summary>
+    /// The actions of this incident that are waiting for a person to approve or deny them, oldest
+    /// first. Read only for an incident that is awaiting approval; empty for every other.
+    /// </summary>
+    public IReadOnlyList<TeamsPendingAction> PendingActions { get; init; } = [];
+
     public bool IsOpen => State is not (
         IncidentState.Resolved
         or IncidentState.Expired
@@ -90,6 +96,29 @@ public sealed record TeamsIncident
     /// on it would outlive the state it was drawn for; reopening stays a link into the console.
     /// </remarks>
     public bool CanReinvestigate => State is IncidentState.Escalated && !Diagnosed;
+}
+
+/// <summary>
+/// One proposed action that waits for a person, as a card names it beside its two buttons: what
+/// would be done, and to what. Nobody approves a button that does not say.
+/// </summary>
+/// <remarks>
+/// <see cref="Target"/> and <see cref="Arguments"/> come from a plan a model wrote. The card
+/// renders both as <c>TextRun</c>s, redacted and cleaned, like every other model-written string.
+/// </remarks>
+public sealed record TeamsPendingAction
+{
+    public required Guid Id { get; init; }
+
+    public ActionType Type { get; init; }
+
+    public RiskTier Risk { get; init; }
+
+    /// <summary>Human-readable <c>namespace/kind/name</c>, or empty when the action has no target.</summary>
+    public string Target { get; init; } = string.Empty;
+
+    /// <summary>The action's typed arguments as JSON, e.g. <c>{"replicas":3}</c>, when it has any.</summary>
+    public string? Arguments { get; init; }
 }
 
 /// <summary>The addresses a card links to. All optional; a card without one is thinner, not broken.</summary>
@@ -120,6 +149,13 @@ public sealed record TeamsCardLinks
     /// close is decided at the click.
     /// </remarks>
     public bool Closing { get; init; }
+
+    /// <summary>
+    /// Whether an alert whose incident has an action awaiting approval says what it is and carries
+    /// Approve and Deny for it (<c>Notifications:TeamsBot:Actions:Approvals</c>). Off, the card
+    /// keeps its link into the console and names no action.
+    /// </summary>
+    public bool Approvals { get; init; }
 }
 
 /// <summary>
@@ -169,8 +205,13 @@ public sealed record TeamsDiagnosis
 /// </para>
 /// <para>
 /// <see cref="Close"/> sits with approval in the console, so here it takes somebody the install
-/// maps to the approver role (<c>Notifications:TeamsBot:Actions:Approvers</c>). Approving and
-/// denying stay links (backlog #124).
+/// maps to the approver role (<c>Notifications:TeamsBot:Actions:Approvers</c>).
+/// </para>
+/// <para>
+/// <see cref="Approve"/> and <see cref="Deny"/> take the same role and a switch of their own
+/// (<c>Notifications:TeamsBot:Actions:Approvals</c>). <b>Two verbs, never one with a boolean</b>,
+/// for the reason the console has two routes: a truncated or mistyped payload must not be able
+/// to turn a denial into an approval (backlog #124).
 /// </para>
 /// </remarks>
 public static class TeamsBotVerbs
@@ -183,13 +224,23 @@ public static class TeamsBotVerbs
 
     public const string Close = "close";
 
+    public const string Approve = "approve";
+
+    public const string Deny = "deny";
+
     /// <summary>The id of the Close card's text input, which Teams merges into the button's data.</summary>
     public const string ReasonInput = "reason";
 
-    public static readonly IReadOnlyList<string> All = [Acknowledge, AssignToMe, Reinvestigate, Close];
+    /// <summary>The key under which an Approve or Deny button carries the action it decides.</summary>
+    public const string ActionId = "actionId";
+
+    public static readonly IReadOnlyList<string> All = [Acknowledge, AssignToMe, Reinvestigate, Close, Approve, Deny];
 
     /// <summary>The verbs only a mapped approver may send.</summary>
-    public static readonly IReadOnlyList<string> Approver = [Close];
+    public static readonly IReadOnlyList<string> Approver = [Close, Approve, Deny];
+
+    /// <summary>The verbs that are refused unless approvals from Teams are switched on.</summary>
+    public static readonly IReadOnlyList<string> Approval = [Approve, Deny];
 }
 
 /// <summary>
@@ -243,6 +294,12 @@ public static class TeamsBotCards
 
     /// <summary>The longest reason the Close card accepts, and the route keeps.</summary>
     public const int MaxReasonLength = 500;
+
+    /// <summary>
+    /// Actions an alert offers to decide. A plan rarely proposes more than one; past this the card
+    /// says how many it left to the console rather than growing a button row per action.
+    /// </summary>
+    private const int MaxApprovalsShown = 3;
 
     /// <summary>
     /// The board: every open incident the caller passed, and a line for the ones it did not.
@@ -421,6 +478,13 @@ public static class TeamsBotCards
                 ["wrap"] = true,
                 ["isSubtle"] = true,
             });
+        }
+
+        if (links.Actions && links.Approvals && incident.IsOpen && incident.PendingActions.Count > 0)
+        {
+            // In the body and not in the card's button row, so each pair of buttons sits directly
+            // under the sentence that says what it decides.
+            body.Add(ApprovalSection(incident));
         }
 
         var card = Card(body);
@@ -831,6 +895,76 @@ public static class TeamsBotCards
         }
 
         return Section(items);
+    }
+
+    /// <summary>
+    /// The actions waiting for a person, each named and each with its own Approve and Deny.
+    /// </summary>
+    /// <remarks>
+    /// What is named is what the policy engine was asked about: the action's type, its target and
+    /// its arguments. The target and the arguments were written by a model, so they are
+    /// <see cref="Plain"/> text. The buttons carry the action's id and nothing about who may press
+    /// them - the card is the same for everybody, and the route decides.
+    /// </remarks>
+    private static JsonObject ApprovalSection(TeamsIncident incident)
+    {
+        var items = new JsonArray
+        {
+            new JsonObject
+            {
+                ["type"] = "TextBlock",
+                ["text"] = "Waiting for approval",
+                ["weight"] = "Bolder",
+                ["wrap"] = true,
+            },
+        };
+
+        foreach (var action in incident.PendingActions.Take(MaxApprovalsShown))
+        {
+            var what = string.IsNullOrWhiteSpace(action.Target)
+                ? action.Type.ToString()
+                : $"{action.Type} on {ModelText(action.Target, 200)}";
+
+            if (!string.IsNullOrWhiteSpace(action.Arguments))
+            {
+                what += $" with {ModelText(action.Arguments, 200)}";
+            }
+
+            items.Add(Plain($"{what} - risk {action.Risk}"));
+
+            items.Add(new JsonObject
+            {
+                ["type"] = "ActionSet",
+                ["actions"] = new JsonArray
+                {
+                    Decide($"Approve {action.Type}", TeamsBotVerbs.Approve, "positive", incident.Id, action.Id),
+                    Decide($"Deny {action.Type}", TeamsBotVerbs.Deny, "destructive", incident.Id, action.Id),
+                },
+            });
+        }
+
+        if (incident.PendingActions.Count > MaxApprovalsShown)
+        {
+            items.Add(Plain(
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"and {incident.PendingActions.Count - MaxApprovalsShown} more, in Hephaisto."),
+                subtle: true));
+        }
+
+        items.Add(Plain("Approve and Deny take the approver role. An approved action runs under your name.", subtle: true));
+
+        return Section(items);
+    }
+
+    private static JsonObject Decide(string title, string verb, string style, Guid incidentId, Guid actionId)
+    {
+        var button = Execute(title, verb, incidentId);
+
+        button["style"] = style;
+        button["data"]![TeamsBotVerbs.ActionId] = actionId.ToString();
+
+        return button;
     }
 
     private static JsonObject Section(JsonArray items) => new()

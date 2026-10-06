@@ -74,7 +74,8 @@ it is opt-in: with `notifications.teamsBot.actions.enabled`, an alert carries **
 `notifications.teamsBot.actions.approvers` names by Microsoft Entra object id. The inbound route
 that makes this possible is on a port of its own and takes a Bot Framework token; see
 [the chart's values](/reference/helm-values) for what turning it on exposes. Approving an action
-is still a link.
+is still a link unless `notifications.teamsBot.actions.approvals.enabled` is set as well: then the
+card names the proposed action above **Approve** and **Deny**, for those same approvers.
 
 ## Signing
 

@@ -501,8 +501,9 @@ notifications:
   #     channel post and for a reply alike, and there is no setting that stops it.
   #
   # Every button is a link, unless `actions.enabled` below: then an open alert also carries
-  # buttons that act - Acknowledge, Assign to me, Reinvestigate, and Close for the approvers you
-  # name - which Microsoft delivers by calling this pod.
+  # buttons that act - Acknowledge, Assign to me, Reinvestigate, Close for the approvers you
+  # name, and, behind a switch of their own, Approve and Deny - which Microsoft delivers by
+  # calling this pod.
   #
   # You need, in the SAME Microsoft tenant as your Teams: a single-tenant app registration, an
   # Azure Bot resource (free tier) with the Teams channel on, and a Teams app that names the bot
@@ -532,7 +533,8 @@ notifications:
     #     investigation found anything for - Reinvestigate. All three are read-level in the
     #     console too.
     #   An approver only: Close, which asks for a reason first. See `approvers` below.
-    # Approve and deny stay links into the console.
+    #   An approver only, and only with `approvals.enabled`: Approve and Deny of a proposed
+    #     action. Without it they stay links into the console.
     #
     # Turning this on creates the ONE inbound route Microsoft calls: POST /api/teams/messages,
     # on its own port and nowhere else, and nothing else answers on that port. Set your Azure
@@ -554,6 +556,17 @@ notifications:
       # card is the same for everybody, so with somebody named here everybody SEES Close; who
       # may press it is decided at the click. An approver must also be a member of the team.
       approvers: []
+      # Approve and Deny, on an alert whose incident has an action awaiting approval. The card
+      # then says what is proposed - the action, its target, its arguments, its risk - with the
+      # two buttons under it, and an approver's click is recorded as that person and runs the
+      # action exactly as approving in the console does: through admission, under the mode,
+      # the budgets and the kill switch.
+      #
+      # Its own switch, off by default, because it is the one click here that can change your
+      # cluster: you can let the team acknowledge and close from Teams and keep every approval
+      # in the console. Refused without `enabled` above, and without at least one approver.
+      approvals:
+        enabled: false
 
   # Which events, at which severity, in which namespaces, go where. Additive only - there is
   # no deny rule, because a subtractive routing table is one nobody can reason about and the

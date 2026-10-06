@@ -45,9 +45,15 @@ public sealed class TeamsBotIncidents(HephaistoDbContext db)
     }
 
     /// <summary>The named incidents, whatever state they are in. One that no longer exists is absent.</summary>
+    /// <param name="withPendingActions">
+    /// Whether the actions awaiting approval are read too (#124). Only an alert that offers to
+    /// decide them needs them - <see cref="TeamsCardLinks.Approvals"/> - so with approvals off,
+    /// which is the default, nothing is asked of the database that was not asked before.
+    /// </param>
     public async Task<IReadOnlyDictionary<Guid, TeamsIncident>> ByIdAsync(
         IReadOnlyCollection<Guid> ids,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool withPendingActions = false)
     {
         ArgumentNullException.ThrowIfNull(ids);
 
@@ -60,10 +66,16 @@ public sealed class TeamsBotIncidents(HephaistoDbContext db)
             .ToListAsync(ct)
             .ConfigureAwait(false);
 
-        return (await WithDiagnosisAsync(
-                await WithNotesAsync(await WithCodeFixAsync(found, ct).ConfigureAwait(false), ct).ConfigureAwait(false),
-                ct).ConfigureAwait(false))
-            .ToDictionary(i => i.Id);
+        var shown = await WithDiagnosisAsync(
+            await WithNotesAsync(await WithCodeFixAsync(found, ct).ConfigureAwait(false), ct).ConfigureAwait(false),
+            ct).ConfigureAwait(false);
+
+        if (withPendingActions)
+        {
+            shown = await WithPendingActionsAsync(shown, ct).ConfigureAwait(false);
+        }
+
+        return shown.ToDictionary(i => i.Id);
     }
 
     private static IQueryable<TeamsIncident> Project(IQueryable<Incident> incidents) =>
@@ -219,6 +231,64 @@ public sealed class TeamsBotIncidents(HephaistoDbContext db)
         })];
     }
 
+    /// <summary>
+    /// The actions that wait for a person (#124), in one query for all the incidents that are
+    /// awaiting approval - and no query at all when none is, which is nearly always. An action
+    /// that still says it is waiting on an incident that has moved on is not read: nobody can
+    /// decide it, so no card offers to.
+    /// </summary>
+    /// <remarks>
+    /// Ordered in the database, by an id that is assigned in time order: the card is compared by
+    /// its content, and two actions that swapped places between two reads would be an edit every
+    /// tick for nothing.
+    /// </remarks>
+    private async Task<IReadOnlyList<TeamsIncident>> WithPendingActionsAsync(
+        IReadOnlyList<TeamsIncident> incidents,
+        CancellationToken ct)
+    {
+        var waiting = incidents
+            .Where(i => i.State == IncidentState.AwaitingApproval)
+            .Select(i => i.Id)
+            .ToList();
+
+        if (waiting.Count == 0)
+        {
+            return incidents;
+        }
+
+        // Plain columns, and the card's own shape made here: nothing for the database to translate
+        // but a filter and an order.
+        var actions = await db.AgentActions.AsNoTracking()
+            .Where(a => waiting.Contains(a.IncidentId) && a.State == ActionState.AwaitingApproval)
+            .OrderBy(a => a.Id)
+            .Select(a => new
+            {
+                a.Id,
+                a.IncidentId,
+                a.Type,
+                a.Risk,
+                a.Target.Namespace,
+                a.Target.Kind,
+                a.Target.Name,
+                a.Arguments,
+            })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        var byIncident = actions.ToLookup(a => a.IncidentId, a => new TeamsPendingAction
+        {
+            Id = a.Id,
+            Type = a.Type,
+            Risk = a.Risk,
+            Target = string.IsNullOrEmpty(a.Name) ? string.Empty : $"{a.Namespace}/{a.Kind}/{a.Name}",
+            Arguments = a.Arguments,
+        });
+
+        return [.. incidents.Select(i => byIncident.Contains(i.Id)
+            ? i with { PendingActions = [.. byIncident[i.Id]] }
+            : i)];
+    }
+
     private async Task<IReadOnlyList<TeamsIncident>> WithCodeFixAsync(
         List<TeamsIncident> incidents,
         CancellationToken ct)
@@ -268,6 +338,7 @@ public static class TeamsBotLinks
             BoardUrl = Board(options.TeamsBot, boardActivityId),
             Actions = actions.Enabled,
             Closing = actions.Enabled && actions.Approvers.Count > 0,
+            Approvals = actions.Enabled && actions.Approvals.Enabled && actions.Approvers.Count > 0,
         };
     }
 
