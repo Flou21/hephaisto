@@ -240,11 +240,22 @@ public static class SignalMapper
     /// API server's retention, about an hour, so after an agent restart a warning about a pod
     /// that has since healed would reopen the incident its healing closed.
     /// </param>
+    /// <param name="isGone">
+    /// Whether the object an event is about is known not to exist any more. Such an event is
+    /// dropped: it is a warning about something that cannot be looked at, acted on or seen to
+    /// heal. An event outlives its object - a pod that crash-looped and was deleted by a rollout
+    /// leaves its BackOff warnings behind for the retention - and a restarted agent is handed
+    /// all of them again. Without this each became an incident filed under the POD's own name
+    /// (its owner can no longer be asked for), which matches no workload, is never seen to heal,
+    /// and is investigated and escalated all the same. "Not known" is not "gone": an object that
+    /// could not be read is treated as before.
+    /// </param>
     public static Signal? FromEvent(
         Corev1Event kubeEvent,
         string cluster,
         OwnerLookup? lookup = null,
-        DateTimeOffset? notBefore = null)
+        DateTimeOffset? notBefore = null,
+        Func<string, string, string, bool>? isGone = null)
     {
         ArgumentNullException.ThrowIfNull(kubeEvent);
 
@@ -288,6 +299,12 @@ public static class SignalMapper
         // must not reach the fingerprint. With no lookup the owner stays null and WorkloadKey
         // falls back to the pod itself, so a caller that has an API to hand should supply one.
         var involvedMeta = lookup?.Invoke(target.Kind, ns, target.Name);
+
+        if (involvedMeta is null && isGone?.Invoke(target.Kind, ns, target.Name) == true)
+        {
+            return null;
+        }
+
         Apply(target, OwnerWalker.TopController(involvedMeta, ns, lookup));
 
         return Finish(

@@ -98,6 +98,8 @@ public sealed class OwnerCache(KubernetesApi api, TimeProvider time, ILogger<Own
         }
 
         V1ObjectMeta? meta;
+        var gone = false;
+
         try
         {
             meta = await ReadAsync(kind, @namespace, name, ct).ConfigureAwait(false);
@@ -108,6 +110,7 @@ public sealed class OwnerCache(KubernetesApi api, TimeProvider time, ILogger<Own
             // negative so the next thousand observations of the same pod do not re-ask - for
             // NegativeTtl, not for the hour: the name may be somebody's again by then.
             meta = null;
+            gone = true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -117,9 +120,22 @@ public sealed class OwnerCache(KubernetesApi api, TimeProvider time, ILogger<Own
             meta = null;
         }
 
-        Store(key, meta);
+        Store(key, meta, gone);
         return meta;
     }
+
+    /// <summary>
+    /// Whether the API server said, a moment ago, that there is no such object: a 404, no older
+    /// than <see cref="NegativeTtl"/>. Never performs I/O.
+    /// </summary>
+    /// <remarks>
+    /// False for everything that is not that answer - an object that was found, one nobody
+    /// asked about, a kind this cache cannot read, a request that failed. "Could not be read" is
+    /// not "gone", and what a caller does with gone (drop a warning about it) must not happen
+    /// because the API server was slow.
+    /// </remarks>
+    public bool IsGone(string kind, string @namespace, string name) =>
+        entries.TryGetValue(Key(kind, @namespace, name), out var entry) && entry.ExpiresAt > time.GetUtcNow() && entry.Gone;
 
     private V1ObjectMeta? TryGet(string kind, string @namespace, string name) =>
         entries.TryGetValue(Key(kind, @namespace, name), out var entry) && entry.ExpiresAt > time.GetUtcNow()
@@ -144,7 +160,7 @@ public sealed class OwnerCache(KubernetesApi api, TimeProvider time, ILogger<Own
             _ => null,
         };
 
-    private void Store(string key, V1ObjectMeta? meta)
+    private void Store(string key, V1ObjectMeta? meta, bool gone)
     {
         // A flat cap with a wholesale clear, rather than an LRU. The contents are pure
         // derivable state, so the worst a clear costs is one round of re-fetching, and an
@@ -154,10 +170,11 @@ public sealed class OwnerCache(KubernetesApi api, TimeProvider time, ILogger<Own
             entries.Clear();
         }
 
-        entries[key] = new Entry(meta, time.GetUtcNow() + (meta is null ? NegativeTtl : Ttl));
+        entries[key] = new Entry(meta, time.GetUtcNow() + (meta is null ? NegativeTtl : Ttl), gone && meta is null);
     }
 
     private static string Key(string kind, string @namespace, string name) => $"{kind}/{@namespace}/{name}";
 
-    private readonly record struct Entry(V1ObjectMeta? Meta, DateTimeOffset ExpiresAt);
+    /// <param name="Gone">The API server answered 404 - as opposed to not answering, or a kind that is not read.</param>
+    private readonly record struct Entry(V1ObjectMeta? Meta, DateTimeOffset ExpiresAt, bool Gone);
 }

@@ -78,6 +78,15 @@ release is about handing it a GitHub issue ([#243](https://github.com/Flou21/hep
   none of which matched. A request the API server failed had the same effect. "Not there" and
   "could not be read" are now held for 30 seconds; an object that was found is still held for
   the hour.
+- **A warning about a pod that no longer exists opens no incident.** Kubernetes keeps an event
+  for about an hour, longer than the pod it is about may live. An agent that restarted within
+  `incidents.healedAfter` of a crash-looping pod being deleted - by a rollout that fixed it, by
+  a `helm uninstall` - was handed that pod's `BackOff` warnings again, could no longer ask whose
+  pod it had been, and opened "CrashLoopBackOff on `<pod name>`" with the pod as its own
+  workload: investigated, escalated and announced, never seen to heal, and matching no cooldown
+  or mapping. Such a warning is now dropped, for a pod and for every other kind the agent can
+  look up. Only when the API server says the object is gone: one that could not be read is
+  handled as before.
 
 ### Changed
 - **`incidentId` on a code-fix attempt can be null** - in `GET /api/codefixes`, and in the

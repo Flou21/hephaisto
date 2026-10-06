@@ -187,6 +187,103 @@ public sealed class OwnerCacheTests
         server.Asked(ReplicaSetPath).Should().Be(2);
     }
 
+    // --- gone, as opposed to not known ------------------------------------------------------
+
+    private static readonly string PodPath = $"/api/v1/namespaces/{Ns}/pods/{ReplicaSet}-x7k2p";
+
+    private static Corev1Event BackOff() => new()
+    {
+        Metadata = new V1ObjectMeta { Name = "x7k2p.backoff", NamespaceProperty = Ns, Uid = "ev-1" },
+        Type = "Warning",
+        Reason = "BackOff",
+        Message = "Back-off restarting failed container app in pod",
+        LastTimestamp = new DateTime(2026, 10, 6, 8, 55, 0, DateTimeKind.Utc),
+        InvolvedObject = new V1ObjectReference { Kind = "Pod", Name = $"{ReplicaSet}-x7k2p", NamespaceProperty = Ns },
+    };
+
+    [Fact]
+    public async Task Only_a_404_is_gone_and_only_for_as_long_as_it_is_remembered()
+    {
+        var (cache, server, time) = World();
+
+        cache.IsGone("Pod", Ns, $"{ReplicaSet}-x7k2p").Should().BeFalse("nobody has asked");
+
+        (await cache.FetchAsync("Pod", Ns, $"{ReplicaSet}-x7k2p", CancellationToken.None)).Should().BeNull();
+        cache.IsGone("Pod", Ns, $"{ReplicaSet}-x7k2p").Should().BeTrue();
+        server.Asked(PodPath).Should().Be(1, "asking whether it is gone is not a request");
+
+        // A kind this cache does not read was never asked for, so it is not known to be gone.
+        (await cache.FetchAsync("PersistentVolumeClaim", Ns, "data", CancellationToken.None)).Should().BeNull();
+        cache.IsGone("PersistentVolumeClaim", Ns, "data").Should().BeFalse();
+
+        time.Advance(OwnerCache.NegativeTtl + TimeSpan.FromSeconds(1));
+        cache.IsGone("Pod", Ns, $"{ReplicaSet}-x7k2p").Should().BeFalse("what was true half a minute ago is not known now");
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task An_object_that_could_not_be_read_is_not_gone(HttpStatusCode status)
+    {
+        var (cache, server, _) = World();
+        server.Failing[PodPath] = status;
+
+        (await cache.FetchAsync("Pod", Ns, $"{ReplicaSet}-x7k2p", CancellationToken.None)).Should().BeNull();
+
+        cache.IsGone("Pod", Ns, $"{ReplicaSet}-x7k2p").Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task An_object_that_exists_is_not_gone()
+    {
+        var (cache, server, _) = World();
+        Create(server);
+
+        await cache.WarmAsync(Pod(), Ns, CancellationToken.None);
+
+        cache.IsGone("ReplicaSet", Ns, ReplicaSet).Should().BeFalse();
+        cache.IsGone("Deployment", Ns, Deployment).Should().BeFalse();
+    }
+
+    /// <summary>
+    /// The watcher's three steps for an event, with the real cache: fetch the object the event
+    /// is about, warm its chain, map. Seen on the dev cluster: an agent restarted nine minutes
+    /// after a crash-looping fixture was deleted opened "CrashLoopBackOff on shop-api-...-zpx67"
+    /// with the pod as its own workload.
+    /// </summary>
+    [Fact]
+    public async Task A_replayed_warning_about_a_deleted_pod_is_no_signal_and_one_about_a_pod_that_could_not_be_read_still_is()
+    {
+        var (cache, server, time) = World();
+        var notBefore = new DateTimeOffset(2026, 10, 6, 8, 50, 0, TimeSpan.Zero);
+
+        async Task<Hephaisto.Core.Domain.Signal?> HandleAsync()
+        {
+            var meta = await cache.FetchAsync("Pod", Ns, $"{ReplicaSet}-x7k2p", CancellationToken.None);
+            await cache.WarmAsync(meta, Ns, CancellationToken.None);
+
+            return SignalMapper.FromEvent(BackOff(), "dev", cache.Lookup, notBefore, cache.IsGone);
+        }
+
+        // The pod is gone: 404.
+        (await HandleAsync()).Should().BeNull();
+
+        // The API server is failing: the pod is not known to be gone, and the warning is kept.
+        time.Advance(OwnerCache.NegativeTtl + TimeSpan.FromSeconds(1));
+        server.Failing[PodPath] = HttpStatusCode.ServiceUnavailable;
+
+        (await HandleAsync())!.Target.WorkloadKey.Should().Be($"{Ns}/Pod/{ReplicaSet}-x7k2p");
+
+        // The pod is there: the warning is its Deployment's.
+        time.Advance(OwnerCache.NegativeTtl + TimeSpan.FromSeconds(1));
+        server.Failing.Clear();
+        Create(server);
+        server.Objects[PodPath] = "{\"apiVersion\":\"v1\",\"kind\":\"Pod\",\"metadata\":{\"name\":\"" + ReplicaSet + "-x7k2p\",\"namespace\":\"" + Ns + "\","
+            + "\"ownerReferences\":[{\"apiVersion\":\"apps/v1\",\"kind\":\"ReplicaSet\",\"name\":\"" + ReplicaSet + "\",\"uid\":\"rs-2\",\"controller\":true}]}}";
+
+        (await HandleAsync())!.Target.WorkloadKey.Should().Be($"{Ns}/Deployment/{Deployment}");
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.InternalServerError)]
     [InlineData(HttpStatusCode.ServiceUnavailable)]
