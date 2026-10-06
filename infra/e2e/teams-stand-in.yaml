@@ -1,10 +1,11 @@
-# A stand-in for Microsoft Teams, as the bot sees it - and for the model, as the pager suite
-# needs it.
+# A stand-in for Microsoft Teams, as the bot sees it - for the model, as the pager suite needs
+# it - and for GitHub, as the issue poller sees it (the Service github-stand-in, below).
 #
-# Applied by Tilt when tilt_config.json says "teams-bot": "stand-in", and never by the chart. It
-# is the notification receiver's binary (see infra/e2e/notification-receiver/TeamsStandIn.cs):
-# it answers the token request and the Bot Connector calls, keeps every message it is given,
-# and serves what a person looking at Teams would see now on GET /teams/messages.
+# Applied by Tilt when tilt_config.json says "teams-bot": "stand-in" or "github": "stand-in", and
+# never by the chart. It is the notification receiver's binary (see
+# infra/e2e/notification-receiver/TeamsStandIn.cs): it answers the token request and the Bot
+# Connector calls, keeps every message it is given, and serves what a person looking at Teams
+# would see now on GET /teams/messages.
 #
 # It exists so the board and the alerts can be exercised on this cluster without a tenant, and
 # without a test run editing a channel real people read. What it copies from Teams are the two
@@ -52,6 +53,17 @@ spec:
               value: "00000000-0000-0000-0000-0000000000d1"
             - name: AGENT_ACTIONS_URL
               value: "http://hephaisto.hephaisto:8082/api/teams/messages"
+            # GitHub (GitHubStandIn.cs). The token is not a credential - it opens nothing but
+            # this pod's /github/api - and the bot is the account an issue is assigned to. Whoever
+            # points an agent at this names the same three: the token in its Secret, the login it
+            # polls for, and - for an approver - a number the issues suite comments as
+            # (scripts/e2e/lib/issues.sh).
+            - name: GITHUB_STANDIN_TOKEN
+              value: "stand-in-github-token"
+            - name: GITHUB_STANDIN_BOT_LOGIN
+              value: "hephaisto-bot"
+            - name: GITHUB_STANDIN_BOT_ID
+              value: "9001"
           ports:
             - containerPort: 8080
               name: http
@@ -67,7 +79,7 @@ spec:
               memory: 32Mi
             limits:
               # The model stand-in keeps the last 500 prompts it was sent, for the pager suite
-              # to read back.
+              # to read back; the GitHub one the last 2000 requests, a few hundred bytes each.
               memory: 256Mi
           securityContext:
             runAsNonRoot: true
@@ -100,6 +112,24 @@ metadata:
   namespace: hephaisto-obs
   labels:
     app.kubernetes.io/name: model-stand-in
+spec:
+  selector:
+    app.kubernetes.io/name: teams-stand-in
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+# The same pod, as GitHub. An agent's GitHub API base URL is
+# http://github-stand-in.hephaisto-obs:8080/github/api; a name of its own for the model's reason,
+# and so that the one line which decides whether a dev agent talks to github.com says so.
+apiVersion: v1
+kind: Service
+metadata:
+  name: github-stand-in
+  namespace: hephaisto-obs
+  labels:
+    app.kubernetes.io/name: github-stand-in
 spec:
   selector:
     app.kubernetes.io/name: teams-stand-in
