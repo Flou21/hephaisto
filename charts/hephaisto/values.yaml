@@ -434,6 +434,21 @@ secrets:
   # alone goes to `publish`, which starts after it has ended. The containers share no process
   # namespace, so the model's shell cannot read a token out of another one's environment.
   codeFix: hephaisto-codefix
+  # The AGENT's GitHub token: key `GITHUB_TOKEN`. Only referenced when github.enabled is true.
+  # A Secret in THIS release's namespace, and deliberately not the one above: that one lives in
+  # codeFix.namespace, holds a token that may push, and the agent has no way to read it. This
+  # one reads issues and writes comments:
+  #
+  #   repositories owned by an organisation  a FINE-GRAINED token of the bot account, limited to
+  #                                          the listed repositories: Issues read and write,
+  #                                          Pull requests read, Metadata read
+  #   repositories owned by a user           a fine-grained token only reaches repositories its
+  #                                          own account or organisation owns, so a bot that is a
+  #                                          collaborator there needs a classic token (`repo`)
+  #
+  # The chart refuses the same name as secrets.codeFix: one token for both is the coder's write
+  # access held by the process that reads every issue.
+  github: ""
 
 # -----------------------------------------------------------------------------------------
 # Alertmanager - for the SilenceAlert action, and nothing else
@@ -859,6 +874,58 @@ codeFix:
   # without it the coder can reach anything the cluster can, and the proxy is advisory.
   networkPolicy:
     enabled: true
+
+# -----------------------------------------------------------------------------------------
+# GitHub issues as work (v0.14.0) - OFF by default
+# -----------------------------------------------------------------------------------------
+# An issue assigned to Hephaisto's account, in a repository listed here, is taken as work. The
+# agent ASKS GitHub - a poll per repository, nothing reaches in, no webhook to expose - and an
+# unchanged list is answered with a 304 that costs nothing against the rate limit.
+#
+# The account is an ordinary GitHub account (a machine user), not a GitHub App: an App cannot
+# be an assignee. Make it a collaborator on each listed repository, create its token signed in
+# as it, and put the token in the Secret secrets.github names.
+#
+# What this release does with a taken issue is record it: GET /api/workitems, and `github` among
+# the connections of GET /api/status. Unassigning the account, or closing the issue, takes it
+# back. With the agent's mode Off nothing is asked and nothing is taken.
+github:
+  enabled: false
+
+  # The REST API's root. GitHub Enterprise Server's is https://<host>/api/v3.
+  apiBaseUrl: https://api.github.com
+
+  # The account issues are assigned to. Empty means whoever the token belongs to, which is
+  # right unless the token is somebody else's.
+  botLogin: ""
+
+  # How often each repository is asked. .NET TimeSpan (hh:mm:ss), at least five seconds;
+  # GitHub's own advice for a poller is a minute.
+  pollInterval: "00:01:00"
+
+  issues:
+    # THE AUTHORIZATION LIST: owner/repo. An issue anywhere else is never asked about, however
+    # it is assigned. Required when enabled - an empty list would poll nothing and look fine.
+    #
+    # repositories:
+    #   - example/shop
+    repositories: []
+
+  # Who may answer a plan on the issue, by account NUMBER - a login can be renamed and taken
+  # by somebody else. `gh api users/<login> --jq .id`. Recorded and checked in this release;
+  # nothing reads a comment as a command yet.
+  approvers: []
+
+  # Send the agent's GitHub calls through codeFix.egressProxy when that proxy is rendered
+  # (codeFix.enabled and codeFix.egressProxy.enabled): its allowlist already holds
+  # api.github.com, its log then shows the agent's requests beside the coder's, and with
+  # networkPolicy.egress.enabled it is the agent's only way out to GitHub - the chart adds the
+  # rule that lets the agent reach the proxy, and the one that lets the proxy accept it.
+  #
+  # Without the proxy and with networkPolicy.egress.enabled, GitHub has to be reachable through
+  # networkPolicy.egress.extraEgressCIDRs on 443. A GitHub Enterprise host has to be added to
+  # codeFix.egressProxy.extraAllowlist, and the proxy tunnels to port 443 only.
+  useEgressProxy: true
 
 # -----------------------------------------------------------------------------------------
 # Database

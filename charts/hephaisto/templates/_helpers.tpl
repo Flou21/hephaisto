@@ -220,6 +220,9 @@ would also make at startup - rendering is just the earlier, cheaper place to hea
   {{- if hasPrefix "Investigation__Job__" .name -}}
     {{- fail (printf "extraEnv may not set %q: every Investigation:Job setting is an investigation.job.* value, checked together with the port and the code-fix stage it borrows from." .name) -}}
   {{- end -}}
+  {{- if hasPrefix "GitHub__" .name -}}
+    {{- fail (printf "extraEnv may not set %q: every GitHub setting is a github.* value and the token is secrets.github. A token set here is a token in `helm get values` for ever, and a repository or an approver added here is one no values file names." .name) -}}
+  {{- end -}}
   {{- if hasPrefix "CodeFix__" .name -}}
     {{- fail (printf "extraEnv may not set %q: every CodeFix setting is a codeFix.* value, and the chart validates them TOGETHER - the namespace against the RBAC it grants, mode pr against auth. A CodeFix__ entry here would win silently and skip every one of those checks." .name) -}}
   {{- end -}}
@@ -406,5 +409,41 @@ agent would also make at startup; rendering is the earlier, cheaper place to hea
     {{- end -}}
   {{- end -}}
   {{- $port -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+=========================================================================================
+GitHub issues as work (v0.14.0)
+=========================================================================================
+Guard for the github block. Rendered from the Deployment; checks nothing unless github.enabled.
+Every refusal is one the agent would also make at startup (GitHubOptions.Problems) - rendering
+is the earlier, cheaper place to hear it - except the last, which only the chart can see.
+*/}}
+{{- define "hephaisto.validateGitHub" -}}
+{{- $gh := .Values.github | default dict -}}
+{{- if $gh.enabled -}}
+{{- if not .Values.secrets.github -}}
+  {{- fail "secrets.github is required when github.enabled is true: the Secret in the release namespace holding the agent's GitHub token under key GITHUB_TOKEN. The chart never creates a Secret, it only references one." -}}
+{{- end -}}
+{{- if not (($gh.issues | default dict).repositories) -}}
+  {{- fail "github.issues.repositories is required when github.enabled is true: the list is what authorizes a repository, and an empty one polls nothing while looking configured." -}}
+{{- end -}}
+{{- if and .Values.codeFix.enabled (eq .Values.secrets.github .Values.secrets.codeFix) -}}
+  {{- fail (printf "secrets.github may not be %q, the name of secrets.codeFix: the coder's Secret holds a token that may push and a model credential, and the agent - which reads every issue anybody opens - gets a token of its own that can do neither." .Values.secrets.github) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+The proxy the agent's GitHub client uses, or empty for a direct connection: the coder's egress
+proxy, when it is rendered and github.useEgressProxy has not been turned off. One definition,
+because the env var, the agent's egress rule and the proxy's ingress rule must agree on whether
+the agent goes that way.
+*/}}
+{{- define "hephaisto.gitHubProxyUrl" -}}
+{{- $gh := .Values.github | default dict -}}
+{{- if and $gh.enabled (ne $gh.useEgressProxy false) .Values.codeFix.enabled .Values.codeFix.egressProxy.enabled -}}
+{{- include "hephaisto.codeFixProxyUrl" . -}}
 {{- end -}}
 {{- end -}}

@@ -1,6 +1,7 @@
 {{- include "hephaisto.validateActionableNamespaces" . -}}
 {{- include "hephaisto.validateExtraEnv" . -}}
 {{- include "hephaisto.validateCodeFix" . -}}
+{{- include "hephaisto.validateGitHub" . -}}
 {{/*
 =========================================================================================
 WHY replicas: 1 AND strategy: Recreate - and why the chart exposes no replicaCount
@@ -665,6 +666,50 @@ spec:
             # launcher reads its Jobs through its own client, which this does not restrict.
             - name: Kubernetes__DeniedNamespaces__0
               value: {{ include "hephaisto.codeFixNamespace" $ | quote }}
+            {{- end }}
+            {{- end }}
+
+            {{- if (.Values.github | default dict).enabled }}
+            {{- with .Values.github }}
+
+            # ---------------------------------------------------------------------------
+            # GitHub issues as work (v0.14.0). The agent asks; nothing reaches in.
+            # ---------------------------------------------------------------------------
+            - name: GitHub__Enabled
+              value: "true"
+            - name: GitHub__ApiBaseUrl
+              value: {{ .apiBaseUrl | default "https://api.github.com" | quote }}
+            # The agent's own token, from a Secret in THIS namespace. Not secrets.codeFix: that
+            # Secret is in the coder namespace, and no rule anywhere lets the agent read it.
+            - name: GitHub__Token
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.secrets.github }}
+                  key: GITHUB_TOKEN
+            {{- with .botLogin }}
+            - name: GitHub__BotLogin
+              value: {{ . | quote }}
+            {{- end }}
+            - name: GitHub__PollInterval
+              value: {{ .pollInterval | default "00:01:00" | quote }}
+            # The authorization list. An issue in a repository that is not here is never asked
+            # about, however it is assigned.
+            {{- range $i, $r := (.issues | default dict).repositories }}
+            - name: GitHub__Repositories__{{ $i }}
+              value: {{ $r | quote }}
+            {{- end }}
+            {{- /* int64, not toString: a YAML number is a float to Helm, and an account number
+                   of eight digits would otherwise render as 1.2345678e+07. */}}
+            {{- range $i, $a := .approvers }}
+            - name: GitHub__Approvers__{{ $i }}
+              value: {{ int64 $a | quote }}
+            {{- end }}
+            {{- with include "hephaisto.gitHubProxyUrl" $ }}
+            # Through the coder's egress proxy: api.github.com is on its allowlist, and with
+            # the agent's egress policy on it is the only way out to GitHub.
+            - name: GitHub__ProxyUrl
+              value: {{ . | quote }}
+            {{- end }}
             {{- end }}
             {{- end }}
 

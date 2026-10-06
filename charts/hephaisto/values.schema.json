@@ -238,6 +238,10 @@
         "mcp": {
           "type": "string",
           "description": "Secret holding the MCP endpoint's tokens: one key per mcp.tokens[].name, each at least 32 characters. Required when mcp.tokens is not empty."
+        },
+        "github": {
+          "type": "string",
+          "description": "Secret in the RELEASE namespace holding the agent's GitHub token under key `GITHUB_TOKEN`. Required when github.enabled is true. Never the same name as secrets.codeFix."
         }
       },
       "additionalProperties": false
@@ -1352,6 +1356,60 @@
               }
             }
           }
+        }
+      }
+    },
+    "github": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "GitHub issues as work (v0.14.0): an issue assigned to the agent's account, in a listed repository, is taken as a work item. Off by default.",
+      "required": [
+        "enabled"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "apiBaseUrl": {
+          "type": "string",
+          "pattern": "^https?://[^\\s/]+(/[^\\s]*)?$",
+          "description": "The REST API's root. https://api.github.com, or https://<host>/api/v3 for GitHub Enterprise Server."
+        },
+        "botLogin": {
+          "type": "string",
+          "pattern": "^$|^[A-Za-z0-9][A-Za-z0-9-]*(\\[bot\\])?$",
+          "description": "The account issues are assigned to. Empty means whoever the token belongs to."
+        },
+        "pollInterval": {
+          "type": "string",
+          "pattern": "^([0-9]+\\.)?[0-9]{1,2}:[0-9]{2}:[0-9]{2}$",
+          "description": "How often each repository is asked. .NET TimeSpan (hh:mm:ss), not Go duration. At least five seconds."
+        },
+        "issues": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repositories": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+$"
+              },
+              "description": "The authorization list: owner/repo. An issue in any other repository is never asked about."
+            }
+          }
+        },
+        "approvers": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "description": "Who may answer a plan on the issue, by GitHub account number - never a login."
+        },
+        "useEgressProxy": {
+          "type": "boolean",
+          "description": "Send the agent's GitHub calls through codeFix.egressProxy when that proxy is rendered."
         }
       }
     }
