@@ -327,7 +327,21 @@ stand-in's token and the bot's login are in `infra/e2e/teams-stand-in.yaml`.
 
 `lib/issues.sh` has two halves and says which is which: `gh_*` drives the stand-in and was
 exercised when it was written; `wi_*` reads an agent API that did not exist yet, and is the one
-place a later stage adjusts when a path or a field turns out differently.
+place a later stage adjusts when a path or a field turns out differently. Its header lists six
+things it reads and marks each BUILT or ASSUMED: since stage 2.2 (#245) the work items
+(`GET /api/workitems`), a cancel, and `github` in `/api/status` are built, and G02 and G09 are
+green.
+
+**The agent is pointed at the stand-in by a values file**, `charts/hephaisto/values-dev-github.yaml`,
+which the Tiltfile layers for `"github": "stand-in"`: the stand-in's URL, its bot's login, the one
+listed repository, approver 1001, a five-second poll, and `secrets.github` naming the Secret
+`hephaisto-github-stand-in` that is applied with the stand-in. The dev agent therefore gets its
+token the way an install does - the chart's `secretKeyRef` - and not through `extraEnv`, which
+the chart refuses for every `GitHub__` name.
+
+**`github` in `/api/status` is up to a minute behind.** The row is what the poller last saw,
+served from the status page's cache, which is refreshed every 60 seconds. G09 waits for each
+change of it, so that scenario takes four to five minutes however fast the poller is.
 
 **The stand-in's image can vanish.** It is a fixed tag (`hephaisto/notification-receiver:dev`)
 that no container uses between a rebuild and the pod's restart, and a kubelet whose disk is

@@ -1,0 +1,31 @@
+# GitHub issues as work against the stand-in, layered over values-dev.yaml when tilt_config.json
+# says "github": "stand-in".
+#
+# The stand-in (infra/e2e/notification-receiver/GitHubStandIn.cs, Service github-stand-in in
+# hephaisto-obs) answers GitHub's REST calls with GitHub's field names and holds no account:
+# nothing here leaves the cluster. scripts/e2e/issues-local.sh reads GitHub__ApiBaseUrl off the
+# Deployment and refuses to run against anything but this.
+github:
+  enabled: true
+  apiBaseUrl: http://github-stand-in.hephaisto-obs:8080/github/api
+  # GITHUB_STANDIN_BOT_LOGIN in infra/e2e/teams-stand-in.yaml: the account its controls assign.
+  botLogin: hephaisto-bot
+  # Fast enough that a suite does not wait on it. The default is GitHub's advice for a poller.
+  pollInterval: "00:00:05"
+  issues:
+    repositories:
+      # The one the in-cluster git server holds (infra/coder/git-server), because a plan clones
+      # it. The suite's second repository, Flou21/not-listed, is not here on purpose.
+      - Flou21/hephaisto-fixture-dotnet
+  # `maintainer` in scripts/e2e/lib/issues.sh (ISSUES_APPROVER_ID). `passerby`, 2002, is not.
+  approvers:
+    - 1001
+  # The stand-in is in the cluster, on plain http and port 8080. The coder's proxy tunnels to
+  # 443 and forwards to 80, to names on its allowlist: it would refuse this, rightly.
+  useEgressProxy: false
+
+secrets:
+  # Applied with the stand-in, and holding the stand-in's own token - which opens nothing but
+  # that pod's /github/api. Its own name, so that pointing a dev agent at github.com can never
+  # be answered with this one.
+  github: hephaisto-github-stand-in

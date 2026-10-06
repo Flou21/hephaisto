@@ -149,6 +149,12 @@ public sealed class GitHubIssuePoller(
             try
             {
                 await PollRepositoryAsync(client, repository, bot, ct).ConfigureAwait(false);
+
+                // WHAT COMES AFTER TAKING AN ISSUE GOES HERE (stage 2.3, #246), and not into
+                // TakeAsync: after the list was compared OR found unchanged - the method above
+                // returns early on a 304 - so that "every taken work item of this repository
+                // has an attempt" is asked on each pass. A plan that could not start when its
+                // work item was created is then started by the next pass, like everything else.
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
@@ -301,10 +307,6 @@ public sealed class GitHubIssuePoller(
         {
             Failed(repository, firstProblem ?? "the pass did not finish");
         }
-
-        // STAGE 2.3 (#246) RECONCILES HERE, and on a 304 too: "every taken work item of this
-        // repository has an attempt" is asked on each pass, not when the item is created - a
-        // plan that could not start is then started by the next pass, like everything else here.
     }
 
     /// <summary>

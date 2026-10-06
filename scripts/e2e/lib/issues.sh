@@ -8,31 +8,39 @@
 #   ISSUES_STANDIN  the stand-in's base; GitHub is under /github
 #                   (infra/e2e/notification-receiver/GitHubStandIn.cs)
 #
-# TWO HALVES, AND ONLY THE FIRST EXISTED WHEN THIS WAS WRITTEN (v0.14.0 stage 2.1, #244).
+# TWO HALVES, AND THE SECOND IS BEING BUILT STAGE BY STAGE (v0.14.0, #243).
 #
 # gh_*  is the person and the witness: it opens, assigns and comments through the stand-in's
-#       controls, and reads back what the agent wrote and asked. Built and exercised.
+#       controls, and reads back what the agent wrote and asked. Built and exercised in #244.
 #
-# wi_*  reads the AGENT, which at that point had no GitHub client, no work item and no endpoint
-#       for one. Everything below it is the best reading of docs/roadmap.md and the plan, kept
-#       in this one file so that the stage which builds a thing adjusts it HERE and no scenario
-#       has to change. What is assumed:
+# wi_*  reads the AGENT. When this was written the agent had no GitHub client, no work item and
+#       no endpoint for one, so everything below it was the best reading of docs/roadmap.md and
+#       the plan, kept in this one file so that the stage which builds a thing adjusts it HERE
+#       and no scenario has to change. Six things, and where each stands:
 #
-#   1. GET /api/workitems?state=any&limit=N answers a JSON array of work items, each with
-#      {id, repository: "owner/repo", number, state} and, somewhere in it, the body it was
-#      created with. `state=any` as on /api/incidents.
-#   2. A work item whose pull request was merged is in state Done; one whose issue was
-#      unassigned or closed is Cancelled (WI_DONE, WI_CANCELLED below).
-#   3. A row of GET /api/codefixes carries `workItemId` where it has no incident, and keeps the
-#      fields it has today: state, summary, branch, planJobName, implementJobName, prUrl,
-#      prNumber, approvedBy. A rejection's reason is somewhere in the row.
-#   4. A Job and its request ConfigMap keep today's labels hephaisto.dev/attempt and
+#   1. BUILT (stage 2.2, #245). GET /api/workitems?state=any&limit=N answers a JSON array of
+#      work items, newest first: {id, source, repository: "owner/repo", number, url, title,
+#      type, authorLogin, state, stateReason, takenAt, closedAt, body}. `body` is the issue's
+#      text when the work item was taken, never updated. Without `state` it lists what is
+#      Taken; `state=any` as on /api/incidents; limit is capped at 500. GET /api/workitems/{id}
+#      is one of them.
+#   2. BUILT for Cancelled (stage 2.2): a work item whose issue was unassigned or closed is
+#      Cancelled, with why in stateReason, and the same issue assigned again is a SECOND work
+#      item. ASSUMED for Done: a work item whose pull request was merged (stage 2.4).
+#   3. ASSUMED. A row of GET /api/codefixes carries `workItemId` where it has no incident, and
+#      keeps the fields it has today: state, summary, branch, planJobName, implementJobName,
+#      prUrl, prNumber, approvedBy. A rejection's reason is somewhere in the row.
+#   4. ASSUMED. A Job and its request ConfigMap keep today's labels hephaisto.dev/attempt and
 #      hephaisto.dev/phase, and the request is still <job>-req, key request.json - with the
 #      issue under `work_item` (contract v2).
-#   5. GitHub is a row named "github" in GET /api/status `.connections`.
-#   6. The publish container's log shows the pull request's body (issues_pr_body). It does not
-#      today, and the `gh` shim's copy is gone with the pod: stage 2.4 decides where the body
-#      can be read, and changes that one function.
+#   5. BUILT (stage 2.2). GitHub is a row named "github" in GET /api/status `.connections`:
+#      Healthy when the last poll of every listed repository was answered (a 304 is an
+#      answer), Degraded with one line of why otherwise, NotConfigured with GitHub off or the
+#      agent Off. The row is what the poller last saw, served from the status page's cache -
+#      so it follows GitHub by up to a minute, which is why a scenario waits for it.
+#   6. ASSUMED. The publish container's log shows the pull request's body (issues_pr_body). It
+#      does not today, and the `gh` shim's copy is gone with the pod: stage 2.4 decides where
+#      the body can be read, and changes that one function.
 #
 # shellcheck disable=SC2034
 
@@ -186,7 +194,7 @@ gh_wait_comment_reads() {
 }
 
 # ---------------------------------------------------------------------------------------
-# The agent: work items and their attempts. ASSUMED - see the header.
+# The agent: work items (built) and their attempts (ASSUMED) - see the header.
 # ---------------------------------------------------------------------------------------
 
 # The first line of every scenario: an agent that serves no work items cannot pass one, and
@@ -269,6 +277,14 @@ issues_plan_ready() {
     pass "the assigned issue became a work item"
     WI=$(wi_id "$repo" "$number")
 
+    # An attempt is a row before it is a Job, so whether there will be one is known in seconds.
+    # Without this, an agent that takes an issue and plans nothing for it - which is what one
+    # is between stage 2.2 and stage 2.3 - is waited on for the whole of a plan's ceiling, in
+    # every scenario that starts on this road.
+    _wi_has_attempt() { [ "$(wi_attempt_count "$WI")" -ge 1 ]; }
+    wait_for "the work item to get an attempt" "$ISSUES_SEEN_WAIT" _wi_has_attempt \
+        || { fail "its plan is ready" "no attempt for the work item within ${ISSUES_SEEN_WAIT}s - nothing started a plan for it"; return 1; }
+
     wi_wait_attempt "$WI" "$ISSUES_PLAN_WAIT" PlanReady Failed Cancelled Denied Expired || true
     ATTEMPT=$(wi_attempt "$WI")
     if [ "$(jq -r '.state // empty' <<<"$ATTEMPT")" = PlanReady ]; then
@@ -330,8 +346,8 @@ issues_git_rev() {
         git --git-dir="/srv/git/${2:-$ISSUES_REPO}.git" rev-parse --verify --quiet "refs/heads/$1" 2>/dev/null || true
 }
 
-# GitHub, as the agent's own status page reports it: Healthy, Degraded, Unreachable,
-# NotConfigured - or nothing, when it has no such row.
+# GitHub, as the agent's own status page reports it: Healthy, Degraded, NotConfigured - or
+# nothing, when it has no such row. Up to a minute behind the poller (header, 5).
 issues_github_health() {
     _issues_curl "$ISSUES_API/api/status" | jq -r '[.connections[]? | select(.name == "github")][0].state // empty'
 }

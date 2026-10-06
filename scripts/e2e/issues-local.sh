@@ -133,15 +133,15 @@ bot=$(_issues_curl "$ISSUES_STANDIN/github/control/state" 2>/dev/null | jq -r '.
     || die "the stand-in does not know GitHub: its pod predates GitHubStandIn.cs - kubectl -n hephaisto-obs rollout restart deploy/teams-stand-in"
 export ISSUES_BOT="$bot"
 
-# Which GitHub the agent talks to, read off its Deployment. THE VARIABLE'S NAME IS STAGE 2.2's:
-# the agent had no GitHub client when this was written, so the name is what the Tiltfile's
-# marked place says it will be. Three answers:
+# Which GitHub the agent talks to, read off its Deployment: GitHub__ApiBaseUrl, which the chart
+# renders from github.apiBaseUrl whenever github.enabled (charts/hephaisto/values-dev-github.yaml
+# on this cluster). Three answers:
 #
 #   the stand-in   the run goes ahead - and only with the scripted coder
 #   something else refused. A run opens a dozen issues and approves plans on them.
-#   nothing        the agent cannot be handed an issue at all. Every scenario is red at its first
-#                  line, which is what a run before stage 2.2 is for; the coder is not asked
-#                  about, since nothing can start one.
+#   nothing        GitHub is not enabled on this agent, so it cannot be handed an issue. Every
+#                  scenario is red at its first wait; the coder is not asked about, since
+#                  nothing can start one.
 agent_env() {
     kc -n "$ISSUES_NS" get deploy "$ISSUES_DEPLOY" \
         -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name==\"$1\")].value}" 2>/dev/null || true
