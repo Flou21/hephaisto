@@ -294,12 +294,14 @@ cf_request() {
     cf_post "/api/incidents/$incident/codefix" "$(jq -cn --arg a "$CF_ACTOR" '{requestedBy:$a}')"
 }
 
-# The number of attempts and Jobs that exist for an incident.
+# The number of attempts and code-fix Jobs that exist for an incident. An investigator Job
+# carries the incident's label too (phase investigate) and is not one: with investigation.job on,
+# counting it made "exactly one Job ran for the plan" a statement about who investigated.
 cf_attempt_count() { cf_codefix "$1" | jq '.attempts | length'; }
 
 cf_job_count() {
     local incident="$1"
-    kc -n "$CF_CODER_NS" get jobs -l "hephaisto.dev/incident=$incident" -o json 2>/dev/null | jq '.items | length'
+    kc -n "$CF_CODER_NS" get jobs -l "hephaisto.dev/incident=$incident,hephaisto.dev/phase in (plan,implement)" -o json 2>/dev/null | jq '.items | length'
 }
 
 # --- the switch -----------------------------------------------------------------------------
@@ -497,6 +499,17 @@ run_c13() {
     phase_start "c13-declined"
 
     cf_trigger c13-wedged-lock
+
+    # c13 comes up healthy and breaks only when told to (see the fixture: an abnormal exit that
+    # leaves its lock held). Without this the scenario waited ten minutes for an incident that
+    # could not exist, and passed only when an earlier run had left one open.
+    if kc -n "$CF_CHAOS_NS" rollout status deploy/c13-wedged-lock --timeout=120s >/dev/null 2>&1 \
+        && kc -n "$CF_CHAOS_NS" exec deploy/c13-wedged-lock -- touch /scratch/crash >/dev/null 2>&1; then
+        say "armed c13: abnormal exit simulated, lock left held"
+    else
+        fail "c13 was armed"
+        return 0
+    fi
 
     local incident=""
     find_c13() { incident=$(cf_get "/api/incidents?state=open&limit=200" | jq -r --arg ns "$CF_CHAOS_NS" '[.[] | select(.namespace == $ns and ((.ownerName // .targetName) | test("wedged")))] | sort_by(.openedAt) | last | .id // empty'); [ -n "$incident" ]; }
