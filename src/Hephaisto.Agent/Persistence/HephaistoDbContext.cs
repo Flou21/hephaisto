@@ -310,7 +310,12 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
 
         b.Entity<CodeFixAttempt>(e =>
         {
-            e.ToTable("code_fix_attempts");
+            // An attempt is for an incident or for a work item: exactly one, and never neither.
+            // In Postgres and not only in the coordinator, because every path after the start -
+            // collect, cancel, expire, charge - asks the row what it is for and has no third answer.
+            e.ToTable("code_fix_attempts", t => t.HasCheckConstraint(
+                "ck_code_fix_attempts_one_subject",
+                "(incident_id IS NULL) <> (work_item_id IS NULL)"));
             e.HasKey(a => a.Id);
 
             // Verbatim documents as they crossed the process boundary. jsonb so "what did the
@@ -332,6 +337,19 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
             // eligibility check: two alerts for one incident arriving in the same second both
             // pass an in-memory "is one open" read, and exactly one of them may win.
             e.HasIndex(a => a.IncidentId, "ux_code_fix_attempts_one_open_per_incident")
+                .IsUnique()
+                .HasFilter(CodeFixOpenStateFilterSql("state"));
+
+            // The same for a work item (v0.14.0): the poller reads "no attempt" before it starts
+            // one, and two passes - or one on either side of a restart - read the same nothing.
+            e.HasOne(a => a.WorkItem)
+                .WithMany()
+                .HasForeignKey(a => a.WorkItemId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            e.HasIndex(a => a.WorkItemId, "ix_code_fix_attempts_work_item_id");
+
+            e.HasIndex(a => a.WorkItemId, "ux_code_fix_attempts_one_open_per_work_item")
                 .IsUnique()
                 .HasFilter(CodeFixOpenStateFilterSql("state"));
         });
@@ -829,6 +847,9 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
             e.Property(w => w.AuthorLogin).HasMaxLength(64).IsRequired();
             e.Property(w => w.Body).IsRequired();
             e.Property(w => w.StateReason).HasMaxLength(MaxErrorLength);
+            e.Property(w => w.StatusCommentDigest).HasMaxLength(64);
+            e.Property(w => w.DeclineCodes).HasMaxLength(512);
+            e.Property(w => w.DeclineReason).HasMaxLength(MaxErrorLength);
 
             e.Property(w => w.Labels)
                 .HasConversion(StringListConverter, StringListComparer)

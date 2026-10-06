@@ -68,6 +68,9 @@ public static class CodeFixJobSpec
 
     public const string IncidentLabel = "hephaisto.dev/incident";
 
+    /// <summary>On the Job of a work item's attempt, in place of <see cref="IncidentLabel"/>: the work item's id.</summary>
+    public const string WorkItemLabel = "hephaisto.dev/work-item";
+
     public const string PhaseLabel = "hephaisto.dev/phase";
 
     /// <summary>The model's credential, either form. Only <c>coder</c> is handed these.</summary>
@@ -454,12 +457,24 @@ public static class CodeFixJobSpec
         };
     }
 
-    private static Dictionary<string, string> Labels(CodeFixAttempt attempt, CodeFixPhase phase) => new()
+    private static Dictionary<string, string> Labels(CodeFixAttempt attempt, CodeFixPhase phase)
     {
-        ["app.kubernetes.io/name"] = AppLabel,
-        ["app.kubernetes.io/managed-by"] = "hephaisto",
-        [AttemptLabel] = attempt.Id.ToString(),
-        [IncidentLabel] = attempt.IncidentId.ToString(),
-        [PhaseLabel] = phase == CodeFixPhase.Plan ? "plan" : "implement",
-    };
+        // In this order, with exactly one of the two subject labels: an incident's Job is
+        // labelled as it always was.
+        var labels = new Dictionary<string, string>
+        {
+            ["app.kubernetes.io/name"] = AppLabel,
+            ["app.kubernetes.io/managed-by"] = "hephaisto",
+            [AttemptLabel] = attempt.Id.ToString(),
+        };
+
+        if (attempt.IncidentId is { } incident)
+            labels[IncidentLabel] = incident.ToString();
+        else if (attempt.WorkItemId is { } workItem)
+            labels[WorkItemLabel] = workItem.ToString();
+
+        labels[PhaseLabel] = phase == CodeFixPhase.Plan ? "plan" : "implement";
+
+        return labels;
+    }
 }

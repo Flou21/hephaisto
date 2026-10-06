@@ -446,7 +446,10 @@ public sealed partial class McpIncidentReader
         string? cursor,
         CancellationToken ct)
     {
-        var query = db.CodeFixAttempts.AsNoTracking().AsQueryable();
+        // An attempt for a GitHub issue (v0.14.0) has no incident, and a row of this list is
+        // defined by one: its incidentId is what a reader follows. Until the list learns to show
+        // an issue, such an attempt is left out here rather than given an id that is nobody's.
+        var query = db.CodeFixAttempts.AsNoTracking().Where(a => a.IncidentId != null);
 
         if (!string.IsNullOrWhiteSpace(state))
         {
@@ -510,6 +513,13 @@ public sealed partial class McpIncidentReader
         var attempt = await db.CodeFixAttempts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == attemptId, ct).ConfigureAwait(false)
             ?? throw new McpException($"No code fix attempt {attemptId}.");
 
+        if (attempt.IncidentId is null)
+        {
+            throw new McpException(
+                $"Code fix attempt {attemptId} is for a GitHub issue, not an incident. Its plan and its state are on the issue; "
+                + "this endpoint reads the attempts of incidents.");
+        }
+
         return CodeFixDetailOf(CodeFixQueries.View(attempt));
     }
 
@@ -543,7 +553,8 @@ public sealed partial class McpIncidentReader
     private static CodeFixRow CodeFixRowOf(CodeFixAttemptView a) => new()
     {
         Id = a.Id,
-        IncidentId = a.IncidentId,
+        // Never empty here: both readers above leave out an attempt without an incident.
+        IncidentId = a.IncidentId ?? Guid.Empty,
         State = a.State,
         Repository = McpText.Name(a.Repository),
         Workload = McpText.Name(a.Workload),

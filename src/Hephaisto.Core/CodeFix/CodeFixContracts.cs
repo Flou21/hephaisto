@@ -72,6 +72,26 @@ public sealed record CodeFixCandidate
     public bool RequestedByHuman { get; init; }
 }
 
+/// <summary>
+/// What is known about a piece of work somebody handed over, gathered by the caller. The
+/// counterpart of <see cref="CodeFixCandidate"/> for a <see cref="WorkItem"/>, and far smaller:
+/// nothing about it is a diagnosis.
+/// </summary>
+public sealed record WorkItemCandidate
+{
+    /// <summary><c>owner/repo</c>, for the sentence of a refusal.</summary>
+    public required string Repository { get; init; }
+
+    /// <summary>The work item is still <see cref="WorkItemState.Taken"/>.</summary>
+    public required bool Taken { get; init; }
+
+    /// <summary>The repository is one the install lists for issues. The authorization.</summary>
+    public required bool RepositoryListed { get; init; }
+
+    /// <summary>Where the code is cloned from, and its default branch; null when nothing says.</summary>
+    public RepositoryBinding? Binding { get; init; }
+}
+
 /// <summary>The world at the moment of judging, read by the caller.</summary>
 public sealed record CodeFixFacts
 {
@@ -84,6 +104,7 @@ public sealed record CodeFixFacts
 
     public required bool RunawayLatched { get; init; }
 
+    /// <summary>An attempt is open for the same subject - the incident, or the work item.</summary>
     public bool IncidentAttemptOpen { get; init; }
 
     public bool WorkloadAttemptOpen { get; init; }
@@ -143,6 +164,12 @@ public enum CodeFixReasonCode
     ConcurrencyCapReached = 18,
     DailyCostCapReached = 19,
     LlmBudgetExhausted = 20,
+
+    /// <summary>A work item's repository is not one the install lists for issues.</summary>
+    RepositoryNotListed = 21,
+
+    /// <summary>The work item was cancelled or finished between being read and being judged.</summary>
+    WorkItemNotTaken = 22,
 }
 
 /// <summary>The predicate's answer: eligible, or every reason it is not.</summary>

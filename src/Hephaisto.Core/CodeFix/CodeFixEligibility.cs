@@ -65,17 +65,7 @@ public static class CodeFixEligibility
 
         // 1. The switches. First, and none of them ends the evaluation: the rest of the verdict is
         //    what tells an operator whether turning the mode on would have mattered.
-        if (facts.Mode == CodeFixMode.Off)
-            Refuse(CodeFixReasonCode.ModeOff, "code-fix mode is Off");
-
-        if (facts.AgentMode == AgentMode.Off)
-            Refuse(CodeFixReasonCode.AgentOff, "agent is off");
-
-        if (facts.EmergencyStop)
-            Refuse(CodeFixReasonCode.EmergencyStop, "the emergency stop is engaged");
-
-        if (facts.RunawayLatched)
-            Refuse(CodeFixReasonCode.RunawayLatched, "the runaway latch is set");
+        RefuseForSwitches(facts, Refuse);
 
         // 2. Never about ourselves. A coder asked to fix the thing that runs coders is a loop.
         if (candidate.SelfSignal)
@@ -124,11 +114,9 @@ public static class CodeFixEligibility
         {
             Refuse(CodeFixReasonCode.NoRepositoryMapping, $"no repository is mapped for {candidate.WorkloadKey}");
         }
-        else if (binding.Host is not { } host
-                 || !options.AllowedRepositoryHosts.Contains(host, StringComparer.OrdinalIgnoreCase))
+        else
         {
-            Refuse(CodeFixReasonCode.RepositoryHostNotAllowed,
-                $"repository host '{binding.Host ?? binding.Url}' is not allowed");
+            RefuseForHost(binding, options, Refuse);
         }
 
         // 6. One at a time, and within the caps. Zero caps permit nothing.
@@ -138,23 +126,115 @@ public static class CodeFixEligibility
         if (facts.WorkloadAttemptOpen)
             Refuse(CodeFixReasonCode.WorkloadAttemptOpen, "a code fix is already open for this workload");
 
+        RefuseForCaps(facts, options, Refuse);
+
+        return new CodeFixVerdict { Eligible = codes.Count == 0, Codes = codes, Reasons = reasons };
+    }
+
+    /// <summary>
+    /// Decides whether a piece of work somebody handed over - an issue assigned to Hephaisto's
+    /// account - may start a coder (v0.14.0).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The same switches, the same host allowlist and the same caps as an incident's, from the same
+    /// three functions, and one gate of its own: the repository is one the install lists. Nothing
+    /// about an incident is asked, because there is none - no escalation, no investigation, no
+    /// finding, no category, no confidence, no workload. A person assigning the issue is the
+    /// judgement those gates stand in for, exactly as it is for
+    /// <see cref="CodeFixCandidate.RequestedByHuman"/>.
+    /// </para>
+    /// <para>
+    /// A refusal here is not the end of the work item: the caller asks again on its next pass, so a
+    /// cap that was reached at noon is not a plan that never happens.
+    /// </para>
+    /// </remarks>
+    public static CodeFixVerdict EvaluateWorkItem(WorkItemCandidate candidate, CodeFixFacts facts, CodeFixEligibilityOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+        ArgumentNullException.ThrowIfNull(facts);
+        ArgumentNullException.ThrowIfNull(options);
+
+        var codes = new List<CodeFixReasonCode>();
+        var reasons = new List<string>();
+
+        void Refuse(CodeFixReasonCode code, string reason)
+        {
+            codes.Add(code);
+            reasons.Add(reason);
+        }
+
+        RefuseForSwitches(facts, Refuse);
+
+        if (!candidate.Taken)
+            Refuse(CodeFixReasonCode.WorkItemNotTaken, "the issue is no longer Hephaisto's");
+
+        // The install's list is the authorization. An issue anywhere else is not asked about by
+        // the poller at all; this is the same rule where a Job would start.
+        if (!candidate.RepositoryListed)
+        {
+            Refuse(CodeFixReasonCode.RepositoryNotListed, $"{candidate.Repository} is not one of the listed repositories");
+        }
+        else if (candidate.Binding is not { } binding || string.IsNullOrWhiteSpace(binding.Url))
+        {
+            Refuse(CodeFixReasonCode.NoRepositoryMapping, $"no clone URL is known for {candidate.Repository}");
+        }
+        else
+        {
+            RefuseForHost(binding, options, Refuse);
+        }
+
+        if (facts.IncidentAttemptOpen)
+            Refuse(CodeFixReasonCode.AttemptAlreadyOpen, "a code fix is already open for this issue");
+
+        RefuseForCaps(facts, options, Refuse);
+
+        return new CodeFixVerdict { Eligible = codes.Count == 0, Codes = codes, Reasons = reasons };
+    }
+
+    private static void RefuseForSwitches(CodeFixFacts facts, Action<CodeFixReasonCode, string> refuse)
+    {
+        if (facts.Mode == CodeFixMode.Off)
+            refuse(CodeFixReasonCode.ModeOff, "code-fix mode is Off");
+
+        if (facts.AgentMode == AgentMode.Off)
+            refuse(CodeFixReasonCode.AgentOff, "agent is off");
+
+        if (facts.EmergencyStop)
+            refuse(CodeFixReasonCode.EmergencyStop, "the emergency stop is engaged");
+
+        if (facts.RunawayLatched)
+            refuse(CodeFixReasonCode.RunawayLatched, "the runaway latch is set");
+    }
+
+    private static void RefuseForHost(RepositoryBinding binding, CodeFixEligibilityOptions options, Action<CodeFixReasonCode, string> refuse)
+    {
+        if (binding.Host is not { } host
+            || !options.AllowedRepositoryHosts.Contains(host, StringComparer.OrdinalIgnoreCase))
+        {
+            refuse(CodeFixReasonCode.RepositoryHostNotAllowed,
+                $"repository host '{binding.Host ?? binding.Url}' is not allowed");
+        }
+    }
+
+    /// <summary>The caps that are about the stage as a whole. Zero caps permit nothing.</summary>
+    private static void RefuseForCaps(CodeFixFacts facts, CodeFixEligibilityOptions options, Action<CodeFixReasonCode, string> refuse)
+    {
         if (facts.RepositoryAttemptsToday >= options.MaxAttemptsPerRepositoryPerDay)
         {
-            Refuse(CodeFixReasonCode.RepositoryDailyCapReached,
+            refuse(CodeFixReasonCode.RepositoryDailyCapReached,
                 $"{facts.RepositoryAttemptsToday} attempts on this repository today (cap {options.MaxAttemptsPerRepositoryPerDay})");
         }
 
         if (facts.JobsInFlight >= options.MaxConcurrentJobs)
-            Refuse(CodeFixReasonCode.ConcurrencyCapReached,
+            refuse(CodeFixReasonCode.ConcurrencyCapReached,
                 $"{facts.JobsInFlight} coder job(s) running (cap {options.MaxConcurrentJobs})");
 
         if (facts.CostTodayUsd >= options.MaxCostUsdPerDay)
-            Refuse(CodeFixReasonCode.DailyCostCapReached,
+            refuse(CodeFixReasonCode.DailyCostCapReached,
                 $"coder spend today ${facts.CostTodayUsd:0.00} (cap ${options.MaxCostUsdPerDay:0.00})");
 
         if (facts.LlmBudgetExhausted)
-            Refuse(CodeFixReasonCode.LlmBudgetExhausted, "the global LLM budget is exhausted");
-
-        return new CodeFixVerdict { Eligible = codes.Count == 0, Codes = codes, Reasons = reasons };
+            refuse(CodeFixReasonCode.LlmBudgetExhausted, "the global LLM budget is exhausted");
     }
 }

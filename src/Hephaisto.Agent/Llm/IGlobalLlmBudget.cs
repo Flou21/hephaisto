@@ -22,7 +22,11 @@ namespace Hephaisto.Agent.Llm;
 public interface IGlobalLlmBudget
 {
     /// <summary>Asked once, before the first token is spent.</summary>
-    Task<GlobalBudgetVerdict> CheckAsync(Guid incidentId, CancellationToken ct);
+    /// <param name="incidentId">
+    /// The incident the spend would be for, whose own ceiling is then checked with the windows.
+    /// Null for spend that is no incident's - a coder for a work item - where only the windows apply.
+    /// </param>
+    Task<GlobalBudgetVerdict> CheckAsync(Guid? incidentId, CancellationToken ct);
 
     /// <summary>
     /// Persists what an investigation spent.
@@ -61,7 +65,7 @@ public sealed record GlobalBudgetVerdict(bool Allowed, string Reason)
 /// </summary>
 public sealed class LlmBudgetServiceAdapter(LlmBudgetService budget) : IGlobalLlmBudget
 {
-    public async Task<GlobalBudgetVerdict> CheckAsync(Guid incidentId, CancellationToken ct)
+    public async Task<GlobalBudgetVerdict> CheckAsync(Guid? incidentId, CancellationToken ct)
     {
         var verdict = await budget.CheckAsync(incidentId, ct).ConfigureAwait(false);
 
@@ -99,7 +103,7 @@ public sealed class LlmBudgetServiceAdapter(LlmBudgetService budget) : IGlobalLl
 /// </remarks>
 public sealed class NullGlobalLlmBudget : IGlobalLlmBudget
 {
-    public Task<GlobalBudgetVerdict> CheckAsync(Guid incidentId, CancellationToken ct) =>
+    public Task<GlobalBudgetVerdict> CheckAsync(Guid? incidentId, CancellationToken ct) =>
         Task.FromResult(GlobalBudgetVerdict.Allow);
 
     public Task RecordAsync(
