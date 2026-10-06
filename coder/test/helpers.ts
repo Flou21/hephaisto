@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { stringify as toYaml } from 'yaml';
 import { APP_ROOT } from '../src/config.js';
+import { resetRedactions } from '../src/log.js';
 import { main } from '../src/main.js';
 import { parseLastFrame, resetEmitted } from '../src/result.js';
 import type { CodeFixRequest, InvestigateRequest } from '../src/schemas.js';
@@ -224,6 +225,7 @@ export async function runRequest(w: World, request: unknown, extraEnv: Record<st
     ...extraEnv,
   };
   resetEmitted();
+  resetRedactions();
   const out: string[] = [];
   await main({ env, write: (s) => out.push(s) });
   resetEmitted();
@@ -231,6 +233,68 @@ export async function runRequest(w: World, request: unknown, extraEnv: Record<st
   const parsed = parseLastFrame(stdout);
   if (!parsed) throw new Error(`no framed result in: ${stdout}`);
   return { stdout, doc: JSON.parse(parsed.json) as Record<string, unknown>, valid: parsed.valid };
+}
+
+export interface RoleOutput {
+  stdout: string;
+  /** The framed result this role printed, or null: prepare never prints, and coder does not in implement. */
+  doc: Record<string, unknown> | null;
+  exitCode: number;
+}
+
+/** Where the Job would mount the volume prepare and publish share and coder does not: outside the workspace. */
+export function sealDir(w: World): string {
+  return join(w.root, 'sealed');
+}
+
+/**
+ * One role of a Job, as its own main() with its own environment - the tokens a container would
+ * be handed are exactly `extraEnv`. Nothing is shared between two calls but the files.
+ */
+export async function runRole(w: World, role: 'prepare' | 'coder' | 'publish', request: unknown, extraEnv: Record<string, string | undefined> = {}): Promise<RoleOutput> {
+  const reqPath = join(w.root, 'in', 'request.json');
+  mkdirSync(dirname(reqPath), { recursive: true });
+  writeFileSync(reqPath, typeof request === 'string' ? request : JSON.stringify(request, null, 2));
+  mkdirSync(sealDir(w), { recursive: true });
+  const env: NodeJS.ProcessEnv = {
+    PATH: process.env.PATH,
+    TMPDIR: process.env.TMPDIR,
+    GH_SHIM_STATE: w.ghState,
+    GH_SHIM_LOG: w.ghLog,
+    CODEFIX_ROLE: role,
+    CODEFIX_REQUEST: reqPath,
+    CODEFIX_SDK: 'fake',
+    CODEFIX_FAKE_SCRIPT_DIR: w.scripts,
+    CODEFIX_GH: 'shim',
+    CODEFIX_GH_SHIM_DIR: join(APP_ROOT, 'test', 'gh-shim'),
+    CODEFIX_WORK_DIR: w.work,
+    CODEFIX_SEAL_DIR: sealDir(w),
+    ...extraEnv,
+  };
+  resetEmitted();
+  resetRedactions();
+  const out: string[] = [];
+  const r = await main({ env, write: (s) => out.push(s) });
+  resetEmitted();
+  const stdout = out.join('');
+  const parsed = parseLastFrame(stdout);
+  if (parsed && !parsed.valid) throw new Error(`an invalid frame in: ${stdout}`);
+  return { stdout, doc: parsed ? (JSON.parse(parsed.json) as Record<string, unknown>) : null, exitCode: r.exitCode };
+}
+
+/** Every regular file under `dir` (links are not followed) that contains `needle`. */
+export function filesContaining(dir: string, needle: string): string[] {
+  const hits: string[] = [];
+  const walk = (d: string) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, e.name);
+      if (e.isSymbolicLink()) continue;
+      if (e.isDirectory()) walk(p);
+      else if (e.isFile() && statSync(p).size < 64 * 1024 * 1024 && readFileSync(p).includes(needle)) hits.push(p);
+    }
+  };
+  walk(dir);
+  return hits;
 }
 
 export function ghLog(w: World): string {

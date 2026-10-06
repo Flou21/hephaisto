@@ -1,18 +1,39 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { type AgentRunResult, buildAgentEnv, guardEnvFor, runAgent } from './agent.js';
-import { APP_ROOT, BINARY_MAX_BYTES, IMPLEMENT_MAX_TURNS, PATCH_MAX_BYTES, PLAN_MAX_TURNS, type RunnerEnv, type WorkPaths } from './config.js';
+import { IMPLEMENT_MAX_TURNS, PATCH_MAX_BYTES, PLAN_MAX_TURNS, type RunnerEnv, type WorkPaths } from './config.js';
 import { Git, trailers } from './git.js';
-import { type GuardContext, matchesProtected, realish } from './guard.js';
+import { type GuardContext, realish } from './guard.js';
+import { BUNDLE_FILE, type CoderHandoff, HANDOFF_VERSION, type PrepareHandoff, newPrepareHandoff } from './handoff.js';
 import { log } from './log.js';
-import { BRANCH_RE, createDraftPr, findOpenPr, ghEnv, inspectRemoteBranch, prTitle, pushBranch, renderPrBody } from './pr.js';
+import { changedFiles, policyCheck } from './policy.js';
+import { BRANCH_RE, findOpenPr, ghEnv, inspectRemoteBranch } from './pr.js';
 import { fencedJson, loadTemplate, render, renderEvidenceBlock, repoNotesBlock } from './prompts.js';
-import { NOT_ENABLED, enabledRepo, protectedGlobs } from './repos.js';
+import { NOT_ENABLED, enabledRepo, protectedGlobs, repoDirName } from './repos.js';
 import { minimalFailed } from './result.js';
-import { type CodeFixRequest, type ImplementResult, type PlanResult, type RepoEntry, type Repos, rawSchema, validateWith } from './schemas.js';
+import { type CodeFixRequest, type ImplementResult, type PlanResult, type RepoEntry, rawSchema, validateWith } from './schemas.js';
 import type { QueryFn } from './sdk.js';
-import { type VerificationReport, runVerification } from './verify.js';
-import { type Target, checkoutAnalysedRef, cloneTarget, ensureNugetConfig, makeDirs, nugetCredentialEnv, prepareCait, prepareContext, sanitizeTarget } from './workspace.js';
+import { type VerificationReport, feedRefusal, feedRefusalNote, runVerification } from './verify.js';
+import { type Target, checkoutAnalysedRef, cloneTarget, ensureNugetConfig, makeDirs, nugetCredentialEnv, openPrepared, prepareCait, prepareContext, sanitizeTarget } from './workspace.js';
+
+// plan and implement, each cut where the model starts (backlog #116):
+//
+//   prepare*   needs a GitHub or NuGet token and runs BEFORE the model exists. What it decided
+//              travels in a PrepareHandoff - or, when the run ends here (the repository is not
+//              enabled, an open PR already exists, a clone failed), in that handoff's `terminal`.
+//   coder*     the agent, and whatever executes what the agent wrote. No git or NuGet token is
+//              in this role's environment, so none of the git it runs can authenticate - and
+//              none needs to: everything it reads was fetched by prepare.
+//   publish    (publish.ts) the push and the Draft PR, from a copy this role does not share.
+
+export interface PrepareDeps {
+  env: RunnerEnv;
+  paths: WorkPaths;
+  deadline: number;
+  abort: AbortController;
+  /** When this run started; it travels in the handoff, because the Job's deadline started then too. */
+  startedAt: number;
+}
 
 export interface PhaseDeps {
   env: RunnerEnv;
@@ -135,34 +156,51 @@ function relFiles(files: string[], targetDir: string): string[] {
   return files.map((f) => (f.startsWith(targetDir) ? relative(targetDir, f) : f.replace(/^\.\//, '')));
 }
 
-function contextDenied(req: CodeFixRequest, repos: Repos): RepoEntry | null {
-  return enabledRepo(repos, req.repository.url);
-}
-
 // =============================================================================================
 // plan
 
-export async function runPlan(req: CodeFixRequest, deps: PhaseDeps): Promise<PlanResult> {
+export async function preparePlan(req: CodeFixRequest, deps: PrepareDeps): Promise<PrepareHandoff> {
   const { env, paths } = deps;
-  const result = minimalFailed('plan', req.attempt_id, 'plan did not complete') as PlanResult;
+  const h = newPrepareHandoff(req.attempt_id, 'plan', deps.startedAt);
+  const end = (error: string): PrepareHandoff => {
+    const result = minimalFailed('plan', req.attempt_id, error) as PlanResult;
+    return { ...h, terminal: { ...result, context_sha: h.context_sha, analysed_ref: h.analysed_ref } };
+  };
   try {
     makeDirs(paths);
     const ctx = await prepareContext(req, env, paths, deps.abort.signal);
-    result.context_sha = ctx.contextSha;
-    const repo = contextDenied(req, ctx.repos);
+    h.context_sha = ctx.contextSha;
+    const repo = enabledRepo(ctx.repos, req.repository.url);
     if (!repo) {
       log.warn(`${req.repository.url}: ${NOT_ENABLED}; the agent is not started`);
-      result.error = NOT_ENABLED;
-      return result;
+      return end(NOT_ENABLED);
     }
     const target = await cloneTarget(req, ctx.repos, repo, env, paths, deps.abort.signal);
-    result.analysed_ref = await checkoutAnalysedRef(target, req.incident.image, req.repository.default_branch);
+    h.repo_dir = repoDirName(repo);
+    h.claude_md = target.claudeMd;
+    h.analysed_ref = await checkoutAnalysedRef(target, req.incident.image, req.repository.default_branch);
     await sanitizeTarget(target);
     await prepareCait(target, req.repository.url, ctx.repos, env, paths, deps.abort.signal);
+    h.cait = target.caitDir !== null;
+    h.notes = [...target.notes];
+    return h;
+  } catch (e) {
+    log.error(`plan could not be prepared: ${(e as Error).stack ?? String(e)}`);
+    return end((e as Error).message);
+  }
+}
+
+export async function coderPlan(req: CodeFixRequest, deps: PhaseDeps, h: PrepareHandoff): Promise<PlanResult> {
+  const { env, paths } = deps;
+  const result = minimalFailed('plan', req.attempt_id, 'plan did not complete') as PlanResult;
+  result.context_sha = h.context_sha;
+  result.analysed_ref = h.analysed_ref;
+  try {
+    const { repos, repo, target } = openPrepared(req.repository.url, h, env, paths, deps.abort.signal);
 
     const vars = { ...baseVars(req, repo, target, paths), analysed_ref: result.analysed_ref ?? '', result_schema: JSON.stringify(planOutputSchema(), null, 2) };
     const prompt = render(loadTemplate('plan', paths.context).text, vars);
-    const guard: GuardContext = { targetDir: realish(target.dir), protectedGlobs: protectedGlobs(ctx.repos, repo), homeDir: paths.home };
+    const guard: GuardContext = { targetDir: realish(target.dir), protectedGlobs: protectedGlobs(repos, repo), homeDir: paths.home };
     const query = await deps.makeQuery({
       repoName: repo.name,
       vars: { ...vars, target: target.dir, first_evidence_file: await firstEvidenceFile(req, target.git) },
@@ -217,34 +255,6 @@ export async function runPlan(req: CodeFixRequest, deps: PhaseDeps): Promise<Pla
 // =============================================================================================
 // implement
 
-const SECRET_IN_DIFF = /ghp_|github_pat_|sk-ant-/;
-
-export interface PolicyVerdict {
-  ok: boolean;
-  reasons: string[];
-}
-
-/** The diff the driver is about to publish, checked by the driver: no protected paths, no big binaries, no credential shapes. */
-export async function policyCheck(git: Git, base: string, files: string[], globs: string[]): Promise<PolicyVerdict> {
-  const reasons: string[] = [];
-  for (const f of files) {
-    const hit = matchesProtected(f, globs);
-    if (hit) reasons.push(`${f} is a protected path (${hit})`);
-  }
-  const numstat = await git.ok(['diff', '--numstat', '--no-renames', `${base}..HEAD`]);
-  for (const line of numstat.split('\n').filter(Boolean)) {
-    const [add, del, path] = line.split('\t');
-    if (add === '-' && del === '-' && path) {
-      const size = await git.try(['cat-file', '-s', `HEAD:${path}`]);
-      if (size.code === 0 && Number(size.stdout.trim()) > BINARY_MAX_BYTES) reasons.push(`${path} is a binary larger than 1 MB`);
-    }
-  }
-  const diff = await git.ok(['diff', '--no-color', '--no-ext-diff', `${base}..HEAD`]);
-  const added = diff.split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++'));
-  if (added.some((l) => SECRET_IN_DIFF.test(l))) reasons.push('the diff adds a line that looks like a credential (ghp_/github_pat_/sk-ant-)');
-  return { ok: reasons.length === 0, reasons };
-}
-
 /** Every commit on the branch carries this attempt's trailers, so a retried Job can recognise its own work. */
 async function ensureTrailers(git: Git, base: string, req: CodeFixRequest): Promise<void> {
   const commits = (await git.ok(['log', '--format=%H%x1f%(trailers:key=Hephaisto-Attempt,valueonly,separator=%x2c)', `${base}..HEAD`])).split('\n').filter(Boolean);
@@ -255,6 +265,11 @@ async function ensureTrailers(git: Git, base: string, req: CodeFixRequest): Prom
   await git.ok(['rebase', '--quiet', '--exec', exec, base]);
 }
 
+/**
+ * The environment of the driver's own restore/build/test. In the prepare role that includes the
+ * two variables the TR nuget.config files read; in the coder role nugetCredentialEnv is empty -
+ * there is no token in that container to pass on.
+ */
 function driverChildEnv(env: RunnerEnv, paths: WorkPaths): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(env.base)) {
@@ -270,59 +285,55 @@ function driverChildEnv(env: RunnerEnv, paths: WorkPaths): NodeJS.ProcessEnv {
     DOTNET_CLI_TELEMETRY_OPTOUT: '1',
     DOTNET_CLI_USE_MSBUILD_SERVER: '0',
     DOTNET_NOLOGO: '1',
-    // the TR nuget.config files read these two; set for the driver's own restore/build/test only
     ...nugetCredentialEnv(env),
   };
 }
 
-export async function runImplement(req: CodeFixRequest, deps: PhaseDeps): Promise<ImplementResult> {
+/**
+ * Everything of implement that needs a token, before the model runs: the clones, the open-PR and
+ * remote-branch checks, the assigned branch, the pre-restore that fills the package cache the
+ * coder role will build from. An open PR, a foreign branch or any failure ends the run here.
+ */
+export async function prepareImplement(req: CodeFixRequest, deps: PrepareDeps): Promise<PrepareHandoff> {
   const { env, paths } = deps;
-  const result = minimalFailed('implement', req.attempt_id, 'implement did not complete') as ImplementResult;
-  result.branch = req.repository.branch;
+  const h = newPrepareHandoff(req.attempt_id, 'implement', deps.startedAt);
   const deviations: string[] = [];
+  const end = (r: Partial<ImplementResult>): PrepareHandoff => {
+    const result = minimalFailed('implement', req.attempt_id, 'implement did not complete') as ImplementResult;
+    return { ...h, deviations, terminal: { ...result, branch: req.repository.branch, base_commit: h.base_commit, ...r } };
+  };
   const plan = req.plan;
   try {
-    if (!plan) {
-      result.error = 'implement phase requires request.plan';
-      return result;
-    }
-    if (plan.outcome !== 'planned') {
-      result.error = `the plan's outcome is ${plan.outcome}; only a planned result can be implemented`;
-      return result;
-    }
-    if (plan.needs_cait) {
-      result.error = 'the plan needs a Cait change: multi-repository fixes are not implemented in v1 (Cait first, by a human)';
-      return result;
-    }
-    if (!BRANCH_RE.test(req.repository.branch)) {
-      result.error = `assigned branch ${req.repository.branch} is not a hephaisto/codefix-<id> branch`;
-      return result;
-    }
+    if (!plan) return end({ error: 'implement phase requires request.plan' });
+    if (plan.outcome !== 'planned') return end({ error: `the plan's outcome is ${plan.outcome}; only a planned result can be implemented` });
+    if (plan.needs_cait) return end({ error: 'the plan needs a Cait change: multi-repository fixes are not implemented in v1 (Cait first, by a human)' });
+    if (!BRANCH_RE.test(req.repository.branch)) return end({ error: `assigned branch ${req.repository.branch} is not a hephaisto/codefix-<id> branch` });
+
     makeDirs(paths);
     const ctx = await prepareContext(req, env, paths, deps.abort.signal);
-    const repo = contextDenied(req, ctx.repos);
+    h.context_sha = ctx.contextSha;
+    const repo = enabledRepo(ctx.repos, req.repository.url);
     if (!repo) {
       log.warn(`${req.repository.url}: ${NOT_ENABLED}; the agent is not started`);
-      result.error = NOT_ENABLED;
-      return result;
+      return end({ error: NOT_ENABLED });
     }
     const target = await cloneTarget(req, ctx.repos, repo, env, paths, deps.abort.signal);
     const git = target.git;
     const base = await git.head();
-    result.base_commit = base;
+    h.base_commit = base;
+    h.repo_dir = repoDirName(repo);
+    h.claude_md = target.claudeMd;
     const gh = ghEnv(env, paths.home);
 
     // idempotency: an open PR from the assigned branch means a previous Job finished the work
     const existing = await findOpenPr(req.repository.url, req.repository.branch, gh, target.dir);
     if (existing) {
       log.info(`an open PR already exists for ${req.repository.branch}: ${existing.url}; the agent is not started`);
-      return { ...result, outcome: 'already_exists', pr_url: existing.url, pr_number: existing.number, error: null };
+      return end({ outcome: 'already_exists', pr_url: existing.url, pr_number: existing.number, error: null });
     }
+    // publish asks the remote again before it pushes; this one stops a run that could never push
     const remote = await inspectRemoteBranch(git, req.repository.branch, req.repository.default_branch, req.attempt_id);
-    if (remote.kind === 'foreign') {
-      result.error = remote.reason;
-      return result;
-    }
+    if (remote.kind === 'foreign') return end({ error: remote.reason });
     if (remote.kind === 'reset') deviations.push(`The branch ${req.repository.branch} already existed from an earlier run of this attempt; it was rebuilt from ${req.repository.default_branch} and replaced.`);
 
     await sanitizeTarget(target);
@@ -346,16 +357,65 @@ export async function runImplement(req: CodeFixRequest, deps: PhaseDeps): Promis
     }
     target.notes.push(mainMoved);
 
-    // pre-restore in a driver child: the agent's shell has no feed credentials
-    const childEnv = driverChildEnv(env, paths);
+    // The pre-restore: the ONE moment a package feed is asked with credentials. The agent's shell
+    // has none, and neither has the verification that follows it - both build from this cache.
     if (repo.commands.restore) {
-      const pre = await runVerification(repo, { cwd: target.dir, env: childEnv, deadline: deps.deadline, signal: deps.abort.signal, steps: ['restore'] });
-      if (pre.failed) deviations.push(`The driver's pre-restore failed (exit ${pre.failed.exit}); the agent worked without restored packages.`);
+      const pre = await runVerification(repo, { cwd: target.dir, env: driverChildEnv(env, paths), deadline: deps.deadline, signal: deps.abort.signal, steps: ['restore'] });
+      if (pre.failed) {
+        const refused = feedRefusal(pre.logTail);
+        deviations.push(
+          `The driver's pre-restore failed (exit ${pre.failed.exit}); the agent worked without restored packages` +
+            (refused
+              ? `, and its output shows a package feed refusing the request (${refused}) - is NUGET_GITHUB_TOKEN in the coder Secret? Verification has no feed credentials at all and will fail the same way.`
+              : '.'),
+        );
+      }
     }
+
+    h.cait = target.caitDir !== null;
+    h.notes = [...target.notes];
+    h.deviations = deviations;
+    h.main_moved = mainMoved;
+    h.protected_globs = protectedGlobs(ctx.repos, repo);
+    h.pr = { assignee: ctx.repos.defaults.pr.assignee, labels: ctx.repos.defaults.pr.labels, template: loadTemplate('pr-body', paths.context).text };
+    return h;
+  } catch (e) {
+    log.error(`implement could not be prepared: ${(e as Error).stack ?? String(e)}`);
+    return end({ error: (e as Error).message, deviations });
+  }
+}
+
+/**
+ * The agent, and then everything that executes what the agent wrote. What comes out is a
+ * CoderHandoff and never a push: either `publish: false` with the outcome, or - verification
+ * green - the branch as a bundle for the publish role to check for itself.
+ */
+export async function coderImplement(req: CodeFixRequest, deps: PhaseDeps, h: PrepareHandoff): Promise<CoderHandoff> {
+  const { env, paths } = deps;
+  const result = minimalFailed('implement', req.attempt_id, 'implement did not complete') as ImplementResult;
+  result.branch = req.repository.branch;
+  result.base_commit = h.base_commit;
+  const deviations: string[] = [...h.deviations];
+  const handoff = (r: Partial<ImplementResult>, publish?: Pick<CoderHandoff, 'head' | 'change_summary' | 'report'>): CoderHandoff => ({
+    handoff_version: HANDOFF_VERSION,
+    role: 'coder',
+    attempt_id: req.attempt_id,
+    publish: publish !== undefined,
+    result: { ...result, deviations, ...r },
+    head: publish?.head ?? null,
+    change_summary: publish?.change_summary ?? '',
+    report: publish?.report ?? null,
+  });
+  try {
+    const plan = req.plan;
+    const base = h.base_commit;
+    if (!plan || !base) return handoff({ error: 'the prepare handoff carries no plan or no base commit' });
+    const { repos, repo, target } = openPrepared(req.repository.url, h, env, paths, deps.abort.signal);
+    const git = target.git;
 
     const guard: GuardContext = {
       targetDir: realish(target.dir),
-      protectedGlobs: protectedGlobs(ctx.repos, repo),
+      protectedGlobs: protectedGlobs(repos, repo),
       allowedBranch: req.repository.branch,
       homeDir: paths.home,
     };
@@ -363,7 +423,7 @@ export async function runImplement(req: CodeFixRequest, deps: PhaseDeps): Promis
     const vars = {
       ...baseVars(req, repo, target, paths),
       analysed_ref: plan.analysed_ref ?? '(unknown)',
-      main_moved: mainMoved,
+      main_moved: h.main_moved ?? '',
       plan_json: fencedJson(plan),
       plan_steps: plan.steps.map((s, i) => `${i + 1}. ${s}`).join('\n'),
       plan_files: planFiles,
@@ -396,24 +456,14 @@ export async function runImplement(req: CodeFixRequest, deps: PhaseDeps): Promis
     result.cost_usd = agent.costUsd;
     result.session_id = agent.sessionId;
     result.denied_tool_calls = agent.denials;
-    if (!agent.ok || !agent.output) {
-      result.error = agent.error;
-      result.deviations = deviations;
-      return result;
-    }
+    if (!agent.ok || !agent.output) return handoff({ error: agent.error });
     deviations.push(...agent.output.deviations);
 
     // the agent must still be on its branch, on top of the base it was given
     const branchNow = await git.currentBranch();
-    if (branchNow !== req.repository.branch) {
-      result.error = `the agent left the assigned branch (now on ${branchNow}); nothing was pushed`;
-      result.deviations = deviations;
-      return result;
-    }
+    if (branchNow !== req.repository.branch) return handoff({ error: `the agent left the assigned branch (now on ${branchNow}); nothing was pushed` });
     if ((await git.try(['merge-base', '--is-ancestor', base, 'HEAD'])).code !== 0) {
-      result.error = 'the branch no longer descends from the default branch HEAD it was created from; nothing was pushed';
-      result.deviations = deviations;
-      return result;
+      return handoff({ error: 'the branch no longer descends from the default branch HEAD it was created from; nothing was pushed' });
     }
 
     // anything the agent left uncommitted becomes one final commit with the trailers
@@ -430,74 +480,49 @@ export async function runImplement(req: CodeFixRequest, deps: PhaseDeps): Promis
     }
     await ensureTrailers(git, base, req);
 
-    const files = (await git.ok(['diff', '--name-only', '--no-renames', `${base}..HEAD`])).split('\n').filter(Boolean);
+    const files = await changedFiles(git, base, 'HEAD');
     result.files = files;
-    if (files.length === 0) {
-      return { ...result, outcome: 'no_changes', deviations, error: null, log_tail: 'The agent made no changes.' };
-    }
+    if (files.length === 0) return handoff({ outcome: 'no_changes', error: null, log_tail: 'The agent made no changes.' });
     const claimed = relFiles(agent.output.files, target.dir);
     const unclaimed = files.filter((f) => !claimed.includes(f));
     if (unclaimed.length > 0) deviations.push(`The diff also touches files the agent did not report: ${unclaimed.join(', ')}.`);
 
-    const policy = await policyCheck(git, base, files, guard.protectedGlobs);
-    if (!policy.ok) {
-      return { ...result, outcome: 'policy_diff', deviations, error: `the diff violates the publishing policy: ${policy.reasons.join('; ')}` };
-    }
+    // Checked here so that a violation costs no build. publish checks it again, on its own copy.
+    const head = await git.head();
+    const policy = await policyCheck(git, base, head, files, guard.protectedGlobs);
+    if (!policy.ok) return handoff({ outcome: 'policy_diff', error: `the diff violates the publishing policy: ${policy.reasons.join('; ')}` });
 
-    const report: VerificationReport = await runVerification(repo, { cwd: target.dir, env: childEnv, deadline: deps.deadline, signal: deps.abort.signal });
+    const report: VerificationReport = await runVerification(repo, { cwd: target.dir, env: driverChildEnv(env, paths), deadline: deps.deadline, signal: deps.abort.signal });
     result.build_passed = report.buildPassed;
     result.tests_passed = report.testsPassed;
     result.log_tail = report.logTail;
     if (report.failed) {
       const outcome = report.failed.name === 'test' ? 'tests_failed' : 'build_failed';
+      const refused = feedRefusal(report.logTail);
+      if (refused) deviations.push(feedRefusalNote(report.failed.name, refused));
       deviations.push(await savePatch(git, base, paths));
-      return {
-        ...result,
+      return handoff({
         outcome,
-        deviations,
-        error: `${report.failed.name} failed (exit ${report.failed.exit}${report.failed.timedOut ? ', timed out' : ''}): \`${report.failed.command}\`; nothing was pushed`,
-      };
+        error:
+          `${report.failed.name} failed (exit ${report.failed.exit}${report.failed.timedOut ? ', timed out' : ''}): \`${report.failed.command}\`; nothing was pushed` +
+          (refused ? '. It could not get a package: verification has no feed credentials and builds only from what the pre-restore cached (see deviations)' : ''),
+      });
     }
 
-    await pushBranch(git, req.repository.branch, req.repository.branch, remote.kind === 'reset' ? remote.lease : undefined);
-    const bodyFile = join(paths.out, 'pr-body.md');
-    const versions = versionLine(ctx.contextSha);
-    writeFileSync(
-      bodyFile,
-      renderPrBody({
-        req,
-        plan,
-        changeSummary: agent.output.summary ?? '',
-        files,
-        deviations,
-        notes: target.notes,
-        report,
-        costUsd: agent.costUsd,
-        versions,
-        contextDir: paths.context,
-      }),
+    // Green. The branch leaves this container as a file; the role that holds the token never
+    // opens this repository.
+    if ((await git.head()) !== head) return handoff({ error: 'the branch moved while it was being verified; nothing was pushed' });
+    mkdirSync(env.handoffDir, { recursive: true });
+    const bundle = join(env.handoffDir, BUNDLE_FILE);
+    rmSync(bundle, { force: true });
+    await git.ok(['bundle', 'create', '--quiet', bundle, `${base}..refs/heads/${req.repository.branch}`]);
+    return handoff(
+      { error: 'verified, and handed to the publish role, which has not reported' },
+      { head, change_summary: agent.output.summary ?? '', report },
     );
-    const assignee = ctx.repos.defaults.pr.assignee;
-    const pr = await createDraftPr(
-      {
-        repoUrl: req.repository.url,
-        base: req.repository.default_branch,
-        head: req.repository.branch,
-        title: prTitle(req, plan),
-        bodyFile,
-        assignee,
-        labels: ctx.repos.defaults.pr.labels,
-      },
-      gh,
-      target.dir,
-    );
-    deviations.push(...pr.deviations);
-    return { ...result, outcome: 'pr_opened', pr_url: pr.url, pr_number: pr.number, deviations, error: null };
   } catch (e) {
     log.error(`implement failed: ${(e as Error).stack ?? String(e)}`);
-    result.error = (e as Error).message;
-    result.deviations = deviations;
-    return result;
+    return handoff({ error: (e as Error).message });
   }
 }
 
@@ -509,20 +534,5 @@ async function savePatch(git: Git, base: string, paths: WorkPaths): Promise<stri
   writeFileSync(file, patch);
   if (bytes > PATCH_MAX_BYTES) return `The patch (${bytes} bytes) exceeds 1 MB and was not attached; nothing was pushed.`;
   process.stderr.write(`---HEPHAISTO-PATCH-BEGIN bytes=${bytes}---\n${patch}\n---HEPHAISTO-PATCH-END---\n`);
-  return `The unpushed patch (${bytes} bytes) is in the pod log between ---HEPHAISTO-PATCH-BEGIN/END--- markers.`;
-}
-
-export function versionLine(contextSha: string | null): string {
-  let coder = '0.0.0-dev';
-  let sdk = '?';
-  let cli = '?';
-  try {
-    coder = (JSON.parse(readFileSync(join(APP_ROOT, 'package.json'), 'utf8')) as { version: string }).version;
-    const lock = JSON.parse(readFileSync(join(APP_ROOT, 'package-lock.json'), 'utf8')) as { packages: Record<string, { version?: string }> };
-    sdk = lock.packages['node_modules/@anthropic-ai/claude-agent-sdk']?.version ?? '?';
-    cli = lock.packages['node_modules/@anthropic-ai/claude-code']?.version ?? '?';
-  } catch {
-    /* versions are informational */
-  }
-  return `hephaisto-coder ${process.env.CODER_VERSION ?? coder} · agent-sdk ${sdk} · claude-code ${cli} · dev-context ${contextSha ?? '?'}`;
+  return `The unpushed patch (${bytes} bytes) is in the coder container's log between ---HEPHAISTO-PATCH-BEGIN/END--- markers.`;
 }

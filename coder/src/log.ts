@@ -11,9 +11,23 @@ export function setLogPrefix(p: string): void {
 
 const secrets: string[] = [];
 
-/** Every later log line has this value replaced by `***` (the investigate endpoint's bearer token). */
-export function addRedaction(secret: string): void {
-  if (secret.length >= 8 && !secrets.includes(secret)) secrets.push(secret);
+/**
+ * Every later log line has this value replaced by `***`: the investigate endpoint's bearer token,
+ * and every credential the role was started with - no code path prints one, and this is what
+ * holds when a path that should not exist does.
+ */
+export function addRedaction(secret: string | undefined): void {
+  if (secret && secret.length >= 8 && !secrets.includes(secret)) secrets.push(secret);
+}
+
+/** True when the text carries one of the registered values. For text that leaves the pod some other way than the log. */
+export function secretIn(text: string): boolean {
+  return secrets.some((s) => text.includes(s));
+}
+
+/** For tests that drive several runs in one process. */
+export function resetRedactions(): void {
+  secrets.length = 0;
 }
 
 export function redact(s: string): string {

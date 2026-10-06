@@ -6,12 +6,17 @@ import { log } from './log.js';
 
 // The DRIVER's git. Credentials reach git only through GIT_ASKPASS, which reads a variable that
 // exists solely in the environment of these child processes - never in the agent's, never on
-// disk, never on a command line (where /proc/<pid>/cmdline would show it).
+// disk, never on a command line (where /proc/<pid>/cmdline would show it). Since #116 only the
+// prepare and publish roles have a token to hand over at all: the coder role's git runs without.
 
 export interface GitEnvOptions {
   token?: string | undefined;
   home: string;
   base?: NodeJS.ProcessEnv;
+  /** More `-c key=value`, at the precedence of the command line: above every config file. */
+  config?: [string, string][];
+  /** More environment, for the publish role's git (see publish.ts). */
+  extra?: Record<string, string>;
 }
 
 export function gitEnv(opts: GitEnvOptions): NodeJS.ProcessEnv {
@@ -38,6 +43,7 @@ export function gitEnv(opts: GitEnvOptions): NodeJS.ProcessEnv {
     ['init.defaultBranch', 'main'],
     ['protocol.file.allow', 'always'],
     ['core.hooksPath', '/dev/null'],
+    ...(opts.config ?? []),
   ];
   env.GIT_CONFIG_COUNT = String(cfg.length);
   cfg.forEach(([k, v], i) => {
@@ -48,7 +54,7 @@ export function gitEnv(opts: GitEnvOptions): NodeJS.ProcessEnv {
     env.GIT_ASKPASS = join(APP_ROOT, 'bin', 'askpass');
     env.CODEFIX_GIT_PASSWORD = opts.token;
   }
-  return env;
+  return { ...env, ...(opts.extra ?? {}) };
 }
 
 export function driverGitEnv(env: RunnerEnv, home: string): NodeJS.ProcessEnv {
@@ -121,6 +127,17 @@ export async function clone(
     }
     log.warn(`git clone ${redactArgs([url])[0]} could not connect (attempt ${attempt + 1}); retrying in ${delays[attempt]! / 1000}s`);
     await rm(dest, { recursive: true, force: true });
+    await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+  }
+}
+
+/** One network command, retried only when the server could not be reached at all. */
+export async function withNetworkRetry(git: Git, args: string[], opts: { timeoutMs?: number } = {}): Promise<ExecResult> {
+  const delays = [1_000, 4_000];
+  for (let attempt = 0; ; attempt++) {
+    const r = await git.try(args, opts);
+    if (r.code === 0 || attempt >= delays.length || !isTransientNetworkFailure(r.stderr) || git.signal?.aborted) return r;
+    log.warn(`git ${redactArgs(args).slice(0, 3).join(' ')} could not connect (attempt ${attempt + 1}); retrying in ${delays[attempt]! / 1000}s`);
     await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
   }
 }

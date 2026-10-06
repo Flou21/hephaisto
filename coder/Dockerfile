@@ -6,8 +6,13 @@
 #
 # It must run with a read-only root filesystem: everything writable lives under /work and /tmp,
 # which the Job mounts as emptyDirs. Nothing secret is baked in - no token, no nuget.config;
-# credentials arrive as env from a Secret, and only the driver's child processes ever see the
-# GitHub and NuGet ones.
+# credentials arrive as env from a Secret.
+#
+# One image, three roles (CODEFIX_ROLE, see src/config.ts): a Job starts it as `prepare` (the
+# GitHub and NuGet tokens, before the model exists), as `coder` (the model's credential, the
+# agent, the build and tests) and, to implement, as `publish` (the GitHub token, after coder
+# has ended). The container the model runs in is never handed a git or NuGet token. Without
+# CODEFIX_ROLE all three run in this one process - for `docker run` and the tests, not for a Job.
 #
 # Base images are pinned by digest (multi-arch index digests). Bumping one is a deliberate edit.
 

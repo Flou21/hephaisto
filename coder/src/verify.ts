@@ -6,6 +6,12 @@ import type { RepoEntry, VerificationLevel } from './schemas.js';
 
 // The driver - never the agent - runs the repository's own commands from repos.yaml and reports
 // exit codes it observed itself. What the agent claims about builds is not evidence.
+//
+// Since #116 the full run happens in the coder role: a test suite is code the model wrote, and it
+// must not execute beside a token. So verification has NO feed credentials. It builds from the
+// package cache the prepare role filled (the pre-restore, which does hold NUGET_GITHUB_TOKEN); a
+// package that is not in that cache cannot be fetched from a private feed here, and
+// feedRefusal() is what turns the resulting 401 into a sentence a person can act on.
 
 export type StepName = 'restore' | 'build' | 'test' | 'typecheck';
 
@@ -105,6 +111,30 @@ export async function runVerification(repo: RepoEntry, opts: VerifyOptions): Pro
   if (repo.verification.note) honestyNote += ` ${repo.verification.note}`;
 
   return { level, steps, buildPassed, testsPassed, failed, logTail, honestyNote };
+}
+
+const FEED_REFUSAL =
+  /\bNU1301\b|\bNU1101\b|\bNU1102\b|\bNU1103\b|Unable to load the service index for source|\b401 \(Unauthorized\)|\b403 \(Forbidden\)|status code does not indicate success: 40[13]|\bE401\b|\bE403\b|code E40[13]|Read-only file system.*nuget|nuget.*Read-only file system|Access to the path '[^']*nuget[^']*' is denied/i;
+
+/**
+ * The line of a failed step's output that shows a package feed refusing the request, a package
+ * that no reachable source has, or a package cache that could not be written (the Job mounts a
+ * shared NuGet cache read-only into the coder container) - or null. NuGet, then the npm spelling.
+ */
+export function feedRefusal(output: string): string | null {
+  for (const line of output.split('\n')) {
+    if (FEED_REFUSAL.test(line)) return line.trim().replace(/\s+/g, ' ').slice(0, 300);
+  }
+  return null;
+}
+
+/** What a result says, in plain words, when verification failed for want of a package it could not fetch. */
+export function feedRefusalNote(step: StepName, line: string): string {
+  return (
+    `Verification runs without package-feed credentials (they stay in the prepare container, away from the code the agent wrote), ` +
+    `and \`${step}\` needed a package that the pre-restore had not put in the cache - most likely this change adds or bumps a package reference. ` +
+    `The build was not judged; a person has to restore and verify it with the feed. The line: ${line}`
+  );
 }
 
 /** Counters from any .trx written since `since` (dotnet test --logger trx). */

@@ -3,12 +3,13 @@ import type { RunnerEnv } from './config.js';
 import { type ExecResult, run } from './exec.js';
 import type { Git } from './git.js';
 import { log } from './log.js';
-import { evidenceMarkdown, loadTemplate, render } from './prompts.js';
+import { evidenceMarkdown, render } from './prompts.js';
 import type { CodeFixRequest, PlanResult } from './schemas.js';
 import { type VerificationReport, verificationTable } from './verify.js';
 
 // Everything that talks to GitHub. The agent never reaches any of it: `gh` is denied by the
-// guard, and GITHUB_TOKEN is only ever in the environment of the children spawned here.
+// guard, and since #116 GITHUB_TOKEN is not in its container at all - the open-PR and
+// remote-branch checks run in the prepare role, the push and the PR in the publish role.
 
 export const BRANCH_RE = /^hephaisto\/codefix-[0-9a-f]{12}$/;
 
@@ -77,14 +78,23 @@ export async function inspectRemoteBranch(git: Git, branch: string, defaultBranc
   return { kind: 'reset', lease: remoteSha };
 }
 
-/** Pushes the assigned branch and nothing else. A lease is only used to replace this attempt's own earlier push. */
-export async function pushBranch(git: Git, branch: string, assigned: string, lease?: string): Promise<void> {
+export const REMOTE_URL_RE = /^(https?|file):\/\//;
+
+/**
+ * Pushes ONE commit to the assigned branch and nothing else: the URL is the request's, never a
+ * remote name somebody could have re-pointed, and the source is a commit id the caller has just
+ * checked, never a ref that could have moved since. A lease is only used to replace this
+ * attempt's own earlier push.
+ */
+export async function pushBranch(git: Git, url: string, sha: string, branch: string, assigned: string, lease?: string): Promise<void> {
   if (branch !== assigned || !BRANCH_RE.test(branch)) throw new Error(`refusing to push ${branch}: only ${assigned} may be pushed`);
-  const args = ['push', '--porcelain', '--no-verify'];
+  if (!REMOTE_URL_RE.test(url)) throw new Error('refusing to push: the repository URL is not http(s) or file');
+  if (!/^[0-9a-f]{40,64}$/.test(sha)) throw new Error('refusing to push: the source is not a commit id');
+  const args = ['push', '--porcelain', '--no-verify', '--no-recurse-submodules'];
   if (lease) args.push(`--force-with-lease=refs/heads/${branch}:${lease}`);
-  args.push('origin', `refs/heads/${branch}:refs/heads/${branch}`);
+  args.push(url, `${sha}:refs/heads/${branch}`);
   await git.ok(args, { timeoutMs: 5 * 60_000 });
-  log.info(`pushed ${branch}${lease ? ' (replacing this attempt\'s earlier push)' : ''}`);
+  log.info(`pushed ${sha} to ${branch}${lease ? ' (replacing this attempt\'s earlier push)' : ''}`);
 }
 
 export interface CreatedPr {
@@ -126,7 +136,8 @@ export interface PrBodyInput {
   report: VerificationReport;
   costUsd: number;
   versions: string;
-  contextDir: string | null;
+  /** The pr-body template's text. The caller loads it; publish gets it sealed by prepare and never reads dev-context. */
+  template: string;
 }
 
 export function renderPrBody(i: PrBodyInput): string {
@@ -145,8 +156,7 @@ export function renderPrBody(i: PrBodyInput): string {
           ),
         ].join('\n')
       : '';
-  const { text } = loadTemplate('pr-body', i.contextDir);
-  return render(text, {
+  return render(i.template, {
     incident_link: `Hephaisto incident \`${req.incident_id}\``,
     incident_title: req.incident.title,
     summary: plan.summary,

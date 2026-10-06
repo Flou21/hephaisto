@@ -16,9 +16,13 @@ const SHA = '0123456789abcdef0123456789abcdef01234567';
 function runnerEnv(over: Partial<RunnerEnv> = {}): RunnerEnv {
   return {
     base: process.env,
+    role: 'all',
+    handoffDir: '/work/handoff',
+    sealDir: '/work/sealed',
     requestPath: '/work/in/request.json',
     sdkMode: 'fake',
     fakeScriptDir: '/x',
+    fakeScript: undefined,
     ghMode: 'shim',
     ghShimDir: '/opt/coder/gh-shim',
     workDir: '/work',
