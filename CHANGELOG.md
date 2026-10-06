@@ -102,6 +102,12 @@ the same day.
   clone without file contents, and git fetched each of the project file's 974 versions with a
   request of its own. They are fetched in one request now, and a lookup that still fails is a
   note on the plan and no longer the end of it. Needs the coder image of this version.
+- **An investigator Job is told the workload, not the pod, when an alert opened the incident.**
+  An incident Alertmanager opens names a pod and nothing above it, and the request to the Job
+  carried that pod as the workload while the source it was handed belonged to the pod's
+  Deployment. Which of the alert and the watcher opens an incident first is a race, so the same
+  fault read differently from one run to the next. The request asks the cluster now, as the
+  source lookup beside it always did.
 - **A protected path with an unusual name is still protected** ([#116](docs/backlog.md#116)).
   The check that keeps `.github/**` and the other protected paths out of a pushed fix compared
   names as git prints them, and git prints a name with a backslash or a non-ASCII byte in

@@ -192,8 +192,9 @@ public sealed class KubernetesInvestigationJobLoop(
 
         try
         {
-            var source = j.Source.Enabled ? await SourceForAsync(context.Incident, o, ct).ConfigureAwait(false) : null;
-            var request = InvestigateRequestBuilder.Build(attemptId, context, j, o, token, source);
+            var target = await WorkloadOfAsync(context.Incident, ct).ConfigureAwait(false);
+            var source = j.Source.Enabled ? await SourceForAsync(target, o, ct).ConfigureAwait(false) : null;
+            var request = InvestigateRequestBuilder.Build(attemptId, context, j, o, token, source, target.WorkloadKey);
             var json = JsonSerializer.Serialize(request, CodeFixContract.Json);
             var spec = InvestigateJobSpec.Job(attemptId, context.Incident.Id, context.InvestigationId, j, o);
 
@@ -349,23 +350,30 @@ public sealed class KubernetesInvestigationJobLoop(
     };
 
     /// <summary>
-    /// The workload's repository at its running image, when source access is on and the workload
-    /// maps through <c>codeFix.repositories</c> to an allowed host. Anything missing means no source,
-    /// never a failed investigation: the investigator still has every tool.
+    /// The incident's target with its controller filled in. An incident an alert opened names a
+    /// pod and no owner, so its own workload key is the pod: the request and the source lookup
+    /// both have to ask, or one of them names a workload nothing is mapped to.
     /// </summary>
-    private async Task<InvestigateSource?> SourceForAsync(Incident incident, CodeFixOptions o, CancellationToken ct)
+    private async Task<TargetRef> WorkloadOfAsync(Incident incident, CancellationToken ct)
     {
-        var target = incident.Target;
-
         try
         {
-            target = await images.ResolveWorkloadAsync(target, ct).ConfigureAwait(false);
+            return await images.ResolveWorkloadAsync(incident.Target, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogDebug(ex, "Could not resolve the workload of incident {IncidentId}", incident.Id);
+            return incident.Target;
         }
+    }
 
+    /// <summary>
+    /// The workload's repository at its running image, when source access is on and the workload
+    /// maps through <c>codeFix.repositories</c> to an allowed host. Anything missing means no source,
+    /// never a failed investigation: the investigator still has every tool.
+    /// </summary>
+    private async Task<InvestigateSource?> SourceForAsync(TargetRef target, CodeFixOptions o, CancellationToken ct)
+    {
         if (o.BindingFor(target.WorkloadKey) is not { } binding)
             return null;
 

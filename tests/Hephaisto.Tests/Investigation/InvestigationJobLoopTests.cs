@@ -136,7 +136,10 @@ public sealed class InvestigationJobLoopTests
         public Task<(string? Image, string? Revision)> ReadAsync(TargetRef target, CancellationToken ct) =>
             Task.FromResult<(string?, string?)>((Image, "1"));
 
-        public Task<TargetRef> ResolveWorkloadAsync(TargetRef target, CancellationToken ct) => Task.FromResult(target);
+        /// <summary>What the cluster says owns a target; a test sets it to stand for the owner walk.</summary>
+        public Func<TargetRef, TargetRef> Resolve { get; set; } = t => t;
+
+        public Task<TargetRef> ResolveWorkloadAsync(TargetRef target, CancellationToken ct) => Task.FromResult(Resolve(target));
     }
 
     private (KubernetesInvestigationJobLoop Loop, ScriptedLauncher Launcher, InvestigationJobSessions Sessions, Switch Switch) Build(
@@ -593,6 +596,30 @@ public sealed class InvestigationJobLoopTests
         request.Incident.Target.Workload.Should().Be("hephaisto-chaos/Deployment/shop-api");
         request.Budget.MaxTurns.Should().Be(job.MaxTurns);
         request.Source.Should().BeNull();
+    }
+
+    /// <summary>
+    /// An incident Alertmanager opened names the pod and nothing above it. The request used to
+    /// carry that pod as the workload while the source lookup beside it asked the cluster, so one
+    /// request named a pod and handed over a Deployment's repository.
+    /// </summary>
+    [Fact]
+    public async Task An_incident_an_alert_opened_is_sent_with_the_workload_the_cluster_resolves()
+    {
+        images.Resolve = t => new TargetRef { Cluster = t.Cluster, Namespace = t.Namespace, Kind = t.Kind, Name = t.Name, OwnerKind = "Deployment", OwnerName = "shop-api" };
+        var (loop, launcher, _, _) = Build();
+        launcher.Log = r => Frame(r, "no_conclusion");
+        var context = Context(NewRecorder(), new InvestigationRunner.ConclusionHolder());
+        context.Incident.Target.OwnerKind = null;
+        context.Incident.Target.OwnerName = null;
+        context.Incident.Target.WorkloadKey.Should().Be("hephaisto-chaos/Pod/shop-api-7d9f8-xk2p1", "that is what the alert knew");
+
+        await loop.RunAsync(context, CancellationToken.None);
+
+        var target = launcher.Request!.Incident.Target;
+        target.Workload.Should().Be("hephaisto-chaos/Deployment/shop-api");
+        target.Kind.Should().Be("Pod", "the target is still what the incident is about");
+        target.Name.Should().Be("shop-api-7d9f8-xk2p1");
     }
 
     [Fact]
