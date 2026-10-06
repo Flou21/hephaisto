@@ -69,6 +69,15 @@ release is about handing it a GitHub issue ([#243](https://github.com/Flou21/hep
   and to MCP readers as they were unless the value itself had a known prefix: `_` is a word
   character, so the pattern for `token=` did not match inside a longer name. GitHub's `ghu_` and
   `ghr_` tokens are now known by sight as well.
+- **A workload that is deleted and created again is found again.** The watcher remembers which
+  object owns which, and it remembered "there is no such object" for as long as a hit: an hour.
+  A Deployment deleted and created again under its name within that hour - a re-install, a
+  `kubectl delete -f` and `apply -f` - keeps its ReplicaSet's name too, so a lookup made in
+  between left the new pods' incident filed under `namespace/ReplicaSet/name-hash` instead of
+  the Deployment: its own workload key, with its own cooldown, mapping and code-fix repository,
+  none of which matched. A request the API server failed had the same effect. "Not there" and
+  "could not be read" are now held for 30 seconds; an object that was found is still held for
+  the hour.
 
 ### Changed
 - **`incidentId` on a code-fix attempt can be null** - in `GET /api/codefixes`, and in the

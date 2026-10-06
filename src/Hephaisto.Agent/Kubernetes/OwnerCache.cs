@@ -20,17 +20,36 @@ namespace Hephaisto.Agent.Kubernetes;
 /// </para>
 /// <para>
 /// Caching is safe because ownership does not change: a Pod's ReplicaSet and that ReplicaSet's
-/// Deployment are fixed for the object's whole life. The entries therefore only expire to
-/// bound memory, not for correctness. Negative results are cached too - a Pod whose ReplicaSet
-/// has already been garbage-collected would otherwise be re-fetched on every observation, and
-/// crash-looping pods are observed a lot.
+/// Deployment are fixed for the object's whole life. An entry for an object that was found
+/// therefore only expires to bound memory, not for correctness.
+/// </para>
+/// <para>
+/// <b>"Not there" is remembered too, but only for <see cref="NegativeTtl"/>.</b> It has to be
+/// remembered at all: a Pod whose ReplicaSet has already been garbage-collected would otherwise
+/// be re-fetched on every observation, and crash-looping pods are observed a lot. It must not
+/// be remembered for long, because unlike ownership, absence does change - and a name is not an
+/// identity. A Deployment that is deleted and created again keeps its name, and so does its
+/// ReplicaSet, whose name is a hash of the unchanged pod template. A lookup made while they
+/// were gone (the watcher makes them for the events it is replayed after a restart) used to be
+/// held for the hour: the new Pod's walk then stopped at the ReplicaSet, and its incident was
+/// filed under <c>ns/ReplicaSet/name-hash</c> instead of the Deployment. An API error is the
+/// same answer with the same lifetime - one refused request must not decide an hour of
+/// attributions either.
 /// </para>
 /// </remarks>
 public sealed class OwnerCache(KubernetesApi api, TimeProvider time, ILogger<OwnerCache> logger)
 {
     private const int MaxEntries = 20_000;
 
-    private static readonly TimeSpan Ttl = TimeSpan.FromHours(1);
+    /// <summary>How long an object that was found is served from memory.</summary>
+    internal static readonly TimeSpan Ttl = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// How long "not found" and "could not be read" are served from memory. Long enough that a
+    /// crash loop is one request per half minute and not one per observation; short enough that
+    /// an object created under a name that was just free is seen.
+    /// </summary>
+    internal static readonly TimeSpan NegativeTtl = TimeSpan.FromSeconds(30);
 
     private readonly ConcurrentDictionary<string, Entry> entries = new(StringComparer.Ordinal);
 
@@ -86,11 +105,14 @@ public sealed class OwnerCache(KubernetesApi api, TimeProvider time, ILogger<Own
         catch (HttpOperationException ex) when (ex.Response?.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
             // Garbage-collected between the pod being observed and this call. Cached as a
-            // negative so the next thousand observations of the same pod do not re-ask.
+            // negative so the next thousand observations of the same pod do not re-ask - for
+            // NegativeTtl, not for the hour: the name may be somebody's again by then.
             meta = null;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            // Not an answer about the object at all. Held as briefly as "not found", so that an
+            // API server that is failing is not asked per observation either.
             logger.LogDebug(ex, "Owner lookup for {Kind}/{Name} in {Namespace} failed; the walk stops here", kind, name, @namespace);
             meta = null;
         }
@@ -132,7 +154,7 @@ public sealed class OwnerCache(KubernetesApi api, TimeProvider time, ILogger<Own
             entries.Clear();
         }
 
-        entries[key] = new Entry(meta, time.GetUtcNow() + Ttl);
+        entries[key] = new Entry(meta, time.GetUtcNow() + (meta is null ? NegativeTtl : Ttl));
     }
 
     private static string Key(string kind, string @namespace, string name) => $"{kind}/{@namespace}/{name}";
