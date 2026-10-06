@@ -6,3 +6,5 @@
 # fail the run; a GREEN one listed here fails it, so the fix and its removal land in one commit.
 # Once Directory.Build.props' floor passes the milestone the entry is stale and a unit test fails
 # (InvestigateSuiteTests). investigate-local.sh --strict, the release gate, fails every entry.
+
+I12 0.13 the investigator Job's prepare init container (#116): until the Job is split, the one container holds GITHUB_TOKEN beside the model

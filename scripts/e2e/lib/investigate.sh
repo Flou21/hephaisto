@@ -309,7 +309,8 @@ scenario_I5() {
     spec=$(kc -n "$CF_CODER_NS" get job "$job" -o json)
     jq -e '.spec.template.metadata.labels["app.kubernetes.io/name"] == "hephaisto-investigator"' <<<"$spec" >/dev/null \
         && pass "$job: labelled as an investigator, not a coder" || fail "$job: labelled as an investigator, not a coder"
-    jq -e '[.spec.template.spec.containers[0].env[] | select(.name == "NUGET_GITHUB_TOKEN")] | length == 0' <<<"$spec" >/dev/null \
+    jq -e '[(.spec.template.spec.initContainers // [])[], .spec.template.spec.containers[]]
+           | [.[].env[]? | select(.name == "NUGET_GITHUB_TOKEN")] | length == 0' <<<"$spec" >/dev/null \
         && pass "$job: no NuGet token" || fail "$job: no NuGet token"
 
     local cm
@@ -501,4 +502,45 @@ scenario_I11() {
     iv_set_executor inprocess
 }
 
-IV_SCENARIOS="I0 I1 I2 I3 I4 I5 I6 I7 I8 I9 I10 I11"
+# I12: the container the model runs in holds no GitHub token (#116). The clones that need one -
+# dev-context always, the workload's source when source access is on - happen in the `prepare`
+# init container before the model exists; `coder` is handed the model credential and nothing
+# else. Asserted on the Job's spec and from inside the running container, and then the Job is
+# left to finish, because the other half of the claim is that it still can.
+scenario_I12() {
+    iv_use_executor job Job || { fail "the executor is Job"; return 0; }
+
+    local incident before job inv
+    incident=$(iv_ensure_incident catalog-api c19-injection)
+    [ -n "$incident" ] || { fail "an incident on catalog-api exists"; iv_set_executor inprocess; return 0; }
+    iv_wait_idle "$incident"
+    before=$(iv_investigation_count "$incident")
+
+    # catalog-api's script waits three minutes before its first tool call: the window to look in.
+    iv_reinvestigate "$incident" >/dev/null
+    find_job() { job=$(iv_running_job "$incident"); [ -n "$job" ]; }
+    wait_for "a running investigator Job for catalog-api" 180 find_job \
+        || { fail "a running investigator Job for catalog-api"; iv_set_executor inprocess; return 0; }
+    pass "a running investigator Job for catalog-api" "$job"
+
+    cf_assert_token_separation "$job" investigate
+    cf_probe_coder_env "$job"
+
+    done_after() { [ "$(iv_investigation_count "$incident")" -gt "$before" ] && ! iv_is_running "$incident"; }
+    wait_for "the investigation to finish" 900 done_after \
+        || { fail "the investigation finished"; iv_set_executor inprocess; return 0; }
+    inv=$(iv_latest_investigation "$incident")
+    record_json I12-investigation "$inv"
+
+    # Not JobFallback: the Job itself answered, with its clones done by a container it never saw.
+    jq -e '.executor == "Job"' <<<"$inv" >/dev/null \
+        && pass "the Job answered without a GitHub token in the model's container" "$(jq -r .terminationReason <<<"$inv")" \
+        || fail "the Job answered without a GitHub token in the model's container" "$(jq -r '.executor + " " + .terminationReason + " " + (.error // "")' <<<"$inv")"
+    [ "$(cf_frames_in "$job" coder)" = 1 ] && [ "$(cf_frames_in "$job" prepare)" = 0 ] \
+        && pass "its one framed result is in the coder container's log" \
+        || skip "its one framed result is in the coder container's log" "coder $(cf_frames_in "$job" coder), prepare $(cf_frames_in "$job" prepare) - the Job may already be collected"
+
+    iv_set_executor inprocess
+}
+
+IV_SCENARIOS="I0 I1 I2 I3 I4 I5 I6 I7 I8 I9 I10 I11 I12"
