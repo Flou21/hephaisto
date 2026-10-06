@@ -1,0 +1,20 @@
+{
+  "contract_version": "2",
+  "attempt_id": "0192a6f0-0000-7000-8000-000000000001",
+  "phase": "plan",
+  "budget": {
+    "max_cost_usd": 5,
+    "deadline_seconds": 1800
+  },
+  "repository": {
+    "url": "https://github.com/Flou21/hephaisto-fixture-dotnet",
+    "default_branch": "main",
+    "path": "",
+    "branch": "hephaisto/codefix-0192a6f00000"
+  },
+  "context": {
+    "repository_url": "https://github.com/TrueRelevance/dev-context",
+    "ref": "main"
+  },
+  "plan": null
+}

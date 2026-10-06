@@ -148,11 +148,6 @@ export function isTransientNetworkFailure(stderr: string): boolean {
     && !/Authentication failed|could not read Username|Repository not found|not found in upstream|Remote branch .* not found/i.test(stderr);
 }
 
-/** Trailers the agent is told to write, and the driver writes on its own final commit. */
-export function trailers(incidentId: string, attemptId: string): string {
-  return `Hephaisto-Incident: ${incidentId}\nHephaisto-Attempt: ${attemptId}`;
-}
-
 /** 40-hex commit sha from an image reference: `repo:<sha>` or `repo:<anything>-<sha>` (fixtures: `:c15-<sha>`). */
 export function shaFromImage(image: string | null | undefined): string | null {
   if (!image) return null;

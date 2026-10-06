@@ -369,9 +369,8 @@ export async function* fakeQuery(params: { prompt: string; options: Options }, c
         continue;
       }
       if ('commit' in step) {
-        const incident = ctx.vars.incident_id ?? '';
-        const attempt = ctx.vars.attempt_id ?? '';
-        const msg = `${step.commit}\n\nHephaisto-Incident: ${incident}\nHephaisto-Attempt: ${attempt}`;
+        // the two trailers the prompt names: Hephaisto-Incident or Hephaisto-Issue, then Hephaisto-Attempt
+        const msg = `${step.commit}\n\n${ctx.vars.trailers ?? `Hephaisto-Incident: ${ctx.vars.incident_id ?? ''}\nHephaisto-Attempt: ${ctx.vars.attempt_id ?? ''}`}`;
         if (yield* toolCall('Bash', { command: 'git add -A' })) yield* toolCall('Bash', { command: `git commit -q -m ${shq(msg)}` });
         continue;
       }

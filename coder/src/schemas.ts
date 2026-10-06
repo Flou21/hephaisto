@@ -14,6 +14,7 @@ export const CONTRACTS_DIR = join(APP_ROOT, 'contracts');
 
 export const SCHEMA_FILES = {
   request: 'codefix-request.schema.json',
+  requestV2: 'codefix-request-v2.schema.json',
   plan: 'codefix-plan-result.schema.json',
   implement: 'codefix-implement-result.schema.json',
   repos: 'repos.schema.json',
@@ -48,6 +49,7 @@ function compiled(name: SchemaName): ValidateFunction {
 
 const validators: Record<SchemaName, ValidateFunction> = {
   request: compiled('request'),
+  requestV2: compiled('requestV2'),
   plan: compiled('plan'),
   implement: compiled('implement'),
   repos: compiled('repos'),
@@ -133,24 +135,31 @@ export const ImplementResultZ = z
   })
   .strict();
 
+const BudgetZ = z
+  .object({ max_cost_usd: z.number().min(0).max(1000), deadline_seconds: z.number().int().min(60).max(86400) })
+  .strict();
+
+const RepositoryZ = z
+  .object({
+    url: z.string().max(512).regex(/^(https:\/\/|http:\/\/|file:\/\/)[^\s]+$/),
+    default_branch: z.string().min(1).max(255),
+    path: z.string().max(512),
+    branch: z.string().regex(/^hephaisto\/codefix-[0-9a-f]{12}$/),
+  })
+  .strict();
+
+const ContextZ = z.object({ repository_url: z.string().min(1).max(512), ref: z.string().min(1).max(255) }).strict();
+
+/** Version 1: the request for an incident. Unchanged since v0.9.0. */
 export const RequestZ = z
   .object({
     contract_version: z.literal('1'),
     attempt_id: z.guid(),
     incident_id: z.guid(),
     phase: z.enum(['plan', 'implement']),
-    budget: z
-      .object({ max_cost_usd: z.number().min(0).max(1000), deadline_seconds: z.number().int().min(60).max(86400) })
-      .strict(),
-    repository: z
-      .object({
-        url: z.string().max(512).regex(/^(https:\/\/|http:\/\/|file:\/\/)[^\s]+$/),
-        default_branch: z.string().min(1).max(255),
-        path: z.string().max(512),
-        branch: z.string().regex(/^hephaisto\/codefix-[0-9a-f]{12}$/),
-      })
-      .strict(),
-    context: z.object({ repository_url: z.string().min(1).max(512), ref: z.string().min(1).max(255) }).strict(),
+    budget: BudgetZ,
+    repository: RepositoryZ,
+    context: ContextZ,
     incident: z
       .object({
         title: z.string().max(512),
@@ -186,6 +195,36 @@ export const RequestZ = z
       )
       .max(10),
     investigation_summary: z.string().max(8000).nullable(),
+    plan: PlanResultZ.nullable(),
+  })
+  .strict();
+
+/**
+ * Version 2 (v0.14.0): the request for a piece of work somebody handed over - a GitHub issue
+ * assigned to Hephaisto's account. `work_item` in place of the incident, the findings and the
+ * investigation summary, which are absent. Its title, author, body and comments are untrusted.
+ */
+export const WorkItemRequestZ = z
+  .object({
+    contract_version: z.literal('2'),
+    attempt_id: z.guid(),
+    phase: z.enum(['plan', 'implement']),
+    budget: BudgetZ,
+    repository: RepositoryZ,
+    context: ContextZ,
+    work_item: z
+      .object({
+        source: z.enum(['github']),
+        repository: z.string().max(200).regex(/^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+$/),
+        number: z.number().int().min(1),
+        url: z.string().max(512),
+        title: z.string().max(512),
+        type: z.string().max(64).nullable(),
+        author: z.string().max(64),
+        body: z.string().max(65536),
+        comments: z.array(z.object({ author: z.string().max(64), body: z.string().max(65536) }).strict()).max(50),
+      })
+      .strict(),
     plan: PlanResultZ.nullable(),
   })
   .strict();
@@ -318,7 +357,10 @@ export const InvestigateResultZ = z
   })
   .strict();
 
-export type CodeFixRequest = z.infer<typeof RequestZ>;
+export type IncidentRequest = z.infer<typeof RequestZ>;
+export type WorkItemRequest = z.infer<typeof WorkItemRequestZ>;
+/** What a code-fix Job is asked to do: for an incident (version 1) or for a work item (version 2). Ask subject.ts which. */
+export type CodeFixRequest = IncidentRequest | WorkItemRequest;
 export type PlanResult = z.infer<typeof PlanResultZ>;
 export type ImplementResult = z.infer<typeof ImplementResultZ>;
 export type Denial = z.infer<typeof DenialZ>;

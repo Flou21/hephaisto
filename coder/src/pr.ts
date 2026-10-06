@@ -3,8 +3,9 @@ import type { RunnerEnv } from './config.js';
 import { type ExecResult, run } from './exec.js';
 import type { Git } from './git.js';
 import { log } from './log.js';
-import { evidenceMarkdown, render } from './prompts.js';
+import { evidenceMarkdown, fence, inert, render } from './prompts.js';
 import type { CodeFixRequest, PlanResult } from './schemas.js';
+import { isWorkItem, prType, subjectOf } from './subject.js';
 import { type VerificationReport, verificationTable } from './verify.js';
 
 // Everything that talks to GitHub. The agent never reaches any of it: `gh` is denied by the
@@ -156,6 +157,36 @@ export function renderPrBody(i: PrBodyInput): string {
           ),
         ].join('\n')
       : '';
+  const common = {
+    files: bullets(i.files.map((f) => `\`${f}\``), '- (none)'),
+    verification_table: verificationTable(i.report),
+    cost: `$${i.costUsd.toFixed(2)} (implement phase, API-equivalent estimate)`,
+    versions: i.versions,
+    attempt_id: req.attempt_id,
+    analysed_ref: plan.analysed_ref ?? '(unknown)',
+    branch: req.repository.branch,
+    repo_url: req.repository.url,
+  };
+  if (isWorkItem(req)) {
+    // The body of a pull request is read by GitHub for closing keywords and mentions, and this
+    // one is for an issue anybody may have opened. So: the one `Closes` is the template's line,
+    // built from issue_ref; the issue's title is in a fence, where nothing is linked; its body
+    // is not here at all; and what the model wrote is made inert (prompts.ts).
+    const inertWeak = weak ? inert(weak) : '';
+    return render(i.template, {
+      ...common,
+      issue_ref: subjectOf(req).ref,
+      issue_url: req.work_item.url,
+      issue_md: fence(req.work_item.title),
+      summary: inert(plan.summary),
+      root_cause: inert(plan.root_cause),
+      change_summary: inert(i.changeSummary || plan.summary),
+      deviations: bullets(i.deviations.map(inert), '- none'),
+      verification_weak: inertWeak,
+      notes: bullets([...plan.notes, ...i.notes].map(inert), '- none'),
+      default_branch: req.repository.default_branch,
+    });
+  }
   return render(i.template, {
     incident_link: `Hephaisto incident \`${req.incident_id}\``,
     incident_title: req.incident.title,
@@ -180,9 +211,16 @@ export function renderPrBody(i: PrBodyInput): string {
   });
 }
 
+/**
+ * `fix(<workload>): <first sentence of the plan's summary>` for an incident, and for an issue
+ * `<type>: <the same>`, where the type is the issue's kind (subject.ts prType) - an issue names
+ * no workload to scope by. Capped at 120 characters either way.
+ */
 export function prTitle(req: CodeFixRequest, plan: PlanResult): string {
   const first = (plan.summary.split(/(?<=[.!?])\s/)[0] ?? plan.summary).trim().replace(/\s+/g, ' ');
-  const name = req.incident.target.workload.split('/').pop() || 'service';
-  const t = `fix(${name}): ${first.charAt(0).toLowerCase()}${first.slice(1)}`.replace(/\.$/, '');
+  const prefix = isWorkItem(req) ? prType(req.work_item.type) : `fix(${req.incident.target.workload.split('/').pop() || 'service'})`;
+  // a title notifies and links like any other text: an issue's is made inert as its body is
+  const sentence = isWorkItem(req) ? inert(first) : first;
+  const t = `${prefix}: ${sentence.charAt(0).toLowerCase()}${sentence.slice(1)}`.replace(/\.$/, '');
   return t.length > 120 ? `${t.slice(0, 117)}...` : t;
 }

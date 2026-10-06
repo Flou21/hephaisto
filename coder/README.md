@@ -83,6 +83,7 @@ coder/
   src/git.ts pr.ts   the driver's git and gh; push of one commit to the assigned branch; PR body
   src/result.ts      framing, schema caps, 512 KiB limit
   src/schemas.ts     ajv over the vendored contract + zod mirrors for types
+  src/subject.ts     what a request is for - an incident (v1) or a GitHub issue (v2) - and what follows from it
   contracts/         vendored from dev-context/schemas by scripts/sync-schemas.sh - never edit by hand
   prompts/           built-in templates (dev-context/prompts/*.md wins when present)
   fake-scripts/      default.{plan,implement,investigate}.json + per-repository / per-workload scripts
@@ -298,10 +299,44 @@ The plan-phase structured output is the plan result's `outcome, summary, root_ca
 files, steps, verification, needs_cait, notes`; the implement phase's is `files, deviations` and
 an optional `summary`. Both are cut from the vendored result schemas.
 
+## A request for an issue (contract version 2)
+
+Since Hephaisto v0.14.0 a request is one of two documents, told apart by the `contract_version`
+it states and each held to a schema of its own - `codefix-request.schema.json` for an incident
+(`"1"`, unchanged) and `codefix-request-v2.schema.json` for a **work item**, a GitHub issue that
+was assigned to Hephaisto's account (`"2"`): `work_item {source, repository, number, url, title,
+type, author, body, comments}` in place of `incident_id`, `incident`, `findings` and
+`investigation_summary`. Both results are version 1 for either.
+
+Everything that follows from "what is this for" is in `src/subject.ts`, and nothing else reads
+`req.incident` of a request that may have none:
+
+| | incident | issue |
+|---|---|---|
+| templates | `plan.md`, `implement.md`, `pr-body.md` | `plan-issue.md`, `implement-issue.md`, `pr-body-issue.md` |
+| untrusted text | `evidence-block.md` + one `<untrusted-evidence>` | `issue-block.md` + one `<untrusted-issue>`: title, author, body, comments |
+| analysed commit | the running image's | the default branch's HEAD - an issue names nothing that runs, and no note says "may differ from what is deployed" |
+| first trailer | `Hephaisto-Incident: <id>` | `Hephaisto-Issue: owner/repo#<n>` |
+| PR title | `fix(<workload>): <first sentence of the plan's summary>` | `<type>: <the same>` - `fix` for a `bug`, `feat` for a `feature` or an `enhancement`, else `chore` |
+| PR body | the incident, its evidence in fences | `Closes owner/repo#<n>` on a line of its own, the issue's title in a fence, its body not at all |
+
+`Hephaisto-Attempt` is the second trailer either way, and it alone is what `publish` and a retried
+Job recognise their own commits by. The scripted SDK still picks its script by the repository's
+`repos.yaml` name, so a fixture's script plays for an issue on that repository.
+
+A pull request's body is read by GitHub for mentions and closing keywords, and this one is for an
+issue anybody could have opened. So what the model wrote - summary, root cause, notes, deviations,
+and the title's sentence - goes through `inert()` for an issue: a zero-width space after every `@`
+before a name and every `#` before a digit. It reads the same, notifies nobody, and the one
+`Closes` GitHub acts on is the template's own line. **Commit messages are not rewritten**: the
+prompt tells the model to write no closing keyword in one, and nothing checks that it did not.
+
 ## Tests
 
 `scripts/test.sh` fails below its test-count floor. The suites: `hooks` (guard table + `bin/guard`
 protocol), `schema` + `contracts` (samples, lock hashes, zod ↔ JSON Schema), `prompt`, `result`,
+`issue` (a version-2 request end to end: the prompt as the SDK receives it, the trailer, the
+pull request that closes the issue),
 `workspace` (image tags, credentials, nuget.config, Cait pinning), `driver` (main() end to end with
 the fake SDK against a bare remote and the gh shim, every role in one process), `roles` (each role
 as its own main() with only its container's environment: who prints, who refuses which
