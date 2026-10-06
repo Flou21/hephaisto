@@ -208,6 +208,7 @@ public sealed class InvestigationCoordinator(
         db.AddInvestigationGraph(investigation);
 
         metrics.InvestigationCompleted(
+            incident.Kind,
             clock.UtcNow - started,
             investigation.StepsUsed,
             investigation.TerminationReason,

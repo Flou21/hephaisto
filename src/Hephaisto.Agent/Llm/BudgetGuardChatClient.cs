@@ -112,7 +112,6 @@ public sealed class BudgetGuardChatClient(
         LlmInstrumentation.Tokens.Add(output, outputTags);
 
         LlmInstrumentation.CostUsd.Add((double)cost, tags);
-        LlmInstrumentation.InvestigationSteps.Add(1, tags);
     }
 
     /// <summary>How long a turn's digest may be before it is clipped.</summary>

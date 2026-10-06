@@ -99,6 +99,11 @@ public static class KubernetesServiceCollectionExtensions
         services.AddScoped<Pipeline.ActionEventMirror>();
         services.AddScoped<Pipeline.IActionExecutor, Pipeline.ActionExecutor>();
 
+        // The watcher counts what it drops through the one registration of that counter
+        // (backlog #15). The pipeline registers this too; a host that adds only this half still
+        // gets one.
+        services.TryAddSingleton<HephaistoMetrics>();
+
         // Before the watcher. See the remarks above.
         services.AddHostedService<RbacSelfCheck>();
         services.AddHostedService<KubernetesWatcherService>();

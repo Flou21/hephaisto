@@ -48,6 +48,16 @@ the same day.
   longer re-reports a warning from before a pod healed.
 
 ### Fixed
+- **One metric name is one instrument** ([#15](docs/backlog.md#15)). Six names were registered
+  twice. `hephaisto_signals_received_total{source="Kubernetes"}`,
+  `hephaisto_investigation_terminations_total` and `hephaisto_grounding_rejected_total` each
+  counted an event twice and now read half of what they did: a panel or alert with a
+  threshold on one of them needs a look. `hephaisto_investigation_steps_total` and
+  `hephaisto_investigation_duration_milliseconds_*` are gone; the histogram
+  `hephaisto_investigation_steps` and `hephaisto_investigation_duration_seconds` are what the
+  shipped dashboard reads. Both carry `kind` and `termination_reason` now, and the termination
+  counter `kind`, so the dashboard's kind filter works on them.
+  `hephaisto_signals_dropped_total` has `source` on every series and `kind` on none.
 - **A grounding rejection says why in the log**, at Warning. Its detail was in no log line.
 - **The incident list says who acknowledged a row** ([#165](docs/backlog.md#165)).
 - **A finding that quotes a grafana-mcp result survives grounding.** An MCP text block was stored

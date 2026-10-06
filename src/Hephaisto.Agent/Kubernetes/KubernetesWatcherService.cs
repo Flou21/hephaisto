@@ -62,8 +62,7 @@ public sealed class KubernetesWatcherService : BackgroundService
     private readonly SignalThresholds thresholds;
     private readonly SeenEvents seenEvents = new();
 
-    private readonly Counter<long> signalsReceived;
-    private readonly Counter<long> signalsDropped;
+    private readonly HephaistoMetrics metrics;
     private readonly Counter<long> watchReconnects;
 
     public KubernetesWatcherService(
@@ -73,17 +72,20 @@ public sealed class KubernetesWatcherService : BackgroundService
         IServiceScopeFactory scopes,
         IOptions<KubernetesOptions> options,
         IMeterFactory meterFactory,
+        HephaistoMetrics metrics,
         TimeProvider time,
         ILogger<KubernetesWatcherService> logger)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(meterFactory);
+        ArgumentNullException.ThrowIfNull(metrics);
 
         this.api = api;
         this.owners = owners;
         this.sink = sink;
         this.scopes = scopes;
         this.options = options.Value;
+        this.metrics = metrics;
         this.time = time;
         this.logger = logger;
 
@@ -94,10 +96,10 @@ public sealed class KubernetesWatcherService : BackgroundService
             this.options.RestartStormThreshold,
             HealingOn ? this.options.HealedAfter : TimeSpan.MaxValue);
 
+        // The reconnect counter is the watcher's own and is registered nowhere else. Signals
+        // received and dropped are HephaistoMetrics' (backlog #15): this used to register both a
+        // second time, and counted every signal here and again when the pipeline ingested it.
         var meter = meterFactory.Create(HephaistoTelemetry.MeterName);
-        signalsReceived = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.SignalsReceived);
-        var dropped = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.SignalsDropped);
-        signalsDropped = dropped;
         watchReconnects = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.KubernetesWatchReconnects);
 
         queue = Channel.CreateBounded<Signal>(
@@ -114,10 +116,7 @@ public sealed class KubernetesWatcherService : BackgroundService
             // nothing on the write path can tell that the queue is shedding. This callback is
             // the only honest place to count it, and a rising hephaisto.signals.dropped is
             // what says the agent is behind rather than the cluster being quiet.
-            itemDropped: signal => dropped.Add(
-                1,
-                new KeyValuePair<string, object?>("reason", "queue_full"),
-                new KeyValuePair<string, object?>("kind", signal.Kind.ToString())));
+            itemDropped: signal => metrics.SignalDropped(signal.Source, "queue_full"));
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -451,17 +450,15 @@ public sealed class KubernetesWatcherService : BackgroundService
             return;
         }
 
-        signalsReceived.Add(
-            1,
-            new KeyValuePair<string, object?>("kind", signal.Kind.ToString()),
-            new KeyValuePair<string, object?>("source", signal.Source.ToString()));
+        // Not counted as received here: the pipeline counts a signal when it ingests it, for
+        // every source alike, and counting it here as well made each of the watcher's read twice.
 
         // Always succeeds while the channel is open: overflow evicts the oldest item and is
         // counted by the itemDropped callback registered in the constructor. A false here is
         // shutdown, and is counted separately so the two are never confused.
         if (!queue.Writer.TryWrite(signal))
         {
-            signalsDropped.Add(1, new KeyValuePair<string, object?>("reason", "writer_closed"));
+            metrics.SignalDropped(signal.Source, "writer_closed");
         }
     }
 

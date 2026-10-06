@@ -817,7 +817,28 @@ has a runbook file, which is the same shape as `ShippedAlertRulesTests` and woul
 **Why it is still open.** Both registrations look correct in isolation; the conflict is only
 visible in the exported series.
 
-**Size.** M.
+**Size.** M. **Fixed in v0.13.0.** Each of the four is registered once, in `HephaistoMetrics`,
+which is the shape every panel and rule already queried: steps as a histogram, duration in
+seconds, one count per termination and per rejection. The registrations in `LlmInstrumentation`
+are gone, with the three places that recorded through them (`BudgetGuardChatClient`, and twice
+in `InvestigationRunner`). What went with them is a per-turn counter under the histogram's name
+and a duration in milliseconds; no panel, rule or script read either.
+
+The "harmless" pair was not: the watcher counted a signal as received when it queued it, and
+the pipeline counted the same signal again when it ingested it, so
+`hephaisto_signals_received_total{source="Kubernetes"}` read double. The watcher registers
+neither counter now. A signal is counted where it is ingested, and the watcher's two drop
+reasons (`queue_full`, `writer_closed`) go through `HephaistoMetrics.SignalDropped`, which
+gives them the `source` label the other reasons have and takes the `kind` label only they had.
+
+One thing the dashboard asked for and never got: the duration, steps and termination panels
+all filter by `kind`, and the only series that carried one was the milliseconds duplicate,
+under `signal_kind`. `InvestigationCompleted` records `kind` on all three, and
+`termination_reason` on the two histograms, as the dashboard's metric-spec table says.
+
+Held by `OneRegistrationPerMetricTests`: a scan of `src/` for a metric name registered in two
+places, which finds six on the old code and none now, and one that drives
+`InvestigationCompleted` and reads the meter. Not measured: the exported series on a cluster.
 
 ### 16. Four declared spans are never started
 

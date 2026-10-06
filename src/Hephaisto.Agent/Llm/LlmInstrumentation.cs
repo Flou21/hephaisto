@@ -40,23 +40,12 @@ internal static class LlmInstrumentation
     public static readonly Histogram<double> ToolDuration =
         Meter.CreateHistogram<double>(HephaistoTelemetry.Metrics.ToolDuration, "ms");
 
-    public static readonly Counter<long> InvestigationSteps =
-        Meter.CreateCounter<long>(HephaistoTelemetry.Metrics.InvestigationSteps);
-
-    public static readonly Counter<long> Terminations =
-        Meter.CreateCounter<long>(HephaistoTelemetry.Metrics.InvestigationTerminations);
-
     public static readonly Counter<long> InvestigationJobFallbacks =
         Meter.CreateCounter<long>(HephaistoTelemetry.Metrics.InvestigationJobFallbacks);
 
-    public static readonly Histogram<double> InvestigationDuration =
-        Meter.CreateHistogram<double>(HephaistoTelemetry.Metrics.InvestigationDuration, "ms");
-
-    /// <summary>
-    /// Tagged <c>reason</c>. A rising rate here is the earliest available signal of prompt
-    /// drift - it says the model started citing things it was not shown, which no test can
-    /// catch because nothing about it is deterministic.
-    /// </summary>
-    public static readonly Counter<long> GroundingRejected =
-        Meter.CreateCounter<long>(HephaistoTelemetry.Metrics.GroundingRejected);
+    // An investigation's steps, duration, termination and grounding rejections are NOT here.
+    // They were, beside the registrations in HephaistoMetrics under the same names (backlog
+    // #15): a counter beside a histogram, milliseconds beside seconds, and two counters that
+    // each counted the same event. One name has one instrument, and those four are recorded
+    // where an investigation's outcome is recorded - InvestigationCoordinator.
 }
