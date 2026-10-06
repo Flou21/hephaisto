@@ -47,6 +47,7 @@ namespace NotificationReceiver;
 //   POST  /github/api/repos/{owner}/{repo}/issues/{number}/comments       {body}
 //   PATCH /github/api/repos/{owner}/{repo}/issues/comments/{id}           {body}
 //   GET   /github/api/repos/{owner}/{repo}/pulls/{number}
+//   GET   /github/api/repos/{owner}/{repo}                                   full_name, default_branch
 //
 // The harness's side: what a person at github.com would do, and what the agent was seen doing.
 // Not authenticated, like /teams/messages - it is not part of the thing being imitated:
@@ -217,6 +218,16 @@ public static class GitHubStandIn
         var api = app.MapGroup(Prefix);
 
         api.MapGet("/user", () => Results.Json(AccountJson(bot)));
+
+        // A repository's own page, asked for its default branch. Any name is a repository here -
+        // there is no list of them - and its branch is `main` unless the pod is told another.
+        api.MapGet("/repos/{owner}/{repo}", (string owner, string repo) => Results.Json(new JsonObject
+        {
+            ["full_name"] = $"{owner}/{repo}",
+            ["name"] = repo,
+            ["private"] = false,
+            ["default_branch"] = configuration["GITHUB_STANDIN_DEFAULT_BRANCH"] is { Length: > 0 } branch ? branch : "main",
+        }));
 
         api.MapGet("/repos/{owner}/{repo}/issues", (string owner, string repo, HttpContext ctx) =>
         {

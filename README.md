@@ -468,7 +468,8 @@ and the click is recorded as the team's member list names that person.
 | `GET /api/incidents/{id}/codefix` | an incident's code-fix attempts and its latest verdict |
 | `POST /api/incidents/{id}/codefix` | ask for a code fix (approver policy) |
 | `POST /api/incidents/{id}/codefix/{attemptId}/approve`, `/deny` | decide on a plan (approver policy; approve needs mode `Pr`) |
-| `GET /api/workitems?state=Taken\|Done\|Cancelled\|any`, `/api/workitems/{id}` | GitHub issues taken as work (v0.14.0): without `state`, what is taken now |
+| `GET /api/workitems?state=Taken\|Done\|Cancelled\|any`, `/api/workitems/{id}` | GitHub issues taken as work (v0.14.0): without `state`, what is taken now; one work item carries its `attempts` |
+| `POST /api/workitems/{id}/codefix/{attemptId}/approve`, `/deny` | decide on the plan for an issue (approver policy; approve needs mode `Pr`) - the incident routes' body and refusals |
 | `GET /api/alerts/{name}/note` | what people wrote about an alert name, and what was done each time |
 | `POST /api/alerts/{name}/note/entries` | add a line of what was done this time |
 | `PUT /api/alerts/{name}/note` | rewrite the note the agent reads beside its runbook (approver policy) |

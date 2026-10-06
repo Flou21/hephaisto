@@ -14,6 +14,8 @@ namespace Hephaisto.Agent.GitHub;
 /// <summary>
 /// Asks GitHub which issues are assigned to Hephaisto's account, and makes the work items say the
 /// same: an assigned issue is taken, one that was closed or unassigned is cancelled (v0.14.0).
+/// Then, for what is taken, what follows from it: a plan, and the issue being told
+/// (<c>GitHubIssuePoller.Work.cs</c>).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -39,7 +41,7 @@ namespace Hephaisto.Agent.GitHub;
 /// work item taken while Off would be work started by a process somebody had stopped.
 /// </para>
 /// </remarks>
-public sealed class GitHubIssuePoller(
+public sealed partial class GitHubIssuePoller(
     IServiceScopeFactory scopes,
     IOptions<GitHubOptions> options,
     IKillSwitch killSwitch,
@@ -148,13 +150,23 @@ public sealed class GitHubIssuePoller(
         {
             try
             {
-                await PollRepositoryAsync(client, repository, bot, ct).ConfigureAwait(false);
+                var answered = await PollRepositoryAsync(client, repository, bot, ct).ConfigureAwait(false);
 
-                // WHAT COMES AFTER TAKING AN ISSUE GOES HERE (stage 2.3, #246), and not into
-                // TakeAsync: after the list was compared OR found unchanged - the method above
-                // returns early on a 304 - so that "every taken work item of this repository
-                // has an attempt" is asked on each pass. A plan that could not start when its
-                // work item was created is then started by the next pass, like everything else.
+                // What comes after taking an issue (GitHubIssuePoller.Work.cs): here and not in
+                // TakeAsync, after the list was compared OR found unchanged, so that it is asked
+                // on every pass. A plan that could not start when its work item was created, a
+                // comment GitHub refused, is then put right by the next pass like everything else.
+                if (await WorkAsync(client, repository, bot, ct).ConfigureAwait(false) is { } undone)
+                {
+                    // The rule the tag is kept by: only when everything was done.
+                    etags.Remove(repository);
+
+                    // When GitHub did not answer the list either, that is the better sentence.
+                    if (answered)
+                    {
+                        Failed(repository, undone);
+                    }
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
@@ -202,7 +214,8 @@ public sealed class GitHubIssuePoller(
         return null;
     }
 
-    private async Task PollRepositoryAsync(IGitHubClient client, string repository, string bot, CancellationToken ct)
+    /// <returns>Whether GitHub answered and everything the list called for was done.</returns>
+    private async Task<bool> PollRepositoryAsync(IGitHubClient client, string repository, string bot, CancellationToken ct)
     {
         etags.TryGetValue(repository, out var etag);
 
@@ -214,14 +227,14 @@ public sealed class GitHubIssuePoller(
         {
             // Unchanged since a list that was acted on completely. Nothing to compare.
             Succeeded(repository, "unchanged");
-            return;
+            return true;
         }
 
         if (list is not { Ok: true, Value: { } page })
         {
             // The tag stays: it still describes the last list that was acted on completely.
             Failed(repository, list.Describe());
-            return;
+            return false;
         }
 
         if (page.HasMore && saidTruncated.Add(repository))
@@ -307,6 +320,8 @@ public sealed class GitHubIssuePoller(
         {
             Failed(repository, firstProblem ?? "the pass did not finish");
         }
+
+        return complete;
     }
 
     /// <summary>

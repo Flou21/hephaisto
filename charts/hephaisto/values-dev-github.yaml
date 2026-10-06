@@ -24,6 +24,16 @@ github:
   # 443 and forwards to 80, to names on its allowlist: it would refuse this, rightly.
   useEgressProxy: false
 
+# The issues suite (scripts/e2e/issues-local.sh) hands the agent a dozen issues a run, all in the
+# one repository the in-cluster git server holds, and every one of them is an attempt on it.
+# values-dev-coder.yaml allows 20 a day, which the incident suites alone come close to; with the
+# stand-in on, a day of running both would be refused from the second run on - by the cap, and
+# reported as "no plan for the issue". Raised here and nowhere else: this file is layered only
+# for the stand-in, after values-dev-coder.yaml, so a dev cluster without it keeps 20.
+codeFix:
+  budgets:
+    attemptsPerRepositoryPerDay: 500
+
 secrets:
   # Applied with the stand-in, and holding the stand-in's own token - which opens nothing but
   # that pod's /github/api. Its own name, so that pointing a dev agent at github.com can never

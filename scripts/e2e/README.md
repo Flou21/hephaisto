@@ -300,7 +300,7 @@ and the in-cluster git server is seeded from a private one.
 
 **GitHub is a stand-in** (`infra/e2e/notification-receiver/GitHubStandIn.cs`), in the pod that
 is Teams and the model too, under a Service name of its own: an agent's API base URL is
-`http://github-stand-in.hephaisto-obs:8080/github/api`. It answers the seven REST calls the agent
+`http://github-stand-in.hephaisto-obs:8080/github/api`. It answers the eight REST calls the agent
 makes, with GitHub's field names, and copies what a client gets wrong against the real thing:
 `ETag` and a 304 for a list already given, 30 per page unless asked, `"body": null`, `since`
 inclusive at whole seconds, comment ids beyond 32 bits, a rate limit as a 403. What it does not
@@ -330,7 +330,23 @@ exercised when it was written; `wi_*` reads an agent API that did not exist yet,
 place a later stage adjusts when a path or a field turns out differently. Its header lists six
 things it reads and marks each BUILT or ASSUMED: since stage 2.2 (#245) the work items
 (`GET /api/workitems`), a cancel, and `github` in `/api/status` are built, and G02 and G09 are
-green.
+green. Since stage 2.3 (#246) a work item's attempt is a row of `GET /api/codefixes` with a
+`workItemId`, its Job's request is contract version 2 with the issue under `work_item`, and the
+plan is a comment on the issue - G01, G07 and G08 are green. `issues_plan_ready`, the road ten
+scenarios start on, ends where the issue has been told: `PlanReady` is written by the loop that
+collects a Job, the comment by the poller's next pass, and the attempt names it (`planCommentId`)
+once it is there. What is still ASSUMED is the answer on the issue, the pull request's body and
+`Done` - stage 2.4 (#247).
+
+What the bot writes on an issue is two comments and never more: one status comment per work
+item, edited in place as the work moves, and one comment per attempt with its plan. `curl -s
+http://$H:8110/github/control/comments | jq -r '.[] | "\(.edits) \(.body)"'` shows both.
+
+All scenarios work in one repository, and each is an attempt on it. `values-dev-coder.yaml` allows
+20 a day, which two runs of this suite beside the incident suites would use up - reported as "no
+plan for the issue: 20 attempts on this repository today (cap 20)" on the issue and in
+`declineReason`. `values-dev-github.yaml` therefore raises `codeFix.budgets.attemptsPerRepositoryPerDay`
+to 500, for the stand-in only.
 
 **The agent is pointed at the stand-in by a values file**, `charts/hephaisto/values-dev-github.yaml`,
 which the Tiltfile layers for `"github": "stand-in"`: the stand-in's URL, its bot's login, the one

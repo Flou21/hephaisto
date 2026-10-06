@@ -24,7 +24,31 @@ release is about handing it a GitHub issue ([#243](https://github.com/Flou21/hep
   `GET /api/workitems/{id}`. Unassigning the account, or closing the issue, cancels it; assigning
   it again is a new work item, with the issue's text as it is then. An issue in a repository that
   is not listed is never asked about. The agent only asks, so there is no webhook to expose.
-  **In this release a taken issue is recorded and nothing more**: no plan, no comment.
+- **A taken issue is planned, and the plan is posted on the issue** ([#246](https://github.com/Flou21/hephaisto/issues/246)).
+  The same read-only plan Job an escalated incident gets, under the same `codeFix.mode`, switches
+  and caps - with `codeFix.mode: off` nothing starts, and the issue is told so. There is no
+  incident, no investigation and no running image behind it: the Job reads the issue and the
+  repository's default branch. Hephaisto then writes two comments on the issue and never more:
+  one that says where the work stands, edited in place as it moves, and one with the plan -
+  summary, what will change, files, steps, verification - and how to answer it. The issue's text
+  travels to the model as it was when the issue was taken, as data in one element of its own; an
+  edit afterwards is not picked up. Unassigning or closing the issue cancels the attempt and
+  deletes a running Job. An issue is planned once: to have it planned again, hand it over again.
+  **Answering on the issue comes with the next stage.** Until then a plan is approved or denied
+  through the API, by whoever the console's approver policy admits:
+  `POST /api/workitems/{id}/codefix/{attemptId}/approve` and `.../deny`, with the body and the
+  refusals of the incident routes. An approval in mode `pr` starts the implementing Job; its
+  draft pull request says `Closes owner/repo#n`, its title is `fix:`, `feat:` or `chore:` by the
+  issue's type, and its commits carry `Hephaisto-Issue: owner/repo#n`.
+- **Where an issue's code is.** The first `codeFix.repositories` entry whose `url` names the
+  repository (it ends in `/owner/repo` or `/owner/repo.git`) gives the clone URL, the branch and
+  the path; with no such entry it is `https://github.com/owner/repo` on the default branch
+  GitHub reports. The host has to be in `codeFix.allowedRepositoryHosts` either way, and the
+  repository enabled in the context repository's `repos.yaml`.
+- `GET /api/codefixes` rows carry `workItemId`, `issue` (`owner/repo#12`), `issueUrl` and
+  `planCommentId`; `incidentId` is null on a row that is for an issue. `GET /api/workitems/{id}`
+  carries `attempts`, and a work item says why no plan was started (`declineReason`) while a cap
+  or a switch is in the way - it is asked again by itself.
 - **GitHub among the dependencies.** `github` is a row in the connections of `GET /api/status`,
   the status page and the MCP tool `get_status`: healthy while every listed repository answers,
   degraded with one line of why - a refused token, a rate limit and until when, a 5xx, no
@@ -46,9 +70,26 @@ release is about handing it a GitHub issue ([#243](https://github.com/Flou21/hep
   character, so the pattern for `token=` did not match inside a longer name. GitHub's `ghu_` and
   `ghr_` tokens are now known by sight as well.
 
+### Changed
+- **`incidentId` on a code-fix attempt can be null** - in `GET /api/codefixes`, and in the
+  `code_fix_attempts` and `llm_usage` tables. It is null exactly for an attempt that is for an
+  issue; a client that follows it to an incident has to check. The console's code-fixes page
+  shows such a row by its issue. The MCP tools `list_code_fixes` and `get_code_fix`, and the
+  Teams board, show the attempts of incidents only until they learn to show an issue; an
+  attempt for an issue is not announced through the notification routes, it is told on its issue.
+- **The coder's request has a second version.** A Job for an issue is handed contract version 2
+  (`codefix-request-v2.schema.json`: `work_item` in place of `incident`, `findings` and
+  `investigation_summary`). A Job for an incident is handed version 1, byte for byte what it
+  was. Agent and coder image have to be of one version, as before: a v0.13.0 coder refuses a
+  version-2 request, and says so in its result.
+- A work item's coder spend counts in the day's and the hour's LLM budget like any other, and
+  in `codeFix.budgets`; it has no incident whose own ceiling could hold it.
+
 ### Upgrading
-- One migration, `WorkItems`: a new table, nothing existing changes. It runs when the agent
-  starts.
+- Two migrations, `WorkItems` and `WorkItemCodeFix`. The first is a new table. The second makes
+  `code_fix_attempts.incident_id` and `llm_usage.incident_id` nullable, adds
+  `code_fix_attempts.work_item_id` with a check that exactly one of the two is set, and three
+  columns to `work_items`; existing rows are valid as they are. Both run when the agent starts.
 - Nothing is on by default. Without `github.enabled` the agent holds no GitHub credential and
   asks GitHub nothing; `/api/workitems` answers an empty list.
 
