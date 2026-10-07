@@ -659,7 +659,8 @@ public sealed class TeamsBotActionsTests
         Hephaisto.Core.Domain.ApprovalSource.Teams.ToString().Should().Be("Teams");
         ((int)Hephaisto.Core.Domain.ApprovalSource.Teams).Should().Be(5);
 
-        Enum.GetNames<Hephaisto.Core.Domain.ApprovalSource>().Should().Equal("NotApplicable", "Ui", "Api", "Auto", "Oidc", "Teams");
+        // Appended to, never reordered: GitHub came after it (v0.14.0) and moved nothing.
+        Enum.GetNames<Hephaisto.Core.Domain.ApprovalSource>().Should().Equal("NotApplicable", "Ui", "Api", "Auto", "Oidc", "Teams", "GitHub");
     }
 
     // ---------------------------------------------------------------------------------------

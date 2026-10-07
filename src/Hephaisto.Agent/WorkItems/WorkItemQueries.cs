@@ -15,6 +15,11 @@ namespace Hephaisto.Agent.WorkItems;
 /// Why no plan was started when it was last asked, while there is no attempt. Asked again on
 /// every pass; null once an attempt exists.
 /// </param>
+/// <param name="StillAssigned">
+/// True for a work item that ended - its pull request was merged or closed - while its issue
+/// stayed open and assigned. Such an issue is not taken again until Hephaisto was unassigned
+/// (or the issue closed) and assigned again.
+/// </param>
 /// <param name="Attempts">
 /// What was tried for it, newest first - on <c>GET /api/workitems/{id}</c>. Null in a list, whose
 /// rows do not carry them: <c>GET /api/codefixes</c> rows name their <c>workItemId</c>.
@@ -35,6 +40,7 @@ public sealed record WorkItemView(
     string Body,
     long? StatusCommentId = null,
     string? DeclineReason = null,
+    bool StillAssigned = false,
     IReadOnlyList<CodeFixAttemptView>? Attempts = null);
 
 /// <summary>Reads of <c>work_items</c> for the API. Never tracked, never written.</summary>
@@ -69,5 +75,5 @@ public sealed class WorkItemQueries(HephaistoDbContext db)
 
     public static WorkItemView View(WorkItem w) => new(
         w.Id, w.Source, w.Repository, w.Number, w.Url, w.Title, w.Type, w.AuthorLogin,
-        w.State, w.StateReason, w.TakenAt, w.ClosedAt, w.Body, w.StatusCommentId, w.DeclineReason);
+        w.State, w.StateReason, w.TakenAt, w.ClosedAt, w.Body, w.StatusCommentId, w.DeclineReason, w.StillAssigned);
 }

@@ -301,6 +301,15 @@ public enum ApprovalSource
     /// new member needs no migration.
     /// </summary>
     Teams = 5,
+
+    /// <summary>
+    /// A comment on the GitHub issue a plan was posted on (v0.14.0): <c>/approve</c> or
+    /// <c>/reject</c> as its first line. ApprovedBy is <c>github:&lt;login&gt;</c>; what let it count is
+    /// the account's NUMBER being listed in <c>GitHub:Approvers</c> - a login can be renamed and
+    /// taken by somebody else, a number cannot. Appended, like <see cref="Teams"/>: the members
+    /// above keep their values.
+    /// </summary>
+    GitHub = 6,
 }
 
 /// <summary>

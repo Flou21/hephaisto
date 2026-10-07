@@ -12,8 +12,25 @@ public enum WorkItemState
     /// <summary>Its pull request was merged.</summary>
     Done = 1,
 
-    /// <summary>Taken back: the issue was closed, or Hephaisto is no longer an assignee.</summary>
+    /// <summary>
+    /// Taken back: the issue was closed, or Hephaisto is no longer an assignee - or its pull
+    /// request was closed without being merged.
+    /// </summary>
     Cancelled = 2,
+}
+
+/// <summary>
+/// How a work item ended by what became of its pull request, as <see cref="WorkItem.StateReason"/>
+/// holds it. Constants, because two places have to agree on the words: the loop that writes
+/// them and the comment that reads them. The reasons for being taken back - closed, unassigned,
+/// gone - are sentences of the poller's own.
+/// </summary>
+public static class WorkItemReasons
+{
+    /// <summary>The reason of <see cref="WorkItemState.Done"/>.</summary>
+    public const string Merged = "merged";
+
+    public const string PullRequestClosed = "pull request closed without merging";
 }
 
 /// <summary>
@@ -73,7 +90,7 @@ public sealed class WorkItem
 
     public WorkItemState State { get; set; } = WorkItemState.Taken;
 
-    /// <summary>Why it was cancelled, in a sentence. Null while taken.</summary>
+    /// <summary>Why it ended, in a sentence: why it was cancelled, or <c>merged</c>. Null while taken.</summary>
     public string? StateReason { get; set; }
 
     public DateTimeOffset TakenAt { get; set; }
@@ -100,6 +117,16 @@ public sealed class WorkItem
 
     /// <summary>The same answer as a sentence, as it was when the codes last changed.</summary>
     public string? DeclineReason { get; set; }
+
+    /// <summary>
+    /// The issue was still open and assigned to Hephaisto when this work item ended - its pull
+    /// request was merged or closed, and nobody took the issue back. While this stands the
+    /// issue is NOT taken again: a finished piece of work that is found assigned on the next
+    /// pass is the same hand-over, not a new one. It is cleared by the first complete list the
+    /// issue is not in (unassigned, or closed), and only an assignment after that is new work.
+    /// Always false for a work item that ended BY being taken back.
+    /// </summary>
+    public bool StillAssigned { get; set; }
 
     public DateTimeOffset UpdatedAt { get; set; }
 

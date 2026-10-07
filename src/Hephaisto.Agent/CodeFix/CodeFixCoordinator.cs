@@ -33,7 +33,50 @@ public enum CodeFixDecisionOutcome
     ModeRefused = 4,
 }
 
-public sealed record CodeFixDecisionResult(CodeFixDecisionOutcome Outcome, string Message, CodeFixAttempt? Attempt = null);
+/// <summary>
+/// Why the door stayed shut, for a caller that has to say so in words of its own. The console
+/// shows <see cref="CodeFixDecisionResult.Message"/>, which names arms and switches; an issue
+/// anybody can read is told one sentence per cause instead (<c>IssueComments.Refused</c>).
+/// </summary>
+public enum CodeFixRefusal
+{
+    None = 0,
+
+    /// <summary>The actor may not decide: a machine identity, or an approval nobody authenticated.</summary>
+    ActorForbidden = 1,
+
+    NotFound = 2,
+
+    /// <summary>The attempt is not waiting for an answer: decided already, expired, cancelled.</summary>
+    NotWaiting = 3,
+
+    /// <summary>
+    /// The code-fix mode itself is below Pr. <see cref="CodeFixDecisionResult.Mode"/> is what its
+    /// arms say - Plan or Off.
+    /// </summary>
+    ModeBelowPr = 4,
+
+    /// <summary>The mode would be Pr, and the agent's emergency stop is engaged.</summary>
+    EmergencyStop = 5,
+
+    /// <summary>The mode would be Pr, and the agent's kill switch holds it down another way: the runaway latch, an unreadable arm.</summary>
+    KillSwitch = 6,
+
+    /// <summary>The plan needs a change in a second repository first, which a person makes.</summary>
+    NeedsSecondRepository = 7,
+
+    /// <summary>The issue was taken back between the pass that read it and this decision.</summary>
+    SubjectTakenBack = 8,
+}
+
+/// <param name="Refusal">Why, when <paramref name="Outcome"/> is not <see cref="CodeFixDecisionOutcome.Done"/>.</param>
+/// <param name="Mode">For <see cref="CodeFixRefusal.ModeBelowPr"/>: the mode the code-fix arms declare.</param>
+public sealed record CodeFixDecisionResult(
+    CodeFixDecisionOutcome Outcome,
+    string Message,
+    CodeFixAttempt? Attempt = null,
+    CodeFixRefusal Refusal = CodeFixRefusal.None,
+    CodeFixMode? Mode = null);
 
 /// <summary>
 /// What asking about a work item came to. Neither: there is no such work item. An attempt and
@@ -564,7 +607,7 @@ public sealed class CodeFixCoordinator(
         if (string.IsNullOrWhiteSpace(actor) || IncidentStateMachine.IsForbiddenGranter(actor)
             || actor.Trim().StartsWith("hephaisto/", StringComparison.OrdinalIgnoreCase))
         {
-            return new(CodeFixDecisionOutcome.Forbidden, $"'{actor}' may not decide a code fix; that is a human act.");
+            return new(CodeFixDecisionOutcome.Forbidden, $"'{actor}' may not decide a code fix; that is a human act.", Refusal: CodeFixRefusal.ActorForbidden);
         }
 
         var o = options.CurrentValue;
@@ -573,7 +616,8 @@ public sealed class CodeFixCoordinator(
         {
             return new(CodeFixDecisionOutcome.Forbidden,
                 "approving a code fix opens a repository to a coder and needs an authenticated human; "
-                + "enable Auth, or set CodeFix:AllowUnauthenticatedApproval on a throwaway cluster");
+                + "enable Auth, or set CodeFix:AllowUnauthenticatedApproval on a throwaway cluster",
+                Refusal: CodeFixRefusal.ActorForbidden);
         }
 
         await using var tx = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
@@ -586,29 +630,43 @@ public sealed class CodeFixCoordinator(
             .ConfigureAwait(false);
 
         if (attempt is null || !belongs(attempt) || await SubjectAsync(attempt, ct).ConfigureAwait(false) is not { } subject)
-            return new(CodeFixDecisionOutcome.NotFound, notFound);
+            return new(CodeFixDecisionOutcome.NotFound, notFound, Refusal: CodeFixRefusal.NotFound);
 
         if (attempt.State != CodeFixState.PlanReady)
-            return new(CodeFixDecisionOutcome.Conflict, $"the code fix is {attempt.State}; only a plan that is ready can be decided", attempt);
+        {
+            return new(CodeFixDecisionOutcome.Conflict, $"the code fix is {attempt.State}; only a plan that is ready can be decided", attempt,
+                CodeFixRefusal.NotWaiting);
+        }
 
         if (approve)
         {
             var mode = await codeFixSwitch.ResolveAsync(ct).ConfigureAwait(false);
 
             if (mode.Effective != CodeFixMode.Pr)
-                return new(CodeFixDecisionOutcome.ModeRefused, $"approval needs code-fix mode Pr; {mode.Explain()}", attempt);
+            {
+                // Which of the things that hold the mode down is the one to name: the code-fix
+                // arms when they say less than Pr by themselves, else the agent's own switch.
+                var why = mode.Declared != CodeFixMode.Pr
+                    ? CodeFixRefusal.ModeBelowPr
+                    : mode.EmergencyStop ? CodeFixRefusal.EmergencyStop : CodeFixRefusal.KillSwitch;
+
+                return new(CodeFixDecisionOutcome.ModeRefused, $"approval needs code-fix mode Pr; {mode.Explain()}", attempt,
+                    why, why == CodeFixRefusal.ModeBelowPr ? mode.Declared : null);
+            }
 
             if (attempt.NeedsCait)
             {
                 return new(CodeFixDecisionOutcome.Conflict,
-                    "this fix needs a Cait change first; that is staged delivery by a human, Cait first", attempt);
+                    "this fix needs a Cait change first; that is staged delivery by a human, Cait first", attempt,
+                    CodeFixRefusal.NeedsSecondRepository);
             }
 
             // Between the issue being taken back and the pass that cancels its attempt.
             if (subject.WorkItem is { State: not WorkItemState.Taken } gone)
             {
                 return new(CodeFixDecisionOutcome.Conflict,
-                    $"the issue is no longer Hephaisto's ({gone.StateReason ?? gone.State.ToString()}); its plan cannot be approved", attempt);
+                    $"the issue is no longer Hephaisto's ({gone.StateReason ?? gone.State.ToString()}); its plan cannot be approved", attempt,
+                    CodeFixRefusal.SubjectTakenBack);
             }
 
             machine.Approve(attempt, actor, source);
@@ -688,7 +746,7 @@ public sealed class CodeFixCoordinator(
         if (phase == CodeFixPhase.Plan)
             ApplyPlan(attempt, subject, CodeFixResultParser.ParsePlan(log, attempt.Id), observed);
         else
-            await ApplyImplementAsync(attempt, subject, CodeFixResultParser.ParseImplement(log, attempt.Id), observed, ct).ConfigureAwait(false);
+            await ApplyImplementAsync(attempt, subject, CodeFixResultParser.ParseImplement(log, attempt.Id), log, observed, ct).ConfigureAwait(false);
 
         await SaveAndPublishAsync(attempt, ct).ConfigureAwait(false);
     }
@@ -744,7 +802,7 @@ public sealed class CodeFixCoordinator(
     }
 
     private async Task ApplyImplementAsync(
-        CodeFixAttempt attempt, CodeFixSubject subject, CodeFixParse<CodeFixImplementResult> parse, CodeFixJobObservation observed, CancellationToken ct)
+        CodeFixAttempt attempt, CodeFixSubject subject, CodeFixParse<CodeFixImplementResult> parse, string? log, CodeFixJobObservation observed, CancellationToken ct)
     {
         var o = options.CurrentValue;
 
@@ -778,6 +836,12 @@ public sealed class CodeFixCoordinator(
         }
 
         machine.PrOpened(attempt, result.PrUrl!, result.PrNumber);
+
+        // What the publish role sent GitHub as the description, from a block of its own in the
+        // log it printed the result in. Kept only for a pull request that was believed - the
+        // checks above - and never a reason to disbelieve one: an older runner prints none.
+        attempt.PrBody = CodeFixResultParser.ParsePrBody(log);
+
         metrics.JobEnded();
         metrics.PhaseFinished(CodeFixPhase.Implement, result.Outcome,
             clock.UtcNow - (attempt.ImplementStartedAt ?? attempt.CreatedAt), result.CostUsd);

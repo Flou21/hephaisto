@@ -721,7 +721,7 @@ public sealed class GitHubIssuePollerTests(PostgresFixture pg)
             i.Type);
 
         // The poller of this stage reads; it does not write on an issue or look at a pull request.
-        public Task<GitHubResult<IReadOnlyList<GitHubComment>>> ListCommentsAsync(string repository, int number, DateTimeOffset? since, CancellationToken ct) =>
+        public Task<GitHubResult<IReadOnlyList<GitHubComment>>> ListCommentsAsync(string repository, int number, DateTimeOffset? since, string? etag, CancellationToken ct) =>
             throw new NotSupportedException("the poller does not read comments");
 
         public Task<GitHubResult<GitHubComment>> CreateCommentAsync(string repository, int number, string body, CancellationToken ct) =>
@@ -730,7 +730,7 @@ public sealed class GitHubIssuePollerTests(PostgresFixture pg)
         public Task<GitHubResult<GitHubComment>> UpdateCommentAsync(string repository, long commentId, string body, CancellationToken ct) =>
             throw new NotSupportedException("the poller does not write comments");
 
-        public Task<GitHubResult<GitHubPullRequest>> GetPullRequestAsync(string repository, int number, CancellationToken ct) =>
+        public Task<GitHubResult<GitHubPullRequest>> GetPullRequestAsync(string repository, int number, string? etag, CancellationToken ct) =>
             throw new NotSupportedException("the poller does not read pull requests");
 
         public Task<GitHubResult<GitHubRepository>> GetRepositoryAsync(string repository, CancellationToken ct) =>

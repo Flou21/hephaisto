@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using Hephaisto.Agent.CodeFix;
 using Hephaisto.Agent.CodeFix.Contract;
 using Hephaisto.Core.CodeFix;
 using Hephaisto.Core.Domain;
@@ -31,9 +32,10 @@ public sealed record IssueAttempt(
     string DefaultBranch);
 
 /// <summary>
-/// The two comments Hephaisto writes on an issue it was handed (v0.14.0): where the work stands,
-/// edited in place, and the plan, once per attempt. Text only - pure, so every sentence a person
-/// will read on their issue is a unit test.
+/// Everything Hephaisto writes on an issue it was handed (v0.14.0): where the work stands, edited
+/// in place; the plan, once per attempt; and the few one-time answers to somebody who answered
+/// the plan and was not heard. Text only - pure, so every sentence a person will read on their
+/// issue is a unit test.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -75,11 +77,108 @@ public static partial class IssueComments
     /// <summary>GitHub refuses a comment beyond 65,536 characters. Kept well under it.</summary>
     public const int MaxBody = 60_000;
 
+    /// <summary>
+    /// The most comments Hephaisto ever writes on one issue for one work item, whatever anybody
+    /// does there. By construction it writes one status comment, one plan per attempt, one answer
+    /// to people who may not answer, and one per cause an approval was refused for; this is the
+    /// ceiling above that, for the day one of those rules is wrong. Beyond it Hephaisto only
+    /// edits its status comment. <c>ISSUES_COMMENT_CAP</c> in <c>scripts/e2e/lib/issues.sh</c>
+    /// is this number, and a test holds the two together.
+    /// </summary>
+    public const int MaxPerWorkItem = 6;
+
+    /// <summary>The key of the one answer to everybody who answered a plan and is not an approver.</summary>
+    public const string NotApproverKey = "not-approver";
+
     private const char ZeroWidthSpace = '​';
 
     public static string StatusMarker(Guid workItemId) => $"<!-- hephaisto:status:{workItemId:N} -->";
 
     public static string PlanMarker(Guid attemptId) => $"<!-- hephaisto:plan:{attemptId:N} -->";
+
+    /// <summary>The marker of a one-time answer: the attempt it is about, and which answer it is.</summary>
+    public static string AnswerMarker(Guid attemptId, string key) => $"<!-- hephaisto:answer:{attemptId:N}:{key} -->";
+
+    /// <summary>
+    /// The answers of an attempt that a list of comments already holds, by their markers - what
+    /// a process that wrote one and died before recording it finds on its next pass.
+    /// </summary>
+    public static IEnumerable<string> AnswerKeysIn(Guid attemptId, string body)
+    {
+        var prefix = $"<!-- hephaisto:answer:{attemptId:N}:";
+
+        for (var at = body.IndexOf(prefix, StringComparison.Ordinal); at >= 0; at = body.IndexOf(prefix, at + 1, StringComparison.Ordinal))
+        {
+            var end = body.IndexOf(" -->", at + prefix.Length, StringComparison.Ordinal);
+
+            if (end > at + prefix.Length)
+                yield return body[(at + prefix.Length)..end];
+        }
+    }
+
+    /// <summary>
+    /// Which one-time answer a refusal is: one per cause, and for the mode one per mode - "the
+    /// mode is Plan" and "the mode is Off" are two things to be told.
+    /// </summary>
+    public static string AnswerKey(CodeFixRefusal refusal, CodeFixMode? mode) => refusal switch
+    {
+        CodeFixRefusal.ModeBelowPr => mode == CodeFixMode.Plan ? "mode-plan" : "mode-off",
+        CodeFixRefusal.EmergencyStop => "emergency-stop",
+        CodeFixRefusal.KillSwitch => "kill-switch",
+        CodeFixRefusal.NeedsSecondRepository => "second-repository",
+        CodeFixRefusal.NotWaiting => "not-waiting",
+        CodeFixRefusal.SubjectTakenBack => "taken-back",
+        _ => "refused",
+    };
+
+    /// <summary>
+    /// To somebody who answered a plan and is not an approver. Once per attempt, whoever it was
+    /// and however many follow: it names the first by login, in a code span - which notifies
+    /// nobody - and nobody else, and it does not say who the approvers are.
+    /// </summary>
+    public static string NotApprover(Guid attemptId, string login) =>
+        $"**Not counted.** {Code(login)} is not one of the approvers of this install, and only they can answer this plan here. "
+        + "Nothing was changed.\n\n<sub>Hephaisto says this once per plan.</sub>\n"
+        + AnswerMarker(attemptId, NotApproverKey);
+
+    /// <summary>
+    /// To an approver whose answer the door refused, with the reason in a sentence. Once per
+    /// attempt and cause. The console's own message names arms and ConfigMaps; an issue anybody
+    /// can read is told this instead.
+    /// </summary>
+    /// <param name="mode">For <see cref="CodeFixRefusal.ModeBelowPr"/>: the mode the install declares.</param>
+    public static string Refused(Guid attemptId, string login, IssueCommandKind command, CodeFixRefusal refusal, CodeFixMode? mode)
+    {
+        const string again = " The plan still stands: reply `/approve` again once that has changed.";
+        const string withdrawn = " No Job is started, and with nothing allowed to run this plan is withdrawn.";
+
+        var why = refusal switch
+        {
+            CodeFixRefusal.ModeBelowPr when mode == CodeFixMode.Plan =>
+                "the code-fix mode of this install is Plan, which plans and changes nothing. Implementing needs an operator to set it to Pr." + again,
+            CodeFixRefusal.ModeBelowPr =>
+                "the code-fix mode of this install is Off." + withdrawn,
+            CodeFixRefusal.EmergencyStop =>
+                "an operator has engaged Hephaisto's emergency stop." + withdrawn,
+            CodeFixRefusal.KillSwitch =>
+                "Hephaisto's kill switch is holding it back." + withdrawn,
+            CodeFixRefusal.NeedsSecondRepository =>
+                "this plan needs a change in a second repository first, which a person makes. It cannot be approved here; "
+                + "reply `/reject <reason>` to close it.",
+            CodeFixRefusal.NotWaiting =>
+                "this plan is no longer waiting for an answer. The comment above says what became of it.",
+            CodeFixRefusal.SubjectTakenBack =>
+                "this issue is no longer Hephaisto's.",
+            _ =>
+                "it could not be recorded. An operator finds the reason in Hephaisto's console.",
+        };
+
+        var word = command == IssueCommandKind.Approve ? IssueCommands.Approve : IssueCommands.Reject;
+
+        return $"**Not done.** {Code(login)}'s `{word}` was read and refused: {why}"
+            + "\n\n<sub>Hephaisto says this once per plan and cause.</sub>\n"
+            + AnswerMarker(attemptId, AnswerKey(refusal, mode));
+    }
 
     /// <summary>What is compared to decide whether the comment has to be edited.</summary>
     public static string Digest(string body) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(body)));
@@ -111,6 +210,13 @@ public static partial class IssueComments
     {
         var a = s.Attempt;
 
+        if (s.State == WorkItemState.Cancelled && string.Equals(s.StateReason, WorkItemReasons.PullRequestClosed, StringComparison.Ordinal))
+        {
+            return "**Hephaisto has let go of this issue:** its pull request was closed without merging"
+                + (a?.PrUrl is { Length: > 0 } closed ? $": {Link(closed)}\n\n" : ". ")
+                + "To hand the issue back, unassign Hephaisto and assign it again.";
+        }
+
         if (s.State == WorkItemState.Cancelled)
         {
             return $"**Hephaisto has let go of this issue:** {Clause(s.StateReason, 300)}."
@@ -122,8 +228,9 @@ public static partial class IssueComments
 
         if (s.State == WorkItemState.Done)
         {
-            return "**Done.** The pull request was merged."
-                + (a?.PrUrl is { Length: > 0 } merged ? $" {Link(merged)}" : string.Empty);
+            return "**Done.** The pull request was merged"
+                + (a?.PrUrl is { Length: > 0 } merged ? $": {Link(merged)}" : ".")
+                + "\n\nFor more work on this issue, reopen it, or unassign Hephaisto and assign it again.";
         }
 
         if (a is null)
@@ -179,7 +286,12 @@ public static partial class IssueComments
     /// second, weaker copy of it.
     /// </summary>
     /// <param name="mode">The install's effective code-fix mode when this is written.</param>
-    public static string Plan(CodeFixAttempt attempt, CodeFixPlanResult? plan, CodeFixMode mode)
+    /// <param name="answerable">
+    /// Whether the install names anybody who may answer on the issue (<c>GitHub:Approvers</c>).
+    /// With nobody listed a comment is never an answer, and the plan says where it is answered
+    /// instead of inviting a reply that will not be read.
+    /// </param>
+    public static string Plan(CodeFixAttempt attempt, CodeFixPlanResult? plan, CodeFixMode mode, bool answerable)
     {
         ArgumentNullException.ThrowIfNull(attempt);
 
@@ -230,14 +342,31 @@ public static partial class IssueComments
                 : string.Empty)
             .Append("\n\n---\n\n");
 
-        if (attempt.NeedsCait)
+        if (!answerable)
+        {
+            text.Append("**This plan is not answered on the issue.** This install names nobody who may approve a plan in a comment, "
+                + "so a reply here is not read as an answer. An operator approves or refuses it in Hephaisto's console.\n\n");
+
+            if (attempt.NeedsCait)
+            {
+                text.Append("It also needs a change in a shared library first; a person makes that change, and this issue is then planned again.\n\n");
+            }
+            else if (mode != CodeFixMode.Pr)
+            {
+                text.Append("Implementing is switched off on this install: when this was written its code-fix mode was ")
+                    .Append(mode)
+                    .Append(", which plans and changes nothing. An approval is refused until an operator sets the mode to Pr.\n\n");
+            }
+        }
+        else if (attempt.NeedsCait)
         {
             text.Append("**This plan cannot be approved here.** It needs a change in a shared library first; a person makes that "
                 + "change, and this issue is then planned again. Reply `/reject <reason>` to close the plan.\n\n");
         }
         else
         {
-            text.Append("**To go ahead,** an approver replies `/approve`. **To refuse it,** an approver replies `/reject <reason>`.\n\n");
+            text.Append("**To go ahead,** an approver replies `/approve`. **To refuse it,** an approver replies `/reject <reason>`. "
+                + "The command is the first line of the comment, and only an approver of this install is heard.\n\n");
 
             if (mode != CodeFixMode.Pr)
             {

@@ -40,7 +40,7 @@ namespace Hephaisto.IntegrationTests;
 /// control beside it.
 /// </remarks>
 [Collection(PostgresCollection.Name)]
-public sealed class WorkItemStageTests(PostgresFixture pg)
+public sealed partial class WorkItemStageTests(PostgresFixture pg)
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 6, 12, 0, 0, TimeSpan.Zero);
 
@@ -1123,13 +1123,13 @@ public sealed class WorkItemStageTests(PostgresFixture pg)
         DeniedToolCalls = [],
     }, CodeFixContract.Json);
 
-    private static string ImplementJson(Guid attemptId, string branch, string prUrl) => JsonSerializer.Serialize(new CodeFixImplementResult
+    private static string ImplementJson(Guid attemptId, string branch, string prUrl, int? prNumber = 7) => JsonSerializer.Serialize(new CodeFixImplementResult
     {
         AttemptId = attemptId,
         Outcome = "pr_opened",
         Branch = branch,
         PrUrl = prUrl,
-        PrNumber = 7,
+        PrNumber = prNumber,
         BaseCommit = null,
         Files = ["src/Startup/Endpoints.cs"],
         BuildPassed = true,
@@ -1155,6 +1155,15 @@ public sealed class WorkItemStageTests(PostgresFixture pg)
         public GitHubHealth Health { get; } = new();
 
         public string Mode { get; set; } = "plan";
+
+        /// <summary>Who may answer a plan on the issue, by account number. <c>maintainer</c> is 1001.</summary>
+        public List<string> Approvers { get; set; } = ["1001"];
+
+        /// <summary>The agent's emergency stop, as the code-fix switch sees it.</summary>
+        public bool EmergencyStop { get; set; }
+
+        /// <summary>The agent's runaway latch.</summary>
+        public bool Latched { get; set; }
 
         public CodeFixOptions Options { get; } = new()
         {
@@ -1242,6 +1251,7 @@ public sealed class WorkItemStageTests(PostgresFixture pg)
                     Token = "ghp_notARealTokenNotARealToken1234567890",
                     BotLogin = Bot,
                     Repositories = [Repo],
+                    Approvers = Approvers,
                 }),
                 new ObserveKillSwitch(),
                 Health,
@@ -1262,12 +1272,14 @@ public sealed class WorkItemStageTests(PostgresFixture pg)
             return attempt.Id;
         }
 
-        public async Task CollectImplementAsync(Guid attemptId, string prUrl)
+        /// <param name="prBody">What the publish role printed as the pull request's description, in its block before the result.</param>
+        public async Task CollectImplementAsync(Guid attemptId, string prUrl, string? prBody = null, int? prNumber = 7)
         {
             await using var db = pg.CreateContext();
             var attempt = await db.CodeFixAttempts.SingleAsync(a => a.Id == attemptId, Ct);
 
-            Launcher.Log = CodeFixResultParser.Frame(ImplementJson(attemptId, attempt.Branch, prUrl));
+            Launcher.Log = (prBody is null ? string.Empty : CodeFixResultParser.FramePrBody(prBody))
+                + CodeFixResultParser.Frame(ImplementJson(attemptId, attempt.Branch, prUrl, prNumber));
             await Coordinator(db).CollectAsync(attempt, Ct);
         }
 
@@ -1275,7 +1287,12 @@ public sealed class WorkItemStageTests(PostgresFixture pg)
         {
             public Task<CodeFixModeResolution> ResolveAsync(CancellationToken ct) => Task.FromResult(CodeFixModeResolver.Resolve(
                 [CodeFixModeResolver.Parse("env:CodeFix__Mode", world.Mode)],
-                ModeResolver.Resolve([ModeResolver.Parse("env:HEPHAISTO_MODE", "Observe")]),
+                ModeResolver.Resolve(
+                [
+                    ModeResolver.Parse("env:HEPHAISTO_MODE", "Observe"),
+                    ModeResolver.Parse("configmap:killSwitch", world.EmergencyStop ? "Observe" : null),
+                    ModeResolver.Parse("db:agent_mode", world.Latched ? "Observe" : null),
+                ]),
                 "configmap:killSwitch",
                 "db:agent_mode"));
         }
@@ -1343,12 +1360,18 @@ public sealed class WorkItemStageTests(PostgresFixture pg)
 
     private sealed record StoredComment(long Id, string Repository, int Number, string Author)
     {
+        /// <summary>The account's number: what an approver list names. The bot's is 9001; anybody else's is 2002 unless said.</summary>
+        public long AuthorId { get; init; } = Author == Bot ? 9001 : 2002;
+
         public string Body { get; set; } = string.Empty;
 
         public int Edits { get; set; }
 
         public DateTimeOffset CreatedAt { get; init; }
     }
+
+    /// <summary>A pull request as GitHub would answer it. One nobody set is an open draft.</summary>
+    private sealed record StoredPull(string State = "open", bool Merged = false);
 
     /// <summary>
     /// GitHub, as far as a pass can tell: issues with assignees and a list whose tag changes
@@ -1403,13 +1426,60 @@ public sealed class WorkItemStageTests(PostgresFixture pg)
         public void Edit(string repository, int number, string body) => Change(repository, number, i => i.Body = body);
 
         /// <summary>A comment that is simply there: somebody's, or one the agent wrote before it died.</summary>
-        public long Comment(string repository, int number, string author, string body)
+        /// <param name="touch">
+        /// False: the list of assigned issues stays as it was - a comment written in the second
+        /// its issue last changed, which the list's tag cannot show.
+        /// </param>
+        public long Comment(string repository, int number, string author, string body, long? authorId = null, bool touch = true)
         {
-            var comment = new StoredComment(nextComment++, repository, number, author) { Body = body, CreatedAt = Now };
+            var comment = authorId is { } id
+                ? new StoredComment(nextComment++, repository, number, author) { Body = body, CreatedAt = Now, AuthorId = id }
+                : new StoredComment(nextComment++, repository, number, author) { Body = body, CreatedAt = Now };
             Comments.Add(comment);
-            Change(repository, number, _ => { });
+
+            if (touch)
+            {
+                Change(repository, number, _ => { });
+            }
+
             return comment.Id;
         }
+
+        public void Reopen(string repository, int number) => Change(repository, number, i => i.State = "open");
+
+        /// <summary>Writing a NEW comment fails with this; reading and editing do not.</summary>
+        public GitHubOutcome? FailCreates { get; set; }
+
+        /// <summary>Called when the list of assigned issues is read, before the answer: what happens on GitHub between two reads of one pass.</summary>
+        public Action? OnListIssues { get; set; }
+
+        /// <summary>Somebody edits a comment of their own. Not one of the agent's writes.</summary>
+        public void EditComment(long id, string body)
+        {
+            var comment = Comments.Single(c => c.Id == id);
+            comment.Body = body;
+            comment.Edits++;
+        }
+
+        /// <summary>Every read of an issue's comments: the tag that was sent, and what was answered.</summary>
+        public List<(int Number, DateTimeOffset? Since, string? ETagSent, GitHubOutcome Answered)> CommentReads { get; } = [];
+
+        /// <summary>Called when an issue's comments are read, before the answer: where a test stops the process.</summary>
+        public Action? OnListComments { get; set; }
+
+        /// <summary>Reads of comments fail with this, and nothing else does.</summary>
+        public GitHubOutcome? FailCommentReads { get; set; }
+
+        public Dictionary<(string Repository, int Number), StoredPull> Pulls { get; } = [];
+
+        /// <summary>Every read of a pull request: the tag that was sent, and what was answered.</summary>
+        public List<(int Number, string? ETagSent, GitHubOutcome Answered)> PullReads { get; } = [];
+
+        public GitHubOutcome? FailPulls { get; set; }
+
+        public void Merge(string repository, int number) => Pulls[(repository, number)] = new StoredPull("closed", Merged: true);
+
+        public void ClosePull(string repository, int number) => Pulls[(repository, number)] = new StoredPull("closed");
 
         private void Change(string repository, int number, Action<Stored> change)
         {
@@ -1423,6 +1493,8 @@ public sealed class WorkItemStageTests(PostgresFixture pg)
 
         public Task<GitHubResult<GitHubIssuePage>> ListAssignedIssuesAsync(string repository, string assignee, string? etag, CancellationToken ct)
         {
+            OnListIssues?.Invoke();
+
             var listed = issues
                 .Where(i => i.Key.Repository == repository && i.Value is { Assigned: true, State: "open" })
                 .OrderByDescending(i => i.Key.Number)
@@ -1459,26 +1531,40 @@ public sealed class WorkItemStageTests(PostgresFixture pg)
             [],
             i.Type);
 
-        public Task<GitHubResult<IReadOnlyList<GitHubComment>>> ListCommentsAsync(string repository, int number, DateTimeOffset? since, CancellationToken ct)
+        public Task<GitHubResult<IReadOnlyList<GitHubComment>>> ListCommentsAsync(string repository, int number, DateTimeOffset? since, string? etag, CancellationToken ct)
         {
-            if (FailWrites is { } failing)
+            OnListComments?.Invoke();
+            ct.ThrowIfCancellationRequested();
+
+            if ((FailCommentReads ?? FailWrites) is { } failing)
             {
+                CommentReads.Add((number, since, etag, failing));
                 return Task.FromResult(new GitHubResult<IReadOnlyList<GitHubComment>>(failing, null, "HTTP 500: Server Error"));
             }
 
-            IReadOnlyList<GitHubComment> found =
-            [
-                .. Comments
-                    .Where(c => c.Repository == repository && c.Number == number && (since is null || c.CreatedAt >= since))
-                    .Select(Wire),
-            ];
+            var stored = Comments
+                .Where(c => c.Repository == repository && c.Number == number && (since is null || c.CreatedAt >= since))
+                .ToList();
 
-            return Task.FromResult(new GitHubResult<IReadOnlyList<GitHubComment>>(GitHubOutcome.Ok, found));
+            // A tag of the answer, as GitHub's is: it changes when a comment is added or edited.
+            var tag = $"W/\"{number}:{since?.ToUnixTimeSeconds()}:{string.Join(",", stored.Select(c => $"{c.Id}.{c.Edits}"))}\"";
+
+            if (etag == tag)
+            {
+                CommentReads.Add((number, since, etag, GitHubOutcome.NotModified));
+                return Task.FromResult(new GitHubResult<IReadOnlyList<GitHubComment>>(GitHubOutcome.NotModified, null, ETag: tag));
+            }
+
+            CommentReads.Add((number, since, etag, GitHubOutcome.Ok));
+
+            IReadOnlyList<GitHubComment> found = [.. stored.Select(Wire)];
+
+            return Task.FromResult(new GitHubResult<IReadOnlyList<GitHubComment>>(GitHubOutcome.Ok, found, ETag: tag));
         }
 
         public Task<GitHubResult<GitHubComment>> CreateCommentAsync(string repository, int number, string body, CancellationToken ct)
         {
-            if (FailWrites is { } failing)
+            if ((FailCreates ?? FailWrites) is { } failing)
             {
                 return Task.FromResult(new GitHubResult<GitHubComment>(failing, null, "HTTP 500: Server Error"));
             }
@@ -1514,11 +1600,33 @@ public sealed class WorkItemStageTests(PostgresFixture pg)
         }
 
         private static GitHubComment Wire(StoredComment c) => new(
-            c.Id, c.Body, new GitHubAccount(c.Author, c.Author == Bot ? 9001 : 2002), c.CreatedAt, c.CreatedAt,
+            c.Id, c.Body, new GitHubAccount(c.Author, c.AuthorId), c.CreatedAt, c.CreatedAt,
             $"https://github.com/{c.Repository}/issues/{c.Number}#issuecomment-{c.Id}");
 
-        public Task<GitHubResult<GitHubPullRequest>> GetPullRequestAsync(string repository, int number, CancellationToken ct) =>
-            throw new NotSupportedException("nothing reads a pull request yet");
+        public Task<GitHubResult<GitHubPullRequest>> GetPullRequestAsync(string repository, int number, string? etag, CancellationToken ct)
+        {
+            if (FailPulls is { } failing)
+            {
+                PullReads.Add((number, etag, failing));
+                return Task.FromResult(new GitHubResult<GitHubPullRequest>(failing, null, "HTTP 500: Server Error"));
+            }
+
+            var pull = Pulls.GetValueOrDefault((repository, number)) ?? new StoredPull();
+            var tag = $"W/\"pull:{number}:{pull.State}:{pull.Merged}\"";
+
+            if (etag == tag)
+            {
+                PullReads.Add((number, etag, GitHubOutcome.NotModified));
+                return Task.FromResult(new GitHubResult<GitHubPullRequest>(GitHubOutcome.NotModified, null, ETag: tag));
+            }
+
+            PullReads.Add((number, etag, GitHubOutcome.Ok));
+
+            return Task.FromResult(new GitHubResult<GitHubPullRequest>(
+                GitHubOutcome.Ok,
+                new GitHubPullRequest(number, pull.State, Draft: !pull.Merged, pull.Merged, pull.Merged ? Now : null, $"https://github.com/{repository}/pull/{number}", "hephaisto/codefix-x"),
+                ETag: tag));
+        }
 
         public Task<GitHubResult<GitHubRepository>> GetRepositoryAsync(string repository, CancellationToken ct)
         {

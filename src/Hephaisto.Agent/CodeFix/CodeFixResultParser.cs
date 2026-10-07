@@ -61,50 +61,10 @@ public static partial class CodeFixResultParser
     private static CodeFixParse<T> Parse<T>(string? log, Guid attemptId, string phase, Func<T, (Guid, string)> identity)
         where T : class
     {
-        if (string.IsNullOrEmpty(log))
-            return CodeFixParse<T>.Violated("the coder's log is empty; no result block");
+        var (payload, violation) = LastBlock(log, BeginLine(), End);
 
-        var begins = BeginLine().Matches(log);
-
-        if (begins.Count == 0)
-            return CodeFixParse<T>.Violated("no result block in the coder's log");
-
-        var begin = begins[^1];
-        var payloadStart = begin.Index + begin.Length;
-
-        // The payload is exactly one line after the BEGIN line.
-        if (payloadStart < log.Length && log[payloadStart] == '\r')
-            payloadStart++;
-
-        if (payloadStart >= log.Length || log[payloadStart] != '\n')
-            return CodeFixParse<T>.Violated("the result block has no payload line");
-
-        payloadStart++;
-        var payloadEnd = log.IndexOf('\n', payloadStart);
-
-        if (payloadEnd < 0)
-            return CodeFixParse<T>.Violated("the result block is truncated (no END marker)");
-
-        var payload = log[payloadStart..payloadEnd].TrimEnd('\r');
-        var rest = log[(payloadEnd + 1)..];
-        var endLine = rest.Split('\n', 2)[0].TrimEnd('\r');
-
-        if (endLine != End)
-            return CodeFixParse<T>.Violated("the result block is not terminated by the END marker");
-
-        var bytes = Encoding.UTF8.GetBytes(payload);
-        var declaredBytes = int.Parse(begin.Groups["bytes"].Value, System.Globalization.CultureInfo.InvariantCulture);
-
-        if (bytes.Length > MaxPayloadBytes)
-            return CodeFixParse<T>.Violated($"the result is {bytes.Length} bytes; the cap is {MaxPayloadBytes}");
-
-        if (bytes.Length != declaredBytes)
-            return CodeFixParse<T>.Violated($"the result declares {declaredBytes} bytes and carries {bytes.Length}");
-
-        var sha = Convert.ToHexStringLower(SHA256.HashData(bytes));
-
-        if (!string.Equals(sha, begin.Groups["sha"].Value, StringComparison.Ordinal))
-            return CodeFixParse<T>.Violated("the result's sha256 does not match its payload");
+        if (payload is null)
+            return CodeFixParse<T>.Violated(violation!);
 
         T? result;
 
@@ -129,6 +89,113 @@ public static partial class CodeFixResultParser
             return CodeFixParse<T>.Violated($"the result is for phase '{reportedPhase}', not '{phase}'");
 
         return new CodeFixParse<T>(result, payload, null);
+    }
+
+    /// <summary>
+    /// The payload of the LAST block a BEGIN line opens, or why there is none: one line after the
+    /// BEGIN line, the END marker on the line after that, and exactly the bytes and the sha256
+    /// the BEGIN line declares.
+    /// </summary>
+    private static (string? Payload, string? Violation) LastBlock(string? log, Regex beginLine, string end)
+    {
+        if (string.IsNullOrEmpty(log))
+            return (null, "the coder's log is empty; no result block");
+
+        var begins = beginLine.Matches(log);
+
+        if (begins.Count == 0)
+            return (null, "no result block in the coder's log");
+
+        var begin = begins[^1];
+        var payloadStart = begin.Index + begin.Length;
+
+        // The payload is exactly one line after the BEGIN line.
+        if (payloadStart < log.Length && log[payloadStart] == '\r')
+            payloadStart++;
+
+        if (payloadStart >= log.Length || log[payloadStart] != '\n')
+            return (null, "the result block has no payload line");
+
+        payloadStart++;
+        var payloadEnd = log.IndexOf('\n', payloadStart);
+
+        if (payloadEnd < 0)
+            return (null, "the result block is truncated (no END marker)");
+
+        var payload = log[payloadStart..payloadEnd].TrimEnd('\r');
+        var rest = log[(payloadEnd + 1)..];
+        var endLine = rest.Split('\n', 2)[0].TrimEnd('\r');
+
+        if (endLine != end)
+            return (null, "the result block is not terminated by the END marker");
+
+        var bytes = Encoding.UTF8.GetBytes(payload);
+        var declaredBytes = int.Parse(begin.Groups["bytes"].Value, System.Globalization.CultureInfo.InvariantCulture);
+
+        if (bytes.Length > MaxPayloadBytes)
+            return (null, $"the result is {bytes.Length} bytes; the cap is {MaxPayloadBytes}");
+
+        if (bytes.Length != declaredBytes)
+            return (null, $"the result declares {declaredBytes} bytes and carries {bytes.Length}");
+
+        var sha = Convert.ToHexStringLower(SHA256.HashData(bytes));
+
+        return string.Equals(sha, begin.Groups["sha"].Value, StringComparison.Ordinal)
+            ? (payload, null)
+            : (null, "the result's sha256 does not match its payload");
+    }
+
+    /// <summary>GitHub's own limit for a pull request's description. What is stored is never longer.</summary>
+    public const int MaxPrBodyChars = 65_536;
+
+    private const string PrBodyEnd = "---HEPHAISTO-PR-BODY-END---";
+
+    [GeneratedRegex(@"^---HEPHAISTO-PR-BODY-BEGIN sha256=(?<sha>[0-9a-f]{64}) bytes=(?<bytes>\d{1,7})---$", RegexOptions.Multiline)]
+    private static partial Regex PrBodyBeginLine();
+
+    /// <summary>
+    /// The pull request's description as the publish role sent it (v0.14.0), read from the same
+    /// log as the result: a block of its own before it, framed the same way, whose one payload
+    /// line is the text as a JSON string - so no line of the text can be a line of the log, and
+    /// nothing in it can open or close a block.
+    /// </summary>
+    /// <remarks>
+    /// Not part of the result contract, and nothing depends on it: it is what a person reads in
+    /// the console instead of opening GitHub, and what a suite reads where GitHub is a stand-in
+    /// that never saw the pull request. A block that is missing, cut or does not add up is
+    /// <c>null</c>, never a failed attempt - the runner of an older image prints none.
+    /// </remarks>
+    public static string? ParsePrBody(string? log)
+    {
+        if (LastBlock(log, PrBodyBeginLine(), PrBodyEnd).Payload is not { } payload)
+            return null;
+
+        try
+        {
+            var body = JsonSerializer.Deserialize<string>(payload);
+
+            if (string.IsNullOrWhiteSpace(body))
+                return null;
+
+            if (body.Length <= MaxPrBodyChars)
+                return body;
+
+            // Never half of a character: Postgres refuses a lone surrogate.
+            return body[..(char.IsHighSurrogate(body[MaxPrBodyChars - 1]) ? MaxPrBodyChars - 1 : MaxPrBodyChars)];
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Frames a pull request's description exactly as the publish role does. For tests.</summary>
+    public static string FramePrBody(string body)
+    {
+        var json = JsonSerializer.Serialize(body);
+        var bytes = Encoding.UTF8.GetBytes(json);
+
+        return $"---HEPHAISTO-PR-BODY-BEGIN sha256={Convert.ToHexStringLower(SHA256.HashData(bytes))} bytes={bytes.Length}---\n{json}\n{PrBodyEnd}\n";
     }
 
     /// <summary>Plan outcomes the contract allows.</summary>

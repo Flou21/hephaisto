@@ -92,6 +92,9 @@ public sealed class WorkItemPersistenceTests(PostgresFixture pg)
 
             // v0.14.0 stage 2.3 (#246): what the status comment last said, and why no plan was started.
             "status_comment_digest", "decline_codes", "decline_reason",
+
+            // v0.14.0 stage 2.4 (#247): it ended while its issue was still assigned.
+            "still_assigned",
         ]);
     }
 

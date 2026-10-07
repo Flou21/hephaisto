@@ -410,7 +410,7 @@ public sealed partial class GitHubIssuePoller
         // contract still has its denormalised columns.
         var view = CodeFixQueries.Plan(attempt);
 
-        return (IssueComments.Plan(attempt, view, mode), null);
+        return (IssueComments.Plan(attempt, view, mode, answerable: options.Value.ApproverIds().Count > 0), null);
     }
 
     /// <summary>
@@ -426,7 +426,7 @@ public sealed partial class GitHubIssuePoller
     private static async Task<(long? Id, string? Problem)> EnsureCommentAsync(
         IGitHubClient client, string repository, int number, string bot, string marker, string body, DateTimeOffset since, bool edit, CancellationToken ct)
     {
-        var existing = await client.ListCommentsAsync(repository, number, since, ct).ConfigureAwait(false);
+        var existing = await client.ListCommentsAsync(repository, number, since, etag: null, ct).ConfigureAwait(false);
 
         if (existing is not { Ok: true, Value: { } comments })
         {
