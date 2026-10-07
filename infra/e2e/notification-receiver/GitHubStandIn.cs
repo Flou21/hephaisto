@@ -58,6 +58,7 @@ namespace NotificationReceiver;
 //   POST   /github/control/repos/{owner}/{repo}/issues/{number}/unassign
 //   POST   /github/control/repos/{owner}/{repo}/issues/{number}/comments  {body, login, id?}
 //   PUT    /github/control/repos/{owner}/{repo}/pulls/{number}            {merged?, state?, draft?, head?, body?}
+//   DELETE /github/control/repos/{owner}/{repo}/pulls/{number}            forget it: an open draft again
 //   POST   /github/control/fail/{500|rate-limit|off}?count=N              the next N API calls fail
 //   GET    /github/control/requests       every API call: seq, method, path, query, status, when
 //   DELETE /github/control/requests
@@ -480,6 +481,21 @@ public static class GitHubStandIn
 
                 return Results.Text(PullJson($"{owner}/{repo}", number, pull).ToJsonString(), "application/json");
             }
+        });
+
+        // Forgets what a pull request was said to be, so that it is answered as an open draft
+        // again. The `gh` shim numbers pull requests from 1 in every Job (its state is the pod's),
+        // so "pull request 1 of this repository" is a different one in every scenario - and one
+        // that a scenario merged would be found merged by the next scenario's pull request.
+        control.MapDelete("/repos/{owner}/{repo}/pulls/{number:int}", (string owner, string repo, int number) =>
+        {
+            lock (gate)
+            {
+                pulls.Remove(($"{owner}/{repo}", number));
+            }
+
+            Console.WriteLine($"GITHUB pull request {owner}/{repo}#{number} is forgotten: an open draft again");
+            return Results.NoContent();
         });
 
         // The next `count` API calls, whoever makes them and whatever they ask. A number rather

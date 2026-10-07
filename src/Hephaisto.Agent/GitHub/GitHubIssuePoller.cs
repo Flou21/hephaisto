@@ -14,8 +14,10 @@ namespace Hephaisto.Agent.GitHub;
 /// <summary>
 /// Asks GitHub which issues are assigned to Hephaisto's account, and makes the work items say the
 /// same: an assigned issue is taken, one that was closed or unassigned is cancelled (v0.14.0).
-/// Then, for what is taken, what follows from it: a plan, and the issue being told
-/// (<c>GitHubIssuePoller.Work.cs</c>).
+/// Before that, what became of the pull requests it opened (<c>GitHubIssuePoller.PullRequests.cs</c>);
+/// after it, for what is taken, what follows from it: a plan, an answer to the plan read off the
+/// issue, and the issue being told (<c>GitHubIssuePoller.Work.cs</c>,
+/// <c>GitHubIssuePoller.Answers.cs</c>).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -150,13 +152,19 @@ public sealed partial class GitHubIssuePoller(
         {
             try
             {
+                // Before the list: a merge closes the issue it names, and a closed issue read
+                // first would be a cancellation (GitHubIssuePoller.PullRequests.cs).
+                var unfollowed = await FollowPullRequestsAsync(client, repository, ct).ConfigureAwait(false);
+
                 var answered = await PollRepositoryAsync(client, repository, bot, ct).ConfigureAwait(false);
 
                 // What comes after taking an issue (GitHubIssuePoller.Work.cs): here and not in
                 // TakeAsync, after the list was compared OR found unchanged, so that it is asked
                 // on every pass. A plan that could not start when its work item was created, a
                 // comment GitHub refused, is then put right by the next pass like everything else.
-                if (await WorkAsync(client, repository, bot, ct).ConfigureAwait(false) is { } undone)
+                var unworked = await WorkAsync(client, repository, bot, ct).ConfigureAwait(false);
+
+                if ((unfollowed ?? unworked) is { } undone)
                 {
                     // The rule the tag is kept by: only when everything was done.
                     etags.Remove(repository);
@@ -246,6 +254,7 @@ public sealed partial class GitHubIssuePoller(
         }
 
         List<(Guid Id, int Number)> taken;
+        List<int> held;
 
         await using (var scope = scopes.CreateAsyncScope())
         {
@@ -257,13 +266,37 @@ public sealed partial class GitHubIssuePoller(
                     .ToListAsync(ct)
                     .ConfigureAwait(false))
                 .ConvertAll(w => (w.Id, w.Number));
+
+            // Issues whose work ended while they were still assigned - a pull request merged or
+            // closed, and nobody took the issue back. Being in the list is the SAME hand-over.
+            held = await db.WorkItems.AsNoTracking()
+                .Where(w => w.Source == WorkItem.GitHubSource && w.Repository == repository && w.State != WorkItemState.Taken && w.StillAssigned)
+                .Select(w => w.Number)
+                .Distinct()
+                .ToListAsync(ct)
+                .ConfigureAwait(false);
         }
 
         var complete = true;
         string? firstProblem = null;
 
-        // Assigned and open, and not yet a work item: take it.
-        foreach (var issue in page.Issues.Where(i => taken.TrueForAll(t => t.Number != i.Number)))
+        // One complete list an issue is not in - unassigned, or closed - is what ends a
+        // hand-over. From here on, finding it assigned is somebody handing it over again. Not
+        // concluded from a list that was cut at a page: "not among the newest hundred" is not
+        // "not assigned".
+        if (!page.HasMore && held.Where(n => page.Issues.All(i => i.Number != n)).ToList() is { Count: > 0 } released)
+        {
+            await using var scope = scopes.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<HephaistoDbContext>();
+
+            await db.WorkItems
+                .Where(w => w.Source == WorkItem.GitHubSource && w.Repository == repository && w.StillAssigned && released.Contains(w.Number))
+                .ExecuteUpdateAsync(s => s.SetProperty(w => w.StillAssigned, false), ct)
+                .ConfigureAwait(false);
+        }
+
+        // Assigned and open, not a work item, and not the issue of one that just ended: take it.
+        foreach (var issue in page.Issues.Where(i => taken.TrueForAll(t => t.Number != i.Number) && !held.Contains(i.Number)))
         {
             try
             {
@@ -292,6 +325,27 @@ public sealed partial class GitHubIssuePoller(
 
             if (reason is not null)
             {
+                // Closed - by whom? A merged pull request closes the issue it names, and may
+                // have done so since this pass asked about it. Read once more, unconditionally,
+                // before "the issue was closed" is written down as taking it back.
+                if (await PullRequestOfAsync(id, ct).ConfigureAwait(false) is { } followed)
+                {
+                    var (fate, unread) = await FollowAsync(client, repository, followed, conditional: false, stillAssigned: false, ct).ConfigureAwait(false);
+
+                    if (fate is PullRequestFate.Merged or PullRequestFate.Closed)
+                    {
+                        continue;
+                    }
+
+                    if (fate == PullRequestFate.Unknown)
+                    {
+                        // Not cancelled on a guess: the next pass asks both again.
+                        complete = false;
+                        firstProblem ??= unread;
+                        continue;
+                    }
+                }
+
                 await CancelAsync(id, reason, code, ct).ConfigureAwait(false);
             }
             else if (!issue.Ok)
@@ -371,7 +425,18 @@ public sealed partial class GitHubIssuePoller(
         logger.LogInformation("Took {Repository}#{Number} as work item {WorkItemId}.", repository, issue.Number, item.Id);
     }
 
-    private async Task CancelAsync(Guid id, string reason, string code, CancellationToken ct)
+    private Task CancelAsync(Guid id, string reason, string code, CancellationToken ct) =>
+        EndAsync(id, WorkItemState.Cancelled, reason, code, stillAssigned: false, ct);
+
+    /// <summary>
+    /// Ends a taken work item: <see cref="WorkItemState.Done"/> or
+    /// <see cref="WorkItemState.Cancelled"/>, with why, and the audit row in the same batch.
+    /// </summary>
+    /// <param name="stillAssigned">
+    /// The issue is, as far as anything says, still open and assigned - which is what keeps the
+    /// list comparison from taking it again (<see cref="WorkItem.StillAssigned"/>).
+    /// </param>
+    private async Task EndAsync(Guid id, WorkItemState state, string reason, string code, bool stillAssigned, CancellationToken ct)
     {
         var now = clock.UtcNow;
 
@@ -379,7 +444,7 @@ public sealed partial class GitHubIssuePoller(
         var db = scope.ServiceProvider.GetRequiredService<HephaistoDbContext>();
 
         // Read again, tracked: between the pass's first read and now it may have been ended by
-        // something else, and a cancel of what is not taken is nothing.
+        // something else, and ending what is not taken is nothing.
         var item = await db.WorkItems.FirstOrDefaultAsync(w => w.Id == id, ct).ConfigureAwait(false);
 
         if (item is not { State: WorkItemState.Taken })
@@ -387,18 +452,21 @@ public sealed partial class GitHubIssuePoller(
             return;
         }
 
-        item.State = WorkItemState.Cancelled;
+        item.State = state;
         item.StateReason = reason;
         item.ClosedAt = now;
         item.UpdatedAt = now;
+        item.StillAssigned = stillAssigned;
 
-        db.AuditEvents.Add(Audit(AuditCancelled, item, $"cancelled {item.Repository}#{item.Number}: {reason}", now, reason));
+        db.AuditEvents.Add(state == WorkItemState.Done
+            ? Audit(AuditDone, item, $"finished {item.Repository}#{item.Number}: its pull request was merged", now, reason)
+            : Audit(AuditCancelled, item, $"cancelled {item.Repository}#{item.Number}: {reason}", now, reason));
 
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
 
-        metrics.Closed(WorkItemState.Cancelled, code);
+        metrics.Closed(state, code);
         logger.LogInformation(
-            "Cancelled work item {WorkItemId} ({Repository}#{Number}): {Reason}.", item.Id, item.Repository, item.Number, reason);
+            "Work item {WorkItemId} ({Repository}#{Number}) is {State}: {Reason}.", item.Id, item.Repository, item.Number, state, reason);
     }
 
     private void Succeeded(string repository, string detail)

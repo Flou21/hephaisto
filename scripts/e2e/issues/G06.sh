@@ -7,7 +7,7 @@
 
 scenario() {
     issues_ready || return
-    local n attempt impl branch
+    local n attempt impl branch mark
 
     n=$(gh_issue_create "$ISSUES_REPO" "$(issues_title G06 "the order total is null for an empty cart")" \
         "Open the cart with nothing in it.") || { fail "the stand-in opened an issue"; return; }
@@ -35,6 +35,19 @@ scenario() {
     branch=$(jq -r '.branch // empty' <<<"$attempt")
     want "the branch was not pushed" "$(issues_git_rev "${branch:-none}")" = ""
     want "the work item ended with the assignment" "$(wi_state "$ISSUES_REPO" "$n")" = "$WI_CANCELLED"
+
+    _g06_told() { [ "$(gh_bot_said "$ISSUES_REPO" "$n" 'Hephaisto has let go of this issue')" -ge 1 ]; }
+    wait_for "the issue to say that Hephaisto let go" "$ISSUES_SEEN_WAIT" _g06_told \
+        && pass "the issue says that Hephaisto has let go of it" \
+        || fail "the issue says that Hephaisto has let go of it" "no comment of the bot's says so"
+
+    # An approval that arrives after the issue was taken back starts nothing.
+    mark=$(gh_mark)
+    gh_comment_as "$ISSUES_REPO" "$n" "$ISSUES_APPROVER" "$ISSUES_APPROVER_ID" "/approve" >/dev/null
+    gh_wait_polls "$mark" 2 || true
+    want "an approval after that changes nothing" "$(wi_attempt_state "$WI")" = Cancelled
+    want "and starts no second Job" "$(issues_job_count "$(jq -r .id <<<"$attempt")" implement)" -le 1
+    want "nor a second work item" "$(wi_count "$ISSUES_REPO" "$n")" -eq 1
 
     issues_done "$ISSUES_REPO" "$n"
 }

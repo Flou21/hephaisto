@@ -24,9 +24,15 @@
 #      text when the work item was taken, never updated. Without `state` it lists what is
 #      Taken; `state=any` as on /api/incidents; limit is capped at 500. GET /api/workitems/{id}
 #      is one of them.
-#   2. BUILT for Cancelled (stage 2.2): a work item whose issue was unassigned or closed is
-#      Cancelled, with why in stateReason, and the same issue assigned again is a SECOND work
-#      item. ASSUMED for Done: a work item whose pull request was merged (stage 2.4).
+#   2. BUILT. A work item whose issue was unassigned or closed is Cancelled, with why in
+#      stateReason, and the same issue assigned again is a SECOND work item (stage 2.2). A work
+#      item whose pull request was merged is Done, with "merged"; one whose pull request was
+#      closed without merging is Cancelled, with "pull request closed without merging" (stage
+#      2.4, #247). The pull request is read before the list of assigned issues, so a merge that
+#      closes the issue is Done and never "the issue was closed". An issue that is still open
+#      and assigned when its work item ends that way is NOT taken again (`stillAssigned` on the
+#      work item): only after one poll in which it was not assigned - or was closed - is the
+#      next assignment new work.
 #   3. BUILT (stage 2.3, #246). A row of GET /api/codefixes carries `workItemId` where it has no
 #      incident (`incidentId` is then null), and keeps the fields it has today: state, summary,
 #      files, branch, planJobName, implementJobName, prUrl, prNumber, approvedBy, and
@@ -46,16 +52,30 @@
 #      answer), Degraded with one line of why otherwise, NotConfigured with GitHub off or the
 #      agent Off. The row is what the poller last saw, served from the status page's cache -
 #      so it follows GitHub by up to a minute, which is why a scenario waits for it.
-#   6. ASSUMED. The publish container's log shows the pull request's body (issues_pr_body). It
-#      does not today, and the `gh` shim's copy is gone with the pod: stage 2.4 decides where
-#      the body can be read, and changes that one function. (What the body says is built and
-#      unit-tested in the runner since stage 2.3: `Closes owner/repo#n` on a line of its own.)
+#   6. BUILT, and not as assumed (stage 2.4, #247). The pull request's body is `prBody` on the
+#      attempt - a row of GET /api/codefixes, and `attempts` of GET /api/workitems/{id}. The
+#      publish role prints the description it sent in a block of its own before the result
+#      (---HEPHAISTO-PR-BODY-BEGIN ...), the agent keeps it with the attempt, and
+#      issues_pr_body reads it there: the Job's pod and the `gh` shim's copy are gone when a
+#      scenario comes to look. Null for an attempt without a pull request.
 #
-# What the bot writes on an issue, since stage 2.3: ONE status comment per work item, edited in
-# place (it ends with <!-- hephaisto:status:<work item id> -->), and ONE comment per attempt
-# with its plan, never edited (<!-- hephaisto:plan:<attempt id> -->), which says how to answer:
-# `/approve`, `/reject <reason>`. Nothing reads an answer yet (stage 2.4); until then a plan is
-# decided through POST /api/workitems/{id}/codefix/{attemptId}/approve|deny.
+# What the bot writes on an issue: ONE status comment per work item, edited in place (it ends
+# with <!-- hephaisto:status:<work item id> -->), and ONE comment per attempt with its plan,
+# never edited (<!-- hephaisto:plan:<attempt id> -->), which says how to answer.
+#
+# How a plan is answered, since stage 2.4 (#247): a comment whose FIRST NON-BLANK LINE is exactly
+# `/approve`, or `/reject` alone or followed by a reason, written by an account whose NUMBER is
+# in the install's github.approvers (ISSUES_APPROVER_ID here). The first such comment after the
+# plan decides; a comment is looked at once and never again, whatever it is edited into. Besides
+# the two comments above the agent writes, each ending in
+# <!-- hephaisto:answer:<attempt id>:<key> -->:
+#   - at most ONE per attempt to people who are not approvers (key not-approver). It names the
+#     first of them by login, in a code span, and nobody else;
+#   - at most ONE per attempt and cause when an approver's answer is refused: mode-plan,
+#     mode-off, emergency-stop, kill-switch, second-repository, not-waiting, taken-back.
+# And never more than ISSUES_COMMENT_CAP comments on one work item, whatever anybody does. A
+# refusal does not use the plan up: when its cause is gone, a NEW /approve is acted on. The API
+# door (POST /api/workitems/{id}/codefix/{attemptId}/approve|deny) is as it was.
 #
 # shellcheck disable=SC2034
 
@@ -73,8 +93,9 @@ ISSUES_OUTSIDER="${ISSUES_OUTSIDER:-passerby}";  ISSUES_OUTSIDER_ID="${ISSUES_OU
 # The account issues are assigned to. The runner reads it from the stand-in.
 ISSUES_BOT="${ISSUES_BOT:-hephaisto-bot}"
 
-# How many comments the agent may ever write on one issue. The number is the stage's that
-# builds the cap (2.4): it sets it here and in the chart's default, in one commit.
+# How many comments the agent may ever write for one work item. Not a setting: it is
+# IssueComments.MaxPerWorkItem (src/Hephaisto.Agent/WorkItems/IssueComments.cs), and a unit test
+# (IssuesSuiteTests) fails when this number and that one differ.
 ISSUES_COMMENT_CAP="${ISSUES_COMMENT_CAP:-6}"
 
 ISSUES_NS="${ISSUES_NS:-hephaisto}"
@@ -145,6 +166,12 @@ gh_comment_as() {
 gh_pr_merge() { _gh_control PUT "/repos/$1/pulls/$2" '{"merged":true}' >/dev/null; }
 gh_pr_close() { _gh_control PUT "/repos/$1/pulls/$2" '{"state":"closed"}' >/dev/null; }
 
+# Back to "an open draft". The `gh` shim numbers pull requests from 1 in every Job, so pull
+# request 1 of the repository is a different one in every scenario: one that was merged here has
+# to be forgotten, or the next scenario's pull request is found merged the moment it is opened.
+#   gh_pr_forget <owner/repo> <number>
+gh_pr_forget() { _gh_control DELETE "/repos/$1/pulls/$2" >/dev/null; }
+
 # The next <count> API calls answer 500, or a rate-limit 403; `off` ends it early.
 #   gh_fail <500|rate-limit|off> [count]
 gh_fail() { _gh_control POST "/fail/$1?count=${2:-1}" >/dev/null; }
@@ -209,7 +236,7 @@ gh_wait_comment_reads() {
 }
 
 # ---------------------------------------------------------------------------------------
-# The agent: work items (built) and their attempts (ASSUMED) - see the header.
+# The agent: work items and their attempts - see the header.
 # ---------------------------------------------------------------------------------------
 
 # The first line of every scenario: an agent that serves no work items cannot pass one, and
@@ -380,9 +407,13 @@ issues_request() {
     kc -n "$ISSUES_CODER_NS" get configmap "$1-req" -o jsonpath='{.data.request\.json}' 2>/dev/null
 }
 
-# The body of the pull request an implementing Job opened. ASSUMED - see the header, 6.
+# The body of the pull request an implementing Job opened, as the agent kept it with the
+# attempt (header, 6). Empty when the attempt has none.
 #   issues_pr_body <implement-job-name>
-issues_pr_body() { kc -n "$ISSUES_CODER_NS" logs "job/$1" -c publish 2>/dev/null; }
+issues_pr_body() {
+    _issues_curl "$ISSUES_API/api/codefixes?limit=200" \
+        | jq -r --arg j "$1" '[.[] | select((.implementJobName // "") == $j)][0].prBody // empty'
+}
 
 # git over the in-cluster server, from inside it: no port-forward, no credential.
 #   issues_git_rev <branch> [owner/repo]

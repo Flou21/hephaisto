@@ -886,9 +886,12 @@ codeFix:
 # be an assignee. Make it a collaborator on each listed repository, create its token signed in
 # as it, and put the token in the Secret secrets.github names.
 #
-# What this release does with a taken issue is record it: GET /api/workitems, and `github` among
-# the connections of GET /api/status. Unassigning the account, or closing the issue, takes it
-# back. With the agent's mode Off nothing is asked and nothing is taken.
+# A taken issue is planned by a coder Job (codeFix has to be enabled; see issues.repositories
+# below), the plan is posted on the issue, an approver answers it there, and the pull request the
+# implementing Job opens is followed until it is merged or closed. GET /api/workitems shows them,
+# and `github` is among the connections of GET /api/status. Unassigning the account, or closing
+# the issue, takes it back at any point. With the agent's mode Off nothing is asked and nothing
+# is taken.
 github:
   enabled: false
 
@@ -919,11 +922,24 @@ github:
     #   - example/shop
     repositories: []
 
-  # Who may answer a plan on the issue, by account NUMBER - a login can be renamed and taken
-  # by somebody else. `gh api users/<login> --jq .id`. Recorded and checked in this release;
-  # nothing reads a comment as a command yet. Until it does, a plan for an issue is approved
-  # through the API by whoever the console's approver policy admits:
-  # POST /api/workitems/{id}/codefix/{attemptId}/approve.
+  # Who may answer a plan ON THE ISSUE, by account NUMBER - a login can be renamed and taken by
+  # somebody else. `gh api users/<login> --jq .id`.
+  #
+  # An approver answers with a comment whose first line is `/approve`, or `/reject` followed by
+  # a reason. Nothing else is a command, and nobody else's comment is one: an account that is not
+  # listed is told so once per plan and changes nothing. What is approved is the plan as
+  # Hephaisto stored it, never the comment's text. An approval still needs codeFix.mode: pr - at
+  # plan or off it is refused, and the issue is told which.
+  #
+  # Empty: nobody can answer by comment, no comment is read, and the plan says that it is
+  # answered in the console. The API is there either way, for whoever the console's approver
+  # policy admits: POST /api/workitems/{id}/codefix/{attemptId}/approve and .../deny.
+  #
+  # These people can make Hephaisto push a branch to every repository listed above. List
+  # maintainers, not everybody who may comment.
+  #
+  # approvers:
+  #   - 1234567
   approvers: []
 
   # Send the agent's GitHub calls through codeFix.egressProxy when that proxy is rendered
