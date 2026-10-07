@@ -5,7 +5,7 @@ import { APP_ROOT } from '../src/config.js';
 import { ALIASES_FILE, loadScript, scriptAlias } from '../src/fake-sdk.js';
 import { readPrepareHandoff } from '../src/handoff.js';
 import { FAKE_REPEAT_MARKER, fakeRepeated } from '../src/phases.js';
-import { prTitle, renderPrBody } from '../src/pr.js';
+import { lowerFirstWord, prTitle, renderPrBody } from '../src/pr.js';
 import { ISSUE_PROMPT_VARS, ISSUE_PR_BODY_VARS, buildIssueElement, inert, loadTemplate, render, renderIssueBlock } from '../src/prompts.js';
 import { parseLastPrBody } from '../src/result.js';
 import { validate } from '../src/schemas.js';
@@ -631,6 +631,30 @@ describe('the title of a pull request', () => {
     const long = prTitle(issueImplementRequest(w), plan(`${'word '.repeat(60)}end.`));
     expect(long.length).toBe(120);
     expect(long.endsWith('...')).toBe(true);
+  });
+
+  // The first pull requests on github.com (#249) were titled "fix: fAKE SDK plan: ...".
+  it('lowers a first word that is only capitalised, and leaves a name as it is - for an issue and for an incident', () => {
+    const w = makeWorld();
+    const issue = issueImplementRequest(w);
+    const incident = implementRequest(w);
+    for (const [summary, rest] of [
+      ['FAKE SDK plan: Endpoints.Primary checks nothing. More.', 'FAKE SDK plan: Endpoints.Primary checks nothing'],
+      ['HTTP client retries for ever.', 'HTTP client retries for ever'],
+      ['Endpoints.Primary dereferences a null list.', 'Endpoints.Primary dereferences a null list'],
+      ['NullReferenceException in startup.', 'NullReferenceException in startup'],
+      ['OAuth2 tokens are not refreshed.', 'OAuth2 tokens are not refreshed'],
+      ['The loop never ends. It should.', 'the loop never ends'],
+      ['A null list is treated as empty.', 'a null list is treated as empty'],
+      ['Re-read the section, then bind it.', 're-read the section, then bind it'],
+      ['already lower case.', 'already lower case'],
+      ['`Endpoints.cs` guards the list.', '`Endpoints.cs` guards the list'],
+    ] as const) {
+      expect(prTitle(issue, plan(summary)), summary).toBe(`fix: ${rest}`);
+      expect(prTitle(incident, plan(summary)), summary).toBe(`fix(shop-api): ${rest}`);
+    }
+    expect(lowerFirstWord('')).toBe('');
+    expect(lowerFirstWord('Übergabe fehlt')).toBe('übergabe fehlt');
   });
 
   it("is unchanged for an incident: fix(<workload>)", () => {
