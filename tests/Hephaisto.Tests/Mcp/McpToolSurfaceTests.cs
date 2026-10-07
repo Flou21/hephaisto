@@ -112,7 +112,12 @@ public sealed class McpToolSurfaceTests
     {
         // Its methods read; a Save anywhere in it is a write through the back door.
         var source = File.ReadAllText(Path.Combine(McpSpecification.Dir(), "..", "..", "..", "src", "Hephaisto.Agent", "Mcp", "McpIncidentReader.cs"))
-            + File.ReadAllText(Path.Combine(McpSpecification.Dir(), "..", "..", "..", "src", "Hephaisto.Agent", "Mcp", "McpIncidentReader.Deep.cs"));
+            + File.ReadAllText(Path.Combine(McpSpecification.Dir(), "..", "..", "..", "src", "Hephaisto.Agent", "Mcp", "McpIncidentReader.Deep.cs"))
+            + File.ReadAllText(Path.Combine(McpSpecification.Dir(), "..", "..", "..", "src", "Hephaisto.Agent", "Mcp", "McpIncidentReader.WorkItems.cs"));
+
+        // Every part of the reader is in that text: a new partial file is read here too.
+        Directory.GetFiles(Path.Combine(McpSpecification.Dir(), "..", "..", "..", "src", "Hephaisto.Agent", "Mcp"), "McpIncidentReader*.cs")
+            .Should().HaveCount(3, "a fourth part of the reader has to be added to the files this test reads");
 
         source.Should().NotContain("SaveChanges").And.NotContain("ExecuteUpdate").And.NotContain("ExecuteDelete")
             .And.NotContain("IAuditRepository");

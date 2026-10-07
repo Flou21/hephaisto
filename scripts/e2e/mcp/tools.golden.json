@@ -124,13 +124,25 @@
       "name": "list_code_fixes",
       "needs": "reader",
       "readOnly": true,
-      "description": "List code fixes across incidents, newest first: the attempts of the coder to plan and implement a fix in a repository, filtered by state (planning, plan ready, implementing, pull request opened, failed, denied), repository, workload, incident and time range. Returns state, repository, branch, summary, pull request URL and cost. Paged. Answers which pull requests (PR) were opened and which plans wait for a person."
+      "description": "List code fixes across incidents and GitHub issues, newest first: the attempts of the coder to plan and implement a fix in a repository, filtered by state (planning, plan ready, implementing, pull request opened, failed, denied), repository, workload, incident and time range. Returns state, repository, branch, summary, the incident or the issue it is for, pull request URL and cost. Paged. Answers which pull requests (PR) were opened and which plans wait for a person."
     },
     {
       "name": "get_code_fix",
       "needs": "reader",
       "readOnly": true,
-      "description": "Get one code fix attempt in full by attempt id or incident id: plan summary, root cause, files to change, steps, notes, what could not be verified, pull request URL and number, whether build and tests passed, deviations from the plan, costs, timestamps, who decided on it and why it failed. Read only: a plan is approved in the console by a person."
+      "description": "Get one code fix attempt in full by attempt id or incident id, for an incident or for a GitHub issue: plan summary, root cause, files to change, steps, notes, what could not be verified, pull request URL, number and description, whether build and tests passed, deviations from the plan, costs, timestamps, who decided on it, through what, and why it failed. Read only: a plan is answered by a person, in the console or on the issue."
+    },
+    {
+      "name": "list_work_items",
+      "needs": "reader",
+      "readOnly": true,
+      "description": "List the work items Hephaisto was handed, newest first: the GitHub issues assigned to its account, each with repository and issue number, title, state (taken, done, cancelled), the reason it ended, when it was taken and when it ended, and the code fix attempt planned for it. Filtered by state, repository and time range. Paged. Answers which issues Hephaisto is working on and what became of an issue."
+    },
+    {
+      "name": "get_work_item",
+      "needs": "reader",
+      "readOnly": true,
+      "description": "Get one work item in full by its id, or by repository and issue number: the GitHub issue handed to Hephaisto with its title, author, labels, text and URL, what became of it - its state and why it ended - why no plan was started when none was, and its code fix attempt with plan summary and pull request. Read only: a plan is answered by a person, on the issue or in the console."
     },
     {
       "name": "get_status",

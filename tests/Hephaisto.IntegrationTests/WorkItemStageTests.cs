@@ -10,6 +10,7 @@ using Hephaisto.Agent.CodeFix;
 using Hephaisto.Agent.CodeFix.Contract;
 using Hephaisto.Agent.GitHub;
 using Hephaisto.Agent.Llm;
+using Hephaisto.Agent.Mcp;
 using Hephaisto.Agent.Notifications.TeamsBot;
 using Hephaisto.Agent.Observability;
 using Hephaisto.Agent.Options;
@@ -963,7 +964,7 @@ public sealed partial class WorkItemStageTests(PostgresFixture pg)
     // --- the surfaces that knew only incidents -----------------------------------------------------
 
     [Fact]
-    public async Task The_lists_show_a_work_items_attempt_where_they_can_and_nothing_crashes_where_they_cannot_yet()
+    public async Task The_lists_show_a_work_items_attempt_beside_an_incidents_each_with_its_own_subject()
     {
         await pg.ResetAsync();
         var world = new World(pg);
@@ -1012,16 +1013,60 @@ public sealed partial class WorkItemStageTests(PostgresFixture pg)
         // The counts count it: a plan is waiting for somebody.
         (await queries.CountsAsync(Ct)).AwaitingApproval.Should().Be(1);
 
-        // MCP list_code_fixes and get_code_fix are defined by an incident id: the work item's
-        // attempt is left out and refused with a sentence, until they learn to show an issue.
+        // GET /api/codefixes/{id}: one attempt by its own id, with what it is for.
+        var detail = (await queries.AttemptAsync(attemptId, Ct))!;
+        detail.Attempt.Id.Should().Be(attemptId);
+        detail.WorkItem!.Id.Should().Be(workItemId);
+        detail.WorkItem.Title.Should().Be("The order total is null for an empty cart");
+        detail.WorkItem.AuthorLogin.Should().NotBeNullOrEmpty();
+
+        var incidentDetail = (await queries.AttemptAsync(incidentAttempt, Ct))!;
+        incidentDetail.WorkItem.Should().BeNull();
+        incidentDetail.Attempt.IncidentId.Should().NotBeNull();
+        incidentDetail.Attempt.IncidentTitle.Should().NotBeEmpty();
+        (await queries.AttemptAsync(Guid.CreateVersion7(), Ct)).Should().BeNull();
+
+        // The console's work-item list: the row with its attempt beside it.
+        var listed = (await new WorkItemQueries(db).RowsAsync(null, 100, Ct)).Should().ContainSingle().Subject;
+        listed.Item.Id.Should().Be(workItemId);
+        listed.Attempt.Should().Be(new WorkItemAttemptRef(attemptId, CodeFixState.PlanReady, null, null));
+
+        // MCP list_code_fixes and get_code_fix (#248): both kinds, each row naming its own subject.
         var reader = McpGiven.Reader(pg, Now);
         var page = await reader.CodeFixesAsync(null, null, null, null, null, 50, null, Ct);
 
-        page.CodeFixes.Should().ContainSingle().Which.Id.Should().Be(incidentAttempt);
+        page.CodeFixes.Select(r => r.Id).Should().BeEquivalentTo([attemptId, incidentAttempt]);
+
+        var mcpMine = page.CodeFixes.Single(r => r.Id == attemptId);
+        mcpMine.IncidentId.Should().BeNull();
+        mcpMine.WorkItemId.Should().Be(workItemId);
+        mcpMine.Issue.Should().Be($"{Repo}#{issue}");
+        mcpMine.IssueUrl!.Value.Should().Be($"https://github.com/{Repo}/issues/{issue}");
+        mcpMine.Workload.Should().BeNull("an issue names no workload");
+
+        var mcpTheirs = page.CodeFixes.Single(r => r.Id == incidentAttempt);
+        mcpTheirs.IncidentId.Should().NotBeNull();
+        mcpTheirs.WorkItemId.Should().BeNull();
+        mcpTheirs.Issue.Should().BeNull();
+
+        // The filters still narrow, for both kinds.
+        (await reader.CodeFixesAsync("PlanReady", null, null, null, null, 50, null, Ct)).CodeFixes.Should().ContainSingle().Which.Id.Should().Be(attemptId);
+        (await reader.CodeFixesAsync(null, "octo/shop", null, null, null, 50, null, Ct)).CodeFixes.Select(r => r.Id).Should().Contain(attemptId);
+        (await reader.CodeFixesAsync(null, "no/such-repository", null, null, null, 50, null, Ct)).CodeFixes.Should().BeEmpty();
+        (await reader.CodeFixesAsync(null, null, null, mcpTheirs.IncidentId, null, 50, null, Ct)).CodeFixes.Should().ContainSingle().Which.Id.Should().Be(incidentAttempt);
+
+        // get_code_fix by attempt id, for both.
         (await reader.CodeFixAsync(incidentAttempt, Ct)).Attempt.Id.Should().Be(incidentAttempt);
 
-        var act = () => reader.CodeFixAsync(attemptId, Ct);
-        (await act.Should().ThrowAsync<Exception>()).Which.Message.Should().Contain("is for a GitHub issue");
+        var mcpDetail = await reader.CodeFixAsync(attemptId, Ct);
+        mcpDetail.Attempt.WorkItemId.Should().Be(workItemId);
+        mcpDetail.IssueTitle!.Value.Should().StartWith("<untrusted-evidence>").And.Contain("The order total is null for an empty cart");
+        mcpDetail.Note.Should().Contain("comment on the issue");
+        mcpDetail.Next.Should().ContainSingle().Which.Should().StartWith($"get_work_item {{\"id\":\"{workItemId}\"}}");
+
+        var asJson = McpAnswer.Of(mcpDetail);
+        asJson.Should().Contain($"\"workItemId\":\"{workItemId}\"").And.Contain($"\"issue\":\"{Repo}#{issue}\"").And.NotContain("\"incidentId\"");
+        McpAnswer.Of(mcpTheirs).Should().Contain("\"incidentId\"").And.NotContain("\"workItemId\"").And.NotContain("\"issue\"");
 
         // The Teams board: an incident's card finds its own attempt beside one that has no incident.
         var incidentId = (await db.CodeFixAttempts.AsNoTracking().SingleAsync(a => a.Id == incidentAttempt, Ct)).IncidentId!.Value;

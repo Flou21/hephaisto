@@ -3,6 +3,7 @@ using Hephaisto.Agent.CodeFix;
 using Hephaisto.Agent.Mcp.Answers;
 using Hephaisto.Agent.Notifications;
 using Hephaisto.Agent.Persistence;
+using Hephaisto.Agent.WorkItems;
 using Hephaisto.Core;
 using Hephaisto.Core.CodeFix;
 using Hephaisto.Core.Domain;
@@ -446,10 +447,9 @@ public sealed partial class McpIncidentReader
         string? cursor,
         CancellationToken ct)
     {
-        // An attempt for a GitHub issue (v0.14.0) has no incident, and a row of this list is
-        // defined by one: its incidentId is what a reader follows. Until the list learns to show
-        // an issue, such an attempt is left out here rather than given an id that is nobody's.
-        var query = db.CodeFixAttempts.AsNoTracking().Where(a => a.IncidentId != null);
+        // Both kinds of attempt (v0.14.0): an incident's, and one for a GitHub issue, which has no
+        // incident. A row names whichever it is for - incidentId, or workItemId with the issue.
+        var query = db.CodeFixAttempts.AsNoTracking().Include(a => a.WorkItem).AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(state))
         {
@@ -510,17 +510,10 @@ public sealed partial class McpIncidentReader
 
     public async Task<CodeFixDetail> CodeFixAsync(Guid attemptId, CancellationToken ct)
     {
-        var attempt = await db.CodeFixAttempts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == attemptId, ct).ConfigureAwait(false)
+        var detail = await codeFixes.AttemptAsync(attemptId, ct).ConfigureAwait(false)
             ?? throw new McpException($"No code fix attempt {attemptId}.");
 
-        if (attempt.IncidentId is null)
-        {
-            throw new McpException(
-                $"Code fix attempt {attemptId} is for a GitHub issue, not an incident. Its plan and its state are on the issue; "
-                + "this endpoint reads the attempts of incidents.");
-        }
-
-        return CodeFixDetailOf(CodeFixQueries.View(attempt));
+        return CodeFixDetailOf(detail.Attempt, detail.WorkItem);
     }
 
     public async Task<IncidentCodeFixes> IncidentCodeFixesAsync(Guid incidentId, CancellationToken ct)
@@ -553,11 +546,17 @@ public sealed partial class McpIncidentReader
     private static CodeFixRow CodeFixRowOf(CodeFixAttemptView a) => new()
     {
         Id = a.Id,
-        // Never empty here: both readers above leave out an attempt without an incident.
-        IncidentId = a.IncidentId ?? Guid.Empty,
+
+        // Exactly one of the two: an attempt is for an incident or for a work item.
+        IncidentId = a.IncidentId,
+        WorkItemId = a.WorkItemId,
+        Issue = a.Issue,
+        IssueUrl = McpText.NameOrNull(a.IssueUrl),
         State = a.State,
         Repository = McpText.Name(a.Repository),
-        Workload = McpText.Name(a.Workload),
+
+        // Empty for a work item: an issue names a repository, not something that runs.
+        Workload = McpText.NameOrNull(a.Workload),
         Branch = McpText.NameOrNull(a.Branch),
         Summary = McpText.UntrustedOrNull(a.Summary, 1_000),
         PullRequestUrl = McpText.NameOrNull(a.PrUrl),
@@ -568,9 +567,15 @@ public sealed partial class McpIncidentReader
         FailureReason = McpText.UntrustedOrNull(a.FailureReason, 1_000),
     };
 
-    private static CodeFixDetail CodeFixDetailOf(CodeFixAttemptView a) => new()
+    /// <summary>
+    /// <paramref name="item"/> is the issue a work item's attempt is for. Its title is somebody
+    /// else's words, the pull request's description a model's, and a rejection's reason whatever
+    /// an approver typed into a comment: each goes out enveloped, like the plan's own text.
+    /// </summary>
+    private static CodeFixDetail CodeFixDetailOf(CodeFixAttemptView a, WorkItemView? item = null) => new()
     {
         Attempt = CodeFixRowOf(a),
+        IssueTitle = McpText.UntrustedOrNull(item?.Title, 300),
         RootCause = McpText.UntrustedOrNull(a.RootCause, 1_500),
         Confidence = a.Confidence,
         VerificationLevel = McpText.NameOrNull(a.VerificationLevel),
@@ -581,13 +586,22 @@ public sealed partial class McpIncidentReader
         BuildPassed = a.BuildPassed,
         TestsPassed = a.TestsPassed,
         Deviations = [.. a.Deviations.Select(s => McpText.Untrusted(s, 800))],
+        PullRequestBody = McpText.UntrustedOrNull(a.PrBody, 4_000),
         PlanCostUsd = a.PlanCostUsd,
         ImplementCostUsd = a.ImplementCostUsd,
         RequestedBy = McpText.NameOrNull(a.RequestedBy),
         DecidedBy = McpText.NameOrNull(a.ApprovedBy),
+        DecidedThrough = a.DecidedThrough,
         PlanReadyAt = a.PlanReadyAt,
         DecidedAt = a.DecidedAt,
-        Note = "Read only. A plan is approved or denied by a person in the console, never here.",
+        Note = a.WorkItemId is null
+            ? "Read only. A plan is approved or denied by a person in the console, never here."
+            : "Read only. A plan is approved or denied by a person - in a comment on the issue, or in the console - never here.",
+        Next = a.WorkItemId is { } workItemId
+            ? [$"get_work_item {{\"id\":\"{workItemId}\"}} - the issue this attempt is for, and what became of it"]
+            : a.IncidentId is { } incidentId
+                ? [$"get_incident {{\"incidentId\":\"{incidentId}\"}} - the incident this attempt is for"]
+                : [],
     };
 
     private async Task<HashSet<Guid>> LiveBlobsAsync(List<Guid> ids, CancellationToken ct)
