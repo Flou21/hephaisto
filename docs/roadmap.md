@@ -33,13 +33,13 @@ containers ([#116](backlog.md#116)), so the container the model runs in is hande
 no NuGet token. It changes the pod of every code-fix and every investigation Job, and needs the
 coder image of the same version.
 
-`v0.14.0` is built and goes into release candidates from 2026-10-07. **A GitHub issue is work
+`v0.14.0` is built and in release candidates since 2026-10-07. **A GitHub issue is work
 Hephaisto can be handed**: an issue assigned to its account is planned by the Job that plans an
 incident's code fix, the plan is posted and answered on the issue, and the draft pull request
 that follows closes it. All six stages are built and nothing is on unless `github.enabled` is
 set. The twelve scenarios against a GitHub stand-in are green on the dev cluster at this state;
-the four against github.com were green when stage 2.6 ran them, the day the last stage was
-built, and are run again before a candidate is tagged. See [v0.14.0](#v0140--a-github-issue-is-work-hephaisto-can-be-handed). It stacks on
+the four against github.com were green on this same state, the last time minutes before the
+first candidate was tagged. See [v0.14.0](#v0140--a-github-issue-is-work-hephaisto-can-be-handed). It stacks on
 v0.13.0, which is itself not released yet; neither is until a candidate has run on the
 production install.
 
