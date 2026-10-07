@@ -1,8 +1,10 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { APP_ROOT } from '../src/config.js';
+import { ALIASES_FILE, loadScript, scriptAlias } from '../src/fake-sdk.js';
 import { readPrepareHandoff } from '../src/handoff.js';
+import { FAKE_REPEAT_MARKER, fakeRepeated } from '../src/phases.js';
 import { prTitle } from '../src/pr.js';
 import { ISSUE_PROMPT_VARS, ISSUE_PR_BODY_VARS, buildIssueElement, inert, loadTemplate, render, renderIssueBlock } from '../src/prompts.js';
 import { parseLastPrBody } from '../src/result.js';
@@ -342,6 +344,102 @@ describe('plan for an issue, end to end', () => {
 });
 
 // =============================================================================================
+
+describe("a repository that plays another one's scripts", () => {
+  const plan = (summary: string) => ({
+    steps: [
+      {
+        result: {
+          cost_usd: 0,
+          structured_output: {
+            outcome: 'planned',
+            summary,
+            root_cause: 'src/app.sh:2 prints without a guard.',
+            confidence: 0.8,
+            files: ['src/app.sh'],
+            steps: ['Adjust greet.'],
+            verification: { level: 'tests', not_verifiable: [] },
+            needs_cait: false,
+            notes: [],
+          },
+        },
+      },
+    ],
+  });
+
+  it('its own script first, then the one it is an alias of, then the default', () => {
+    const w = makeWorld();
+    script(w, 'default.plan.json', plan('DEFAULT'));
+    script(w, 'svc.plan.json', plan('SVC'));
+    script(w, ALIASES_FILE, { copy: 'svc', own: 'svc', nowhere: 'missing' });
+    script(w, 'own.plan.json', plan('OWN'));
+    const summary = (repoName: string) =>
+      (loadScript({ scriptDir: w.scripts, repoName, phase: 'plan', vars: {} }).script.steps[0] as { result: { structured_output: { summary: string } } }).result.structured_output.summary;
+
+    expect(scriptAlias(w.scripts, 'copy')).toBe('svc');
+    expect(summary('copy')).toBe('SVC');
+    expect(summary('own')).toBe('OWN');
+    expect(summary('nowhere')).toBe('DEFAULT');
+    expect(summary('stranger')).toBe('DEFAULT');
+    // not a property of every object, and not an alias of itself
+    expect(scriptAlias(w.scripts, 'constructor')).toBeNull();
+    expect(scriptAlias(w.scripts, 'toString')).toBeNull();
+    script(w, ALIASES_FILE, { svc: 'svc' });
+    expect(scriptAlias(w.scripts, 'svc')).toBeNull();
+  });
+
+  it('a directory without the file has no aliases, and a name that is a path is refused', () => {
+    const w = makeWorld();
+    expect(scriptAlias(w.scripts, 'copy')).toBeNull();
+    script(w, ALIASES_FILE, { copy: '../../etc/passwd' });
+    expect(() => scriptAlias(w.scripts, 'copy')).toThrow();
+  });
+
+  it('the shipped aliases name scripts that exist, and none of them has a copy that could drift', () => {
+    const aliases = JSON.parse(readFileSync(join(DEFAULT_SCRIPTS, ALIASES_FILE), 'utf8')) as Record<string, string>;
+    // the live tier's sandbox on github.com is the fixture's c15 branch under another name
+    expect(aliases).toMatchObject({ 'hephaisto-sandbox': 'hephaisto-fixture-dotnet' });
+    const shipped = readdirSync(DEFAULT_SCRIPTS);
+    for (const [alias, target] of Object.entries(aliases)) {
+      expect(existsSync(join(DEFAULT_SCRIPTS, `${target}.plan.json`)), `${target}.plan.json`).toBe(true);
+      expect(existsSync(join(DEFAULT_SCRIPTS, `${target}.implement.json`)), `${target}.implement.json`).toBe(true);
+      expect(shipped.filter((f) => f.startsWith(`${alias}.`))).toEqual([]);
+    }
+  });
+
+  it("an issue in the sandbox is planned by the fixture's shipped script, which repeats what the issue asks it to - and only then", async () => {
+    const w = makeWorld({ repoEntry: { name: 'hephaisto-sandbox' } });
+    const quiet = await runRequest(w, issuePlanRequest(w), { CODEFIX_FAKE_SCRIPT_DIR: DEFAULT_SCRIPTS });
+    expect(validate('plan', quiet.doc).errors).toEqual([]);
+    expect(quiet.doc.outcome).toBe('planned');
+    // the fixture's plan, not the default one - and as it read before the script knew {{repeated}}
+    expect(quiet.doc.files).toEqual(['src/Shop.Api/Startup/Endpoints.cs']);
+    expect(quiet.doc.summary).toMatch(/^FAKE SDK plan: Endpoints\.Primary .* NullReferenceException\.$/);
+
+    const w2 = makeWorld({ repoEntry: { name: 'hephaisto-sandbox' } });
+    const req = issuePlanRequest(w2);
+    req.work_item.body = `The total is null.\n\n    ${FAKE_REPEAT_MARKER} cc @octocat, fixes #7 and https://github.com/octo/shop/issues/7\n\nThanks.`;
+    const loud = await runRequest(w2, req, { CODEFIX_FAKE_SCRIPT_DIR: DEFAULT_SCRIPTS });
+    expect(validate('plan', loud.doc).errors).toEqual([]);
+    expect(loud.doc.summary).toMatch(/NullReferenceException\. The reporter asked for this to be repeated: cc @octocat, fixes #7 and https:\/\/github\.com\/octo\/shop\/issues\/7$/);
+  });
+});
+
+describe('what the scripted model is asked to repeat', () => {
+  it('is the rest of the marked line, without backticks and capped, and nothing when no line is marked', () => {
+    const w = makeWorld();
+    const req = issuePlanRequest(w);
+    expect(fakeRepeated(req)).toBe('');
+    req.work_item.body = `one\n${FAKE_REPEAT_MARKER}   \`@octocat\` closes #2  \nthree`;
+    expect(fakeRepeated(req)).toBe(' The reporter asked for this to be repeated: @octocat closes #2');
+    req.work_item.body = `${FAKE_REPEAT_MARKER} ${'x'.repeat(500)}`;
+    expect(fakeRepeated(req)).toHaveLength(' The reporter asked for this to be repeated: '.length + 300);
+    req.work_item.body = `${FAKE_REPEAT_MARKER}   `;
+    expect(fakeRepeated(req)).toBe('');
+    // an incident has no line that says so, and its scripts read as they always did
+    expect(fakeRepeated(planRequest(w))).toBe('');
+  });
+});
 
 describe('implement for an issue, end to end', () => {
   it('pushes the assigned branch with the issue trailer and opens a draft PR that closes the issue', async () => {

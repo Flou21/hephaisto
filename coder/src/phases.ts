@@ -160,6 +160,24 @@ async function firstEvidenceFile(req: CodeFixRequest, git: Git): Promise<string>
   return files[0] ?? 'README.md';
 }
 
+/** What an issue - or an incident's evidence - asks the scripted model to say again. */
+export const FAKE_REPEAT_MARKER = 'FAKE-SDK-REPEAT:';
+
+/**
+ * For the fake scripts, as `{{repeated}}`: a sentence that repeats what follows
+ * FAKE-SDK-REPEAT: on a line of the request's untrusted text, or nothing. A model does repeat
+ * what a stranger wrote - a mention, a closing keyword, another issue's address - and the
+ * scripted one could not, so nothing end to end ever put such text where GitHub reads it. With
+ * the marker absent the variable is empty and a script that uses it reads as it always did.
+ */
+export function fakeRepeated(req: CodeFixRequest): string {
+  const text = untrustedText(req);
+  const at = text.indexOf(FAKE_REPEAT_MARKER);
+  if (at < 0) return '';
+  const said = (text.slice(at + FAKE_REPEAT_MARKER.length).split(/\r?\n/)[0] ?? '').replace(/`/g, '').trim().slice(0, 300);
+  return said ? ` The reporter asked for this to be repeated: ${said}` : '';
+}
+
 function lineComment(file: string): string {
   if (/\.(cs|ts|js|java|go|vue|kt|swift|c|cpp|h)$/.test(file)) return '//';
   if (/\.(md|html|xml|csproj)$/.test(file)) return '<!--';
@@ -224,7 +242,7 @@ export async function coderPlan(req: CodeFixRequest, deps: PhaseDeps, h: Prepare
     const guard: GuardContext = { targetDir: realish(target.dir), protectedGlobs: protectedGlobs(repos, repo), homeDir: paths.home };
     const query = await deps.makeQuery({
       repoName: repo.name,
-      vars: { ...vars, target: target.dir, first_evidence_file: await firstEvidenceFile(req, target.git) },
+      vars: { ...vars, target: target.dir, first_evidence_file: await firstEvidenceFile(req, target.git), repeated: fakeRepeated(req) },
     });
     const schema = planOutputSchema();
     const agent: AgentRunResult<AgentPlan> = await runAgent<AgentPlan>({
