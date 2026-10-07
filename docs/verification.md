@@ -848,9 +848,15 @@ failure), and a green-build rule that demanded tests from repositories that have
 ### And the part that is deliberately not tested here
 
 - **A True Relevance service.** Only the fixture repository is exercised (backlog #117).
-- **GitHub.** Locally the remote is the in-cluster git server and the PR is the `gh` shim's; the
-  real `gh pr create`, branch protection and token scopes are exercised by the nightly `--codefix`
-  tier against a sandbox repository, whose credentials cannot see `Flou21/hephaisto`.
+- **GitHub.** Locally the remote is the in-cluster git server and the PR is the `gh` shim's.
+  This paragraph said, from v0.9.0 until v0.14.0, that the real `gh pr create`, branch
+  protection and token scopes were exercised by a nightly `--codefix` tier against a sandbox
+  repository. **No such tier existed, and nothing had ever run `gh` against github.com.** What
+  exists since v0.14.0 is the live tier, run by hand before a release candidate
+  (`scripts/e2e/github-live.sh`, section 19): the real `gh pr list` and `gh pr create --draft`
+  with a fine-grained token, for a GitHub **issue** - not for an incident, whose pull request
+  body and title are still only ever seen by the shim - and not nightly. Branch protection is
+  tested nowhere.
 - **Model quality as a rate.** One run is one sample. Whether gpt-oss categorises c15 as
   `application` is recorded, and the runner then uses the human door so the plumbing is still
   exercised - but a pass rate needs repeats (`codefix run`, deferred to v0.9.x).
@@ -952,3 +958,106 @@ cluster's code-fix stage runs the real SDK - and restores it on exit.
 A real model, not gating: `scripts/e2e/investigate-model-local.sh` runs I4 with
 `investigator-sdk: real` on Haiku (a few cents per run) and reports how many of N runs concluded
 with a grounded finding.
+
+## 19. An issue is work - asked of the stand-in, and of github.com (v0.14.0)
+
+Two suites, and they answer different questions.
+
+`scripts/e2e/issues-local.sh --strict` (G01-G12, about 16 minutes, `"github": "stand-in"`) is the
+acceptance test of the feature: everything the agent does with an issue, including what GitHub
+cannot be made to do on demand - fail, limit, merge without a branch moving, be answered by a
+stranger. Its GitHub is a pod that answers what this project's authors believed GitHub answers
+(`scripts/e2e/README.md`, "The issues suite").
+
+`scripts/e2e/github-live.sh` (L01-L04, about 12 minutes, `"github": "live"`) asks GitHub
+whether they believed right. The dev agent talks to `https://api.github.com` through the egress
+proxy with the bot account's token; the coder Job clones from, pushes to and opens a pull request
+on github.com with the real `gh` and the coder's token; a person's `gh` opens the issues and
+answers the plans. The model is the script. It runs by hand, before a release candidate - it is
+not nightly and not in CI, because it needs two accounts and a cluster that can reach both.
+
+```sh
+# tilt_config.json: "github": "live" (beside "coder": true, "coder-mode": "pr", "coder-sdk": "fake")
+scripts/e2e/github-live.sh
+# ... and back: "github": "stand-in", wait for the agent, then
+scripts/e2e/issues-local.sh --strict
+```
+
+What it needs, what it refuses and what it leaves behind are in `scripts/e2e/README.md`, "The
+live tier". What a green run has shown, per scenario:
+
+| | What GitHub was asked |
+|---|---|
+| L01 | An issue opened and assigned with `gh` is a work item within a poll. Two comments by the bot account, one of them edited in place. `/approve` by an account the install lists by number starts one implementing Job. The pull request is a draft by the bot from `hephaisto/codefix-<id>` into `main`; GitHub renders its `Closes owner/repo#n` as a closing keyword and lists exactly that issue in `closingIssuesReferences`; its files are the scripted fix's; its commits carry the trailers; `main` did not move. Closed without merging, the work item is `Cancelled` and the still-assigned issue is not taken again |
+| L02 | `/reject <reason>` is `Denied` with the reason, on the attempt and on the issue; GitHub has no branch and no pull request; closing the issue ends the work item |
+| L03 | Unassigning the bot cancels a waiting plan; a later `/approve` does nothing and is not answered |
+| L04 | An unchanged list is a 304, counted by the agent, through the proxy; comments-since and a pull request are 304 to their tags too; `github` is `Healthy`. Text Hephaisto repeats - a mention, `#n`, `GH-n`, an issue's address - is no mention, no link and no timeline entry in GitHub's own HTML and timeline, in the plan comment and in the status comment; the same words in a person's comment are all three (the control) |
+
+### Measured on 2026-10-07, the first afternoon it ran
+
+| | |
+|---|---|
+| Runs | six: two red, one of L01 alone, two green in a row, and a third green after the title fix below (4 of 4 scenarios, 103 assertions each, sandbox left clean each time) |
+| A green run | 11 to 12 minutes; five issues, four comments by the person, one branch, one draft pull request, all closed or deleted by the run |
+| An assigned issue became a work item after | 10 to 25 s (poll interval 20 s) |
+| A plan Job, cloning github.com through the proxy | 6 to 7 s; the plan was on the issue within 15 s of it |
+| An implementing Job, to an open draft pull request | about 150 s, 120 of them the script's own wait |
+| Polls answered 304 while nothing changed | every one |
+| Rate limit, permission and not-found answers to the agent | 0 |
+
+**What the first run found, in what stages 2.3 and 2.4 had built and the stand-in had passed:**
+
+1. *A pull request that would have closed somebody else's issue.* The scripted model repeated
+   "resolves `<the address of issue 3>`" from its issue; the description of the pull request
+   for issue 4 carried it, and GitHub answered `closingIssuesReferences: [3, 4]`. The runner's
+   `inert()` neutralised `@name`, `#n` and `GH-n`, and no address.
+2. *A comment that wrote into another issue's timeline.* The same sentence in the plan comment,
+   through `IssueComments.Neutralise` - which breaks the scheme of every address - was rendered
+   by GitHub with a link to issue 3, and issue 3's timeline said "tr-agent-dev mentioned this
+   issue". GitHub reads `/issues/3` as a reference **by itself**: no scheme, no host (also
+   `/pull/3`, `/discussions/3`, in any case of letters, and `owner/repo/issues/3`).
+
+3. *A title nobody had read.* "fix: fAKE SDK plan: ..." - the first letter of the summary was
+   lowered whatever the first word was. Seen in the sandbox's list of pull requests, not by an
+   assertion; L01 has one now.
+
+The first two now put a zero-width space after every slash before a digit; each has the table of forms
+as a unit test, and L01 and L04 hold them to GitHub's own answer. `POST /markdown` (`mode: gfm`,
+`context: owner/repo`) renders text the way a comment would be without writing one - that is how
+the forms were found, and it is the cheap way to check the next one.
+
+**What GitHub confirmed** - assumed until then, and now seen: a fine-grained token's `GET /user`
+names the account; `GET /repos/{o}/{r}` gives the default branch to a token with Issues and Pull
+requests only; the issue list, a comment list with `since`, and a pull request all honour
+`If-None-Match` with the tag as given (weak tags included); comment ids are beyond 32 bits; an
+edited comment has `updated_at` after `created_at`; a label is an object and an unset issue type
+is `null`; `gh pr create --draft --assignee` works with Contents and Pull requests write; a
+label that does not exist makes `gh` refuse, and the runner's fallback opens the pull request
+without it. Seven of GitHub's answers from that run are kept as fixtures
+(`tests/Hephaisto.Tests/GitHub/Recorded/`), and the client is held to them.
+
+**What GitHub did that no stand-in does:** on the second run it answered a comment the agent
+wrote with a 500 and no body (the next pass wrote it; there was one comment, not two), answered
+the suite's `PATCH` that closes a pull request with an error and no body, and listed nothing in
+`closingIssuesReferences` for at least eight minutes for a description that its own renderer
+already marked as closing the issue. A quarter of an hour later all three were as expected.
+
+### And the part that is deliberately not tested here
+
+- **A merge.** `Done` is the stand-in's (G11). Nothing has ever merged a pull request Hephaisto
+  opened on github.com, so "GitHub closes the issue and the agent reads that as Done, not as
+  taken back" is two halves seen separately.
+- **A non-approver, GitHub failing on demand, the comment cap, a restart, the mode** - the
+  stand-in's (G04, G09, G10, G08, G12).
+- **A label on the pull request.** The sandbox has none named `hephaisto`; whether the coder's
+  token may attach one that exists is not known.
+- **Branch protection, required reviews, CODEOWNERS, Actions.** The sandbox has none, and
+  Actions are off on purpose.
+- **A repository a user owns.** A fine-grained token does not reach one for a collaborator;
+  the sandbox is an organisation's.
+- **An incident's pull request.** Its title and description have still only been seen by the
+  `gh` shim - and they are not made inert at all: the evidence in them is in fences, the
+  model's summary is not.
+- **A model.** The words that tested the two fixes above were chosen by this suite. A model
+  will find others.
+- **More than a hundred assigned issues, a rate limit, a token that expires.**

@@ -495,6 +495,41 @@ up to a minute: it is served from `ConnectionHealthCache`. A plan is answered by
 (1001 is the approver `values-dev-github.yaml` names), or through the API as before:
 `curl -X POST "http://$H:8100/api/workitems/<id>/codefix/<attemptId>/approve" -H 'content-type: application/json' -d '{"decidedBy":"you"}'`.
 
+### The live tier: github.com itself
+
+`scripts/e2e/github-live.sh` (`scripts/e2e/README.md`, "The live tier") is the one suite that
+talks to GitHub: `"github": "live"` layers `charts/hephaisto/values-dev-github-live.yaml` - the
+real API through the egress proxy, the bot `tr-agent-dev`, ONE repository
+(`TrueRelevance/hephaisto-sandbox`), the real `gh` in the Job, the model still scripted. Run it
+before a release candidate and after changing anything Hephaisto sends GitHub or writes there.
+Five things to know:
+
+- **It refuses rather than guesses**: any other repository on the agent, a real coder, the shim,
+  a `gh` that is not an approver, Actions enabled on the sandbox, leftovers of an earlier run
+  (`--sweep` removes those). Do not loosen a refusal to get a run through.
+- **Never read the two tokens.** They are in `hephaisto-github` (namespace `hephaisto`) and
+  `hephaisto-codefix` (namespace `hephaisto-coder`), they see more than the sandbox, and nothing
+  here needs their value: the suite plays the person with the `gh` of whoever runs it.
+- **`lib/live.sh` names the repository itself.** Every call goes through `_live_api` or
+  `_live_gh`; `LiveSuiteTests` fails on a bare `gh`, a merge, a push, or a delete of anything
+  but a `hephaisto/codefix-<id>` branch. It never merges - `main` must stay the fixture's c15
+  commit, or the scripted patch stops applying - so "merged is Done" is the stand-in's (G11).
+- **In this mode the incident suites cannot run**: the values file empties
+  `codeFix.repositories` (the real `gh` refuses coder-git). Switch back to `"stand-in"` after.
+- **The sandbox is in dev-context's `repos.yaml` on a branch** (`feat/hephaisto-sandbox-repo`,
+  which `codeFix.contextRepository.ref` names) until that is merged; coder-git serves the LOCAL
+  checkout's branches, so after pulling dev-context: `scripts/coder-git-seed.sh`, rebuild
+  `infra/coder/git-server` as `hephaisto/coder-git:manual` in the VM, delete its pod.
+
+What GitHub taught on the first afternoon, so that it is not relearned: **`/issues/12` is a
+reference by itself** (and `/pull/12`, `/discussions/12`, `owner/repo/issues/12`), so a broken
+scheme never made an address inert - `IssueComments.Neutralise` and the runner's `inert()` both
+break the slash before a digit now, and a new rule in one belongs in the other. `POST /markdown`
+with `mode=gfm` and a `context` repository renders text as a comment would be, without writing
+one: ask it before believing a neutralisation. And GitHub fails for minutes at a time - an
+empty-bodied error on a write, a 500 on a comment, `closingIssuesReferences` empty for eight
+minutes - so a red live run is read request by request before it is believed.
+
 ## The Teams bot, as of v0.9.0-rc4
 
 `notifications.teamsBot`: one board in a channel, edited in place, and alerts by personal chat.
