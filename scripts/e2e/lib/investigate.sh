@@ -82,6 +82,30 @@ iv_ensure_incident() {
     printf '%s' "$incident"
 }
 
+# Incidents of the chaos namespace, opened since a time, that are filed under something nobody
+# deployed: a ReplicaSet, or a Pod that does not exist. Prints one "Kind/name" per line.
+#
+# An incident under a pod that DOES exist is not one of them: an Alertmanager alert names the
+# bare pod and its incident is filed there, by design, beside the watcher's under the
+# Deployment. The two this looks for are what broke this suite in October 2026: a warning about
+# a pod that was gone, handed to a restarted agent again and filed under that pod; and a lookup
+# made while a fixture was deleted, remembered for an hour, which left the new pod's incident
+# under its ReplicaSet. Either was then "the newest incident on shop-api" to iv_incident_on -
+# by the prefix of its name - and the scripted investigator, which picks its script by
+# workload, played the default one: red from there on, for a reason no scenario named.
+#   iv_misfiled_since <iso time>
+iv_misfiled_since() {
+    local kind name
+    cf_get "/api/incidents?state=any&limit=200" | jq -r --arg ns "$CF_CHAOS_NS" --arg since "$1" '
+        .[] | select(.namespace == $ns and .openedAt >= $since and ((.ownerKind // "") != "Deployment"))
+            | "\(.ownerKind // "Pod") \(.ownerName // .targetName)"' \
+    | while read -r kind name; do
+        if [ "$kind" != Pod ] || ! kc -n "$CF_CHAOS_NS" get pod "$name" >/dev/null 2>&1; then
+            printf '%s/%s\n' "$kind" "$name"
+        fi
+    done
+}
+
 iv_incident() { cf_get "/api/incidents/$1"; }
 
 iv_investigation_count() { iv_incident "$1" | jq '.investigations | length'; }
@@ -90,7 +114,28 @@ iv_latest_investigation() { iv_incident "$1" | jq -c '.investigations | sort_by(
 
 iv_is_running() { [ "$(iv_incident "$1" | jq -r '.inProgress != null')" = true ]; }
 
+# An incident whose last investigation proposed an action waits for a person's answer, and
+# cannot be investigated again until it has one (409, "AwaitingApproval -> Investigating").
+# Whether an investigation proposes one is the in-process model's to decide - I1 runs a real
+# model, and on 2026-10-07 it proposed RollbackDeployment for shop-api where the run before had
+# proposed nothing, and I9 was red on the refusal. The harness gives the answer a person would
+# give a fixture: no. Everything it prints goes to stderr; callers capture stdout.
+iv_release() {
+    local incident="$1" doc action
+    doc=$(iv_incident "$incident")
+    [ "$(jq -r '.state // empty' <<<"$doc")" = AwaitingApproval ] || return 0
+
+    for action in $(jq -r '.actions[]? | select(.state == "AwaitingApproval") | .id' <<<"$doc"); do
+        cf_post "/api/incidents/$incident/actions/$action/deny" "$(jq -cn --arg a "$CF_ACTOR" '{decidedBy:$a}')" >/dev/null
+        say "denied the action an earlier investigation proposed for $incident ($action)" >&2
+    done
+
+    _iv_released() { [ "$(iv_incident "$incident" | jq -r '.state // empty')" != AwaitingApproval ]; }
+    wait_for "incident $incident to stop waiting for an approval" 60 _iv_released >&2 || true
+}
+
 iv_reinvestigate() {
+    iv_release "$1"
     cf_post "/api/incidents/$1/reinvestigate" "$(jq -cn --arg a "$CF_ACTOR" '{requestedBy:$a}')"
 }
 
@@ -99,6 +144,48 @@ iv_is_idle() { ! iv_is_running "$1"; }
 # A re-investigation is refused while one runs - an earlier scenario's fallback, say - so every
 # scenario that starts one waits for its incident to be idle first.
 iv_wait_idle() { wait_for "incident $1 to be idle" "${2:-1500}" iv_is_idle "$1" >&2 || true; }
+
+# Whether anything in the chaos namespace is being investigated, or an investigator Job runs.
+iv_busy() {
+    [ "$(kc -n "$CF_CODER_NS" get jobs -l "app.kubernetes.io/name=$IV_LABEL" -o json 2>/dev/null \
+        | jq '[.items[] | select((.status.active // 0) > 0)] | length')" != 0 ] && return 0
+    cf_get "/api/incidents?state=open&limit=200" | jq -e --arg ns "$CF_CHAOS_NS" '
+        [ .[] | select(.namespace == $ns and (.state == "Detected" or .state == "Triaging" or .state == "Investigating")) ]
+        | length > 0' >/dev/null
+}
+
+# Waits until nothing is being investigated and has not been for IV_QUIET seconds.
+#
+# There is ONE investigator Job slot, and a scenario that needs it - to see its own Job run, or
+# to hold it on purpose - cannot share it with an investigation nobody asked for. A fixture that
+# was just brought up gets several of those, minutes apart, and iv_wait_idle on the scenario's
+# own incident sees none of them:
+#
+#   - the watcher's incident, under the Deployment, investigated at once;
+#   - the incident of the alert that names the pod (KubePodCrashLooping), filed under that pod
+#     by design, about two minutes later;
+#   - and, when an incident of the same workload was CLOSED BY A PERSON in the last 24 hours -
+#     which is what cleaning up after a run does - a third: the Deployment-level alert
+#     (KubeDeploymentReplicasMismatch) reopens that closed one (Ingest:ReopenWindow) although
+#     an incident for the workload is already open, and it is investigated again.
+#
+# On 2026-10-07 the third one's three-minute Job took the slot nineteen seconds before I8
+# asked for it, and was three seconds from done when I9 did; both then ran in-process and both
+# scenarios were red. Run 1 of four on 2026-10-06 failed the same two the same way. The window
+# is for the next of these arriving just after the last one ended.
+#   iv_wait_quiet [timeout]
+iv_wait_quiet() {
+    local timeout="${1:-1800}" need="${IV_QUIET:-45}" quiet=0 waited=0
+    printf '  waiting for nothing else to be investigating ' >&2
+    while [ "$waited" -lt "$timeout" ]; do
+        if iv_busy; then quiet=0; printf '.' >&2; else quiet=$((quiet + 5)); fi
+        if [ "$quiet" -ge "$need" ]; then printf ' ok (%ss)\n' "$waited" >&2; return 0; fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+    printf ' timeout after %ss\n' "$timeout" >&2
+    return 1
+}
 
 # Re-investigates and waits for the new investigation to be written. Prints its JSON; empty on
 # timeout. The count is read before the request so an investigation that finishes between the
@@ -250,6 +337,7 @@ scenario_I4() {
     local jobs_before
     jobs_before=$(iv_job_count "$incident")
 
+    iv_wait_quiet || true
     inv=$(iv_investigate_once "$incident" 900) || { fail "a Job investigation completed"; iv_set_executor inprocess; return 0; }
     record_json I4-investigation "$inv"
     IV_JOB_INVESTIGATION="$inv"
@@ -380,6 +468,7 @@ scenario_I8() {
     incident=$(iv_ensure_incident catalog-api c19-injection)
     [ -n "$incident" ] || { fail "an incident on catalog-api exists"; iv_set_executor inprocess; return 0; }
     iv_wait_idle "$incident"
+    iv_wait_quiet || true
     before=$(iv_investigation_count "$incident")
 
     # catalog-api's script is the slow one: the Job is still running when it is deleted.
@@ -417,6 +506,7 @@ scenario_I9() {
     [ -n "$slow" ] && [ -n "$fast" ] || { fail "incidents on catalog-api and shop-api exist"; iv_set_executor inprocess; return 0; }
 
     iv_wait_idle "$slow"
+    iv_wait_quiet || true
     iv_reinvestigate "$slow" >/dev/null
     find_job() { job=$(iv_running_job "$slow"); [ -n "$job" ]; }
     wait_for "the slow Job to hold the slot" 180 find_job || { fail "the slow Job holds the slot"; iv_set_executor inprocess; return 0; }
@@ -442,6 +532,7 @@ scenario_I10() {
     local incident before job
     incident=$(iv_ensure_incident catalog-api c19-injection)
     iv_wait_idle "$incident"
+    iv_wait_quiet || true
     before=$(iv_investigation_count "$incident")
 
     iv_reinvestigate "$incident" >/dev/null
@@ -449,7 +540,8 @@ scenario_I10() {
     wait_for "a running investigator Job" 180 find_job || { fail "a running investigator Job"; iv_set_executor inprocess; return 0; }
     pass "a running investigator Job" "$job"
 
-    local old_pod
+    local old_pod restarted_at misfiled
+    restarted_at=$(date -u +%Y-%m-%dT%H:%M:%S)
     old_pod=$(kc -n "$CF_APP_NS" get pods -l app.kubernetes.io/name=hephaisto -o jsonpath='{.items[0].metadata.name}')
     kc -n "$CF_APP_NS" delete pod "$old_pod" --wait=false >/dev/null
     say "deleted the agent pod $old_pod mid-run"
@@ -477,6 +569,13 @@ scenario_I10() {
     [ "$(iv_investigation_count "$incident")" -eq $((before + 1)) ] \
         && pass "exactly one investigation was written" || fail "exactly one investigation was written" "$before -> $(iv_investigation_count "$incident")"
 
+    # A new agent is handed every warning of the last minutes again, also those about pods an
+    # earlier scenario's fixture no longer has. None of them is an incident of its own.
+    misfiled=$(iv_misfiled_since "$restarted_at" | tr '\n' ' ')
+    [ -z "$misfiled" ] \
+        && pass "the restart opened no incident under a ReplicaSet or a pod that is gone" \
+        || fail "the restart opened no incident under a ReplicaSet or a pod that is gone" "$misfiled"
+
     iv_set_executor inprocess
 }
 
@@ -487,6 +586,7 @@ scenario_I11() {
 
     local incident inv
     incident=$(iv_ensure_incident shop-api c15-null-deref)
+    iv_wait_quiet || true
     inv=$(iv_investigate_once "$incident" 900) || { fail "a Job investigation with source completed"; iv_set_executor inprocess; return 0; }
     record_json I11-investigation "$inv"
     pass "a Job investigation with source completed"
@@ -514,6 +614,7 @@ scenario_I12() {
     incident=$(iv_ensure_incident catalog-api c19-injection)
     [ -n "$incident" ] || { fail "an incident on catalog-api exists"; iv_set_executor inprocess; return 0; }
     iv_wait_idle "$incident"
+    iv_wait_quiet || true
     before=$(iv_investigation_count "$incident")
 
     # catalog-api's script waits three minutes before its first tool call: the window to look in.
