@@ -5,7 +5,7 @@ import { APP_ROOT } from '../src/config.js';
 import { ALIASES_FILE, loadScript, scriptAlias } from '../src/fake-sdk.js';
 import { readPrepareHandoff } from '../src/handoff.js';
 import { FAKE_REPEAT_MARKER, fakeRepeated } from '../src/phases.js';
-import { prTitle } from '../src/pr.js';
+import { prTitle, renderPrBody } from '../src/pr.js';
 import { ISSUE_PROMPT_VARS, ISSUE_PR_BODY_VARS, buildIssueElement, inert, loadTemplate, render, renderIssueBlock } from '../src/prompts.js';
 import { parseLastPrBody } from '../src/result.js';
 import { validate } from '../src/schemas.js';
@@ -645,6 +645,52 @@ describe('inert', () => {
     // a zero-width space of the text's own does not shield what follows it
     expect(inert('@​octocat')).toBe('@​octocat');
     expect(inert('fixes ​#1')).toBe('fixes #​1');
+    expect(inert('**bold** `code` - a list\n\n1. one')).toBe('**bold** `code` - a list\n\n1. one');
+  });
+
+  // Found by the live tier (#249), which asked GitHub. With the scheme of an address broken -
+  // all the stand-in's tests held it to - GitHub still rendered `/issues/3` as a link to issue
+  // 3, wrote "mentioned this issue" into issue 3's timeline, and listed issue 3 in the pull
+  // request's closingIssuesReferences beside the one the runner's own line names.
+  it("an issue's address closes nothing and references nothing, whichever part of it GitHub would read", () => {
+    expect(inert('resolves https://github.com/octo/shop/issues/7')).toBe('resolves https:​//github.com/octo/shop/issues/​7');
+    expect(inert('see www.example.com/2024')).toBe('see www​.example.com/​2024');
+    // every one of these is a reference on github.com by itself, in a repository's context
+    for (const form of ['/issues/7', '/pull/7', '/discussions/7', '/Issues/7', '/PULL/7', 'octo/shop/issues/7', 'octo/shop/pull/7', 'github.com/octo/shop/issues/7', '/issues/7#issuecomment-1']) {
+      const made = inert(`fixes ${form} today`);
+      expect(made, form).not.toMatch(/\/(issues|pull|discussions)\/\d/i);
+      // it reads the same: nothing was added but a character without width
+      expect(made.replace(/​/g, '')).toBe(`fixes ${form} today`);
+    }
+  });
+
+  it('a description rendered from a plan that repeats an issue holds one reference: the line the runner wrote', () => {
+    const w = makeWorld();
+    const req = issueImplementRequest(w);
+    const said = 'cc @octocat - fixes #7, closes GH-7, resolves https://github.com/octo/shop/issues/7 and /pull/8, see octo/other/issues/9';
+    req.plan = { ...req.plan!, summary: `Make greet deterministic. ${said}`, root_cause: `src/app.sh:2. ${said}`, notes: [said] };
+    const body = renderPrBody({
+      req,
+      plan: req.plan,
+      changeSummary: said,
+      files: ['src/app.sh'],
+      deviations: [said],
+      notes: [said],
+      report: { level: 'tests', steps: [], buildPassed: true, testsPassed: true, failed: null, logTail: '', honestyNote: '' },
+      costUsd: 0,
+      versions: 'test',
+      template: loadTemplate('pr-body-issue', null).text,
+    });
+    const outsideFence = body.replace(/^```+text\n[\s\S]*?\n```+$/m, '');
+    // what GitHub acts on, as the live tier found it: a mention, #n, GH-n, and /issues|pull|discussions/n
+    expect(outsideFence).not.toMatch(/(^|[^A-Za-z0-9/])@[A-Za-z0-9_]/);
+    expect(outsideFence.match(/#\d+/g)).toEqual(['#12']);
+    expect(outsideFence).not.toMatch(/GH-\d/i);
+    expect(outsideFence.match(/\/(?:issues|pull|discussions)\/\d+/gi)).toEqual(['/issues/12']);
+    expect(outsideFence.match(/\S+:\/\/\S+/g)).toEqual(['https://github.com/octo/shop/issues/12']);
+    expect(body.match(/^Closes octo\/shop#12$/gm)).toHaveLength(1);
+    // and the title, which GitHub reads the same way
+    expect(prTitle(req, { ...req.plan, summary: 'Fixes /issues/7 for @octocat.' })).toBe('fix: fixes /issues/​7 for @​octocat');
   });
 });
 

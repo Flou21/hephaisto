@@ -134,13 +134,33 @@ function behindPreamble(template: TemplateName, tag: string, placeholder: string
 
 /**
  * Text a model wrote, for a pull request that closes an issue anybody could have opened. It
- * stays markdown - a root cause names `path:line` in code spans - but a zero-width space after
- * every `@` before a name and every `#` before a digit means it notifies nobody and, in a body
- * that GitHub reads for closing keywords, closes nothing: the one `Closes` in that body is the
+ * stays markdown - a root cause names `path:line` in code spans - but a zero-width space sits
+ * wherever GitHub would otherwise act on it, so that it notifies nobody and, in a body that
+ * GitHub reads for closing keywords, closes nothing: the one `Closes` in that body is the
  * runner's own line.
+ *
+ * Where, and each of them asked of github.com (scripts/e2e/github-live.sh, L01 - the first
+ * three were assumed for a stage and the last was missing; a model that repeated "resolves
+ * https://github.com/o/r/issues/3" closed issue 3):
+ *
+ *   @name            after the @: a mention, and a notification
+ *   #12, GH-12       after the # or the hyphen: a reference, and with "fixes" before it a close
+ *   https://, www.   inside the scheme and after www: no address is a link
+ *   /12              after every slash before a digit. GitHub reads `/issues/12`, `/pull/12`
+ *                    and `/discussions/12` as references BY THEMSELVES - no scheme, no host,
+ *                    in any case of letters - and `owner/repo/issues/12` as one in another
+ *                    repository. Breaking the scheme alone leaves all of them standing.
+ *
+ * The agent's counterpart for a comment on an issue is IssueComments.Neutralise.
  */
 export function inert(text: string): string {
-  return text.replace(/\u200b/g, '').replace(/@(?=[A-Za-z0-9_])/g, '@\u200b').replace(/(#|\bGH-)(?=\d)/gi, '$1\u200b');
+  return text
+    .replace(/\u200b/g, '')
+    .replace(/@(?=[A-Za-z0-9_])/g, '@\u200b')
+    .replace(/(#|\bGH-)(?=\d)/gi, '$1\u200b')
+    .replace(/:\/\//g, ':\u200b//')
+    .replace(/(\bwww)(?=\.)/gi, '$1\u200b')
+    .replace(/\/(?=\d)/g, '/\u200b');
 }
 
 /** For a ```json fence: JSON with every backtick escaped (only possible inside strings), so no value can close the fence. */
