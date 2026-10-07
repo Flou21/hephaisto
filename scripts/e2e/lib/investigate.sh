@@ -114,25 +114,10 @@ iv_latest_investigation() { iv_incident "$1" | jq -c '.investigations | sort_by(
 
 iv_is_running() { [ "$(iv_incident "$1" | jq -r '.inProgress != null')" = true ]; }
 
-# An incident whose last investigation proposed an action waits for a person's answer, and
-# cannot be investigated again until it has one (409, "AwaitingApproval -> Investigating").
-# Whether an investigation proposes one is the in-process model's to decide - I1 runs a real
-# model, and on 2026-10-07 it proposed RollbackDeployment for shop-api where the run before had
-# proposed nothing, and I9 was red on the refusal. The harness gives the answer a person would
-# give a fixture: no. Everything it prints goes to stderr; callers capture stdout.
-iv_release() {
-    local incident="$1" doc action
-    doc=$(iv_incident "$incident")
-    [ "$(jq -r '.state // empty' <<<"$doc")" = AwaitingApproval ] || return 0
-
-    for action in $(jq -r '.actions[]? | select(.state == "AwaitingApproval") | .id' <<<"$doc"); do
-        cf_post "/api/incidents/$incident/actions/$action/deny" "$(jq -cn --arg a "$CF_ACTOR" '{decidedBy:$a}')" >/dev/null
-        say "denied the action an earlier investigation proposed for $incident ($action)" >&2
-    done
-
-    _iv_released() { [ "$(iv_incident "$incident" | jq -r '.state // empty')" != AwaitingApproval ]; }
-    wait_for "incident $incident to stop waiting for an approval" 60 _iv_released >&2 || true
-}
+# An incident whose last investigation proposed an action waits for a person's answer and cannot
+# be investigated again until it has one: lib/codefix.sh, cf_release, which the code-fix suite
+# needs for the same reason.
+iv_release() { cf_release "$1"; }
 
 iv_reinvestigate() {
     iv_release "$1"
@@ -145,47 +130,10 @@ iv_is_idle() { ! iv_is_running "$1"; }
 # scenario that starts one waits for its incident to be idle first.
 iv_wait_idle() { wait_for "incident $1 to be idle" "${2:-1500}" iv_is_idle "$1" >&2 || true; }
 
-# Whether anything in the chaos namespace is being investigated, or an investigator Job runs.
-iv_busy() {
-    [ "$(kc -n "$CF_CODER_NS" get jobs -l "app.kubernetes.io/name=$IV_LABEL" -o json 2>/dev/null \
-        | jq '[.items[] | select((.status.active // 0) > 0)] | length')" != 0 ] && return 0
-    cf_get "/api/incidents?state=open&limit=200" | jq -e --arg ns "$CF_CHAOS_NS" '
-        [ .[] | select(.namespace == $ns and (.state == "Detected" or .state == "Triaging" or .state == "Investigating")) ]
-        | length > 0' >/dev/null
-}
-
-# Waits until nothing is being investigated and has not been for IV_QUIET seconds.
-#
-# There is ONE investigator Job slot, and a scenario that needs it - to see its own Job run, or
-# to hold it on purpose - cannot share it with an investigation nobody asked for. A fixture that
-# was just brought up gets several of those, minutes apart, and iv_wait_idle on the scenario's
-# own incident sees none of them:
-#
-#   - the watcher's incident, under the Deployment, investigated at once;
-#   - the incident of the alert that names the pod (KubePodCrashLooping), filed under that pod
-#     by design, about two minutes later;
-#   - and, when an incident of the same workload was CLOSED BY A PERSON in the last 24 hours -
-#     which is what cleaning up after a run does - a third: the Deployment-level alert
-#     (KubeDeploymentReplicasMismatch) reopens that closed one (Ingest:ReopenWindow) although
-#     an incident for the workload is already open, and it is investigated again.
-#
-# On 2026-10-07 the third one's three-minute Job took the slot nineteen seconds before I8
-# asked for it, and was three seconds from done when I9 did; both then ran in-process and both
-# scenarios were red. Run 1 of four on 2026-10-06 failed the same two the same way. The window
-# is for the next of these arriving just after the last one ended.
-#   iv_wait_quiet [timeout]
-iv_wait_quiet() {
-    local timeout="${1:-1800}" need="${IV_QUIET:-45}" quiet=0 waited=0
-    printf '  waiting for nothing else to be investigating ' >&2
-    while [ "$waited" -lt "$timeout" ]; do
-        if iv_busy; then quiet=0; printf '.' >&2; else quiet=$((quiet + 5)); fi
-        if [ "$quiet" -ge "$need" ]; then printf ' ok (%ss)\n' "$waited" >&2; return 0; fi
-        sleep 5
-        waited=$((waited + 5))
-    done
-    printf ' timeout after %ss\n' "$timeout" >&2
-    return 1
-}
+# Nothing else is investigating, and has not been for a while: lib/codefix.sh, cf_wait_quiet,
+# which says what a fixture's several incidents do to the one Job slot.
+iv_busy() { cf_busy; }
+iv_wait_quiet() { cf_wait_quiet "$@"; }
 
 # Re-investigates and waits for the new investigation to be written. Prints its JSON; empty on
 # timeout. The count is read before the request so an investigation that finishes between the
