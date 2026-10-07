@@ -133,11 +133,14 @@ function behindPreamble(template: TemplateName, tag: string, placeholder: string
 }
 
 /**
- * Text a model wrote, for a pull request that closes an issue anybody could have opened. It
- * stays markdown - a root cause names `path:line` in code spans - but a zero-width space sits
- * wherever GitHub would otherwise act on it, so that it notifies nobody and, in a body that
- * GitHub reads for closing keywords, closes nothing: the one `Closes` in that body is the
- * runner's own line.
+ * Text a model wrote, for a pull request - one that closes an issue anybody could have opened,
+ * and one for an incident alike (pr.ts: an incident's description and title were not treated
+ * until v0.14.0, and a model that repeats "fixes #12" from a log line closes issue 12 on merge
+ * whatever the pull request is for). It stays markdown - a root cause names `path:line` in code
+ * spans - but a zero-width space sits wherever GitHub would otherwise act on it, so that it
+ * notifies nobody and, in a body that GitHub reads for closing keywords, closes nothing: the
+ * one `Closes` in an issue's description is the runner's own line, and is not passed through
+ * this.
  *
  * Where, and each of them asked of github.com (scripts/e2e/github-live.sh, L01 - the first
  * three were assumed for a stage and the last was missing; a model that repeated "resolves
