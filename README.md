@@ -154,6 +154,7 @@ Being precise about this matters, because the difference is the whole safety arg
 | Runbook memory, OIDC approval identity, in-card approval | not built |
 | A written design language, one token set, visual regression baselines | **works** |
 | An MCP endpoint a coding agent or an MCP gateway can ask about incidents | **works**, against a gateway with tool search and a real model locally |
+| A GitHub issue assigned to Hephaisto's account: planned, the plan answered on the issue, a draft pull request that closes it (v0.14.0) | **works against a stand-in, and against a sandbox repository on github.com** with a scripted model; no real model has planned an issue in a test, and nothing has merged one of its pull requests on github.com |
 
 **The wording of each row is chosen, not casual.** Detection, investigation and diagnosis are
 measured against a real cluster over ten seeded scenarios. The delivery path was measured in
@@ -464,7 +465,8 @@ and the click is recorded as the team's member list names that person.
 | `POST /api/incidents/{id}/feedback` | mark a diagnosis right or wrong |
 | `GET /api/status` | mode, budgets, kill-switch arms |
 | `GET /api/version` | the running version and commit; touches no database |
-| `GET /api/codefixes`, `/counts`, `/mode` | code-fix attempts, running and waiting counts, the code-fix mode |
+| `GET /api/codefixes`, `/counts`, `/mode` | code-fix attempts - an incident's, or one for a GitHub issue (`workItemId`, `issue`, `issueUrl`; `incidentId` is then null) - the running and waiting counts, the code-fix mode |
+| `GET /api/codefixes/{attemptId}` | one attempt by its own id, with what it is for: `attempt`, `workItem` (null for an incident's) and `mode`. `decidedThrough` on an attempt says through what its plan was answered: `Ui`, `Api`, `Oidc`, `GitHub` |
 | `GET /api/incidents/{id}/codefix` | an incident's code-fix attempts and its latest verdict |
 | `POST /api/incidents/{id}/codefix` | ask for a code fix (approver policy) |
 | `POST /api/incidents/{id}/codefix/{attemptId}/approve`, `/deny` | decide on a plan (approver policy; approve needs mode `Pr`) |

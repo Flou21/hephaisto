@@ -33,6 +33,16 @@ containers ([#116](backlog.md#116)), so the container the model runs in is hande
 no NuGet token. It changes the pod of every code-fix and every investigation Job, and needs the
 coder image of the same version.
 
+`v0.14.0` is built and goes into release candidates from 2026-10-07. **A GitHub issue is work
+Hephaisto can be handed**: an issue assigned to its account is planned by the Job that plans an
+incident's code fix, the plan is posted and answered on the issue, and the draft pull request
+that follows closes it. All six stages are built and nothing is on unless `github.enabled` is
+set. The twelve scenarios against a GitHub stand-in are green on the dev cluster at this state;
+the four against github.com were green when stage 2.6 ran them, the day the last stage was
+built, and are run again before a candidate is tagged. See [v0.14.0](#v0140--a-github-issue-is-work-hephaisto-can-be-handed). It stacks on
+v0.13.0, which is itself not released yet; neither is until a candidate has run on the
+production install.
+
 Everything released is written up in [`roadmap-archive.md`](roadmap-archive.md): each milestone
 from v0.1.0 to v0.12.0 as it was planned and as it turned out, the release-by-release record
 that used to stand here, and the menu of later ideas, which are issues now.
@@ -122,13 +132,16 @@ pod, through the egress proxy**: the next plan production starts is that measure
 
 ---
 
-## Next — a more direct way to talk to Hephaisto
+<a id="next--a-more-direct-way-to-talk-to-hephaisto"></a>
 
-**v0.14.0: a GitHub issue is work Hephaisto can be handed.** Decided by the owner on 2026-10-06.
-Until now the only way in is an alert. An issue assigned to Hephaisto's GitHub account becomes a
-work item, and the Jobs that plan and implement a code fix for an incident do the same for it:
-a plan, an approval, a draft pull request that closes the issue. The plan is posted on the issue
-and approved there, which is the direct way to talk to it that this section promised.
+## v0.14.0 — A GitHub issue is work Hephaisto can be handed
+
+Decided by the owner on 2026-10-06 as the "more direct way to talk to Hephaisto" this file had
+named as next - the heading this section had until it was built, and the anchor above keeps the
+links to it in the frozen backlog working. Until now the only way in was an alert. An issue assigned to Hephaisto's GitHub
+account becomes a work item, and the Jobs that plan and implement a code fix for an incident do
+the same for it: a plan, an approval, a draft pull request that closes the issue. The milestone
+is [#243](https://github.com/Flou21/hephaisto/issues/243).
 
 What was decided, each by the owner:
 
@@ -143,20 +156,75 @@ What was decided, each by the owner:
   project's own backlog is the first thing it can be handed. Done on 2026-10-06: 165 entries and
   22 items from this file, 187 issues.
 
-What the code says about it, so the building starts from there:
+### What ships
 
-- **A code fix belongs to an incident at every layer.** `code_fix_attempts.incident_id` is not
-  nullable, the coordinator loads the incident in every method, the request to the Job requires
-  an incident and findings, and the prompts, the pull request's title and its body speak of one.
-- **The agent has never talked to GitHub.** Only the coder Job does, with `git` and `gh`; the
-  agent holds no GitHub credential, and nothing reads a pull request after it is opened.
-- **No test reaches github.com.** Git is a server in the cluster, `gh` is a script, the model is
-  a script. That stays the everyday tier, with a GitHub stand-in beside the Teams one; a second
-  tier runs the real `gh` and a real token against a sandbox repository before a candidate, which
-  [`verification.md`](verification.md) has claimed since v0.9.0 and nothing did.
+| Stage | Item | Issue | State |
+|---|---|---|---|
+| 2.1 | **A GitHub stand-in and an issues suite, red before any code.** The REST subset the agent uses, with controls to open, assign, comment as a named account, merge, and fail on demand; twelve scenarios written first and listed as known red | [#244](https://github.com/Flou21/hephaisto/issues/244) | built |
+| 2.2 | **Hephaisto asks GitHub which issues are assigned to it.** A typed client, the agent's own token and Secret, a level-triggered poller, the `WorkItem`, `github` among the dependencies | [#245](https://github.com/Flou21/hephaisto/issues/245) | built |
+| 2.3 | **A code fix without an incident.** An attempt has one subject, an incident or a work item; contract version 2 for the Job; the plan is a comment on the issue | [#246](https://github.com/Flou21/hephaisto/issues/246) | built |
+| 2.4 | **A plan is approved on the issue, and the pull request closes it.** `/approve` and `/reject <reason>` by account number; the draft pull request says `Closes owner/repo#n` and is followed until it is merged or closed | [#247](https://github.com/Flou21/hephaisto/issues/247) | built |
+| 2.5 | **Work items in the console, the MCP endpoint and notifications.** A page per attempt and a list of work items; `list_work_items`, `get_work_item` and the code-fix tools for both kinds; the three code-fix notifications; a counter for commands | [#248](https://github.com/Flou21/hephaisto/issues/248) | built |
+| 2.6 | **The first run against real GitHub.** A sandbox repository, the real bot account and its two tokens, the real `gh`, the agent's client through the egress proxy; what it found is fixed in this release | [#249](https://github.com/Flou21/hephaisto/issues/249) | built |
 
-It gets its "Done when" as scenarios before it gets code, as v0.10.0 and v0.11.0 did. The
-milestone is [#243](https://github.com/Flou21/hephaisto/issues/243), and its six stages are the issues it lists.
+Stage 2.6 was built before 2.5, and found the last thing 2.5 fixed: the description of an
+**incident's** pull request carried a model's words as written, so a model repeating "fixes" and
+an issue's number from a log line would have closed that issue. It is made inert now, as an
+issue's was.
+
+### Done when
+
+Each sentence is a scenario, written before the code it holds. Against the GitHub stand-in on the
+dev cluster, `scripts/e2e/issues-local.sh --strict`:
+
+- **G01** an assigned issue is planned by one Job, and the plan is a comment on the issue - and,
+  since stage 2.5, a person a notification route names is told.
+- **G02** an unassigned issue and one in a repository that is not listed are ignored, beside an
+  assigned one that is not.
+- **G03** `/approve` from an approver starts exactly one implementing Job: the branch is pushed,
+  and the pull request says `Closes`.
+- **G04** `/approve` from anybody who is not an approver changes nothing, and is answered once.
+- **G05** `/reject <reason>` ends the attempt as denied, with the reason.
+- **G06** unassigning the bot cancels the running Job.
+- **G07** an issue body that gives orders stays data, and an edit after the snapshot is not
+  picked up.
+- **G08** an agent restart while an issue is being planned leaves exactly one attempt.
+- **G09** GitHub answering 500 or a rate limit is a degraded dependency that recovers: no crash,
+  no duplicate work.
+- **G10** comments are capped: one status comment edited in place, and never more than a fixed
+  number on an issue.
+- **G11** a merged pull request ends the work item.
+- **G12** with the code-fix mode off or at plan, `/approve` is refused and says why.
+
+And against github.com itself, `scripts/e2e/github-live.sh`, before a candidate:
+
+- **L01** an issue assigned to the bot is planned, approved in a comment and becomes a draft
+  pull request that closes it.
+- **L02** `/reject <reason>` by the approver ends the attempt as denied, with the reason, and
+  nothing is pushed.
+- **L03** unassigning the bot while the plan waits takes the issue back, and a later `/approve`
+  changes nothing.
+- **L04** what was only assumed of GitHub: an unchanged poll is a 304 through the proxy, and
+  text Hephaisto repeats mentions nobody and references nothing.
+
+The surfaces of stage 2.5 are held below the scenarios: the console by `scripts/e2e/ui`
+(`codefix.spec.ts`, `workitems.spec.ts`), the MCP tool list by the pager suite's P30 against
+`scripts/e2e/mcp/tools.golden.json` and its two new tools by P44.
+
+### What is explicitly not in v0.14.0
+
+- **A webhook** ([#250](https://github.com/Flou21/hephaisto/issues/250)). Hephaisto polls; a new
+  assignment is seen within `github.pollInterval`.
+- **The issues suite in GitHub Actions** ([#251](https://github.com/Flou21/hephaisto/issues/251)).
+  It runs on the dev cluster: its seed is a context repository that is private.
+- **Replanning from a comment** ([#252](https://github.com/Flou21/hephaisto/issues/252)). A plan
+  is approved or rejected; to have another, the issue is handed over again.
+- **"Merged is done", on github.com.** The live tier never merges - its sandbox's `main` has to
+  stay where the scripted fix applies - so that a merge ends the work item is G11's, against the
+  stand-in.
+- **A real model on the issue templates.** Every automated run plans with a scripted model. What
+  a model makes of an issue's text, and whether the prompts hold it to the plan, is measured on
+  the first issues a person hands it.
 
 ---
 

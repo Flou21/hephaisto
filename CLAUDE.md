@@ -396,8 +396,8 @@ why it is a value and not a default: this stack's collector writes `k8s_namespac
 `WorkItem` (`src/Hephaisto.Agent/GitHub/`, `src/Hephaisto.Agent/WorkItems/`, table `work_items`).
 Built: the client, the poller, the work item, `github` in `/api/status` (#245); a code fix
 without an incident (#246) - a taken work item gets ONE attempt, the plan Job runs for it, and
-the plan is a comment on the issue; and the answer on the issue, the pull request followed to
-its end, `Done` (#247). Not yet (#248): the console, MCP and notifications for a work item.
+the plan is a comment on the issue; the answer on the issue, the pull request followed to
+its end, `Done` (#247); and the console, MCP and notifications for a work item (#248).
 Five things to know about the poller:
 
 - **The poller is level-triggered: no queue, no retry state.** A pass states what should be true
@@ -420,8 +420,8 @@ And five about an attempt that is for a work item (`GitHubIssuePoller.Work.cs`,
 - **An attempt has exactly one subject**, `IncidentId` or `WorkItemId` - a check constraint, and
   one partial unique index each. Everything after the start asks `CodeFixSubject`, never
   `attempt.IncidentId`: a new path that loads `db.Incidents.First(...)` for an attempt throws for
-  every issue. Surfaces that are keyed on an incident (MCP `list_code_fixes`, the Teams board,
-  the notification routes) leave a work item's attempt out on purpose until #248.
+  every issue. Since #248 every surface shows both kinds - except the Teams BOARD, which stays a
+  board of incidents on purpose.
 - **One attempt per work item, ever.** A failed, denied, expired or cancelled one is not followed
   by another; handing the issue over again is a new work item. "Not now" (a cap, a switch) is no
   attempt at all: it is asked again on every pass and written down - audit row,
@@ -466,30 +466,57 @@ And five about an answer on the issue and the pull request (`GitHubIssuePoller.A
   `StillAssigned`, and its issue is not taken again until one complete list did not hold it -
   remove that and a merged issue GitHub did not close is planned again on every pass, for ever.
 
-What the stage after it (#248: console, MCP, notifications for a work item) starts from:
+And five about where a work item shows besides its issue (#248: `Components/Pages/CodeFixDetail.razor`,
+`Pages/WorkItems.razor`, `Mcp/McpIncidentReader.WorkItems.cs`, `CodeFix/CodeFixNotifier.cs`):
 
-- **Nothing announces a work item's attempt** but its issue: no outbox row, no Teams card, no
-  MCP row (`list_code_fixes` and `get_code_fix` still refuse one). `CodeFixNotifier.Enlist` is
-  only called for an incident (`CodeFixCoordinator.Notify`).
-- **The API has what a page needs**: `GET /api/workitems[/{id}]` with `state`, `stateReason`,
-  `stillAssigned`, `declineReason` and `attempts`; a `CodeFixAttemptView` carries `prBody`,
-  `planCommentId`, `approvedBy` (`github:<login>`) - but not `ApprovalSource`, `CommandAnswers`
-  or `CommandCommentId`, which are columns only. `prBody` and a rejection's reason are text a
-  model or a stranger had a hand in: render them as text.
-- **`hephaisto.workitems.closed`** carries `state` and `reason`; there is no metric for a
-  command yet. `workitem.command`, `workitem.done` are audit types with no incident id, like
-  the others of a work item.
+- **An attempt has a page of its own**, `/codefixes/{id}`, for both kinds; `/workitems` lists
+  what was taken. The plan is ONE component, `CodeFixPlan.razor`, used by that page and by the
+  incident page's `CodeFixSection` - change the plan's rendering there and nowhere else. Why
+  approve is unavailable is `CodeFixDoor.BlockedBecause`, also shared; the guard is still the
+  coordinator's, by the attempt's subject (`DecideAsync` or `DecideForWorkItemAsync`).
+- **Somebody else's text is text.** An issue's title, a plan, `prBody` and a rejection's reason
+  are a stranger's, a model's or an approver's. Razor's encoding only: never `MarkupString`,
+  never a markdown renderer, never a link built from them. An address becomes a link only
+  through `Display.HttpUrl`. `codefix.spec.ts` compares `textContent` with the stored string
+  and counts the elements inside: none.
+- **The history is the row's own timestamps** (`CodeFixHistory.Of`), not an audit query - a work
+  item's audit rows carry no incident id to be found by. That is why `Deny` records
+  `ApprovalSource` now: "through what" for a denial was only in its audit row.
+- **A work item's notification has no incident, and invents none.** `CodeFixNotifier.Enlist`
+  has an overload per subject. The work item's snapshot leaves `IncidentId`, kind, namespace,
+  cluster and labels empty and the severity at `Info`, so only an UNSCOPED route that lists the
+  event takes it - the router is unchanged, do not teach it about work items. Its link is the
+  attempt's page (`NotificationLinks.For`, `NotificationMessage.CodeFixUrl`). On a card its
+  title and summary are TextRuns (`Plain`), never TextBlocks: a TextBlock renders markdown.
+- **MCP: two reads, no write.** `list_work_items` and `get_work_item` are in
+  `McpWorkItemTools`; `list_code_fixes` and `get_code_fix` show both kinds, and a row names
+  `incidentId` OR `workItemId`/`issue`. `issue` is the one `[ServerAuthored]` string there - a
+  validated repository name and a number; everything else of an issue is `McpText`. A third
+  partial file of the reader means `McpToolSurfaceTests.The_reader_writes_nothing` has to read
+  it, and it counts the files so that a fourth cannot be forgotten.
+
+And three smaller ones:
+
+- **`hephaisto.workitems.commands`** (`verb`, `outcome`) counts a command where its comment is
+  put behind the cursor - once. `hephaisto.workitems.closed` carries `state` and `reason`.
+  `workitem.command` and `workitem.done` are audit types with no incident id.
 - **The stand-in's pull requests are numbered by the `gh` shim, from 1 in every Job.** A
   scenario that merges one has to `gh_pr_forget` it (G11), or the next one is found merged.
 - **A commit message is the one text nobody neutralises.** A closing keyword there closes an
-  issue on merge; the implement prompt forbids it and nothing checks.
+  issue on merge; the implement prompt forbids it and nothing checks. A pull request's
+  description and title ARE made inert, for an incident as for an issue (`coder/src/pr.ts`).
 
 The agent's token is `secrets.github`, a Secret of the agent's namespace - never the coder's
 `hephaisto-codefix`, which it still cannot read. Locally: `"github": "stand-in"` layers
 `charts/hephaisto/values-dev-github.yaml`; `curl "http://$H:8100/api/workitems?state=any"` and
 `curl http://$H:8110/github/control/state` show both sides, and `scripts/e2e/issues-local.sh`
 is how a change here is accepted (`scripts/e2e/README.md`; `issues/KNOWN_RED` lists
-nothing since #247, and a new scenario may land there). The `github` row follows the poller by
+nothing since #247, and a new scenario may land there). G12 lowers the code-fix switch and
+does not end before the MODE is back - the ConfigMap reaches the agent through a volume, up to
+a minute after the key was put back. G01 also holds that a plan for an issue
+reached a person's chat on the Teams stand-in, when the install routes `CodeFixPlanReady` to
+the bot. `values-dev-github.yaml` raises `notifications.maxPerChannelPerHour` to the pager
+suite's 1000 - it is layered AFTER `values-pager.yaml`, so nothing in it may be lower. The `github` row follows the poller by
 up to a minute: it is served from `ConnectionHealthCache`. A plan is answered by hand with
 `curl -X POST "http://$H:8110/github/control/repos/<owner>/<repo>/issues/<n>/comments" -H 'content-type: application/json' -d '{"body":"/approve","login":"maintainer","id":1001}'`
 (1001 is the approver `values-dev-github.yaml` names), or through the API as before:
@@ -597,6 +624,12 @@ scripts/e2e/pager-local.sh --list           # what exists, and what is known red
 - **The stand-in's image is a fixed tag.** After changing `infra/e2e/notification-receiver`,
   `kubectl -n hephaisto-obs rollout restart deploy/teams-stand-in`; pager-local.sh refuses a
   stand-in that predates the model.
+- **Run it LAST when the chaos fixtures are up, or wait an hour after it.** Its values set
+  `incidents.healedAfter` to 20 seconds, and a crash-looping `shop-api` or `catalog-api` looks
+  healed between two crashes: on 2026-10-07 a fifteen-minute run opened four incidents for
+  `shop-api` and five for `catalog-api`. `codefix-local.sh` started a minute later found c15
+  flap-suppressed (`Ingest:FlapThreshold` 3 in an hour) and failed with "no primary finding".
+  Nothing clears that but the hour.
 
 ## The console has a design language, as of v0.4.0
 

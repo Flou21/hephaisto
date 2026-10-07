@@ -40,6 +40,15 @@ A route naming a channel you have not configured is **refused at startup** rathe
 delivering nowhere. A route with no events, an unknown event, or an invalid severity is a chart
 render failure.
 
+## An event without an incident
+
+A code fix for a [GitHub issue](/operate/github-issues) announces the same three events an
+incident's does — `CodeFixPlanReady`, `CodeFixPrOpened`, `CodeFixFailed` — and has no incident
+behind it: no severity, no namespace, no cluster, no kind, no labels. A route owns it only when it
+is scoped by none of those and asks for no `minSeverity` above `Info`; a fallback route, which is
+for incidents nobody else owns, does not. The same rule `ModeChanged` and `PolicyChanged` have
+always lived by, for their scope.
+
 ## Why the outbox exists
 
 `IIncidentNotifier` is an in-process channel that drops on overflow by design — right for nudging a

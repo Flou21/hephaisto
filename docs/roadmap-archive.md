@@ -32,7 +32,7 @@ runs were green. The cluster gates (`run.sh --nightly --full --mode Auto`,
 
 What came next was the three items carried over, which are [v0.13.0](roadmap.md#v0130--what-v0120-left-open).
 After it, as decided on 2026-10-06: [a more direct way to talk to
-Hephaisto](roadmap.md#next--a-more-direct-way-to-talk-to-hephaisto). The louder channel and install
+Hephaisto](roadmap.md#v0140--a-github-issue-is-work-hephaisto-can-be-handed). The louder channel and install
 ergonomics, which stood here until then, are [not planned for now](roadmap.md#not-planned-for-now).
 
 `v0.8.0` shipped on 2026-09-13. **An on-call engineer can actually use it.** The agent diagnosed

@@ -339,7 +339,12 @@ collects a Job, the comment by the poller's next pass, and the attempt names it 
 once it is there. Since stage 2.4 (#247) nothing is ASSUMED: a plan is answered on the issue, the
 pull request's body is `prBody` on the attempt (`issues_pr_body` reads it there - the Job's pod is
 gone when a scenario looks), a merged pull request is `Done`, and G03 to G06 and G10 to G12 are
-green. `KNOWN_RED` lists nothing, so a plain run and `--strict` are the same.
+green. `KNOWN_RED` lists nothing, so a plain run and `--strict` are the same. Since stage 2.5
+(#248) G01 also reads the Teams stand-in: a plan for an issue is announced through the outbox,
+and where the install routes `CodeFixPlanReady` to the Teams bot - the dev values do, with
+`"teams-bot": "stand-in"` - one message per recipient's chat names the issue by its reference,
+says where the plan is answered and links the attempt's page (`issues_route_takes`,
+`issues_teams_alerts`). An install without that route skips the block and says why.
 
 What the bot writes on an issue is one status comment per work item, edited in place as the work
 moves, and one comment per attempt with its plan - and, only when somebody answered a plan and
@@ -356,7 +361,10 @@ All scenarios work in one repository, and each is an attempt on it. `values-dev-
 20 a day, which two runs of this suite beside the incident suites would use up - reported as "no
 plan for the issue: 20 attempts on this repository today (cap 20)" on the issue and in
 `declineReason`. `values-dev-github.yaml` therefore raises `codeFix.budgets.attemptsPerRepositoryPerDay`
-to 500, for the stand-in only.
+to 500, for the stand-in only - and, since every work item's code fix is announced,
+`notifications.maxPerChannelPerHour` to 1000: a run is about thirty messages on the one channel,
+and the chart's sixty an hour would have the second run within the hour suppress them, with every
+incident's message of whatever suite ran beside it.
 
 **The agent is pointed at the stand-in by a values file**, `charts/hephaisto/values-dev-github.yaml`,
 which the Tiltfile layers for `"github": "stand-in"`: the stand-in's URL, its bot's login, the one
