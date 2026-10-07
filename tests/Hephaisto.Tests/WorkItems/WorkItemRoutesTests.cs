@@ -60,4 +60,16 @@ public sealed class WorkItemRoutesTests
         workItems.Where(e => Verb(e) == "GET").Should().OnlyContain(e => Policy(e) == null);
         workItems.Where(e => Verb(e) != "GET").Should().HaveCount(2).And.OnlyContain(e => Policy(e) == AuthenticationExtensions.ApprovePolicy);
     }
+
+    [Fact]
+    public void OneAttemptByItsOwnId_IsARead_WhateverItIsFor()
+    {
+        // GET /api/codefixes/{attemptId} (#248): the one address an attempt for an issue has in
+        // the API besides its work item's. A read like the list beside it - and a guid, so it
+        // can never be taken for /counts or /mode.
+        var attempt = Routes().Should().ContainSingle(e => e.RoutePattern.RawText == "/api/codefixes/{attemptId:guid}").Subject;
+
+        Verb(attempt).Should().Be("GET");
+        Policy(attempt).Should().BeNull();
+    }
 }

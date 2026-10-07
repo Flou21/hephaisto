@@ -26,6 +26,10 @@ public static class CodeFixEndpoints
         app.MapGet("/api/codefixes/counts", CountsAsync).WithName("CountCodeFixes");
         app.MapGet("/api/codefixes/mode", ModeAsync).WithName("CodeFixMode");
 
+        // One attempt by its own id, whatever it is for (v0.14.0): the incident's attempt that
+        // /api/incidents/{id}/codefix lists, or a work item's, which has no incident to list it.
+        app.MapGet("/api/codefixes/{attemptId:guid}", AttemptAsync).WithName("GetCodeFix");
+
         var incident = app.MapGroup("/api/incidents/{id:guid}/codefix");
 
         incident.MapGet("", ForIncidentAsync).WithName("GetIncidentCodeFix");
@@ -61,6 +65,9 @@ public static class CodeFixEndpoints
 
     private static async Task<Ok<CodeFixModeView>> ModeAsync(CodeFixQueries queries, CancellationToken ct) =>
         TypedResults.Ok(await queries.ModeAsync(ct));
+
+    private static async Task<Results<Ok<CodeFixAttemptDetail>, NotFound>> AttemptAsync(Guid attemptId, CodeFixQueries queries, CancellationToken ct) =>
+        await queries.AttemptAsync(attemptId, ct) is { } detail ? TypedResults.Ok(detail) : TypedResults.NotFound();
 
     private static async Task<Ok<IncidentCodeFixView>> ForIncidentAsync(Guid id, CodeFixQueries queries, CancellationToken ct) =>
         TypedResults.Ok(await queries.ForIncidentAsync(id, ct));

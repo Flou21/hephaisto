@@ -23,6 +23,59 @@ namespace Hephaisto.Tests.Design;
 /// </remarks>
 public class DisplayVocabularyTests
 {
+    /// <summary>
+    /// A work item's three states (v0.14.0): each has a glyph, a word and a class of its own,
+    /// because state is never colour alone - and an unnamed state falls through to "?".
+    /// </summary>
+    [Fact]
+    public void The_work_item_vocabulary_covers_every_state()
+    {
+        var states = Enum.GetValues<WorkItemState>();
+
+        foreach (var state in states)
+        {
+            Display.WorkItemGlyph(state).Should().NotBe("?");
+            Display.WorkItemWord(state).Should().NotBe("unknown");
+            Display.WorkItemClass(state).Should().StartWith("st-");
+        }
+
+        states.Select(Display.WorkItemGlyph).Should().OnlyHaveUniqueItems();
+        states.Select(Display.WorkItemWord).Should().OnlyHaveUniqueItems();
+    }
+
+    /// <summary>Through what a plan was answered: every source a person can decide through has words.</summary>
+    [Fact]
+    public void Every_way_a_plan_is_answered_has_words_and_nothing_else_does()
+    {
+        Display.DecidedThrough(ApprovalSource.Ui).Should().Be("the console");
+        Display.DecidedThrough(ApprovalSource.GitHub).Should().Be("a comment on the issue");
+        Display.DecidedThrough(ApprovalSource.Api).Should().NotBeNull();
+        Display.DecidedThrough(ApprovalSource.Oidc).Should().NotBeNull();
+        Display.DecidedThrough(ApprovalSource.Teams).Should().NotBeNull();
+
+        Display.DecidedThrough(ApprovalSource.NotApplicable).Should().BeNull();
+        Display.DecidedThrough(ApprovalSource.Auto).Should().BeNull("a model's plan is never approved by policy");
+        Display.DecidedThrough(null).Should().BeNull();
+    }
+
+    /// <summary>
+    /// An issue's address becomes a link only when it is an absolute http(s) address: it is
+    /// whatever the API that was asked said, and a javascript: address is an address too.
+    /// </summary>
+    [Theory]
+    [InlineData("https://github.com/octo/shop/issues/12", true)]
+    [InlineData("http://github-stand-in.hephaisto-obs:8080/octo/shop/issues/12", true)]
+    [InlineData("javascript:alert(1)", false)]
+    [InlineData("data:text/html,<script>alert(1)</script>", false)]
+    [InlineData("/octo/shop/issues/12", false)]
+    [InlineData("github.com/octo/shop", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void Only_an_absolute_http_address_is_ever_a_link(string? url, bool linked)
+    {
+        (Display.HttpUrl(url) is not null).Should().Be(linked);
+    }
+
     private static readonly Regex Arm =
         new("""^\s*[A-Za-z_][A-Za-z0-9_]*\.([A-Za-z_][A-Za-z0-9_]*)\s*=>\s*"([^"]*)"\s*,""",
             RegexOptions.Compiled | RegexOptions.Multiline);

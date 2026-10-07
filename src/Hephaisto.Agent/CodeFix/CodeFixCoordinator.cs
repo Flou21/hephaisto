@@ -673,7 +673,7 @@ public sealed class CodeFixCoordinator(
         }
         else
         {
-            machine.Deny(attempt, actor, reason);
+            machine.Deny(attempt, actor, reason, source);
         }
 
         audit.Enlist(Audit(subject, attempt.InvestigationId, attempt.Id, approve ? AuditApproved : AuditDenied, actor.Trim(),

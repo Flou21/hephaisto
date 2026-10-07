@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Hephaisto.Agent.CodeFix.Contract;
 using Hephaisto.Agent.Persistence;
+using Hephaisto.Agent.WorkItems;
 using Hephaisto.Core.CodeFix;
 using Hephaisto.Core.Domain;
 
@@ -62,6 +63,13 @@ public sealed record CodeFixAttemptView
     public bool? TestsPassed { get; init; }
     public IReadOnlyList<string> Deviations { get; init; } = [];
     public string? ApprovedBy { get; init; }
+
+    /// <summary>
+    /// Through what the plan was answered - the console (<c>Ui</c>), the API (<c>Api</c>, or
+    /// <c>Oidc</c> with a token), a comment on the issue (<c>GitHub</c>). Null while nobody has,
+    /// and for a plan denied before v0.14.0, whose row did not keep it.
+    /// </summary>
+    public ApprovalSource? DecidedThrough { get; init; }
     public string? FailureReason { get; init; }
     public required DateTimeOffset CreatedAt { get; init; }
     public DateTimeOffset? PlanStartedAt { get; init; }
@@ -101,6 +109,15 @@ public sealed record IncidentCodeFixView(
     IReadOnlyList<CodeFixAttemptView> Attempts,
     CodeFixEvaluationView? LatestEvaluation,
     CodeFixModeView Mode);
+
+/// <summary>
+/// One attempt with what it is for, as its own page and <c>GET /api/codefixes/{id}</c> show it.
+/// </summary>
+/// <param name="WorkItem">
+/// The issue the attempt is for - its title, author and text are somebody else's words - or null
+/// for an incident's attempt, whose <see cref="CodeFixAttemptView.IncidentId"/> names its page.
+/// </param>
+public sealed record CodeFixAttemptDetail(CodeFixAttemptView Attempt, WorkItemView? WorkItem, CodeFixModeView Mode);
 
 /// <summary>Read side of the code-fix stage, for the console and <c>/api</c>.</summary>
 public sealed class CodeFixQueries(
@@ -144,6 +161,25 @@ public sealed class CodeFixQueries(
             await db.CodeFixAttempts.CountAsync(a => running.Contains(a.State), ct).ConfigureAwait(false),
             await db.CodeFixAttempts.CountAsync(a => a.State == CodeFixState.PlanReady, ct).ConfigureAwait(false),
             await db.CodeFixAttempts.CountAsync(a => a.State == CodeFixState.PrOpened && a.FinishedAt >= weekAgo, ct).ConfigureAwait(false));
+    }
+
+    /// <summary>
+    /// One attempt, whichever kind of subject it has. Null when there is no such attempt.
+    /// </summary>
+    public async Task<CodeFixAttemptDetail?> AttemptAsync(Guid attemptId, CancellationToken ct)
+    {
+        var attempt = await db.CodeFixAttempts.AsNoTracking()
+            .Include(a => a.Incident)
+            .Include(a => a.WorkItem)
+            .FirstOrDefaultAsync(a => a.Id == attemptId, ct)
+            .ConfigureAwait(false);
+
+        return attempt is null
+            ? null
+            : new CodeFixAttemptDetail(
+                View(attempt),
+                attempt.WorkItem is { } item ? WorkItemQueries.View(item) : null,
+                await ModeAsync(ct).ConfigureAwait(false));
     }
 
     /// <summary>The attempts of one work item, newest first. One, until something plans an issue twice.</summary>
@@ -265,6 +301,7 @@ public sealed class CodeFixQueries(
             TestsPassed = impl?.TestsPassed,
             Deviations = impl?.Deviations ?? [],
             ApprovedBy = a.ApprovedBy,
+            DecidedThrough = a.ApprovedBy is null || a.ApprovalSource == ApprovalSource.NotApplicable ? null : a.ApprovalSource,
             FailureReason = a.FailureReason,
             CreatedAt = a.CreatedAt,
             PlanStartedAt = a.PlanStartedAt,
