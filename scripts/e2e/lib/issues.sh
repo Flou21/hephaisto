@@ -380,6 +380,40 @@ issues_done() {
 }
 
 # ---------------------------------------------------------------------------------------
+# Who else is told (stage 2.5, #248): the outbox, as the Teams stand-in received it
+# ---------------------------------------------------------------------------------------
+
+# Whether the install routes an event to the Teams bot, read off the agent's Deployment the way
+# the runner reads which GitHub it talks to. The dev values' one route lists the three code-fix
+# events and is not scoped, so with "teams-bot": "stand-in" a work item's plan is announced; an
+# install without that route announces nothing, and a scenario says so instead of failing.
+#   issues_route_takes <event>
+issues_route_takes() {
+    kc -n "$ISSUES_NS" get deploy "$ISSUES_DEPLOY" -o json 2>/dev/null \
+        | jq -e --arg e "$1" '
+            [.spec.template.spec.containers[0].env[]? | select(.name | test("^Notifications__Routes__[0-9]+__"))] as $r
+            | [$r[] | select(.name | test("__Channel$")) | select(.value == "teamsBot") | (.name | capture("Routes__(?<i>[0-9]+)__").i)] as $bot
+            | any($r[]; (.name | test("__Events__[0-9]+$")) and .value == $e
+                and ((.name | capture("Routes__(?<i>[0-9]+)__").i) as $i | $bot | index($i)))' >/dev/null
+}
+
+# Personal-chat messages the Teams stand-in received that name an attempt: a work item's card
+# links the attempt's own page, /codefixes/<attempt id>. The board is kind "channel".
+#   issues_teams_alerts <attempt-id>   -> array of {id, kind, conversation, summary, text}
+issues_teams_alerts() {
+    _issues_curl "$ISSUES_STANDIN/teams/messages" \
+        | jq -c --arg id "$1" '[.messages[] | select(.kind == "chat") | select((.activity | tostring) | contains("/codefixes/" + $id))
+            | {id, kind, conversation, summary, text: (.activity | tostring)}]'
+}
+
+# The board's cards that mention an attempt or an issue: none, ever - the board is of incidents.
+#   issues_teams_board_mentions <text>
+issues_teams_board_mentions() {
+    _issues_curl "$ISSUES_STANDIN/teams/messages" \
+        | jq --arg t "$1" '[.messages[] | select(.kind == "channel") | select((.activity | tostring) | contains($t))] | length'
+}
+
+# ---------------------------------------------------------------------------------------
 # The cluster, through common.sh's kc and nothing else
 # ---------------------------------------------------------------------------------------
 

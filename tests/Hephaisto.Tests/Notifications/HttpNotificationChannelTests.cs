@@ -151,6 +151,52 @@ public sealed class HttpNotificationChannelTests
     }
 
     [Fact]
+    public async Task A_work_items_event_carries_the_issue_and_its_own_link_and_no_incident_block()
+    {
+        var (channel, handler) = Build();
+
+        var message = new NotificationMessage
+        {
+            DeliveryId = Guid.CreateVersion7(),
+            Snapshot = GivenNotifications.WorkItemPlan(),
+            CodeFixUrl = "https://hephaisto.example/codefixes/0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c",
+        };
+
+        await channel.SendAsync(message, TestContext.Current.CancellationToken);
+
+        var json = JsonDocument.Parse(handler.Body!).RootElement;
+
+        json.GetProperty("event").GetString().Should().Be("CodeFixPlanReady");
+        json.TryGetProperty("incident", out _).Should().BeFalse();
+        json.GetProperty("title").GetString().Should().Be("The order total is null for an empty cart");
+        json.GetProperty("reason").GetString().Should().Contain("octo/shop#12");
+
+        var item = json.GetProperty("workItem");
+        item.GetProperty("id").GetGuid().Should().Be(Guid.Parse("0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"));
+        item.GetProperty("issue").GetString().Should().Be("octo/shop#12");
+        item.GetProperty("url").GetString().Should().Be("https://github.com/octo/shop/issues/12");
+
+        json.GetProperty("codeFix").GetProperty("attemptId").GetGuid().Should().Be(Guid.Parse("0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c"));
+        json.GetProperty("links").GetProperty("codeFix").GetString().Should().EndWith("/codefixes/0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c");
+        json.GetProperty("links").TryGetProperty("incident", out _).Should().BeFalse("there is no incident page to link");
+    }
+
+    [Fact]
+    public async Task An_incidents_message_carries_no_work_item_and_no_code_fix_link()
+    {
+        // The wire format of every message from before v0.14.0, unchanged: two keys that are
+        // written only when there is something in them.
+        var (channel, handler) = Build();
+
+        await channel.SendAsync(Message(), TestContext.Current.CancellationToken);
+
+        var json = JsonDocument.Parse(handler.Body!).RootElement;
+
+        json.TryGetProperty("workItem", out _).Should().BeFalse();
+        json.GetProperty("links").TryGetProperty("codeFix", out _).Should().BeFalse();
+    }
+
+    [Fact]
     public async Task A_suppressed_burst_is_counted_on_the_message_that_does_go_out()
     {
         var (channel, handler) = Build();

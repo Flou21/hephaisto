@@ -163,9 +163,37 @@ public sealed partial class WorkItemStageTests(PostgresFixture pg)
 
             (await db.AuditEvents.AsNoTracking().SingleAsync(e => e.Type == CodeFixCoordinator.AuditPlanReady, Ct)).IncidentId.Should().BeNull();
 
-            // A route takes these events, and nothing was put in the outbox: a work item is told
-            // on its issue, and a card about an incident's kind and workload has nothing to say.
-            (await db.NotificationDeliveries.CountAsync(Ct)).Should().Be(0);
+            // A route takes these events, and the plan is in the outbox (#248): one row, for a
+            // work item and for no incident, saying where it is answered. The issue is still told
+            // by the poller's comment - this row is for the people a route names.
+            var delivery = await db.NotificationDeliveries.AsNoTracking().SingleAsync(Ct);
+            var item = await db.WorkItems.AsNoTracking().SingleAsync(Ct);
+
+            delivery.Event.Should().Be(NotificationEvent.CodeFixPlanReady);
+            delivery.Channel.Should().Be("webhook");
+            delivery.IncidentId.Should().BeNull();
+            delivery.CorrelationKey.Should().Be(CodeFixNotifier.WorkItemKey(item.Id));
+            delivery.Status.Should().Be(DeliveryStatus.Pending);
+
+            var told = delivery.Snapshot;
+            told.IncidentId.Should().BeNull();
+            told.WorkItemId.Should().Be(item.Id);
+            told.CodeFixAttemptId.Should().Be(attemptId);
+            told.Title.Should().Be("The order total is null for an empty cart", "the title is the issue's");
+            told.Issue.Should().Be($"{Repo}#{issue}");
+            told.IssueUrl.Should().Be($"https://github.com/{Repo}/issues/{issue}");
+            told.Summary.Should().Contain("null check");
+            told.Reason.Should().Contain($"{Repo}#{issue}").And.Contain("/approve").And.Contain("in the console");
+
+            // Nothing of an incident, rather than something made up: no kind, no namespace, no
+            // target, no labels, and the severity at its zero.
+            told.Kind.Should().Be(default(SignalKind));
+            told.Severity.Should().Be(Severity.Info);
+            told.Namespace.Should().BeEmpty();
+            told.Cluster.Should().BeEmpty();
+            told.Target.Should().BeEmpty();
+            told.Labels.Should().BeEmpty();
+            told.State.Should().BeNull();
         }
 
         await world.Poller().PassAsync(Ct);
@@ -1261,7 +1289,7 @@ public sealed partial class WorkItemStageTests(PostgresFixture pg)
                 new NullWorkloadImageReader(),
                 new CodeFixRequestBuilder(monitor),
                 new CodeFixStateMachine(clock),
-                new CodeFixNotifier(db, notifications, new NullNotifier(), clock, NullLogger<CodeFixNotifier>.Instance),
+                new CodeFixNotifier(db, notifications, new OptionsStub<GitHubOptions>(new GitHubOptions { Approvers = Approvers }), new NullNotifier(), clock, NullLogger<CodeFixNotifier>.Instance),
                 new CodeFixMetrics(meters),
                 beforeSave is null ? new NullGlobalLlmBudget() : new InterleavingBudget(beforeSave),
                 new NullGrafanaAnnotator(),
