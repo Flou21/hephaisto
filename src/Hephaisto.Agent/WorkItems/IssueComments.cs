@@ -58,9 +58,20 @@ public sealed record IssueAttempt(
 /// <item>a backslash and both square brackets are backslash-escaped, so it holds no link, no image,
 /// no footnote and no task box;</item>
 /// <item>a zero-width space follows every <c>@</c> before a letter or digit, every <c>#</c> and
-/// <c>GH-</c> before a digit, and sits inside every <c>://</c> and after <c>www</c>: it reads the
-/// same, and it mentions nobody, references nothing and is not turned into a link.</item>
+/// <c>GH-</c> before a digit, and every <c>/</c> before a digit, and sits inside every
+/// <c>://</c> and after <c>www</c>: it reads the same, and it mentions nobody, references nothing
+/// and is not turned into a link.</item>
 /// </list>
+/// <para>
+/// <b>The slash before a digit was missing until GitHub was asked</b> (the live tier,
+/// <c>scripts/e2e/github-live.sh</c>, L04). GitHub reads <c>/issues/12</c>, <c>/pull/12</c> and
+/// <c>/discussions/12</c> as references by themselves - with no scheme and no host before them,
+/// in any case of letters - and <c>owner/repo/issues/12</c> as one in another repository. An
+/// address with only its scheme broken was still a link to the issue, and still wrote
+/// "mentioned this issue" into that issue's timeline under Hephaisto's name. What is left
+/// standing on purpose: a commit id and an advisory's id (GHSA-, CVE-) are still linked by
+/// GitHub, which notifies nobody and writes into no timeline.
+/// </para>
 /// <para>
 /// A file path is a code span, where GitHub links and notifies nothing, with its backticks
 /// taken out so it cannot end the span.
@@ -429,6 +440,7 @@ public static partial class IssueComments
 
         one = Mention().Replace(one, "@" + ZeroWidthSpace);
         one = Reference().Replace(one, "$1" + ZeroWidthSpace);
+        one = NumberedPath().Replace(one, "/" + ZeroWidthSpace);
 
         return Www().Replace(one, "$1" + ZeroWidthSpace);
     }
@@ -480,4 +492,8 @@ public static partial class IssueComments
 
     [GeneratedRegex(@"(\bwww)(?=\.)", RegexOptions.IgnoreCase)]
     private static partial Regex Www();
+
+    // /issues/12, /pull/12, /discussions/12 - and whatever GitHub comes to read the same way.
+    [GeneratedRegex(@"/(?=[0-9])")]
+    private static partial Regex NumberedPath();
 }
