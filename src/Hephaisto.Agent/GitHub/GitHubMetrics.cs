@@ -19,6 +19,7 @@ public sealed class GitHubMetrics
     private readonly Counter<long> polls;
     private readonly Counter<long> taken;
     private readonly Counter<long> closed;
+    private readonly Counter<long> commands;
 
     public GitHubMetrics(IMeterFactory meterFactory)
     {
@@ -27,6 +28,7 @@ public sealed class GitHubMetrics
         polls = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.GitHubPolls);
         taken = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.WorkItemsTaken);
         closed = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.WorkItemsClosed);
+        commands = meter.CreateCounter<long>(HephaistoTelemetry.Metrics.WorkItemCommands);
     }
 
     /// <summary>One repository was asked for its assigned issues.</summary>
@@ -36,6 +38,20 @@ public sealed class GitHubMetrics
 
     public void Closed(WorkItemState state, string reason) =>
         closed.Add(1, new("state", state.ToString()), new("reason", reason));
+
+    public const string CommandAccepted = "accepted";
+    public const string CommandNotApprover = "not_approver";
+
+    /// <summary>
+    /// One command on an issue was dealt with. <paramref name="outcome"/> is
+    /// <see cref="CommandAccepted"/>, <see cref="CommandNotApprover"/> or
+    /// <see cref="CommandRefused"/> of the door's cause - each a closed set.
+    /// </summary>
+    public void Command(bool approve, string outcome) =>
+        commands.Add(1, new("verb", approve ? "approve" : "reject"), new("outcome", outcome));
+
+    /// <summary><c>refused:&lt;cause&gt;</c>; the cause is the key of the one-time answer (<c>IssueComments.AnswerKey</c>).</summary>
+    public static string CommandRefused(string cause) => $"refused:{cause}";
 
     public static string Label(GitHubOutcome outcome) => outcome switch
     {
