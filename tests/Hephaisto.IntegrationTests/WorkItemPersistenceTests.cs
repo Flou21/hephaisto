@@ -95,6 +95,9 @@ public sealed class WorkItemPersistenceTests(PostgresFixture pg)
 
             // v0.14.0 stage 2.4 (#247): it ended while its issue was still assigned.
             "still_assigned",
+            "replan_after_attempt_id",
+            "replan_requested_by",
+            "assignment_seen_at",
         ]);
     }
 

@@ -104,6 +104,8 @@ export const PlanResultZ = z
       .strict(),
     needs_cait: z.boolean(),
     notes: z.array(z.string().max(2000)).max(20),
+    /** What only a person can decide, each with what the plan assumed meanwhile. Optional: absent means none. */
+    questions: z.array(z.string().max(600)).max(10).optional(),
     analysed_ref: z.string().max(64).nullable(),
     context_sha: z.string().max(64).nullable(),
     cost_usd: z.number().min(0),
@@ -225,6 +227,19 @@ export const WorkItemRequestZ = z
         comments: z.array(z.object({ author: z.string().max(64), body: z.string().max(65536) }).strict()).max(50),
       })
       .strict(),
+    /**
+     * The earlier attempt's plan, when the work is planned AGAIN (an approver's /replan, or a
+     * fresh assignment after an attempt ended); absent for the first plan of a hand-over. A
+     * model's text about untrusted text - data, like the issue.
+     */
+    previous: z
+      .object({
+        summary: z.string().max(2000),
+        questions: z.array(z.string().max(600)).max(10),
+        steps: z.array(z.string().max(2000)).max(20),
+      })
+      .strict()
+      .optional(),
     plan: PlanResultZ.nullable(),
   })
   .strict();

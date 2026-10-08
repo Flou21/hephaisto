@@ -41,6 +41,13 @@ public sealed record CodeFixAttemptView
     public IReadOnlyList<string> Files { get; init; } = [];
     public IReadOnlyList<string> Steps { get; init; } = [];
     public IReadOnlyList<string> Notes { get; init; } = [];
+
+    /// <summary>
+    /// What the planner asks of a person (v0.14.0), each with what the plan assumed meanwhile.
+    /// A model's text, like the notes. Empty when it asked nothing - and for a plan from before
+    /// there was such a member.
+    /// </summary>
+    public IReadOnlyList<string> Questions { get; init; } = [];
     public IReadOnlyList<string> NotVerifiable { get; init; } = [];
     public IReadOnlyList<CodeFixDenial> DeniedToolCalls { get; init; } = [];
     public string? AnalysedRef { get; init; }
@@ -117,7 +124,13 @@ public sealed record IncidentCodeFixView(
 /// The issue the attempt is for - its title, author and text are somebody else's words - or null
 /// for an incident's attempt, whose <see cref="CodeFixAttemptView.IncidentId"/> names its page.
 /// </param>
-public sealed record CodeFixAttemptDetail(CodeFixAttemptView Attempt, WorkItemView? WorkItem, CodeFixModeView Mode);
+/// <param name="Attempts">
+/// Every attempt of the work item this one belongs to, oldest first - itself among them. An
+/// issue can be planned again, and a page that shows the second plan says that there was a
+/// first. Empty for an incident's attempt.
+/// </param>
+public sealed record CodeFixAttemptDetail(
+    CodeFixAttemptView Attempt, WorkItemView? WorkItem, CodeFixModeView Mode, IReadOnlyList<WorkItemAttemptRef> Attempts);
 
 /// <summary>Read side of the code-fix stage, for the console and <c>/api</c>.</summary>
 public sealed class CodeFixQueries(
@@ -179,15 +192,17 @@ public sealed class CodeFixQueries(
             : new CodeFixAttemptDetail(
                 View(attempt),
                 attempt.WorkItem is { } item ? WorkItemQueries.View(item) : null,
-                await ModeAsync(ct).ConfigureAwait(false));
+                await ModeAsync(ct).ConfigureAwait(false),
+                attempt.WorkItemId is { } workItemId ? await new WorkItemQueries(db).AttemptsAsync(workItemId, ct).ConfigureAwait(false) : []);
     }
 
-    /// <summary>The attempts of one work item, newest first. One, until something plans an issue twice.</summary>
+    /// <summary>The attempts of one work item, newest first: one, or several when an approver asked for a new plan.</summary>
     public async Task<IReadOnlyList<CodeFixAttemptView>> ForWorkItemAsync(Guid workItemId, CancellationToken ct) =>
         (await db.CodeFixAttempts.AsNoTracking()
             .Include(a => a.WorkItem)
             .Where(a => a.WorkItemId == workItemId)
             .OrderByDescending(a => a.CreatedAt)
+            .ThenByDescending(a => a.Id)
             .ToListAsync(ct)
             .ConfigureAwait(false))
         .ConvertAll(View);
@@ -245,6 +260,14 @@ public sealed class CodeFixQueries(
         }
     }
 
+    /// <summary>
+    /// Whether a note speaks of injected text. The plan prompt asks for a suspected injection
+    /// to be quoted in <c>notes</c>, so such a note is where a model repeats what a stranger
+    /// planted: the console marks it, and a comment on an issue does not repeat it.
+    /// </summary>
+    public static bool IsInjectionNote(string? note) =>
+        note is not null && note.Contains("injection", StringComparison.OrdinalIgnoreCase);
+
     public static CodeFixAttemptView View(CodeFixAttempt a)
     {
         CodeFixPlanResult? plan = null;
@@ -285,6 +308,7 @@ public sealed class CodeFixQueries(
             Files = plan?.Files ?? [],
             Steps = plan?.Steps ?? [],
             Notes = plan?.Notes ?? [],
+            Questions = CodeFixContract.Questions(plan?.Questions),
             NotVerifiable = plan?.Verification.NotVerifiable ?? [],
             DeniedToolCalls = [.. plan?.DeniedToolCalls ?? [], .. impl?.DeniedToolCalls ?? []],
             AnalysedRef = a.AnalysedRef,

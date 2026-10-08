@@ -18,7 +18,8 @@ namespace Hephaisto.Tests.GitHub;
 /// api.github.com to the calls the client makes, taken on 2026-10-07 from the live tier's
 /// sandbox after its first green run (<c>scripts/e2e/github-live.sh</c>): the issue of L01, its
 /// three comments, its pull request, an issue the bot was unassigned from, the repository, the
-/// bot's account, and a 404.
+/// bot's account, and a 404. The timeline was added on 2026-10-08, when the client learned to
+/// read one (#285).
 /// </para>
 /// <para>
 /// Recorded with a person's <c>gh</c>, not with the agent's token. Scrubbed: every key with
@@ -118,6 +119,26 @@ public sealed class GitHubRecordedAnswersTests
 
         (await Client("user.json").GetAuthenticatedUserAsync(Ct)).Value
             .Should().Be(new GitHubAccount("tr-agent-dev", 339094978));
+    }
+
+    /// <summary>
+    /// The timeline of the sandbox's issue 40, recorded on 2026-10-08 with a person's
+    /// <c>gh</c>: the issue an earlier live run assigned to the bot, let it plan, and took back.
+    /// Six events - assigned, two comments of the bot's, unassigned, a comment, closed - and the
+    /// one the client is for is the first. Scrubbed like the others.
+    /// </summary>
+    [Fact]
+    public async Task The_timeline_of_an_issue_names_who_was_assigned_when_and_by_whom()
+    {
+        var assignments = await Client("timeline.json").ListAssignmentsAsync(Repo, 40, etag: null, Ct);
+
+        assignments.Ok.Should().BeTrue(assignments.Detail);
+
+        var assigned = assignments.Value.Should().ContainSingle("one assignment; the unassignment and the comments are other events").Subject;
+
+        assigned.Assignee.Should().Be(new GitHubAccount("tr-agent-dev", 339094978));
+        assigned.Actor.Should().Be("Flou21");
+        assigned.At.Should().Be(new DateTimeOffset(2026, 10, 7, 21, 30, 26, TimeSpan.Zero), "whole seconds, in UTC");
     }
 
     [Fact]

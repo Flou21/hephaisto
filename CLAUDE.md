@@ -395,10 +395,11 @@ why it is a value and not a default: this stack's collector writes `k8s_namespac
 `github.enabled`: an issue assigned to the agent's account, in a listed repository, is a
 `WorkItem` (`src/Hephaisto.Agent/GitHub/`, `src/Hephaisto.Agent/WorkItems/`, table `work_items`).
 Built: the client, the poller, the work item, `github` in `/api/status` (#245); a code fix
-without an incident (#246) - a taken work item gets ONE attempt, the plan Job runs for it, and
-the plan is a comment on the issue; the answer on the issue, the pull request followed to
-its end, `Done` (#247); and the console, MCP and notifications for a work item (#248).
-Five things to know about the poller:
+without an incident (#246) - the plan Job runs for a taken work item, and the plan is a comment
+on the issue; the answer on the issue, the pull request followed to its end, `Done` (#247);
+the console, MCP and notifications for a work item (#248); and the issue as a conversation -
+the planner's questions on the issue, `/replan`, a fresh assignment known by its time (#286,
+#252, #285). Five things to know about the poller:
 
 - **The poller is level-triggered: no queue, no retry state.** A pass states what should be true
   and makes it so; the next pass is the retry. Do not add "remember what failed". What comes
@@ -410,11 +411,13 @@ Five things to know about the poller:
 - **A rate limit is honoured in the client** (`GitHubRateLimit`, one per process), and the
   client's resilience handler is removed on purpose. Never wrap a call in a retry.
 - **`Body` is a snapshot.** A later edit of the issue is not copied, and an issue assigned again
-  after a cancel is a NEW row - the partial unique index allows one `Taken` row per issue.
+  after a cancel is a NEW row - the partial unique index allows one `Taken` row per issue. It is
+  read again at exactly one kind of moment: a person asks for a new plan on purpose (`/replan`,
+  a fresh assignment), inside the transaction that records the request.
 - **A connection probe must be registered in `AddHephaistoWeb`.** The first one there is a
   `TryAdd` on the service type, so a probe registered earlier makes Postgres's row vanish.
 
-And five about an attempt that is for a work item (`GitHubIssuePoller.Work.cs`,
+And six about an attempt that is for a work item (`GitHubIssuePoller.Work.cs`,
 `CodeFixCoordinator.EvaluateWorkItemAsync`, `WorkItems/IssueComments.cs`, `coder/src/subject.ts`):
 
 - **An attempt has exactly one subject**, `IncidentId` or `WorkItemId` - a check constraint, and
@@ -422,29 +425,57 @@ And five about an attempt that is for a work item (`GitHubIssuePoller.Work.cs`,
   `attempt.IncidentId`: a new path that loads `db.Incidents.First(...)` for an attempt throws for
   every issue. Since #248 every surface shows both kinds - except the Teams BOARD, which stays a
   board of incidents on purpose.
-- **One attempt per work item, ever.** A failed, denied, expired or cancelled one is not followed
-  by another; handing the issue over again is a new work item. "Not now" (a cap, a switch) is no
-  attempt at all: it is asked again on every pass and written down - audit row,
-  `WorkItem.DeclineReason`, the status comment - only when the reason CODES change.
+- **One OPEN attempt per work item, at most `WorkItem.MaxAttempts` in a row, and the next one
+  only when a person asked.** Asking is a pointer, not a queue: `WorkItem.ReplanAfterAttemptId`
+  names the attempt a new plan is wanted AFTER, written by `CodeFixCoordinator.ReplanWorkItemAsync`
+  (an approver's `/replan`) or `HandOverAgainAsync` (a fresh assignment) under the work item's
+  row lock, and "wanted" is true while that attempt is still the newest - so the poller's
+  `PlanAsync` makes it true on any pass, like a first plan. Do not start the Job from the door.
+  "Not now" (a cap, a switch) is no attempt at all: it is asked again on every pass and written
+  down - audit row, `WorkItem.DeclineReason`, the status comment - only when the reason CODES
+  change. A replanned WAITING plan ends as `Denied` ("replanned by github:<login>"), never
+  `Cancelled`: Cancelled tells every route that a code fix failed.
+- **The newest attempt is the one that counts**, by `(CreatedAt, Id)` - never `Single()` over a
+  work item's attempts, and never the first. A new attempt inherits the old one's comment
+  cursor (`CommandCommentId`), which is why the door writes the `/replan` comment's id itself:
+  read again by the attempt it started, that comment would be answered "a Job is running".
 - **Two comments, and the text is a function of the row.** The status comment is edited when its
   digest differs from `WorkItem.StatusCommentDigest`, so nothing that changes by itself (a clock,
   the mode, a counter) may go into `IssueComments.Status`. The plan comment is written once and
   never edited. Both end in a marker with their id, by which a restart finds what it wrote.
   GitHub first, the ids afterwards - `planCommentId` is visible only once both writes happened.
+  The one thing of the plan the STATUS carries is a failed attempt's questions and notes: it
+  has no plan comment.
 - **Nothing of the issue's text is repeated in a comment, and a model's text goes through
-  `IssueComments.Neutralise`** (the runner's counterpart for a pull request is `inert()`). A plan's
-  `notes` are not posted at all: that is where a model quotes what it was told to ignore.
+  `IssueComments.Neutralise`** (the runner's counterpart for a pull request is `inert()`), which
+  leaves a code span as it was written - GitHub acts on nothing inside one - except a span that
+  holds `<!--`: no model may write one of the markers. A plan's `questions` are a numbered list
+  and its `notes` a `<details>` fold (`AskedAndNoted`), but a note that speaks of injection
+  (`CodeFixQueries.IsInjectionNote`) is counted and NOT quoted: that is where a model quotes
+  what it was told to ignore.
 - **The request is contract version 2** (`codefix-request-v2.schema.json`, a file of its own;
   version 1 is byte for byte what it was, and a test holds it). The body is `WorkItem.Body`, the
-  snapshot - never a second read of the issue.
+  snapshot. It is written with the attempt's ROW (`RequestJson`), not when the Job is created:
+  a relaunch sends the same document, and an implementing Job is told the comments its plan was
+  told. A first plan carries no comment and no `previous`; a later one carries what the issue's
+  AUTHOR and the APPROVERS wrote since the hand-over (`ConversationAsync` - nobody else's text
+  reaches a Job, never the bot's own) and the earlier plan. `questions` and `previous` are
+  OPTIONAL members and left out when null: do not make either required, every stored plan would
+  stop parsing.
 
-And five about an answer on the issue and the pull request (`GitHubIssuePoller.Answers.cs`,
-`GitHubIssuePoller.PullRequests.cs`, `WorkItems/IssueCommands.cs`):
+And seven about what is said on the issue, and the pull request (`GitHubIssuePoller.Answers.cs`,
+`GitHubIssuePoller.Assignments.cs`, `GitHubIssuePoller.PullRequests.cs`, `WorkItems/IssueCommands.cs`):
 
-- **A command is a comment's first non-blank line**: exactly `/approve`, or `/reject` alone or
-  followed by white space and a reason. Lower case, nothing before it, not indented into a code
-  block. `IssueCommands.Parse` is pure and its test is a table - add the row before the rule.
-  Strict in one direction on purpose: a comment wrongly read as a command pushes a branch.
+- **A command is a comment's first non-blank line**: exactly `/approve`, exactly `/replan`, or
+  `/reject` alone or followed by white space and a reason. Lower case, nothing before it, not
+  indented into a code block. `IssueCommands.Parse` is pure and its test is a table - add the
+  row before the rule. Strict in one direction on purpose: a comment wrongly read as a command
+  pushes a branch. What follows a `/replan` line is an answer, and reaches the Job as the
+  comment's text.
+- **The comments of every taken work item's NEWEST attempt are read on every pass**, in every
+  state, because `/replan` has to be refused in words while a Job runs and after a pull request.
+  `/approve` and `/reject` outside a waiting plan are passed over in silence. The pass reads
+  commands, then assignments, then plans, then puts the comments right.
 - **The number decides, the login is shown.** `GitHub:Approvers` holds account ids; the actor is
   `github:<login>`, the source `ApprovalSource.GitHub`. With the list empty no comment is read
   at all and the plan comment says so. The poller's own audit row (`workitem.command`) is where
@@ -455,11 +486,18 @@ And five about an answer on the issue and the pull request (`GitHubIssuePoller.A
   `CommandAnswers` holds the keys of the one-time answers, each of which also carries a marker
   (`<!-- hephaisto:answer:<attempt>:<key> -->`) that a process which died after writing finds.
   The tags and `since` of the comment reads are memory only. Do not move any of it into memory.
-- **It answers rarely, and never past `IssueComments.MaxPerWorkItem`.** One answer per attempt
-  to non-approvers, one per attempt and cause for a refusal of the door's
-  (`CodeFixRefusal` on the decision result - the console's message names arms and ConfigMaps
-  and is never put on an issue). A new cause is a new member there, a key in
+- **It answers rarely, and never past `IssueComments.MaxPerAttempt`** for one attempt (five: its
+  plan and four answers; with at most five attempts and the status comment that is
+  `MaxPerWorkItem`, 26). One answer per attempt to non-approvers, one per attempt and cause for
+  a refusal of a door's (`CodeFixRefusal` on the decision result - the console's message names
+  arms and ConfigMaps and is never put on an issue). A new cause is a new member there, a key in
   `IssueComments.AnswerKey` and a sentence in `IssueComments.Refused`.
+- **A fresh assignment is known by its time, and only for an attempt that ENDED**
+  (`GitHubIssuePoller.Assignments.cs`, `IsNewHandOver`): the timeline is read for a taken work
+  item whose newest attempt failed, was denied, expired or was cancelled, and for nothing else -
+  a waiting plan is left alone. Two clocks are compared, so `WorkItem.AssignmentSeenAt` is what
+  makes one assignment one hand-over; do not replace it with "newer than the attempt's end"
+  alone. A timeline of more than a page comes without an ETag on purpose.
 - **The pull request is read BEFORE the list of assigned issues**, and once more, without a
   tag, for a work item the list says is gone: a merge closes the issue it names, and read the
   other way round that is a cancellation. A work item that ends by its pull request is marked
@@ -511,7 +549,11 @@ The agent's token is `secrets.github`, a Secret of the agent's namespace - never
 `charts/hephaisto/values-dev-github.yaml`; `curl "http://$H:8100/api/workitems?state=any"` and
 `curl http://$H:8110/github/control/state` show both sides, and `scripts/e2e/issues-local.sh`
 is how a change here is accepted (`scripts/e2e/README.md`; `issues/KNOWN_RED` lists
-nothing since #247, and a new scenario may land there). G12 lowers the code-fix switch and
+nothing - G13 to G17 landed there and left with #286 - and a new scenario may land there).
+A plan Job with the scripted coder is ready ten seconds after its attempt exists: a scenario
+that needs "while a Job runs" uses the implementing Job (G15). After changing
+`infra/e2e/notification-receiver` the stand-in's pod forgets every issue; and a hot reload
+applies code and NOT a migration - after adding one, replace the agent's pod. G12 lowers the code-fix switch and
 does not end before the MODE is back - the ConfigMap reaches the agent through a volume, up to
 a minute after the key was put back. G01 also holds that a plan for an issue
 reached a person's chat on the Teams stand-in, when the install routes `CodeFixPlanReady` to
@@ -519,7 +561,8 @@ the bot. `values-dev-github.yaml` raises `notifications.maxPerChannelPerHour` to
 suite's 1000 - it is layered AFTER `values-pager.yaml`, so nothing in it may be lower. The `github` row follows the poller by
 up to a minute: it is served from `ConnectionHealthCache`. A plan is answered by hand with
 `curl -X POST "http://$H:8110/github/control/repos/<owner>/<repo>/issues/<n>/comments" -H 'content-type: application/json' -d '{"body":"/approve","login":"maintainer","id":1001}'`
-(1001 is the approver `values-dev-github.yaml` names), or through the API as before:
+(1001 is the approver `values-dev-github.yaml` names; `"/replan"` the same way, and
+`POST .../issues/<n>/reassign` is off and on again in one request), or through the API as before:
 `curl -X POST "http://$H:8100/api/workitems/<id>/codefix/<attemptId>/approve" -H 'content-type: application/json' -d '{"decidedBy":"you"}'`.
 
 ### The live tier: github.com itself
@@ -529,11 +572,17 @@ talks to GitHub: `"github": "live"` layers `charts/hephaisto/values-dev-github-l
 real API through the egress proxy, the bot `tr-agent-dev`, ONE repository
 (`TrueRelevance/hephaisto-sandbox`), the real `gh` in the Job, the model still scripted. Run it
 before a release candidate and after changing anything Hephaisto sends GitHub or writes there.
-Five things to know:
+Six things to know:
 
 - **It refuses rather than guesses**: any other repository on the agent, a real coder, the shim,
   a `gh` that is not an approver, Actions enabled on the sandbox, leftovers of an earlier run
-  (`--sweep` removes those). Do not loosen a refusal to get a run through.
+  (`--sweep` removes those), and a second install on the sandbox. Do not loosen a refusal to
+  get a run through.
+- **The bot's token is an account's, and whoever else holds it and lists the sandbox plans the
+  suite's issues too** - with a real model, if that is what it runs. On 2026-10-08 production
+  listed the sandbox: one run of this suite was four real plans there. Before a run, make sure
+  no other install lists `TrueRelevance/hephaisto-sandbox`; the runner can only see it
+  afterwards, in the status comments of the last run's issues (`live_foreign_takers`).
 - **Never read the two tokens.** They are in `hephaisto-github` (namespace `hephaisto`) and
   `hephaisto-codefix` (namespace `hephaisto-coder`), they see more than the sandbox, and nothing
   here needs their value: the suite plays the person with the `gh` of whoever runs it.

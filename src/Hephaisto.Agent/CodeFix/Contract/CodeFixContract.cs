@@ -22,6 +22,25 @@ public static class CodeFixContract
     /// </summary>
     public const string WorkItemVersion = "2";
 
+    /// <summary>The plan result's caps for <c>questions</c>, as its schema states them. A test holds the two together.</summary>
+    public const int MaxQuestions = 10;
+
+    public const int MaxQuestionChars = 600;
+
+    /// <summary>
+    /// The questions of a plan as they are shown and passed on: the ones that say something,
+    /// at most <see cref="MaxQuestions"/> of them, each at most <see cref="MaxQuestionChars"/>
+    /// characters. One reading for the comment on the issue, the console and the request of a
+    /// replan - so "to 2: yes" in somebody's answer names the same question in all three.
+    /// </summary>
+    public static IReadOnlyList<string> Questions(IReadOnlyList<string>? asked) =>
+        [.. (asked ?? [])
+            .Where(q => !string.IsNullOrWhiteSpace(q))
+            .Take(MaxQuestions)
+            .Select(q => q.Length <= MaxQuestionChars
+                ? q
+                : q[..(char.IsHighSurrogate(q[MaxQuestionChars - 1]) ? MaxQuestionChars - 1 : MaxQuestionChars)])];
+
     public static readonly JsonSerializerOptions Json = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
@@ -87,8 +106,31 @@ public sealed record CodeFixWorkItemRequest
 
     public required CodeFixWorkItem WorkItem { get; init; }
 
+    /// <summary>
+    /// What the earlier attempt for the same work item had planned and asked, when this one
+    /// plans it AGAIN - an approver's <c>/replan</c>, or a fresh assignment after an attempt
+    /// ended. Null, and then absent from the document, for the first plan of a hand-over: that
+    /// request is byte for byte what it was before there was a second attempt.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public CodeFixPreviousPlan? Previous { get; init; }
+
     /// <summary>Null in the plan phase; the approved plan in the implement phase.</summary>
     public required CodeFixPlanResult? Plan { get; init; }
+}
+
+/// <summary>
+/// The earlier plan, as far as a replanning Job needs it: what was planned, and what was asked -
+/// the questions that the comments passed on with it answer. A model's text about a stranger's,
+/// so the runner hands it over as data.
+/// </summary>
+public sealed record CodeFixPreviousPlan
+{
+    public required string Summary { get; init; }
+
+    public required IReadOnlyList<string> Questions { get; init; }
+
+    public required IReadOnlyList<string> Steps { get; init; }
 }
 
 /// <summary>The issue, as the coder is told about it. Title, author, body and comments are untrusted.</summary>
@@ -109,9 +151,17 @@ public sealed record CodeFixWorkItem
 
     public required string Author { get; init; }
 
-    /// <summary>The snapshot taken when the issue was taken. Never the issue as it is now.</summary>
+    /// <summary>
+    /// The snapshot: the issue's text when it was taken, or when it was last handed over or
+    /// replanned on purpose. Never a silent second read of the issue.
+    /// </summary>
     public required string Body { get; init; }
 
+    /// <summary>
+    /// Empty for the first plan of a hand-over. For a replan: what the issue's author and the
+    /// approvers wrote since the issue was handed over, oldest first - nobody else's words, and
+    /// never Hephaisto's own.
+    /// </summary>
     public required IReadOnlyList<CodeFixWorkItemComment> Comments { get; init; }
 }
 
@@ -194,7 +244,19 @@ public sealed record CodeFixPlanResult
 
     public required bool NeedsCait { get; init; }
 
+    /// <summary>What was deliberately left out and why, suspected prompt injection, observations.</summary>
     public required IReadOnlyList<string> Notes { get; init; }
+
+    /// <summary>
+    /// What only a person can decide, each with what the plan assumed meanwhile. Optional in
+    /// the contract, and absent means none: a plan that asks nothing is the document it always
+    /// was, which is what keeps every stored plan - and an incident's version 1 implement
+    /// request, which embeds one - unchanged. At most <see cref="CodeFixContract.MaxQuestions"/>
+    /// of at most <see cref="CodeFixContract.MaxQuestionChars"/> characters by the schema; this
+    /// side does not validate against it, so whatever shows or forwards them caps them again.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? Questions { get; init; }
 
     public required string? AnalysedRef { get; init; }
 

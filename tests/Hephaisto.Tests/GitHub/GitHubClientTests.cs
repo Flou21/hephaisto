@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 namespace Hephaisto.Tests.GitHub;
 
 /// <summary>
-/// The eight calls to GitHub's REST API, against a handler that records what was sent and
+/// The nine calls to GitHub's REST API, against a handler that records what was sent and
 /// answers with GitHub's own shapes: its field names, its headers, its error bodies.
 /// </summary>
 /// <remarks>
@@ -477,6 +477,96 @@ public sealed class GitHubClientTests
         result.Outcome.Should().Be(GitHubOutcome.NotFound);
         result.Value.Should().BeNull();
     }
+
+    // --- the timeline: when the account was assigned ------------------------------------------------
+
+    [Fact]
+    public async Task The_timeline_gives_the_assignments_with_their_times_and_passes_over_everything_else()
+    {
+        var (client, handler, _) = Build(_ => Json(HttpStatusCode.OK, Timeline, etag: "W/\"t1\""));
+
+        var assignments = await client.ListAssignmentsAsync(Repo, 42, etag: null, Ct);
+
+        handler.Requests.Should().ContainSingle().Which.Uri.Should().Be("https://github.example/api/v3/repos/octo/shop/issues/42/timeline?per_page=100");
+        assignments.Ok.Should().BeTrue(assignments.Detail);
+        assignments.ETag.Should().Be("W/\"t1\"");
+
+        // Two assignments, of two accounts; the unassignment, the comment, the cross-reference
+        // without an id, the commit without an event's time and the assignment without an
+        // assignee are not assignments.
+        assignments.Value.Should().Equal(
+            new GitHubAssignment(new GitHubAccount("hephaisto-bot", 9001), "reporter", new DateTimeOffset(2026, 10, 8, 9, 20, 0, TimeSpan.Zero)),
+            new GitHubAssignment(new GitHubAccount("somebody-else", 4004), null, new DateTimeOffset(2026, 10, 8, 9, 29, 0, TimeSpan.Zero)));
+    }
+
+    [Fact]
+    public async Task An_unchanged_timeline_is_a_304_with_the_tag_that_was_sent()
+    {
+        var (client, handler, _) = Build(_ => new HttpResponseMessage(HttpStatusCode.NotModified));
+
+        var unchanged = await client.ListAssignmentsAsync(Repo, 42, "W/\"t1\"", Ct);
+
+        handler.Requests.Single().Headers["If-None-Match"].Should().Be("W/\"t1\"");
+        unchanged.Outcome.Should().Be(GitHubOutcome.NotModified);
+        unchanged.ETag.Should().Be("W/\"t1\"");
+    }
+
+    [Fact]
+    public async Task A_timeline_of_more_than_a_page_is_read_at_its_end_too_and_comes_without_a_tag()
+    {
+        // Oldest first: a new assignment is on the LAST page, and page one - and its tag - does
+        // not change when it is added. Asked with page one's tag alone, the answer would be
+        // "unchanged" for ever.
+        static string Page(int minute) =>
+            "[{\"event\":\"assigned\",\"created_at\":\"2026-10-08T09:" + minute.ToString("00", System.Globalization.CultureInfo.InvariantCulture)
+            + ":00Z\",\"actor\":{\"login\":\"reporter\",\"id\":3003},\"assignee\":{\"login\":\"hephaisto-bot\",\"id\":9001}}]";
+
+        var (client, handler, _) = Build(r => r.Uri.EndsWith("&page=6", StringComparison.Ordinal) ? Json(HttpStatusCode.OK, Page(6))
+            : r.Uri.EndsWith("&page=7", StringComparison.Ordinal) ? Json(HttpStatusCode.OK, Page(7))
+            : Json(HttpStatusCode.OK, Page(1), etag: "W/\"p1\"",
+                link: "<https://github.example/api/v3/repositories/1/issues/42/timeline?per_page=100&page=2>; rel=\"next\", "
+                    + "<https://github.example/api/v3/repositories/1/issues/42/timeline?per_page=100&page=7>; rel=\"last\""));
+
+        var assignments = await client.ListAssignmentsAsync(Repo, 42, etag: null, Ct);
+
+        handler.Requests.Select(r => r.Uri).Should().Equal(
+            "https://github.example/api/v3/repos/octo/shop/issues/42/timeline?per_page=100",
+            "https://github.example/api/v3/repos/octo/shop/issues/42/timeline?per_page=100&page=6",
+            "https://github.example/api/v3/repos/octo/shop/issues/42/timeline?per_page=100&page=7");
+        handler.Requests.Skip(1).Should().OnlyContain(r => !r.Headers.ContainsKey("If-None-Match"));
+        assignments.Value!.Select(a => a.At.Minute).Should().Equal(1, 6, 7);
+        assignments.ETag.Should().BeNull("a tag of page one would answer 'unchanged' for a timeline that grew at its end");
+    }
+
+    [Fact]
+    public async Task Two_pages_are_two_requests_and_a_page_that_fails_fails_the_question()
+    {
+        var (client, handler, _) = Build(r => r.Uri.EndsWith("&page=2", StringComparison.Ordinal)
+            ? Json(HttpStatusCode.BadGateway, "<html>bad gateway</html>")
+            : Json(HttpStatusCode.OK, Timeline, etag: "W/\"p1\"", link: "<https://github.example/x?per_page=100&page=2>; rel=\"next\", <https://github.example/x?per_page=100&page=2>; rel=\"last\""));
+
+        var assignments = await client.ListAssignmentsAsync(Repo, 42, etag: null, Ct);
+
+        handler.Requests.Should().HaveCount(2, "page one is not asked for twice");
+        assignments.Outcome.Should().Be(GitHubOutcome.ServerError, "half a timeline is not an answer to 'was it assigned again'");
+        assignments.Value.Should().BeNull();
+        assignments.ETag.Should().BeNull();
+    }
+
+    private const string Timeline = """
+        [
+          {"id": 1, "event": "assigned", "created_at": "2026-10-08T09:20:00Z",
+           "actor": {"login": "reporter", "id": 3003}, "assignee": {"login": "hephaisto-bot", "id": 9001}},
+          {"id": 2, "event": "commented", "created_at": "2026-10-08T09:21:00Z", "body": "/replan",
+           "actor": {"login": "maintainer", "id": 1001}, "user": {"login": "maintainer", "id": 1001}},
+          {"event": "cross-referenced", "created_at": "2026-10-08T09:22:00Z", "actor": {"login": "hephaisto-bot", "id": 9001}, "source": {"type": "issue"}},
+          {"sha": "583b1e5b75ad", "event": "committed", "author": {"date": "2026-10-08T09:23:00Z"}, "message": "assigned"},
+          {"id": 3, "event": "unassigned", "created_at": "2026-10-08T09:28:53Z",
+           "actor": {"login": "reporter", "id": 3003}, "assignee": {"login": "hephaisto-bot", "id": 9001}},
+          {"id": 4, "event": "assigned", "created_at": "2026-10-08T09:28:59Z", "actor": {"login": "reporter", "id": 3003}, "assignee": null},
+          {"id": 5, "event": "assigned", "created_at": "2026-10-08T09:29:00Z", "actor": null, "assignee": {"login": "somebody-else", "id": 4004}}
+        ]
+        """;
 
     // --- GitHub's shapes ------------------------------------------------------------------------
 

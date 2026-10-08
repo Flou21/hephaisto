@@ -300,10 +300,12 @@ and the in-cluster git server is seeded from a private one.
 
 **GitHub is a stand-in** (`infra/e2e/notification-receiver/GitHubStandIn.cs`), in the pod that
 is Teams and the model too, under a Service name of its own: an agent's API base URL is
-`http://github-stand-in.hephaisto-obs:8080/github/api`. It answers the eight REST calls the agent
+`http://github-stand-in.hephaisto-obs:8080/github/api`. It answers the nine REST calls the agent
 makes, with GitHub's field names, and copies what a client gets wrong against the real thing:
 `ETag` and a 304 for a list already given, 30 per page unless asked, `"body": null`, `since`
-inclusive at whole seconds, comment ids beyond 32 bits, a rate limit as a 403. What it does not
+inclusive at whole seconds, comment ids beyond 32 bits, a rate limit as a 403 - and an issue's
+**timeline**: every assignment and unassignment is an event with a time of its own, comments
+stand between them, and one of more than a page names its last page in `Link`. What it does not
 copy: GitHub's issue list also returns pull requests, and this one never does.
 
 The other half is for the harness - a person at github.com, and a witness. Through Tilt's
@@ -312,7 +314,8 @@ forward (`$H:8110`), no token:
 | | |
 |---|---|
 | `POST /github/control/repos/{o}/{r}/issues` `{title, body?, login, id?}` | somebody opens an issue |
-| `POST .../issues/{n}/assign`, `.../unassign` | the bot becomes, or stops being, an assignee |
+| `POST .../issues/{n}/assign`, `.../unassign` | the bot becomes, or stops being, an assignee - an event in the issue's timeline |
+| `POST .../issues/{n}/reassign` | off and on again in ONE request: what a person does within seconds, and no poll can fall between |
 | `PATCH .../issues/{n}` `{body?, title?, state?}` | an edit; `state` closes and reopens |
 | `POST .../issues/{n}/comments` `{body, login, id?}` | a comment as that account |
 | `PUT .../pulls/{n}` `{merged?, state?}` | what became of a pull request; one nobody registered is an open draft |
@@ -346,16 +349,33 @@ and where the install routes `CodeFixPlanReady` to the Teams bot - the dev value
 says where the plan is answered and links the attempt's page (`issues_route_takes`,
 `issues_teams_alerts`). An install without that route skips the block and says why.
 
+**G13 to G17 are the issue as a conversation** (#286, with #252 and #285), and landed before
+their code like the twelve: G13, the plan comment shows the planner's questions as a numbered
+list and its notes in a fold; G14, an approver answers and writes `/replan` - the waiting plan
+ends as denied with "replanned by github:\<login\>", the SAME work item gets a second attempt,
+and its Job's request carries the approver's comments, nobody else's, and the earlier plan; G15,
+`/replan` from anybody else changes nothing, and an approver's is refused once while a Job runs
+and once after a pull request; G16, an attempt that did not work shows what its planner asked
+and is planned again by `/replan`; G17, off and on again faster than a poll is noticed once the
+attempt has ended, and a waiting plan is left alone. The scripted planner is what makes them
+cheap: the fixture's plan asks two questions, a request with `previous` plays
+`hephaisto-fixture-dotnet.plan.replan.json`, and a line `FAKE-SDK-PLAN: unclear` in an issue
+makes the first plan end as `insufficient_context` (`coder/README.md`). `issues_next_plan_ready`
+is the road of a second plan, `issues_plan_comment` and `issues_status_comment` find a comment by
+its marker, and `gh_reassign` is the stand-in's `reassign`.
+
 What the bot writes on an issue is one status comment per work item, edited in place as the work
 moves, and one comment per attempt with its plan - and, only when somebody answered a plan and
 was not heard, one answer per attempt to people who are not approvers and one per cause an
-approver was refused for. Never more than six for one work item (`ISSUES_COMMENT_CAP`, which a
-unit test holds to `IssueComments.MaxPerWorkItem`). `curl -s
+approver was refused for. Never more than five for one attempt, at most five attempts for one
+work item, and so - with the status comment - never more than 26 for a work item
+(`ISSUES_ATTEMPT_COMMENT_CAP`, `ISSUES_ATTEMPT_CAP` and `ISSUES_COMMENT_CAP`, which a unit test
+holds to `IssueComments.MaxPerAttempt`, `MaxAttemptsPerWorkItem` and `MaxPerWorkItem`). `curl -s
 http://$H:8110/github/control/comments | jq -r '.[] | "\(.edits) \(.body)"'` shows them.
 
 A scenario answers a plan the way a person does: `gh_comment_as <repo> <n> maintainer 1001
-"/approve"`. The command is the comment's first non-blank line; the number is what makes it
-count.
+"/approve"` - or `/reject <reason>`, or `/replan`. The command is the comment's first non-blank
+line; the number is what makes it count.
 
 All scenarios work in one repository, and each is an attempt on it. `values-dev-coder.yaml` allows
 20 a day, which two runs of this suite beside the incident suites would use up - reported as "no
@@ -400,7 +420,7 @@ GitHub or writes there.
 
 ```sh
 # tilt_config.json: "github": "live", "coder": true, "coder-mode": "pr", "coder-sdk": "fake"
-scripts/e2e/github-live.sh                 # every scenario, one at a time, about 15 minutes
+scripts/e2e/github-live.sh                 # every scenario, one at a time, about 20 minutes
 scripts/e2e/github-live.sh --only L01
 scripts/e2e/github-live.sh --list
 scripts/e2e/github-live.sh --sweep         # close whatever a killed run left in the sandbox
@@ -412,6 +432,7 @@ scripts/e2e/github-live.sh --sweep         # close whatever a killed run left in
 | L02 | `/reject <reason>`: `Denied` by `github:<login>` with the reason, said on the issue; no Job, no branch, no pull request on GitHub. Closing the issue then ends the work item with "the issue was closed" |
 | L03 | The bot unassigned while the plan waits: `Cancelled`, "`<bot>` is no longer an assignee", the issue is told; an `/approve` afterwards changes nothing, starts nothing and is not answered |
 | L04 | What was only assumed. An unchanged list is answered **304** (the agent's own counter), through the egress proxy (its log has the agent's tunnels to `api.github.com`); GitHub also answers 304 for the two other things the agent asks with a tag - an issue's comments since a time, and a pull request; `github` is `Healthy`. And **what Hephaisto repeats does nothing**: the plan repeats a line of the issue with a mention, `#n`, `GH-n` and an issue's address, the status comment the same from a `/reject` - GitHub's HTML of both has no mention and no link, and the other issue's timeline has no reference by the bot. With a control: the approver's own comment with the same words does produce a mention, a link and a timeline entry |
+| L05 | The issue as a conversation. GitHub's **HTML** of the plan comment has every question of the plan as an item of a list and the notes as a `<details>` fold; an answer and `/replan` written with `gh` end the waiting plan as `Denied`, "replanned by github:\<login\>", and the second Job's request holds the two comments GitHub was given, in order, and the earlier plan's questions; the second plan comment repeats the answer and says it replaces the first. Then the second plan is rejected and the bot is taken off the issue and put back **a second apart**: when no poll fell between the two requests, the **timeline** GitHub answers is what starts a third attempt for the same work item - and when one did, the scenario says so and skips that line |
 
 **What it needs**, all made by hand, and checked before anything is written:
 
@@ -441,19 +462,29 @@ on the sandbox, and neither the sandbox nor the agent holds anything an earlier 
 redefined: every call to GitHub goes through `_live_api` or `_live_gh`, which put
 `TrueRelevance/hephaisto-sandbox` into the request themselves - the name is a `readonly`
 constant, not a setting, and `LiveSuiteTests` fails on a bare `gh` anywhere else, on a merge,
-on a push, and on a delete of anything but a `hephaisto/codefix-<id>` branch. A run opens five
-issues (one per scenario and a bystander that nothing may point at), writes four comments as
-the person, and has the bot open one branch and one draft pull request. A trap cleans up on
+on a push, and on a delete of anything but a `hephaisto/codefix-<id>` branch. A run opens six
+issues (one per scenario and a bystander that nothing may point at), writes nine comments as
+the person, takes the bot off one issue and puts it back, and has the bot open one branch and
+one draft pull request. A trap cleans up on
 every exit: its issues are closed, the pull request is closed - never merged - and the branch is
 deleted, after the agent has let go of the issues, so that no Job pushes afterwards. The last
 four lines of a run say whether the sandbox was left as it was found, `main` included.
+
+**It refuses when somebody else works in the sandbox.** The bot's token is an account's: an
+install that holds it and lists the sandbox takes every issue a run opens, writes a second
+status comment on it, and plans it with ITS coder. On 2026-10-08 a production install did, with
+a real model - four issues of one run, about twenty cents a plan - and three scenarios were red
+on nothing but a comment count. No preflight that looks at the dev agent sees that, so the
+runner looks at GitHub: the last run's issues must carry no status comment of a work item the
+agent under test does not know (`live_foreign_takers`).
 
 **What it does not test**, and where that is tested instead:
 
 - **Merged is `Done`.** A merge would move `main`, and the scripted fix would no longer apply.
   That the agent reads a merge as `Done` is issues G11, against the stand-in; that GitHub will
   close the issue on a merge is what `closingIssuesReferences` says, without merging.
-- **Somebody who is not an approver** (G04): there is one human account.
+- **Somebody who is not an approver** (G04), and **that nobody else's comment reaches a
+  replanning Job** (G14): there is one human account, the approver and every issue's author.
 - **GitHub failing or limiting** (G09): it cannot be told to. It did, once - see below.
 - **A model.** The coder is the script. What it repeats is what an issue's
   `FAKE-SDK-REPEAT:` line asks for (`coder/src/phases.ts`), which is how a mention and a

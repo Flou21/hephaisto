@@ -165,7 +165,131 @@ public sealed class WorkItemRequestBuilderTests
         var request = Builder().BuildForWorkItem(Attempt(), CodeFixPhase.Plan, Item(body), null);
 
         request.WorkItem.Body.Should().Be(body);
-        request.WorkItem.Comments.Should().BeEmpty("comments are not passed on yet");
+        request.WorkItem.Comments.Should().BeEmpty("a first plan carries no comment");
+    }
+
+    // --- a replan: the conversation, and the earlier plan ---------------------------------------
+
+    private static readonly CodeFixWorkItemComment[] Conversation =
+    [
+        new("maintainer", "To 1: an absent section means no endpoints."),
+        new("reporter", "It is only the cart's total."),
+        new("maintainer", "/replan\nTo 2: leave the second list alone."),
+    ];
+
+    private static readonly CodeFixPreviousPlan Earlier = new()
+    {
+        Summary = "Endpoints.Primary needs a null check.",
+        Questions = ["Should an absent section mean no endpoints? The plan assumes so.", "Should Fallbacks get the same guard? The plan leaves it."],
+        Steps = ["Treat a null list as empty.", "Add a regression test."],
+    };
+
+    [Fact]
+    public void TheRequestOfAReplan_IsThisDocument()
+    {
+        var json = Json(Builder().BuildForWorkItem(Attempt(), CodeFixPhase.Plan, Item(), null, Conversation, Earlier));
+
+        json.Should().Be(OneLine(
+            """
+            {"contract_version":"2","attempt_id":"0192a6f0-0000-7000-8000-000000000001","phase":"plan",
+            "budget":{"max_cost_usd":5,"deadline_seconds":1800},
+            "repository":{"url":"https://github.com/octo/shop","default_branch":"main","path":"","branch":"hephaisto/codefix-000000000001"},
+            "context":{"repository_url":"https://github.com/TrueRelevance/dev-context","ref":"main"},
+            "work_item":{"source":"github","repository":"octo/shop","number":12,"url":"https://github.com/octo/shop/issues/12",
+            "title":"The order total is null for an empty cart","type":"Bug","author":"reporter",
+            "body":"Open the cart with nothing in it.\nThe total reads null.",
+            "comments":[{"author":"maintainer","body":"To 1: an absent section means no endpoints."},
+            {"author":"reporter","body":"It is only the cart\u0027s total."},
+            {"author":"maintainer","body":"/replan\nTo 2: leave the second list alone."}]},
+            "previous":{"summary":"Endpoints.Primary needs a null check.",
+            "questions":["Should an absent section mean no endpoints? The plan assumes so.","Should Fallbacks get the same guard? The plan leaves it."],
+            "steps":["Treat a null list as empty.","Add a regression test."]},
+            "plan":null}
+            """));
+    }
+
+    [Fact]
+    public void WithoutAConversationAndAnEarlierPlan_TheRequestIsTheFirstOne_ByteForByte()
+    {
+        var first = Json(Builder().BuildForWorkItem(Attempt(), CodeFixPhase.Plan, Item(), null));
+
+        Json(Builder().BuildForWorkItem(Attempt(), CodeFixPhase.Plan, Item(), null, comments: null, previous: null)).Should().Be(first);
+        Json(Builder().BuildForWorkItem(Attempt(), CodeFixPhase.Plan, Item(), null, comments: [], previous: null)).Should().Be(first);
+        first.Should().NotContain("previous").And.Contain("\"comments\":[]");
+    }
+
+    [Fact]
+    public void ACredentialInAnAnswer_OrInWhatTheEarlierPlanQuoted_DoesNotReachTheCoder()
+    {
+        const string token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+
+        var request = Builder().BuildForWorkItem(
+            Attempt(), CodeFixPhase.Plan, Item(), null,
+            [new("maintainer", $"use this: Authorization: Bearer {token} and it works")],
+            Earlier with { Summary = $"the issue pasted Password=hunter2secret; and token {token}", Questions = [$"is {token} the right one?"], Steps = [$"remove {token}"] });
+
+        var json = Json(request);
+
+        json.Should().NotContain(token).And.NotContain("hunter2secret");
+        request.WorkItem.Comments.Single().Body.Should().StartWith("use this:").And.EndWith("and it works");
+    }
+
+    [Fact]
+    public void TheConversationIsCapped_InNumberAndSize_AndTheNewestIsKept_InTheOrderItWasWritten()
+    {
+        // More than the contract holds: the newest fifty, oldest first.
+        var many = Enumerable.Range(1, 70).Select(i => new CodeFixWorkItemComment("maintainer", $"comment {i}")).ToList();
+        var kept = Builder().BuildForWorkItem(Attempt(), CodeFixPhase.Plan, Item(), null, many, Earlier).WorkItem.Comments;
+
+        kept.Should().HaveCount(CodeFixRequestBuilder.MaxComments);
+        kept[0].Body.Should().Be("comment 21");
+        kept[^1].Body.Should().Be("comment 70");
+
+        // One comment is cut, without splitting a character, and a login is held to GitHub's length.
+        var long1 = new CodeFixWorkItemComment(new string('l', 80), new string('x', CodeFixRequestBuilder.MaxCommentChars - 1) + "😀 and more");
+        var cut = Builder().BuildForWorkItem(Attempt(), CodeFixPhase.Plan, Item(), null, [long1], Earlier).WorkItem.Comments.Single();
+
+        cut.Body.Should().HaveLength(CodeFixRequestBuilder.MaxCommentChars - 1);
+        cut.Author.Should().HaveLength(64);
+
+        // Together they fit a ConfigMap beside the issue's own text: older ones are left out first.
+        var big = Enumerable.Range(1, 20).Select(i => new CodeFixWorkItemComment("maintainer", i.ToString("00") + new string('y', CodeFixRequestBuilder.MaxCommentChars - 2))).ToList();
+        var fitted = Builder().BuildForWorkItem(Attempt(), CodeFixPhase.Plan, Item(), null, big, Earlier).WorkItem.Comments;
+
+        fitted.Sum(c => c.Body.Length).Should().BeLessThanOrEqualTo(CodeFixRequestBuilder.MaxCommentsChars);
+        fitted.Should().HaveCount(CodeFixRequestBuilder.MaxCommentsChars / CodeFixRequestBuilder.MaxCommentChars);
+        fitted[^1].Body.Should().StartWith("20");
+        fitted.Select(c => c.Body[..2]).Should().BeInAscendingOrder();
+    }
+
+    [Fact]
+    public void TheEarlierPlanIsHeldToTheContractsCaps()
+    {
+        var request = Builder().BuildForWorkItem(
+            Attempt(), CodeFixPhase.Plan, Item(), null, Conversation,
+            new CodeFixPreviousPlan
+            {
+                Summary = new string('s', 3000),
+                Questions = [.. Enumerable.Range(1, 14).Select(i => $"q{i}? " + new string('q', 700)), " "],
+                Steps = [.. Enumerable.Range(1, 30).Select(i => new string('p', 2500))],
+            });
+
+        request.Previous!.Summary.Should().HaveLength(2000);
+        request.Previous.Questions.Should().HaveCount(CodeFixContract.MaxQuestions).And.OnlyContain(q => q.Length <= CodeFixContract.MaxQuestionChars);
+        request.Previous.Steps.Should().HaveCount(20).And.OnlyContain(p => p.Length == 2000);
+    }
+
+    [Fact]
+    public void AnImplementRequest_CarriesTheConversationItsPlanWasMadeWith_AndNoEarlierPlan()
+    {
+        var plan = JsonSerializer.Deserialize<CodeFixPlanResult>(File.ReadAllText(Path.Combine(CodeFixResultParserTests.SchemaDir, "samples", "valid", "plan-result-questions.json")), CodeFixContract.Json)!;
+
+        var request = Builder().BuildForWorkItem(Attempt(), CodeFixPhase.Implement, Item(), plan, Conversation, null);
+
+        request.WorkItem.Comments.Should().Equal(Conversation);
+        request.Previous.Should().BeNull();
+        request.Plan!.Questions.Should().HaveCount(2, "what the approved plan had asked travels with it");
+        Json(request).Should().NotContain("\"previous\"");
     }
 
     [Fact]

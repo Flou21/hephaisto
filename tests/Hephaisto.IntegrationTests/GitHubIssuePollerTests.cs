@@ -735,5 +735,8 @@ public sealed class GitHubIssuePollerTests(PostgresFixture pg)
 
         public Task<GitHubResult<GitHubRepository>> GetRepositoryAsync(string repository, CancellationToken ct) =>
             throw new NotSupportedException("a poller with nothing that plans does not ask about a repository");
+
+        public Task<GitHubResult<IReadOnlyList<GitHubAssignment>>> ListAssignmentsAsync(string repository, int number, string? etag, CancellationToken ct) =>
+            throw new NotSupportedException("a poller with nothing that plans has no attempt that could have ended");
     }
 }

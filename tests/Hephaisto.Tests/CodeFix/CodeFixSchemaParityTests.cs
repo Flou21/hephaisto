@@ -38,7 +38,9 @@ public sealed class CodeFixSchemaParityTests
         { "request-implement.json", typeof(CodeFixRequest) },
         { "request-v2-plan.json", typeof(CodeFixWorkItemRequest) },
         { "request-v2-implement.json", typeof(CodeFixWorkItemRequest) },
+        { "request-v2-replan.json", typeof(CodeFixWorkItemRequest) },
         { "plan-result.json", typeof(CodeFixPlanResult) },
+        { "plan-result-questions.json", typeof(CodeFixPlanResult) },
         { "implement-result.json", typeof(CodeFixImplementResult) },
         { "investigate-request.json", typeof(InvestigateRequest) },
         { "investigate-request-no-source.json", typeof(InvestigateRequest) },
@@ -68,6 +70,8 @@ public sealed class CodeFixSchemaParityTests
     [InlineData("request-missing-budget.json", typeof(CodeFixRequest))]
     [InlineData("request-v2-missing-work-item.json", typeof(CodeFixWorkItemRequest))]
     [InlineData("request-v2-with-incident-id.json", typeof(CodeFixWorkItemRequest))]
+    [InlineData("request-v2-previous-unknown-member.json", typeof(CodeFixWorkItemRequest))]
+    [InlineData("request-v2-previous-without-questions.json", typeof(CodeFixWorkItemRequest))]
     // Each version's valid sample is not the other's document: a member the record does not know.
     [InlineData("../valid/request-v2-plan.json", typeof(CodeFixRequest))]
     [InlineData("../valid/request-plan.json", typeof(CodeFixWorkItemRequest))]
@@ -115,9 +119,17 @@ public sealed class CodeFixSchemaParityTests
             type.GetProperties().Where(p => p.GetMethod?.IsPublic == true).Select(p => JsonNamingPolicy.SnakeCaseLower.ConvertName(p.Name));
     }
 
+    /// <summary>
+    /// Every member a schema names is a member of its record and the other way round; the ones
+    /// the schema requires are <c>required</c> there, and an OPTIONAL one is a nullable member
+    /// that is left out when it is null - "absent means none", so a document without it is
+    /// byte for byte what it was before the member existed.
+    /// </summary>
     [Fact]
-    public void EveryRequiredSchemaProperty_IsARecordProperty()
+    public void EverySchemaProperty_IsARecordProperty_AndAnOptionalOneIsLeftOutWhenNull()
     {
+        var optional = new List<string>();
+
         foreach (var (schema, type) in new[]
                  {
                      ("codefix-request.schema.json", typeof(CodeFixRequest)),
@@ -130,12 +142,77 @@ public sealed class CodeFixSchemaParityTests
         {
             using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(Dir, schema)));
             var required = doc.RootElement.GetProperty("required").EnumerateArray().Select(e => e.GetString()!).ToHashSet();
+            var named = doc.RootElement.GetProperty("properties").EnumerateObject().Select(p => p.Name).ToHashSet();
             var properties = type.GetProperties()
                 .Where(p => p.GetMethod?.IsPublic == true && p.SetMethod is not null)
-                .Select(p => JsonNamingPolicy.SnakeCaseLower.ConvertName(p.Name))
-                .ToHashSet();
+                .ToDictionary(p => JsonNamingPolicy.SnakeCaseLower.ConvertName(p.Name));
 
-            properties.Should().BeEquivalentTo(required, $"{type.Name} and {schema} must name the same members");
+            properties.Keys.Should().BeEquivalentTo(named, $"{type.Name} and {schema} must name the same members");
+
+            foreach (var name in named.Except(required))
+            {
+                var ignore = properties[name].GetCustomAttributes(typeof(System.Text.Json.Serialization.JsonIgnoreAttribute), false)
+                    .Cast<System.Text.Json.Serialization.JsonIgnoreAttribute>()
+                    .SingleOrDefault();
+
+                ignore.Should().NotBeNull($"{type.Name}.{properties[name].Name} is optional in {schema}, and null is not what its schema allows");
+                ignore!.Condition.Should().Be(System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull);
+                new System.Reflection.NullabilityInfoContext().Create(properties[name]).ReadState
+                    .Should().Be(System.Reflection.NullabilityState.Nullable);
+                optional.Add($"{schema}:{name}");
+            }
+        }
+
+        // Named, so that a third optional member is somebody's decision and not a slip.
+        optional.Should().BeEquivalentTo("codefix-request-v2.schema.json:previous", "codefix-plan-result.schema.json:questions");
+    }
+
+    [Fact]
+    public void ThePreviousPlanOfARequest_NamesTheSchemasMembers_AndNoOthers()
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(Dir, "codefix-request-v2.schema.json")));
+        var previous = doc.RootElement.GetProperty("properties").GetProperty("previous");
+
+        typeof(CodeFixPreviousPlan).GetProperties().Select(p => JsonNamingPolicy.SnakeCaseLower.ConvertName(p.Name))
+            .Should().BeEquivalentTo(previous.GetProperty("required").EnumerateArray().Select(e => e.GetString()!));
+        previous.GetProperty("properties").EnumerateObject().Select(p => p.Name)
+            .Should().BeEquivalentTo(previous.GetProperty("required").EnumerateArray().Select(e => e.GetString()!));
+        previous.GetProperty("additionalProperties").GetBoolean().Should().BeFalse();
+    }
+
+    [Fact]
+    public void TheCapsOfAQuestion_AreTheSchemas_InBothPlacesItIsNamed()
+    {
+        using var result = JsonDocument.Parse(File.ReadAllText(Path.Combine(Dir, "codefix-plan-result.schema.json")));
+        using var request = JsonDocument.Parse(File.ReadAllText(Path.Combine(Dir, "codefix-request-v2.schema.json")));
+
+        foreach (var questions in new[]
+                 {
+                     result.RootElement.GetProperty("properties").GetProperty("questions"),
+                     request.RootElement.GetProperty("properties").GetProperty("previous").GetProperty("properties").GetProperty("questions"),
+                 })
+        {
+            questions.GetProperty("maxItems").GetInt32().Should().Be(CodeFixContract.MaxQuestions);
+            questions.GetProperty("items").GetProperty("maxLength").GetInt32().Should().Be(CodeFixContract.MaxQuestionChars);
+        }
+    }
+
+    [Fact]
+    public void APlanThatAsksNothing_AndAFirstRequest_AreTheDocumentsTheyWere()
+    {
+        // The two optional members, absent: the valid samples from before they existed still
+        // round-trip to themselves, with no "questions" and no "previous" written into them.
+        foreach (var (sample, type, member) in new[]
+                 {
+                     ("plan-result.json", typeof(CodeFixPlanResult), "\"questions\""),
+                     ("request-v2-plan.json", typeof(CodeFixWorkItemRequest), "\"previous\""),
+                     ("request-v2-implement.json", typeof(CodeFixWorkItemRequest), "\"questions\""),
+                     ("request-implement.json", typeof(CodeFixRequest), "\"questions\""),
+                 })
+        {
+            var value = JsonSerializer.Deserialize(File.ReadAllText(Path.Combine(Dir, "samples", "valid", sample)), type, CodeFixContract.Json);
+
+            JsonSerializer.Serialize(value, type, CodeFixContract.Json).Should().NotContain(member, $"{sample} has none");
         }
     }
 }

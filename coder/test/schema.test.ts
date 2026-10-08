@@ -98,11 +98,25 @@ describe('runner-side schema facts', () => {
   it("the plan agent's output schema is cut from the plan result schema, caps included", () => {
     const s = planOutputSchema() as { properties: Record<string, unknown>; required: string[] };
     const full = rawSchema('plan') as { properties: Record<string, unknown> };
-    for (const k of s.required) expect(s.properties[k]).toEqual(full.properties[k]);
-    const sample = samples('valid').find((x) => x.file === 'plan-result.json')!.doc;
+    // every member as the contract has it - but for the words about `questions`, which the contract calls optional and the agent must always write
+    const { description: forTheAgent, ...asked } = s.properties.questions as Record<string, unknown>;
+    const { description: inTheContract, ...contract } = full.properties.questions as Record<string, unknown>;
+    expect(asked).toEqual(contract);
+    expect(String(inTheContract)).toMatch(/^Optional; absent means none/);
+    expect(String(forTheAgent)).toMatch(/Always present: an empty list when nothing is open/);
+    for (const k of s.required.filter((k) => k !== 'questions')) expect(s.properties[k]).toEqual(full.properties[k]);
+    const sample = samples('valid').find((x) => x.file === 'plan-result-questions.json')!.doc;
     const agentPart = Object.fromEntries(s.required.map((k) => [k, sample[k]]));
     expect(validateWith(planOutputSchema(), agentPart).errors).toEqual([]);
     expect(validateWith(planOutputSchema(), { ...agentPart, risk: 'low' }).ok).toBe(false);
+    // required of the agent, optional in the result: a model has to say "nothing is open" by writing the empty list
+    expect(s.required).toContain('questions');
+    expect((rawSchema('plan') as { required: string[] }).required).not.toContain('questions');
+    const { questions: _omitted, ...without } = agentPart;
+    expect(validateWith(planOutputSchema(), without).errors.join(' ')).toMatch(/questions/);
+    expect(validateWith(planOutputSchema(), { ...agentPart, questions: [] }).errors).toEqual([]);
+    expect(validateWith(planOutputSchema(), { ...agentPart, questions: Array.from({ length: 11 }, () => 'q?') }).ok).toBe(false);
+    expect(validateWith(planOutputSchema(), { ...agentPart, questions: ['x'.repeat(601)] }).ok).toBe(false);
   });
   it("the implement agent's output schema accepts files + deviations and nothing else", () => {
     expect(validateWith(implementOutputSchema(), { files: ['a.cs'], deviations: [], summary: 'x' }).ok).toBe(true);

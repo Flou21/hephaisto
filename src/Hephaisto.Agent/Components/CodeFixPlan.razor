@@ -2,7 +2,7 @@
 
 @*
     The plan of one code-fix attempt, in full: summary, confidence, how it would be verified, root
-    cause, files, steps, notes - and the tool calls its sandbox refused. Rendered on the incident
+    cause, files, steps, questions, notes - and the tool calls its sandbox refused. Rendered on the incident
     page (CodeFixSection) and on the attempt's own page (/codefixes/{id}, v0.14.0), which is the
     only place an attempt for a GitHub issue has.
 
@@ -100,6 +100,19 @@
         </ol>
     }
 
+    @if (Attempt.Questions.Count > 0)
+    {
+        @* What the planner asks of a person, each with what the plan assumed meanwhile. On an
+           issue they are answered in a comment, by number - so they are numbered here as there. *@
+        <h4>questions for a person <span class="hp-count">@Attempt.Questions.Count</span></h4>
+        <ol class="hp-cf-steps" data-testid="codefix-questions">
+            @foreach (var question in Attempt.Questions)
+            {
+                <li>@question</li>
+            }
+        </ol>
+    }
+
     @if (Attempt.Notes.Count > 0)
     {
         <h4>notes <span class="hp-count">@Attempt.Notes.Count</span></h4>
@@ -154,8 +167,7 @@
     [Parameter, EditorRequired]
     public CodeFixAttemptView Attempt { get; set; } = default!;
 
-    private static bool IsInjection(string note) =>
-        note.Contains("injection", StringComparison.OrdinalIgnoreCase);
+    private static bool IsInjection(string note) => CodeFixQueries.IsInjectionNote(note);
 
     private static string Width(double confidence) =>
         (Math.Clamp(confidence, 0, 1) * 100).ToString("F1", CultureInfo.InvariantCulture) + "%";

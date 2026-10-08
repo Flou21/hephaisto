@@ -801,6 +801,11 @@ so the first callback after a cold start throws NullReferenceException.</pre>
             <li>Return early from Complete when Customer is null and requeue the callback.</li>
             <li>Add a test for a callback that arrives before the customer is loaded.</li>
           </ol>
+          <h4>questions for a person <span class="hp-count">2</span></h4>
+          <ol class="hp-cf-steps" data-testid="codefix-questions">
+            <li>Should a callback that arrives before the customer is loaded be retried, or dropped with a log line? The plan requeues it.</li>
+            <li>RefundService.Complete reads Customer the same way and the incident does not name it. Should it get the same guard? The plan leaves it as it is.</li>
+          </ol>
           <h4>notes <span class="hp-count">2</span></h4>
           <ul class="hp-cf-notes" data-testid="codefix-notes">
             <li class="note-injection" data-testid="codefix-note-injection">
@@ -938,7 +943,10 @@ so the first callback after a cold start throws NullReferenceException.</pre>
           </td>
           <td class="c-cf-repo mono">acme/api</td>
           <td class="c-cf-progress"></td>
-          <td class="c-state"><a href="#" data-testid="workitem-attempt-link"><span class="hp-state st-awaiting"><span class="glyph">!</span> plan ready</span></a></td>
+          <td class="c-state">
+            <a href="#" data-testid="workitem-attempt-link"><span class="hp-state st-awaiting"><span class="glyph">!</span> plan ready</span></a>
+            <span class="hp-cf-line hp-muted" data-testid="workitem-earlier-attempts">attempt 2, after <a href="#" data-testid="workitem-earlier-attempt">1 denied</a></span>
+          </td>
           <td class="c-time mono">2026-10-07 09:14:47Z</td>
           <td class="c-time mono">&mdash;</td>
         </tr>
@@ -1005,6 +1013,8 @@ so the first callback after a cold start throws NullReferenceException.</pre>
             <span class="hp-state st-investigating"><span class="glyph">~</span> taken</span>
             <span class="hp-muted"> &middot; taken <span class="mono">2026-10-07 09:14:47Z</span></span>
           </dd>
+          <dt>attempts</dt>
+          <dd data-testid="codefix-attempts"><a href="#" data-testid="codefix-attempt-other">1 denied</a> &middot; <span class="mono" data-testid="codefix-attempt-this">2 this one</span></dd>
           <dt>repository</dt>
           <dd class="mono">acme/api</dd>
           <dt>branch</dt>

@@ -112,7 +112,13 @@ public sealed record GitHubPullRequest(
 /// <param name="DefaultBranch">The branch a pull request targets unless told otherwise. Null when GitHub did not say.</param>
 public sealed record GitHubRepository(string FullName, string? DefaultBranch);
 
-/// <summary>What the agent asks of GitHub. Eight calls, and nothing that deletes or closes.</summary>
+/// <summary>
+/// One <c>assigned</c> event of an issue's timeline: who was made an assignee, by whom, and when
+/// by GitHub's clock - whole seconds.
+/// </summary>
+public sealed record GitHubAssignment(GitHubAccount Assignee, string? Actor, DateTimeOffset At);
+
+/// <summary>What the agent asks of GitHub. Nine calls, and nothing that deletes or closes.</summary>
 public interface IGitHubClient
 {
     /// <summary>Whose token this is.</summary>
@@ -154,6 +160,21 @@ public interface IGitHubClient
     /// issue is made when no <c>CodeFix:Repositories</c> entry names the repository.
     /// </summary>
     Task<GitHubResult<GitHubRepository>> GetRepositoryAsync(string repository, CancellationToken ct);
+
+    /// <summary>
+    /// Every time somebody was made an assignee of an issue, oldest first, from its timeline
+    /// (<c>GET /repos/{o}/{r}/issues/{n}/timeline</c>): what tells an assignment that is NEW
+    /// from one a poll has seen all along. With <paramref name="etag"/>, an unchanged timeline
+    /// is <see cref="GitHubOutcome.NotModified"/>.
+    /// </summary>
+    /// <remarks>
+    /// GitHub lists a timeline oldest first, a hundred events to a page, comments among them.
+    /// For one page the answer carries its tag. For a longer one the LAST two pages are read as
+    /// well - that is where a new assignment is - and no tag comes back: page one of a long
+    /// timeline does not change when an event is added to its end, so "unchanged" would be
+    /// answered for a question that was not asked.
+    /// </remarks>
+    Task<GitHubResult<IReadOnlyList<GitHubAssignment>>> ListAssignmentsAsync(string repository, int number, string? etag, CancellationToken ct);
 }
 
 /// <summary>
@@ -191,7 +212,7 @@ public sealed class GitHubRateLimit
 /// exists to prevent.
 /// </para>
 /// </remarks>
-public sealed class GitHubClient(
+public sealed partial class GitHubClient(
     HttpClient http,
     IOptions<GitHubOptions> options,
     GitHubRateLimit rateLimit,
@@ -267,6 +288,44 @@ public sealed class GitHubClient(
             null,
             (json, _) => new GitHubRepository(Text(json, "full_name") ?? repository, Text(json, "default_branch")),
             ct);
+
+    public async Task<GitHubResult<IReadOnlyList<GitHubAssignment>>> ListAssignmentsAsync(string repository, int number, string? etag, CancellationToken ct)
+    {
+        var path = $"repos/{repository}/issues/{Number(number)}/timeline?per_page={PageSize}";
+
+        var first = await SendAsync(HttpMethod.Get, path, null, etag, (json, response) => (Events: Assignments(json), Last: LastPage(response)), ct).ConfigureAwait(false);
+
+        if (!first.Ok)
+        {
+            return new(first.Outcome, null, first.Detail, first.ETag, first.RetryAt);
+        }
+
+        var (events, last) = first.Value;
+
+        if (last <= 1)
+        {
+            return new(GitHubOutcome.Ok, events, ETag: first.ETag);
+        }
+
+        // More than a page. A new event is at the end; the page before the last one is read
+        // too, because the last may hold a single comment and the assignment sit just before it.
+        var all = new List<GitHubAssignment>(events);
+
+        foreach (var page in new[] { last - 1, last }.Where(p => p > 1).Distinct())
+        {
+            var more = await SendAsync(
+                HttpMethod.Get, $"{path}&page={page.ToString(CultureInfo.InvariantCulture)}", null, null, (json, _) => Assignments(json), ct).ConfigureAwait(false);
+
+            if (!more.Ok)
+            {
+                return new(more.Outcome, null, more.Detail, RetryAt: more.RetryAt);
+            }
+
+            all.AddRange(more.Value!);
+        }
+
+        return new(GitHubOutcome.Ok, all);
+    }
 
     private async Task<GitHubResult<T>> SendAsync<T>(
         HttpMethod method,
@@ -406,6 +465,47 @@ public sealed class GitHubClient(
     private static string? Header(HttpResponseMessage response, string name) =>
         response.Headers.TryGetValues(name, out var values) ? values.FirstOrDefault()?.Trim() : null;
 
+    /// <summary>
+    /// The number of the last page a paged answer names in its <c>Link</c> header, or 1 when it
+    /// names none - GitHub sends the header only when there is more than one page.
+    /// </summary>
+    private static int LastPage(HttpResponseMessage response)
+    {
+        if (!response.Headers.TryGetValues("Link", out var links))
+        {
+            return 1;
+        }
+
+        foreach (var link in links.SelectMany(l => l.Split(',')))
+        {
+            var match = LastPageLink().Match(link);
+
+            if (match.Success && int.TryParse(match.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var page) && page > 0)
+            {
+                return page;
+            }
+        }
+
+        // A next page and no last one named: at least two.
+        return HasNextPage(response) ? 2 : 1;
+    }
+
+    /// <summary>
+    /// The <c>assigned</c> events of a timeline page. Everything else a timeline holds -
+    /// comments, labels, cross-references, commits, each with members of its own - is passed
+    /// over without being read.
+    /// </summary>
+    private static List<GitHubAssignment> Assignments(JsonElement json) =>
+        [.. json.EnumerateArray()
+            .Where(e => e.ValueKind == JsonValueKind.Object
+                && Text(e, "event") == "assigned"
+                && e.TryGetProperty("assignee", out var assignee) && assignee.ValueKind == JsonValueKind.Object
+                && e.TryGetProperty("created_at", out var at) && at.ValueKind == JsonValueKind.String)
+            .Select(e => new GitHubAssignment(
+                Account(e.GetProperty("assignee")),
+                e.TryGetProperty("actor", out var actor) && actor.ValueKind == JsonValueKind.Object ? Text(actor, "login") : null,
+                e.GetProperty("created_at").GetDateTimeOffset()))];
+
     private static bool HasNextPage(HttpResponseMessage response) =>
         response.Headers.TryGetValues("Link", out var links) && links.Any(l => l.Contains("rel=\"next\"", StringComparison.Ordinal));
 
@@ -482,6 +582,9 @@ public sealed class GitHubClient(
         json.TryGetProperty("merged_at", out var at) && at.ValueKind == JsonValueKind.String ? at.GetDateTimeOffset() : null,
         Text(json, "html_url") ?? string.Empty,
         json.TryGetProperty("head", out var head) && head.ValueKind == JsonValueKind.Object ? Text(head, "ref") : null);
+
+    [System.Text.RegularExpressions.GeneratedRegex("[?&]page=(\\d{1,6})[^>]*>\\s*;\\s*rel=\"last\"")]
+    private static partial System.Text.RegularExpressions.Regex LastPageLink();
 
     private static string? Text(JsonElement json, string name) =>
         json.ValueKind == JsonValueKind.Object && json.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String

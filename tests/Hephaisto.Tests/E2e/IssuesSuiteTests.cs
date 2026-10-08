@@ -45,8 +45,20 @@ public sealed partial class IssuesSuiteTests
     [Fact]
     public void The_milestones_twelve_scenarios_are_all_there()
     {
-        Scenarios().Select(f => Path.GetFileNameWithoutExtension(f)).Should().BeEquivalentTo(
+        Scenarios().Select(f => Path.GetFileNameWithoutExtension(f)).Should().Contain(
             Enumerable.Range(1, 12).Select(n => $"G{n:00}"));
+    }
+
+    /// <summary>
+    /// The issue as a conversation (#286, with #252 and #285): the planner's questions on the
+    /// issue, an answer and <c>/replan</c>, a refusal of it, a failed attempt planned again, and
+    /// a fresh assignment known by its time. Seventeen in all, and no file beside them.
+    /// </summary>
+    [Fact]
+    public void The_five_scenarios_of_the_conversation_are_there_and_nothing_else_is()
+    {
+        Scenarios().Select(f => Path.GetFileNameWithoutExtension(f)).Should().BeEquivalentTo(
+            Enumerable.Range(1, 17).Select(n => $"G{n:00}"));
     }
 
     /// <summary>
@@ -122,6 +134,8 @@ public sealed partial class IssuesSuiteTests
     [Theory]
     [InlineData("\"/repos/{owner}/{repo}/issues\"", "POST \"/repos/$repo/issues\"")]
     [InlineData("/issues/{{number:int}}/{verb}", "\"/repos/$1/issues/$2/assign\"")]
+    [InlineData("\"assign\", \"unassign\", \"reassign\"", "\"/repos/$1/issues/$2/reassign\"")]
+    [InlineData("\"/repos/{owner}/{repo}/issues/{number:int}/timeline\"", "\"/repos/$2/issues/$3/timeline\"")]
     [InlineData("\"/repos/{owner}/{repo}/issues/{number:int}/comments\"", "\"/repos/$1/issues/$2/comments\"")]
     [InlineData("\"/repos/{owner}/{repo}/pulls/{number:int}\"", "\"/repos/$1/pulls/$2\"")]
     [InlineData("control.MapDelete(\"/repos/{owner}/{repo}/pulls/{number:int}\"", "DELETE \"/repos/$1/pulls/$2\"")]
@@ -140,21 +154,19 @@ public sealed partial class IssuesSuiteTests
     /// How many comments the agent may write for one work item is a constant of the agent's, and
     /// G10 asserts against the suite's copy of it. Two numbers that have to be one.
     /// </summary>
-    [Fact]
-    public void The_suites_comment_cap_is_the_agents_ceiling()
+    [Theory]
+    [InlineData("ISSUES_ATTEMPT_COMMENT_CAP", Hephaisto.Agent.WorkItems.IssueComments.MaxPerAttempt)]
+    [InlineData("ISSUES_ATTEMPT_CAP", Hephaisto.Agent.WorkItems.IssueComments.MaxAttemptsPerWorkItem)]
+    [InlineData("ISSUES_COMMENT_CAP", Hephaisto.Agent.WorkItems.IssueComments.MaxPerWorkItem)]
+    public void The_suites_comment_caps_are_the_agents_ceilings(string name, int ceiling)
     {
         var lib = File.ReadAllText(Path.Combine(RepoRoot(), "scripts", "e2e", "lib", "issues.sh"));
-        var cap = Regex.Match(lib, @"^ISSUES_COMMENT_CAP=""\$\{ISSUES_COMMENT_CAP:-(\d+)\}""$", RegexOptions.Multiline);
+        var cap = Regex.Match(lib, $@"^{name}=""\$\{{{name}:-(\d+)\}}""$", RegexOptions.Multiline);
 
-        cap.Success.Should().BeTrue("lib/issues.sh sets ISSUES_COMMENT_CAP with a default");
-        int.Parse(cap.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)
-            .Should().Be(Hephaisto.Agent.WorkItems.IssueComments.MaxPerWorkItem);
+        cap.Success.Should().BeTrue($"lib/issues.sh sets {name} with a default");
+        int.Parse(cap.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture).Should().Be(ceiling);
     }
 
-    /// <summary>
-    /// The twelve scenarios the milestone was written down as are green, and stay off the list:
-    /// an entry from now on is a scenario that landed red after them.
-    /// </summary>
     [Fact]
     public void Nothing_of_the_milestones_twelve_is_known_red_any_more()
     {

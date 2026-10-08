@@ -22,7 +22,8 @@ public sealed partial class LiveSuiteTests
         var scenarios = Scenarios();
 
         scenarios.Select(f => Path.GetFileNameWithoutExtension(f)).Should().BeEquivalentTo(
-            ["L01", "L02", "L03", "L04"], "the four the tier was written down as (#249); a fifth is added here too");
+            ["L01", "L02", "L03", "L04", "L05"],
+            "the four the tier was written down as (#249), and the conversation on an issue (#286); a sixth is added here too");
 
         foreach (var file in scenarios)
         {
@@ -55,6 +56,13 @@ public sealed partial class LiveSuiteTests
         runner.Should().Contain("grep -qx \"$ISSUES_APPROVER_ID\"");
         runner.Should().Contain("actions/permissions");
         runner.Should().Contain("trap 'cleanup' EXIT");
+
+        // And when somebody else works in the sandbox: another install with the bot's token
+        // plans every issue of a run with ITS coder - production did, with a real model.
+        runner.Should().Contain("others=$(live_foreign_takers 6");
+        runner.Should().Contain("refusing: another Hephaisto took issues of the last run");
+        runner.IndexOf("live_foreign_takers 6", StringComparison.Ordinal)
+            .Should().BeLessThan(runner.IndexOf("trap 'cleanup' EXIT", StringComparison.Ordinal), "asked before anything is written");
     }
 
     /// <summary>

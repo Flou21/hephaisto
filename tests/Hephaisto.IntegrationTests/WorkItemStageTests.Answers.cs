@@ -362,7 +362,7 @@ public sealed partial class WorkItemStageTests
     }
 
     [Fact]
-    public async Task Every_cause_is_answered_once_and_never_beyond_the_ceiling_of_one_work_item()
+    public async Task Every_cause_is_answered_once_and_never_beyond_the_ceiling_of_one_attempt()
     {
         var (world, issue, _, attemptId) = await PlanOnTheIssueAsync();
         var poller = world.Poller();
@@ -389,7 +389,8 @@ public sealed partial class WorkItemStageTests
 
         Answers(world).Select(a => IssueComments.AnswerKeysIn(attemptId, a.Body).Single())
             .Should().Equal(IssueComments.NotApproverKey, "mode-plan", "mode-off", "emergency-stop");
-        world.GitHub.Comments.Count(c => c.Author == Bot).Should().Be(IssueComments.MaxPerWorkItem);
+        // The ceiling is the attempt's: its plan and four answers - and the status comment beside it.
+        world.GitHub.Comments.Count(c => c.Author == Bot).Should().Be(1 + IssueComments.MaxPerAttempt);
 
         // Two more causes, and a stranger again: the ceiling holds, and what was read is still handled.
         world.EmergencyStop = false;
@@ -406,7 +407,7 @@ public sealed partial class WorkItemStageTests
         await ApproveAsync();
         await ApproveAsync(Passerby, PasserbyId);
 
-        world.GitHub.Comments.Count(c => c.Author == Bot).Should().Be(IssueComments.MaxPerWorkItem, "beyond it Hephaisto writes nothing new on the issue");
+        world.GitHub.Comments.Count(c => c.Author == Bot).Should().Be(1 + IssueComments.MaxPerAttempt, "beyond it Hephaisto writes nothing new for this attempt");
         Answers(world).Should().HaveCount(4);
 
         var attempt = await AttemptAsync();
@@ -429,7 +430,8 @@ public sealed partial class WorkItemStageTests
         (await AttemptAsync()).State.Should().Be(CodeFixState.Implementing);
         status.Edits.Should().Be(edits + 1);
         status.Body.Should().Contain("**Implementing.**");
-        world.GitHub.Comments.Count(c => c.Author == Bot).Should().Be(IssueComments.MaxPerWorkItem);
+        // The ceiling is the attempt's: its plan and four answers - and the status comment beside it.
+        world.GitHub.Comments.Count(c => c.Author == Bot).Should().Be(1 + IssueComments.MaxPerAttempt);
     }
 
     [Fact]
@@ -533,12 +535,18 @@ public sealed partial class WorkItemStageTests
         world.GitHub.CommentReads[^1].Answered.Should().Be(GitHubOutcome.Ok);
         (await AttemptAsync()).State.Should().Be(CodeFixState.Implementing, "the answer was read without the list's help");
 
-        // A plan that stopped waiting is not asked about any more.
+        // A plan that stopped waiting is still read for: its attempt is the work item's newest,
+        // and an approver's /replan while the Job runs has to be refused in words (#252). It
+        // costs what a waiting plan costs - once the question has settled, a 304.
         var reads = world.GitHub.CommentReads.Count;
         await poller.PassAsync(Ct);
         await poller.PassAsync(Ct);
+        await poller.PassAsync(Ct);
 
-        world.GitHub.CommentReads.Should().HaveCount(reads);
+        world.GitHub.CommentReads.Should().HaveCount(reads + 3);
+        world.GitHub.CommentReads[^1].Should().Match<(int Number, DateTimeOffset? Since, string? ETagSent, GitHubOutcome Answered)>(
+            r => r.ETagSent != null && r.Answered == GitHubOutcome.NotModified);
+        Answers(world).Should().BeEmpty("nothing was said: nobody asked anything of the running attempt");
     }
 
     // --- GitHub refusing ---------------------------------------------------------------------------
@@ -609,7 +617,7 @@ public sealed partial class WorkItemStageTests
         await poller.PassAsync(Ct);
 
         (await AttemptAsync()).State.Should().Be(CodeFixState.PlanReady);
-        world.Health.Polls.Should().ContainSingle().Which.Detail.Should().Contain("its comments could not be read for an answer");
+        world.Health.Polls.Should().ContainSingle().Which.Detail.Should().Contain("its comments could not be read for a command");
 
         world.GitHub.FailCommentReads = null;
         await poller.PassAsync(Ct);
@@ -860,7 +868,7 @@ public sealed partial class WorkItemStageTests
 
         world.GitHub.Comments.Should().ContainSingle(c =>
             c.Body.Contains($"its pull request was closed without merging: {CloneUrl}/pull/7")
-            && c.Body.Contains("unassign Hephaisto and assign it again"));
+            && c.Body.Contains("unassign Hephaisto, wait a minute or two, and assign it again"));
 
         await using (var db = pg.CreateContext())
         {
@@ -969,5 +977,55 @@ public sealed partial class WorkItemStageTests
 
         world.GitHub.PullReads.Should().Contain(r => r.Number == 31);
         (await WorkItemsAsync()).Single().State.Should().Be(WorkItemState.Done);
+    }
+
+    // --- the moment between an approval and its Job ------------------------------------------------
+
+    /// <summary>
+    /// Found by the issues suite on 2026-10-08 (G06): approved at 10:59:16.336, "the Implement
+    /// phase has no job recorded" at .342, Job started at .343. The watcher's pass had read the
+    /// attempt in the moment an approval is durable and its Job is not yet created - and failed
+    /// it. The Job ran for two minutes all the same and opened its pull request, for an attempt
+    /// that said it had not worked.
+    /// </summary>
+    [Fact]
+    public async Task An_approved_attempt_whose_job_is_still_being_created_is_not_failed_by_the_watcher()
+    {
+        var (world, _, _, attemptId) = await PlanOnTheIssueAsync();
+
+        // The row as it is between the approval's commit and the Job's creation.
+        await using (var db = pg.CreateContext())
+        {
+            await db.CodeFixAttempts.Where(a => a.Id == attemptId).ExecuteUpdateAsync(
+                s => s.SetProperty(a => a.State, CodeFixState.Implementing)
+                    .SetProperty(a => a.ApprovedBy, "github:maintainer")
+                    .SetProperty(a => a.ApprovalSource, ApprovalSource.GitHub)
+                    .SetProperty(a => a.DecidedAt, Now),
+                Ct);
+        }
+
+        await using (var db = pg.CreateContext())
+        {
+            await world.Coordinator(db).CollectAsync(await db.CodeFixAttempts.SingleAsync(a => a.Id == attemptId, Ct), Ct);
+        }
+
+        var between = await AttemptAsync();
+        between.State.Should().Be(CodeFixState.Implementing, "its Job is on its way");
+        between.FailureReason.Should().BeNull();
+
+        await using (var db = pg.CreateContext())
+        {
+            (await db.AuditEvents.CountAsync(e => e.Type == CodeFixCoordinator.AuditFailed, Ct)).Should().Be(0);
+
+            // The control: left like that by a process that died - for longer than a launch takes.
+            await db.CodeFixAttempts.Where(a => a.Id == attemptId)
+                .ExecuteUpdateAsync(s => s.SetProperty(a => a.DecidedAt, Now - CodeFixCoordinator.LaunchGrace - TimeSpan.FromSeconds(1)), Ct);
+
+            await world.Coordinator(db).CollectAsync(await db.CodeFixAttempts.SingleAsync(a => a.Id == attemptId, Ct), Ct);
+        }
+
+        var left = await AttemptAsync();
+        left.State.Should().Be(CodeFixState.Failed);
+        left.FailureReason.Should().Be("the Implement phase has no job recorded");
     }
 }

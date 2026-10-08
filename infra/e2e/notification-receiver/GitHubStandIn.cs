@@ -29,6 +29,13 @@ namespace NotificationReceiver;
 //   - an account is a login AND a number, and only the number is for ever: a control can comment
 //     as somebody whose login is an approver's and whose id is not
 //
+//   - an issue has a timeline: every assignment and unassignment is an event with a time of its
+//     own, in whole seconds, and comments stand between them. Off and on again within a second
+//     leaves the issue assigned in every list and two events in the timeline - which is the only
+//     place a client can learn that the assignment is a new one
+//   - a timeline of more than a page names its last page in `Link`, and its first page - and that
+//     page's ETag - does not change when an event is added to the end
+//
 // What it does NOT copy, and a client still has to survive on the real one: GitHub's issue list
 // also returns pull requests (each with a `pull_request` key); this one lists issues only. And
 // every repository exists here - a list of one nobody created an issue in is empty, not a 404.
@@ -47,6 +54,7 @@ namespace NotificationReceiver;
 //   POST  /github/api/repos/{owner}/{repo}/issues/{number}/comments       {body}
 //   PATCH /github/api/repos/{owner}/{repo}/issues/comments/{id}           {body}
 //   GET   /github/api/repos/{owner}/{repo}/pulls/{number}
+//   GET   /github/api/repos/{owner}/{repo}/issues/{number}/timeline?per_page=&page=
 //   GET   /github/api/repos/{owner}/{repo}                                   full_name, default_branch
 //
 // The harness's side: what a person at github.com would do, and what the agent was seen doing.
@@ -56,6 +64,7 @@ namespace NotificationReceiver;
 //   PATCH  /github/control/repos/{owner}/{repo}/issues/{number}           {title?, body?, state?}
 //   POST   /github/control/repos/{owner}/{repo}/issues/{number}/assign    the bot becomes an assignee
 //   POST   /github/control/repos/{owner}/{repo}/issues/{number}/unassign
+//   POST   /github/control/repos/{owner}/{repo}/issues/{number}/reassign  off and on again, in one step; {login?, id?} is who
 //   POST   /github/control/repos/{owner}/{repo}/issues/{number}/comments  {body, login, id?}
 //   PUT    /github/control/repos/{owner}/{repo}/pulls/{number}            {merged?, state?, draft?, head?, body?}
 //   DELETE /github/control/repos/{owner}/{repo}/pulls/{number}            forget it: an open draft again
@@ -101,6 +110,9 @@ public static class GitHubStandIn
         public DateTimeOffset UpdatedAt { get; set; }
     }
 
+    /// <summary>An <c>assigned</c> or <c>unassigned</c> event of an issue's timeline.</summary>
+    private sealed record Event(long Id, string Repo, int Number, string Kind, Account Actor, Account Assignee, DateTimeOffset At);
+
     private sealed class Pull
     {
         public bool Draft { get; set; } = true;
@@ -126,6 +138,7 @@ public static class GitHubStandIn
         var issues = new Dictionary<(string Repo, int Number), Issue>();
         var comments = new List<Comment>();
         var pulls = new Dictionary<(string Repo, int Number), Pull>();
+        var events = new List<Event>();
         var requests = new Queue<JsonObject>();
         var failMode = "off";
         var failLeft = 0;
@@ -135,6 +148,7 @@ public static class GitHubStandIn
         // across restarts, and the second is the size GitHub's own comment ids have reached.
         var nextNumber = (int)(DateTimeOffset.UtcNow - new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)).TotalSeconds;
         var nextComment = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var nextEvent = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
         // Everything under the API prefix, served or not: the record, the failure mode and the
         // token. A middleware rather than a filter on the routes, because a call to a path this
@@ -323,6 +337,56 @@ public static class GitHubStandIn
             }
         });
 
+        // The issue's timeline: its assignment events and its comments, oldest first, as GitHub
+        // orders them. With more than a page it names the last one in `Link`.
+        api.MapGet("/repos/{owner}/{repo}/issues/{number:int}/timeline", (string owner, string repo, int number, HttpContext ctx) =>
+        {
+            lock (gate)
+            {
+                if (!issues.ContainsKey(($"{owner}/{repo}", number)))
+                {
+                    return Problem(404, "Not Found");
+                }
+
+                var all = events
+                    .Where(e => e.Repo == $"{owner}/{repo}" && e.Number == number)
+                    .Select(e => (e.At, e.Id, Json: EventJson(e)))
+                    .Concat(comments
+                        .Where(c => c.Repo == $"{owner}/{repo}" && c.Number == number)
+                        .Select(c => (At: c.CreatedAt, c.Id, Json: CommentedJson(c))))
+                    .OrderBy(e => e.At)
+                    .ThenBy(e => e.Id)
+                    .Select(e => e.Json)
+                    .ToList();
+
+                var size = int.TryParse(ctx.Request.Query["per_page"].ToString(), CultureInfo.InvariantCulture, out var n) ? Math.Clamp(n, 1, 100) : 30;
+                var page = int.TryParse(ctx.Request.Query["page"].ToString(), CultureInfo.InvariantCulture, out var p) ? Math.Max(1, p) : 1;
+                var last = Math.Max(1, (all.Count + size - 1) / size);
+
+                if (last > 1)
+                {
+                    var self = $"{ctx.Request.Scheme}://{ctx.Request.Host}{ctx.Request.Path}?per_page={size}";
+                    var links = new List<string>();
+
+                    if (page < last)
+                    {
+                        links.Add($"<{self}&page={page + 1}>; rel=\"next\"");
+                        links.Add($"<{self}&page={last}>; rel=\"last\"");
+                    }
+
+                    if (page > 1)
+                    {
+                        links.Add($"<{self}&page=1>; rel=\"first\"");
+                        links.Add($"<{self}&page={page - 1}>; rel=\"prev\"");
+                    }
+
+                    ctx.Response.Headers.Link = string.Join(", ", links);
+                }
+
+                return Etagged(ctx, new JsonArray([.. all.Skip((page - 1) * size).Take(size)]));
+            }
+        });
+
         // A pull request nobody registered is answered as an open draft. The `gh` that "opens"
         // one in a coder Job is a script with no network (coder/test/gh-shim), so the stand-in
         // never hears of it; what a scenario can do is say what became of it afterwards.
@@ -403,10 +467,16 @@ public static class GitHubStandIn
             }
         });
 
-        foreach (var verb in new[] { "assign", "unassign" })
+        // `reassign` is off and on again in ONE step, under the lock: what a person does within
+        // a few seconds, and what no poll can fall between here. Each step is an event of the
+        // issue's timeline, with its own time - the reassignment's `assigned` a second after its
+        // `unassigned`, as two clicks are.
+        foreach (var verb in new[] { "assign", "unassign", "reassign" })
         {
-            control.MapPost($"/repos/{{owner}}/{{repo}}/issues/{{number:int}}/{verb}", (string owner, string repo, int number) =>
+            control.MapPost($"/repos/{{owner}}/{{repo}}/issues/{{number:int}}/{verb}", async (string owner, string repo, int number, HttpContext ctx) =>
             {
+                var actor = Who(await ReadAsync(ctx));
+
                 lock (gate)
                 {
                     if (!issues.TryGetValue(($"{owner}/{repo}", number), out var issue))
@@ -414,11 +484,18 @@ public static class GitHubStandIn
                         return Results.NotFound(new { error = $"no issue {owner}/{repo}#{number}" });
                     }
 
-                    issue.Assignees.RemoveAll(a => a.Id == bot.Id);
+                    var by = actor ?? issue.Author;
+                    var at = Now();
 
-                    if (verb == "assign")
+                    if (verb != "assign" && issue.Assignees.RemoveAll(a => a.Id == bot.Id) > 0)
+                    {
+                        events.Add(new Event(nextEvent++, issue.Repo, number, "unassigned", by, bot, at));
+                    }
+
+                    if (verb != "unassign" && issue.Assignees.All(a => a.Id != bot.Id))
                     {
                         issue.Assignees.Add(bot);
+                        events.Add(new Event(nextEvent++, issue.Repo, number, "assigned", by, bot, verb == "reassign" ? at.AddSeconds(1) : at));
                     }
 
                     issue.UpdatedAt = Now();
@@ -585,6 +662,7 @@ public static class GitHubStandIn
                 issues.Clear();
                 comments.Clear();
                 pulls.Clear();
+                events.Clear();
                 requests.Clear();
                 failMode = "off";
                 failLeft = 0;
@@ -656,6 +734,30 @@ public static class GitHubStandIn
         ["updated_at"] = Stamp(c.UpdatedAt),
         ["html_url"] = $"https://github.com/{c.Repo}/issues/{c.Number}#issuecomment-{c.Id}",
     };
+
+    /// <summary>An assignment event, with the members GitHub's timeline gives one (recorded from the sandbox, 2026-10-08).</summary>
+    private static JsonObject EventJson(Event e) => new()
+    {
+        ["id"] = e.Id,
+        ["node_id"] = NodeId(e.Kind == "assigned" ? "AE" : "UE", e.Repo, e.Number) + e.Id.ToString(CultureInfo.InvariantCulture),
+        ["url"] = $"https://api.github.com/repos/{e.Repo}/issues/events/{e.Id}",
+        ["actor"] = AccountJson(e.Actor),
+        ["event"] = e.Kind,
+        ["commit_id"] = null,
+        ["commit_url"] = null,
+        ["created_at"] = Stamp(e.At),
+        ["assignee"] = AccountJson(e.Assignee),
+        ["performed_via_github_app"] = null,
+    };
+
+    /// <summary>A comment as a timeline holds it: the comment, an `event`, and an `actor` beside its `user`.</summary>
+    private static JsonObject CommentedJson(Comment c)
+    {
+        var json = CommentJson(c);
+        json["event"] = "commented";
+        json["actor"] = AccountJson(c.Author);
+        return json;
+    }
 
     private static JsonObject PullJson(string repo, int number, Pull p) => new()
     {

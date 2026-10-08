@@ -14,7 +14,7 @@ import { type McpStub, STUB_POD, startMcpStub } from './mcp-stub.js';
 // repository's CLAUDE.md, and the offered tool set is exactly the pinned one.
 
 const CLI = join(APP_ROOT, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe');
-const PLAN_OUT = { outcome: 'planned', summary: 'mock plan', root_cause: 'src/app.sh:2', confidence: 0.5, files: ['src/app.sh'], steps: ['x'], verification: { level: 'tests', not_verifiable: [] }, needs_cait: false, notes: [] };
+const PLAN_OUT = { outcome: 'planned', summary: 'mock plan', root_cause: 'src/app.sh:2', confidence: 0.5, files: ['src/app.sh'], steps: ['x'], verification: { level: 'tests', not_verifiable: [] }, needs_cait: false, notes: [], questions: [] };
 
 let api: MockApi;
 let w: World;

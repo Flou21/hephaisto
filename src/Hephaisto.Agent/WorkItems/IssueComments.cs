@@ -10,6 +10,15 @@ using Hephaisto.Core.Domain;
 namespace Hephaisto.Agent.WorkItems;
 
 /// <summary>What the status comment is written from: the work item, and its newest attempt if it has one.</summary>
+/// <param name="Attempts">How many attempts the work item has had, the newest included.</param>
+/// <param name="ReplanRequestedBy">
+/// Who asked for a new plan after the newest attempt, while that plan has not been started
+/// (<c>github:&lt;login&gt;</c>); null when nobody did, and once the new attempt exists.
+/// </param>
+/// <param name="Answerable">
+/// Whether the install names anybody who may answer on the issue. Configuration, which a
+/// running process does not change - so it may be in the text, where a clock or a mode may not.
+/// </param>
 public sealed record IssueStatus(
     Guid WorkItemId,
     WorkItemState State,
@@ -17,9 +26,18 @@ public sealed record IssueStatus(
     string? DeclineCodes,
     string? DeclineReason,
     string IssueUrl,
-    IssueAttempt? Attempt);
+    IssueAttempt? Attempt,
+    int Attempts = 1,
+    string? ReplanRequestedBy = null,
+    bool Answerable = true);
 
-/// <summary>The columns of an attempt the status comment reads. Never its plan or its request.</summary>
+/// <summary>
+/// What the status comment reads of an attempt. Never its plan or its request - with one
+/// exception: for an attempt that did not work there is no plan comment, so what the planner
+/// asked and noted is said here, beside what it found.
+/// </summary>
+/// <param name="Questions">For an attempt that failed: what its planner asked of a person. Null otherwise.</param>
+/// <param name="Notes">For an attempt that failed: its planner's notes. Null otherwise.</param>
 public sealed record IssueAttempt(
     Guid Id,
     CodeFixState State,
@@ -29,7 +47,9 @@ public sealed record IssueAttempt(
     string? PrUrl,
     long? PlanCommentId,
     string Branch,
-    string DefaultBranch);
+    string DefaultBranch,
+    IReadOnlyList<string>? Questions = null,
+    IReadOnlyList<string>? Notes = null);
 
 /// <summary>
 /// Everything Hephaisto writes on an issue it was handed (v0.14.0): where the work stands, edited
@@ -63,6 +83,15 @@ public sealed record IssueAttempt(
 /// and is not turned into a link.</item>
 /// </list>
 /// <para>
+/// <b>A code span of the text's own is left exactly as it was written.</b> Between two runs of
+/// backticks of the same length GitHub acts on nothing - asked of github.com with a mention, a
+/// reference, an address, an image and a tag inside one - and it shows every character,
+/// including a backslash. The first plan in production named <c>children: [...]</c> in a code
+/// span and was posted as <c>children: \[...\]</c>, because the brackets were escaped where an
+/// escape is not one. The one span that is not passed on is one that holds <c>&lt;!--</c>: a
+/// marker of Hephaisto's own must not be something a model can write into a comment.
+/// </para>
+/// <para>
 /// <b>The slash before a digit was missing until GitHub was asked</b> (the live tier,
 /// <c>scripts/e2e/github-live.sh</c>, L04). GitHub reads <c>/issues/12</c>, <c>/pull/12</c> and
 /// <c>/discussions/12</c> as references by themselves - with no scheme and no host before them,
@@ -89,14 +118,30 @@ public static partial class IssueComments
     public const int MaxBody = 60_000;
 
     /// <summary>
-    /// The most comments Hephaisto ever writes on one issue for one work item, whatever anybody
-    /// does there. By construction it writes one status comment, one plan per attempt, one answer
-    /// to people who may not answer, and one per cause an approval was refused for; this is the
-    /// ceiling above that, for the day one of those rules is wrong. Beyond it Hephaisto only
-    /// edits its status comment. <c>ISSUES_COMMENT_CAP</c> in <c>scripts/e2e/lib/issues.sh</c>
-    /// is this number, and a test holds the two together.
+    /// The most comments Hephaisto ever writes for ONE ATTEMPT, whatever anybody does on the
+    /// issue: its plan, and its one-time answers. By construction it writes one plan per
+    /// attempt, one answer to people who may not answer, and one per cause a command was refused
+    /// for; this is the ceiling above that, for the day one of those rules is wrong.
+    /// <c>ISSUES_ATTEMPT_COMMENT_CAP</c> in <c>scripts/e2e/lib/issues.sh</c> is this number.
     /// </summary>
-    public const int MaxPerWorkItem = 6;
+    public const int MaxPerAttempt = 5;
+
+    /// <summary>How many attempts one work item may have (<see cref="WorkItem.MaxAttempts"/>). <c>ISSUES_ATTEMPT_CAP</c> in the suite.</summary>
+    public const int MaxAttemptsPerWorkItem = WorkItem.MaxAttempts;
+
+    /// <summary>
+    /// The most comments Hephaisto ever writes on one issue for one work item: the one status
+    /// comment, and at most <see cref="MaxPerAttempt"/> for each of at most
+    /// <see cref="MaxAttemptsPerWorkItem"/> attempts. It was a flat six while a work item had
+    /// one attempt; since an approver can ask for a new plan it grows with the attempts, each of
+    /// which a person asked for, and stops with them. Beyond it Hephaisto only edits its status
+    /// comment. <c>ISSUES_COMMENT_CAP</c> in <c>scripts/e2e/lib/issues.sh</c> is this number,
+    /// and a test holds the three together.
+    /// </summary>
+    public const int MaxPerWorkItem = 1 + (MaxAttemptsPerWorkItem * MaxPerAttempt);
+
+    /// <summary>How many of a plan's notes a comment holds. The contract's own cap.</summary>
+    public const int MaxNotes = 20;
 
     /// <summary>The key of the one answer to everybody who answered a plan and is not an approver.</summary>
     public const string NotApproverKey = "not-approver";
@@ -139,6 +184,9 @@ public static partial class IssueComments
         CodeFixRefusal.NeedsSecondRepository => "second-repository",
         CodeFixRefusal.NotWaiting => "not-waiting",
         CodeFixRefusal.SubjectTakenBack => "taken-back",
+        CodeFixRefusal.JobRunning => "job-running",
+        CodeFixRefusal.PullRequestOpen => "pull-request",
+        CodeFixRefusal.TooManyAttempts => "attempts",
         _ => "refused",
     };
 
@@ -180,13 +228,20 @@ public static partial class IssueComments
                 "this plan is no longer waiting for an answer. The comment above says what became of it.",
             CodeFixRefusal.SubjectTakenBack =>
                 "this issue is no longer Hephaisto's.",
+            CodeFixRefusal.JobRunning =>
+                "a Job is running for this issue right now, so there is nothing to plan again yet. "
+                + "When it has ended the comment above says so, and a new `/replan` is read then.",
+            CodeFixRefusal.PullRequestOpen =>
+                "a draft pull request is already open for this issue, and what it still needs is said in its review. "
+                + "To start over instead, close the pull request; then " + UnassignAndWait,
+            CodeFixRefusal.TooManyAttempts =>
+                $"this issue has been planned {MaxAttemptsPerWorkItem.ToString(CultureInfo.InvariantCulture)} times, which is the most for one hand-over. "
+                + "To hand it over again, unassign Hephaisto, wait until the comment above says it has let go, and assign it again.",
             _ =>
                 "it could not be recorded. An operator finds the reason in Hephaisto's console.",
         };
 
-        var word = command == IssueCommandKind.Approve ? IssueCommands.Approve : IssueCommands.Reject;
-
-        return $"**Not done.** {Code(login)}'s `{word}` was read and refused: {why}"
+        return $"**Not done.** {Code(login)}'s `{IssueCommands.Word(command)}` was read and refused: {why}"
             + "\n\n<sub>Hephaisto says this once per plan and cause.</sub>\n"
             + AnswerMarker(attemptId, AnswerKey(refusal, mode));
     }
@@ -217,6 +272,14 @@ public static partial class IssueComments
         return Cap(text.ToString());
     }
 
+    /// <summary>
+    /// For a work item that ended while its issue stayed assigned - its pull request was merged
+    /// or closed. Such an issue is taken again only after one poll found it without Hephaisto
+    /// on it, and this comment does not change when that happened: so it says to leave a gap.
+    /// </summary>
+    private const string UnassignAndWait =
+        "unassign Hephaisto, wait a minute or two, and assign it again: Hephaisto has to have seen the issue without itself on it first.";
+
     private static string StatusLine(IssueStatus s)
     {
         var a = s.Attempt;
@@ -225,7 +288,7 @@ public static partial class IssueComments
         {
             return "**Hephaisto has let go of this issue:** its pull request was closed without merging"
                 + (a?.PrUrl is { Length: > 0 } closed ? $": {Link(closed)}\n\n" : ". ")
-                + "To hand the issue back, unassign Hephaisto and assign it again.";
+                + "To hand the issue back, " + UnassignAndWait;
         }
 
         if (s.State == WorkItemState.Cancelled)
@@ -241,7 +304,7 @@ public static partial class IssueComments
         {
             return "**Done.** The pull request was merged"
                 + (a?.PrUrl is { Length: > 0 } merged ? $": {Link(merged)}" : ".")
-                + "\n\nFor more work on this issue, reopen it, or unassign Hephaisto and assign it again.";
+                + "\n\nFor more work on this issue, reopen it, or " + UnassignAndWait;
         }
 
         if (a is null)
@@ -256,16 +319,42 @@ public static partial class IssueComments
                     + "Hephaisto asks again by itself; nothing has to be done on this issue.";
         }
 
-        const string again = " To have it tried again, unassign Hephaisto and assign it again.";
+        // A new plan was asked for after this attempt, and has not been started: that is where
+        // the work stands, whatever became of the attempt.
+        if (s.ReplanRequestedBy is { Length: > 0 } by)
+        {
+            // A person who replied /replan, or one who assigned the issue again: both asked.
+            // Where GitHub did not say who assigned it, nobody is named.
+            var asked = by.StartsWith("github:", StringComparison.Ordinal)
+                ? $"{Clause(by, 100)} asked for a new plan"
+                : "The issue was assigned to Hephaisto again";
+
+            if (string.IsNullOrWhiteSpace(s.DeclineReason))
+                return $"**Planning again.** {asked}. The new plan is started on Hephaisto's next pass; nothing is changed.";
+
+            return string.Equals(s.DeclineCodes, nameof(CodeFixReasonCode.ModeOff), StringComparison.Ordinal)
+                ? $"**Not planned.** {asked}, and the code-fix mode of this install is Off, so no Job is started for this issue. "
+                    + "When an operator turns it on, Hephaisto plans it without being asked again."
+                : $"**Waiting.** {asked}, and the new plan has not been started: {Clause(s.DeclineReason, 500)}. "
+                    + "Hephaisto asks again by itself; nothing has to be done on this issue.";
+        }
+
+        var again = Again(s);
+        var replanned = s.Attempts > 1;
 
         return a.State switch
         {
+            CodeFixState.Eligible or CodeFixState.Planning when replanned =>
+                $"**Planning again.** A read-only Job is reading the code on branch {Code(a.DefaultBranch)} to write a new plan, "
+                + "with the earlier plan and what was answered on this issue. Nothing is changed.",
+
             CodeFixState.Eligible or CodeFixState.Planning =>
                 $"**Planning.** A read-only Job is reading the code on branch {Code(a.DefaultBranch)} to write a plan. Nothing is changed.",
 
             CodeFixState.PlanReady =>
-                "**A plan is ready**"
+                (replanned ? "**A new plan is ready**" : "**A plan is ready**")
                 + (a.PlanCommentId is { } plan ? $": [read the plan]({CommentUrl(s.IssueUrl, plan)})." : ".")
+                + (replanned ? " It replaces the earlier one." : string.Empty)
                 + " It waits for an approver's answer; nothing is changed until then.",
 
             CodeFixState.Implementing =>
@@ -287,8 +376,98 @@ public static partial class IssueComments
             _ =>
                 $"**It did not work.** {Clause(a.FailureReason, 500)}."
                 + (string.IsNullOrWhiteSpace(a.Summary) ? string.Empty : $"\n\n**What it found.** {Neutralise(a.Summary, 1500)}")
+                + AskedAndNoted(a.Questions, a.Notes)
                 + "\n\nNothing was changed." + again,
         };
+    }
+
+    /// <summary>
+    /// How an attempt that has ended is followed by another, in words that are true of this
+    /// install and this work item: an approver's <c>/replan</c> where somebody may answer on the
+    /// issue at all, or assigning the issue again - and after the last attempt a hand-over has,
+    /// only a new hand-over.
+    /// </summary>
+    /// <remarks>
+    /// "Unassign Hephaisto and assign it again" stood here alone until 2026-10-08, when somebody
+    /// did exactly that within seven seconds and nothing happened: an unassignment was noticed
+    /// only by a poll that found the issue without Hephaisto on it. For an attempt that has
+    /// ended the sentence is true since then, however quickly it is done - the assignment is
+    /// known by its time on GitHub (<c>GitHubIssuePoller.Assignments.cs</c>). After the last
+    /// attempt it is not: that needs a new work item, and so the poll, and it says to wait.
+    /// </remarks>
+    private static string Again(IssueStatus s)
+    {
+        if (s.Attempts >= MaxAttemptsPerWorkItem)
+        {
+            return $" This issue has been planned {s.Attempts.ToString(CultureInfo.InvariantCulture)} times, which is the most for one hand-over. "
+                + "To hand it over again, unassign Hephaisto, wait until this comment says it has let go, and assign it again.";
+        }
+
+        return s.Answerable
+            ? " To have it tried again, an approver replies `/replan` - after answering in a comment, where something was asked. "
+                + "Or unassign Hephaisto and assign it again."
+            : " To have it tried again, unassign Hephaisto and assign it again.";
+    }
+
+    /// <summary>
+    /// What the planner asked of a person and what it noted, for a comment: the questions as a
+    /// numbered list - they are answered by number - and the notes folded away, since they are
+    /// for whoever wants to know what was left out. Nothing at all when there is neither.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Until 2026-10-08 neither was shown anywhere. The first plan in production left an entry
+    /// where it was because the issue did not name it, and asked whether it should move too -
+    /// in <c>notes</c>, which no comment rendered. The owner asked why Hephaisto had not
+    /// suggested it.
+    /// </para>
+    /// <para>
+    /// <b>A note about injected text is counted and not quoted.</b> The plan prompt asks for a
+    /// suspected injection to be quoted in <c>notes</c>, so such a note is exactly where a model
+    /// repeats what a stranger planted in the issue - and a comment is written under
+    /// Hephaisto's name. The console shows those notes, marked, to an operator.
+    /// </para>
+    /// </remarks>
+    private static string AskedAndNoted(IReadOnlyList<string>? questions, IReadOnlyList<string>? notes)
+    {
+        var text = new StringBuilder();
+        var asked = CodeFixContract.Questions(questions);
+
+        if (asked.Count > 0)
+        {
+            text.Append("\n\n**Questions**\n");
+
+            for (var i = 0; i < asked.Count; i++)
+                text.Append('\n').Append((i + 1).ToString(CultureInfo.InvariantCulture)).Append(". ").Append(Neutralise(asked[i], CodeFixContract.MaxQuestionChars));
+        }
+
+        var noted = (notes ?? []).Where(n => !string.IsNullOrWhiteSpace(n)).Take(MaxNotes).ToList();
+
+        if (noted.Count > 0)
+        {
+            var withheld = noted.Count(CodeFixQueries.IsInjectionNote);
+
+            // A blank line after the summary, and one before the closing tag: between them
+            // GitHub reads Markdown again, and a list is a list.
+            text.Append("\n\n<details>\n<summary>The planner's notes (")
+                .Append(noted.Count.ToString(CultureInfo.InvariantCulture))
+                .Append(")</summary>\n");
+
+            foreach (var note in noted.Where(n => !CodeFixQueries.IsInjectionNote(n)))
+                text.Append("\n- ").Append(Neutralise(note, 1000));
+
+            if (withheld > 0)
+            {
+                text.Append("\n- ")
+                    .Append(withheld == 1 ? "One note is" : $"{withheld.ToString(CultureInfo.InvariantCulture)} notes are")
+                    .Append(" about text in the issue that read like an instruction to the planner. What such a note quotes is not repeated here; ")
+                    .Append("an operator reads it on the attempt's page in Hephaisto's console.");
+            }
+
+            text.Append("\n\n</details>");
+        }
+
+        return text.ToString();
     }
 
     /// <summary>
@@ -302,13 +481,22 @@ public static partial class IssueComments
     /// With nobody listed a comment is never an answer, and the plan says where it is answered
     /// instead of inviting a reply that will not be read.
     /// </param>
-    public static string Plan(CodeFixAttempt attempt, CodeFixPlanResult? plan, CodeFixMode mode, bool answerable)
+    /// <param name="ordinal">Which attempt of its work item this is, from 1. A later one says that it replaces a plan.</param>
+    public static string Plan(CodeFixAttempt attempt, CodeFixPlanResult? plan, CodeFixMode mode, bool answerable, int ordinal = 1)
     {
         ArgumentNullException.ThrowIfNull(attempt);
 
         var text = new StringBuilder();
 
-        text.Append("## Hephaisto's plan for this issue\n\n");
+        if (ordinal > 1)
+        {
+            text.Append("## Hephaisto's new plan for this issue\n\n")
+                .Append("This plan replaces the earlier one on this issue. It was made with that plan and with what the issue's author and the approvers wrote here since.\n\n");
+        }
+        else
+        {
+            text.Append("## Hephaisto's plan for this issue\n\n");
+        }
         text.Append("**Summary.** ").Append(Neutralise(plan?.Summary ?? attempt.Summary, 2000)).Append("\n\n");
         text.Append("**What is wrong, and what will change.** ").Append(Neutralise(plan?.RootCause ?? attempt.RootCause, 4000)).Append("\n\n");
 
@@ -336,7 +524,9 @@ public static partial class IssueComments
 
         if (plan is { Verification.NotVerifiable.Count: > 0 })
         {
-            text.Append(" What only production can show:\n");
+            // For an issue the reader is a person at the running application, not a dashboard:
+            // an issue names no workload, and what the Job cannot run is somebody looking.
+            text.Append(" What only a person looking at the running application can confirm:\n");
 
             foreach (var item in plan.Verification.NotVerifiable.Take(10))
                 text.Append("- ").Append(Neutralise(item, 500)).Append('\n');
@@ -345,6 +535,11 @@ public static partial class IssueComments
         {
             text.Append('\n');
         }
+
+        // What it asks, and what it noted. Each block brings its own blank line before it, and
+        // the line above is already ended.
+        if (AskedAndNoted(plan?.Questions, plan?.Notes) is { Length: > 0 } asked)
+            text.Append(asked.AsSpan(1)).Append('\n');
 
         text.Append("\n**Cost of planning.** $")
             .Append(attempt.PlanCostUsd.ToString("0.00", CultureInfo.InvariantCulture))
@@ -372,12 +567,20 @@ public static partial class IssueComments
         else if (attempt.NeedsCait)
         {
             text.Append("**This plan cannot be approved here.** It needs a change in a shared library first; a person makes that "
-                + "change, and this issue is then planned again. Reply `/reject <reason>` to close the plan.\n\n");
+                + "change, and an approver then replies `/replan` to have this issue planned again. Reply `/reject <reason>` to close the plan instead.\n\n");
         }
         else
         {
-            text.Append("**To go ahead,** an approver replies `/approve`. **To refuse it,** an approver replies `/reject <reason>`. "
-                + "The command is the first line of the comment, and only an approver of this install is heard.\n\n");
+            var asks = CodeFixContract.Questions(plan?.Questions).Count > 0;
+
+            // Three things an approver can say, each true of this install as it stands.
+            text.Append(asks
+                    ? "**To go ahead,** an approver replies `/approve`: that takes the plan as it is, with the assumptions above. "
+                        + "**To have it planned again with your answers,** write them in a comment, then reply `/replan`. "
+                    : "**To go ahead,** an approver replies `/approve`. "
+                        + "**To have it planned again,** say in a comment what should be different, then reply `/replan`. ")
+                .Append("**To refuse it,** an approver replies `/reject <reason>`. "
+                    + "A command is the first line of its comment, and only an approver of this install is heard.\n\n");
 
             if (mode != CodeFixMode.Pr)
             {
@@ -429,7 +632,77 @@ public static partial class IssueComments
             one = one[..cut].TrimEnd() + "…";
         }
 
-        one = one
+        // Code spans stay as they were written, and everything between them is made inert.
+        // The spans are found the way GitHub finds them - a run of backticks, closed by the
+        // next run of the same length - and in the text as it leaves here: outside a span no
+        // "<" survives and every backslash is doubled, so nothing that comes before a run of
+        // backticks can stop it from opening one, and the two readings cannot differ.
+        var inert = new StringBuilder(one.Length + 16);
+        var at = 0;
+
+        while (at < one.Length)
+        {
+            var open = one.IndexOf('`', at);
+
+            if (open < 0)
+            {
+                inert.Append(Inert(one[at..]));
+                break;
+            }
+
+            var run = 1;
+
+            while (open + run < one.Length && one[open + run] == '`')
+                run++;
+
+            var close = ClosingRun(one, open + run, run);
+
+            // Unclosed, the backticks are characters. And a span that holds the start of an
+            // HTML comment is not passed on as one: a marker of Hephaisto's own, shown as code,
+            // would still be found by the process that looks for its markers.
+            if (close < 0 || one.AsSpan(open + run, close - open - run).Contains("<!--", StringComparison.Ordinal))
+            {
+                inert.Append(Inert(one[at..(open + run)]));
+                at = open + run;
+                continue;
+            }
+
+            inert.Append(Inert(one[at..open])).Append(one, open, close + run - open);
+            at = close + run;
+        }
+
+        return inert.ToString();
+    }
+
+    /// <summary>Where the run of exactly <paramref name="length"/> backticks that closes a code span starts, or -1.</summary>
+    private static int ClosingRun(string text, int from, int length)
+    {
+        for (var i = text.IndexOf('`', from); i >= 0; i = text.IndexOf('`', i))
+        {
+            var run = 1;
+
+            while (i + run < text.Length && text[i + run] == '`')
+                run++;
+
+            if (run == length)
+                return i;
+
+            i += run;
+
+            if (i >= text.Length)
+                break;
+        }
+
+        return -1;
+    }
+
+    /// <summary>Text outside a code span: no HTML, no link, no mention, no reference, no address.</summary>
+    private static string Inert(string text)
+    {
+        if (text.Length == 0)
+            return text;
+
+        var one = text
             .Replace("&", "&amp;", StringComparison.Ordinal)
             .Replace("<", "&lt;", StringComparison.Ordinal)
             .Replace(">", "&gt;", StringComparison.Ordinal)

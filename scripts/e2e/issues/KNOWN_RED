@@ -15,5 +15,10 @@
 # last seven - G03 to G06 and G10 to G12 - left with stage 2.4 (#247): a plan answered on the
 # issue, the pull request followed to its end, and the cap on what the agent writes.
 #
+# G13 to G17 landed before their code (v0.14.0, #286 with #252 and #285): the issue as a
+# conversation - the planner's questions on the issue, /replan, and a fresh assignment known by
+# its time on GitHub. G13 to G16 left with the commit that built /replan, G17 with the one that
+# reads the timeline.
+#
 # Nothing is listed: every scenario is expected green, and --strict and a plain run are the same
 # thing until one lands red again.

@@ -119,6 +119,13 @@ gh_unassign() {
     _live_api DELETE "issues/$2/assignees" -f "assignees[]=$LIVE_BOT" >/dev/null
 }
 
+# Off and on again, as fast as two requests go - about a second, where the agent polls every
+# twenty. On the stand-in this is one control and nothing can fall between; here a poll can, and
+# a scenario has to say which road the run took (L05).
+gh_reassign() {
+    gh_unassign "$1" "$2" && gh_assign "$1" "$2"
+}
+
 gh_issue_close() {
     _live_repo_is "$1" || return 1
     _live_api PATCH "issues/$2" -f state=closed >/dev/null
@@ -249,6 +256,32 @@ gh_polls_since() {
 }
 
 gh_comment_reads_since() { gh_polls_since "$1"; }
+
+# ---------------------------------------------------------------------------------------
+# Somebody else on the sandbox
+# ---------------------------------------------------------------------------------------
+
+# The suite's newest issues that ANOTHER Hephaisto took as well: one line per work item,
+# "<issue> <work item id>", for every status marker of the bot's on them that the agent under
+# test does not know as a work item of its own.
+#
+# The bot's token is an account's, and any install that holds it and lists the sandbox polls
+# the sandbox. On 2026-10-08 production did - with a real model: every issue this suite opened
+# was planned there too, for money, and carried a second status comment. Nothing in a preflight
+# that looks at the dev agent can see that; what an earlier run left on GitHub can.
+#   live_foreign_takers [how many of the newest closed issues to look at]
+live_foreign_takers() {
+    local n id uuid
+    for n in $(_live_api GET "issues?state=closed&sort=created&direction=desc&per_page=${1:-6}" \
+            | jq -r --arg p "$LIVE_TITLE_PREFIX" '.[] | select(.pull_request == null) | select(.title | startswith($p)) | .number'); do
+        for id in $(_live_api GET "issues/$n/comments?per_page=100" \
+                | jq -r --arg b "$LIVE_BOT" '.[] | select(.user.login == $b) | .body' \
+                | grep -o 'hephaisto:status:[0-9a-f]\{32\}' | cut -d: -f3 | sort -u); do
+            uuid="${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20:12}"
+            [ "$(_issues_curl -o /dev/null -w '%{http_code}' "$ISSUES_API/api/workitems/$uuid")" = 200 ] || echo "$n $uuid"
+        done
+    done
+}
 
 # ---------------------------------------------------------------------------------------
 # One issue nobody is working on

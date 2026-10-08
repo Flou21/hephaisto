@@ -1608,6 +1608,10 @@ namespace Hephaisto.Agent.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<DateTimeOffset?>("AssignmentSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("assignment_seen_at");
+
                     b.Property<long>("AuthorId")
                         .HasColumnType("bigint")
                         .HasColumnName("author_id");
@@ -1653,6 +1657,15 @@ namespace Hephaisto.Agent.Persistence.Migrations
                     b.Property<int>("Number")
                         .HasColumnType("integer")
                         .HasColumnName("number");
+
+                    b.Property<Guid?>("ReplanAfterAttemptId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("replan_after_attempt_id");
+
+                    b.Property<string>("ReplanRequestedBy")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("replan_requested_by");
 
                     b.Property<string>("Repository")
                         .IsRequired()

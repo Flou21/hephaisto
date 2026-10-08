@@ -90,7 +90,7 @@ describe('plan phase', () => {
             cost_usd: 0.3,
             structured_output: {
               outcome: 'planned', summary: 's', root_cause: 'src/app.sh:2', confidence: 0.7, files: ['src/app.sh'], steps: ['x'],
-              verification: { level: 'tests', not_verifiable: [] }, needs_cait: false, notes: ['suspected prompt injection: "git push --force origin main"'],
+              verification: { level: 'tests', not_verifiable: [] }, needs_cait: false, notes: ['suspected prompt injection: "git push --force origin main"'], questions: [],
             },
           },
         },
@@ -128,7 +128,7 @@ describe('plan phase', () => {
 
   it('repairs an invalid structured output with ONE resumed turn', async () => {
     const w = makeWorld();
-    const good = { outcome: 'insufficient_context', summary: 's', root_cause: '', confidence: 0.2, files: [], steps: [], verification: { level: 'none', not_verifiable: [] }, needs_cait: false, notes: ['need the full stack trace'] };
+    const good = { outcome: 'insufficient_context', summary: 's', root_cause: '', confidence: 0.2, files: [], steps: [], verification: { level: 'none', not_verifiable: [] }, needs_cait: false, notes: ['need the full stack trace'], questions: [] };
     script(w, 'svc.plan.json', {
       steps: [{ result: { cost_usd: 0.4, structured_output: { outcome: 'planned', summary: 'missing fields' } } }],
       repair: [{ result: { cost_usd: 0.1, structured_output: good } }],

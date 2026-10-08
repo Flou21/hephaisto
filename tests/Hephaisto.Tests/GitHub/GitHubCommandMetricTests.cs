@@ -46,16 +46,26 @@ public sealed class GitHubCommandMetricTests
 
         var metrics = new GitHubMetrics(factory);
 
-        metrics.Command(approve: true, GitHubMetrics.CommandAccepted);
-        metrics.Command(approve: false, GitHubMetrics.CommandAccepted);
-        metrics.Command(approve: true, GitHubMetrics.CommandNotApprover);
-        metrics.Command(approve: true, GitHubMetrics.CommandRefused(IssueComments.AnswerKey(CodeFixRefusal.ModeBelowPr, CodeFixMode.Plan)));
+        metrics.Command(IssueCommands.Verb(IssueCommandKind.Approve), GitHubMetrics.CommandAccepted);
+        metrics.Command(IssueCommands.Verb(IssueCommandKind.Reject), GitHubMetrics.CommandAccepted);
+        metrics.Command(IssueCommands.Verb(IssueCommandKind.Approve), GitHubMetrics.CommandNotApprover);
+        metrics.Command(IssueCommands.Verb(IssueCommandKind.Approve), GitHubMetrics.CommandRefused(IssueComments.AnswerKey(CodeFixRefusal.ModeBelowPr, CodeFixMode.Plan)));
+        metrics.Command(IssueCommands.Verb(IssueCommandKind.Replan), GitHubMetrics.CommandAccepted);
+        metrics.Command(IssueCommands.Verb(IssueCommandKind.Replan), GitHubMetrics.CommandRefused(IssueComments.AnswerKey(CodeFixRefusal.JobRunning, null)));
 
         seen.Should().Equal(
             (1, "approve", "accepted"),
             (1, "reject", "accepted"),
             (1, "approve", "not_approver"),
-            (1, "approve", "refused:mode-plan"));
+            (1, "approve", "refused:mode-plan"),
+            (1, "replan", "accepted"),
+            (1, "replan", "refused:job-running"));
+    }
+
+    [Fact]
+    public void The_verb_is_one_of_three_words_whatever_the_command()
+    {
+        Enum.GetValues<IssueCommandKind>().Select(IssueCommands.Verb).Should().BeEquivalentTo(["approve", "reject", "replan"]);
     }
 
     [Fact]
@@ -69,7 +79,8 @@ public sealed class GitHubCommandMetricTests
             .ToList();
 
         causes.Should().BeEquivalentTo(
-            ["mode-plan", "mode-off", "emergency-stop", "kill-switch", "second-repository", "not-waiting", "taken-back", "refused"]);
+            ["mode-plan", "mode-off", "emergency-stop", "kill-switch", "second-repository", "not-waiting", "taken-back", "refused",
+             "job-running", "pull-request", "attempts"]);
         causes.Select(GitHubMetrics.CommandRefused).Should().OnlyContain(o => System.Text.RegularExpressions.Regex.IsMatch(o, "^refused:[a-z-]+$"));
     }
 }
