@@ -41,8 +41,13 @@
 #      holds the plan, null until the poller's next pass has written it. PlanReady is the
 #      database's word and the comment follows it by one poll, so issues_plan_ready waits for
 #      both. GET /api/workitems/{id} is the work item with `attempts`, newest first.
-#      An attempt is made once per work item: a failed, denied or cancelled one is not followed
-#      by another, and handing the issue over again (unassign, assign) is a new work item.
+#      A work item has at most ONE OPEN attempt, and may have several in a row (#252, #285,
+#      #286): an approver's `/replan` on the issue, or a fresh assignment once the latest attempt
+#      has ended, starts the next one for the SAME work item - never more than
+#      ISSUES_ATTEMPT_CAP of them. A row also carries `questions`: what the planner asks of a
+#      person, beside `notes`. The request of an attempt after the first carries `previous`
+#      (the earlier plan's summary, questions and steps) and, under `work_item.comments`, what
+#      the issue's author and the approvers wrote since the issue was handed over.
 #   4. BUILT (stage 2.3). A Job and its request ConfigMap keep the labels hephaisto.dev/attempt
 #      and hephaisto.dev/phase (and carry hephaisto.dev/work-item in place of
 #      hephaisto.dev/incident), and the request is still <job>-req, key request.json - contract
@@ -61,21 +66,40 @@
 #
 # What the bot writes on an issue: ONE status comment per work item, edited in place (it ends
 # with <!-- hephaisto:status:<work item id> -->), and ONE comment per attempt with its plan,
-# never edited (<!-- hephaisto:plan:<attempt id> -->), which says how to answer.
+# never edited (<!-- hephaisto:plan:<attempt id> -->), which says how to answer. The plan
+# comment shows the planner's questions as a numbered list under **Questions** and its notes in
+# a <details> block; the status comment of an attempt that did not work shows them too.
 #
 # How a plan is answered, since stage 2.4 (#247): a comment whose FIRST NON-BLANK LINE is exactly
 # `/approve`, or `/reject` alone or followed by a reason, written by an account whose NUMBER is
 # in the install's github.approvers (ISSUES_APPROVER_ID here). The first such comment after the
-# plan decides; a comment is looked at once and never again, whatever it is edited into. Besides
-# the two comments above the agent writes, each ending in
+# plan decides; a comment is looked at once and never again, whatever it is edited into.
+#
+# And `/replan` (#252): the same grammar as `/approve` - alone on the first non-blank line - and
+# the same people. It is ACCEPTED while the latest attempt's plan is waiting (that attempt is
+# then Denied, with the reason "replanned by github:<login>") or once the latest attempt has
+# ended without a pull request (Failed, Denied, Expired, Cancelled), and it starts a new attempt
+# for the same work item. It is REFUSED while a Job is running for the issue and after a pull
+# request was opened. Whatever else the command's comment says is an answer like any other
+# comment.
+#
+# Besides the two comments above the agent writes, each ending in
 # <!-- hephaisto:answer:<attempt id>:<key> -->:
 #   - at most ONE per attempt to people who are not approvers (key not-approver). It names the
 #     first of them by login, in a code span, and nobody else;
-#   - at most ONE per attempt and cause when an approver's answer is refused: mode-plan,
-#     mode-off, emergency-stop, kill-switch, second-repository, not-waiting, taken-back.
-# And never more than ISSUES_COMMENT_CAP comments on one work item, whatever anybody does. A
-# refusal does not use the plan up: when its cause is gone, a NEW /approve is acted on. The API
-# door (POST /api/workitems/{id}/codefix/{attemptId}/approve|deny) is as it was.
+#   - at most ONE per attempt and cause when an approver's command is refused: mode-plan,
+#     mode-off, emergency-stop, kill-switch, second-repository, not-waiting, taken-back, and for
+#     /replan job-running, pull-request, attempts.
+# And never more than ISSUES_ATTEMPT_COMMENT_CAP comments for one attempt, whatever anybody
+# does - so, with the one status comment and at most ISSUES_ATTEMPT_CAP attempts, never more than
+# ISSUES_COMMENT_CAP on one work item. A refusal does not use the plan up: when its cause is
+# gone, a NEW /approve is acted on. The API door
+# (POST /api/workitems/{id}/codefix/{attemptId}/approve|deny) is as it was.
+#
+# A fresh assignment (#285): for a work item whose latest attempt has ended without a pull
+# request the agent reads GET /repos/{o}/{r}/issues/{n}/timeline, and an `assigned` event for
+# the bot that is newer than that attempt's end is a new hand-over - a new attempt, as /replan
+# without answers. A waiting plan is left alone, and for one the timeline is not read at all.
 #
 # shellcheck disable=SC2034
 
@@ -97,6 +121,13 @@ ISSUES_BOT="${ISSUES_BOT:-hephaisto-bot}"
 # IssueComments.MaxPerWorkItem (src/Hephaisto.Agent/WorkItems/IssueComments.cs), and a unit test
 # (IssuesSuiteTests) fails when this number and that one differ.
 ISSUES_COMMENT_CAP="${ISSUES_COMMENT_CAP:-6}"
+
+# What that ceiling becomes once a work item can be planned again (#252): so many comments for
+# one attempt - its plan and its one-time answers - and so many attempts for one work item.
+# G15 holds an attempt to the first; the agent's numbers follow with the stage that builds
+# /replan, and ISSUES_COMMENT_CAP with them.
+ISSUES_ATTEMPT_COMMENT_CAP="${ISSUES_ATTEMPT_COMMENT_CAP:-5}"
+ISSUES_ATTEMPT_CAP="${ISSUES_ATTEMPT_CAP:-5}"
 
 ISSUES_NS="${ISSUES_NS:-hephaisto}"
 ISSUES_DEPLOY="${ISSUES_DEPLOY:-hephaisto}"
@@ -146,6 +177,12 @@ gh_issue_create() {
 
 gh_assign()   { _gh_control POST "/repos/$1/issues/$2/assign" >/dev/null; }
 gh_unassign() { _gh_control POST "/repos/$1/issues/$2/unassign" >/dev/null; }
+
+# Off and on again in ONE request, so that no poll can fall between the two: what a person does
+# in a few seconds, and what a poll a minute apart never sees (#285). The issue's timeline gets
+# an `unassigned` and an `assigned` event, as on GitHub. Fails when the stand-in does not know
+# the control - a pod that predates it.
+gh_reassign() { _gh_control POST "/repos/$1/issues/$2/reassign" | jq -e '.number' >/dev/null; }
 
 #   gh_issue_edit <owner/repo> <number> <new body>
 gh_issue_edit()   { _gh_control PATCH "/repos/$1/issues/$2" "$(jq -cn --arg b "$3" '{body:$b}')" >/dev/null; }
@@ -217,6 +254,25 @@ gh_polls_since() {
 gh_comment_reads_since() {
     gh_requests_since "$1" | jq --arg p "/repos/$2/issues/$3/comments" \
         '[.[] | select(.method == "GET" and .path == $p and (.status == 200 or .status == 304))] | length'
+}
+
+# How often it has read an issue's timeline since a mark - which it does only for a work item
+# whose latest attempt has ended.
+#   gh_timeline_reads_since <mark> <owner/repo> <number>
+gh_timeline_reads_since() {
+    gh_requests_since "$1" | jq --arg p "/repos/$2/issues/$3/timeline" \
+        '[.[] | select(.method == "GET" and .path == $p and (.status == 200 or .status == 304))] | length'
+}
+
+# The text of the comment that carries an attempt's plan, and of the one status comment of a
+# work item: found by their markers, among the bot's own comments. Empty when there is none.
+#   issues_plan_comment <owner/repo> <number> <attempt-id>
+#   issues_status_comment <owner/repo> <number> <work-item-id>
+issues_plan_comment() {
+    gh_bot_comments "$1" "$2" | jq -r --arg m "hephaisto:plan:$(printf '%s' "$3" | tr -d '-') " '[.[] | select(.body | contains($m))][0].body // empty'
+}
+issues_status_comment() {
+    gh_bot_comments "$1" "$2" | jq -r --arg m "hephaisto:status:$(printf '%s' "$3" | tr -d '-') " '[.[] | select(.body | contains($m))][0].body // empty'
 }
 
 # "Nothing happened" is only worth asserting once the agent has had the chance: these wait
@@ -363,6 +419,38 @@ issues_plan_ready() {
         ATTEMPT=$(wi_attempt "$WI")
     else
         fail "the plan is on the issue" "the attempt names no plan comment within ${ISSUES_SEEN_WAIT}s"
+        return 1
+    fi
+}
+
+# The road of a SECOND plan: the work item has <count> attempts, the newest is PlanReady, and
+# its plan is on the issue. Sets ATTEMPT to that newest attempt; records each step, and returns
+# non-zero when one did not happen.
+#   issues_next_plan_ready <work-item-id> <count>
+issues_next_plan_ready() {
+    local wi="$1" count="$2"
+    ATTEMPT="{}"
+
+    _wi_attempts_ge() { [ "$(wi_attempt_count "$wi")" -ge "$count" ]; }
+    wait_for "attempt $count of the work item" "$ISSUES_SEEN_WAIT" _wi_attempts_ge \
+        || { fail "a new attempt was started for the work item" "it has $(wi_attempt_count "$wi") attempt(s) after ${ISSUES_SEEN_WAIT}s"; return 1; }
+    pass "a new attempt was started for the work item"
+
+    wi_wait_attempt "$wi" "$ISSUES_PLAN_WAIT" PlanReady Failed Cancelled Denied Expired || true
+    ATTEMPT=$(wi_attempt "$wi")
+    if [ "$(jq -r '.state // empty' <<<"$ATTEMPT")" = PlanReady ]; then
+        pass "its plan is ready"
+    else
+        fail "its plan is ready" "$(jq -r '(.state // "no attempt") + ": " + (.failureReason // "")' <<<"$ATTEMPT")"
+        return 1
+    fi
+
+    _wi_next_posted() { [ -n "$(wi_attempt "$wi" | jq -r '.planCommentId // empty')" ]; }
+    if wait_for "the new plan to be written on the issue" "$ISSUES_SEEN_WAIT" _wi_next_posted; then
+        pass "the new plan is on the issue"
+        ATTEMPT=$(wi_attempt "$wi")
+    else
+        fail "the new plan is on the issue" "the attempt names no plan comment within ${ISSUES_SEEN_WAIT}s"
         return 1
     fi
 }

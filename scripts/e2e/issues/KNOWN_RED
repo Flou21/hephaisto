@@ -15,5 +15,12 @@
 # last seven - G03 to G06 and G10 to G12 - left with stage 2.4 (#247): a plan answered on the
 # issue, the pull request followed to its end, and the cap on what the agent writes.
 #
-# Nothing is listed: every scenario is expected green, and --strict and a plain run are the same
-# thing until one lands red again.
+# G13 to G17 landed before their code (v0.14.0, #286 with #252 and #285): the issue as a
+# conversation - the planner's questions on the issue, /replan, and a fresh assignment known by
+# its time on GitHub.
+
+G13 0.14 the plan comment shows the planner's questions and folds its notes (#286): IssueComments renders neither
+G14 0.14 /replan starts a new attempt with the answers and the earlier plan (#252): the command does not exist, and a work item has one attempt
+G15 0.14 /replan is refused while a Job runs and after a pull request (#252): the command does not exist
+G16 0.14 a failed attempt shows what the planner asked and is planned again by /replan (#286, #252): neither is built
+G17 0.14 a fresh assignment is known by its time on the issue's timeline (#285): the timeline is never read

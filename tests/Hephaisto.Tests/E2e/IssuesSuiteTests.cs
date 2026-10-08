@@ -45,8 +45,20 @@ public sealed partial class IssuesSuiteTests
     [Fact]
     public void The_milestones_twelve_scenarios_are_all_there()
     {
-        Scenarios().Select(f => Path.GetFileNameWithoutExtension(f)).Should().BeEquivalentTo(
+        Scenarios().Select(f => Path.GetFileNameWithoutExtension(f)).Should().Contain(
             Enumerable.Range(1, 12).Select(n => $"G{n:00}"));
+    }
+
+    /// <summary>
+    /// The issue as a conversation (#286, with #252 and #285): the planner's questions on the
+    /// issue, an answer and <c>/replan</c>, a refusal of it, a failed attempt planned again, and
+    /// a fresh assignment known by its time. Seventeen in all, and no file beside them.
+    /// </summary>
+    [Fact]
+    public void The_five_scenarios_of_the_conversation_are_there_and_nothing_else_is()
+    {
+        Scenarios().Select(f => Path.GetFileNameWithoutExtension(f)).Should().BeEquivalentTo(
+            Enumerable.Range(1, 17).Select(n => $"G{n:00}"));
     }
 
     /// <summary>
