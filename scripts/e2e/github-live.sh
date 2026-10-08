@@ -34,6 +34,10 @@
 #   - `gh` on this machine, logged in as an account whose NUMBER is in the agent's approvers.
 #     The suite plays the person with it: it opens the issues, assigns the bot, answers plans.
 #
+# IT ALSO REFUSES when the issues of the last run were taken by ANOTHER Hephaisto as well - an
+# install that holds the bot's token and lists the sandbox, which plans them with its own coder
+# and its own money (production did, on 2026-10-08).
+#
 # IT REFUSES TO RUN unless all of this is so, read off the agent's Deployment and off GitHub:
 # the kube context is this machine's; the agent talks to https://api.github.com; the ONE
 # repository it lists is the sandbox; its coder is the script (CodeFix__Sdk=fake) and the Job's
@@ -43,8 +47,9 @@
 # run was killed, and works when the agent has been pointed elsewhere again.)
 #
 # WHAT IT WRITES, and where. Only in the sandbox - lib/live.sh puts the repository's name into
-# every request itself and takes it from nobody. Per run: five issues, half a dozen comments by
-# the person, one branch and one draft pull request by the bot. A trap cleans up on EVERY exit:
+# every request itself and takes it from nobody. Per run: six issues, nine comments by the
+# person, one branch and one draft pull request by the bot, and one issue the bot is taken off
+# and put back on. A trap cleans up on EVERY exit:
 # the issues it opened are closed, the pull requests they led to are closed - never merged -
 # and those pull requests' hephaisto/codefix-* branches are deleted. It never pushes, never
 # merges, and never touches main, and it asserts at the end that main did not move.
@@ -230,6 +235,12 @@ left=$(_live_api GET "git/matching-refs/heads/hephaisto/codefix-" --jq '[.[].ref
 [ -z "$left" ] || die "refusing: $LIVE_REPO has branches an earlier run left ($left); scripts/e2e/github-live.sh --sweep deletes them"
 held=$(_issues_curl "$ISSUES_API/api/workitems?limit=200" | jq --arg r "$LIVE_REPO" '[.[]? | select(.repository == $r)] | length' 2>/dev/null)
 [ "${held:-1}" -eq 0 ] || die "refusing: the agent still holds $held work item(s) of $LIVE_REPO from an earlier run; wait for its next poll, or see GET /api/workitems"
+
+# Nobody else may be working in the sandbox. The bot's token is an account's: another install
+# that holds it and lists the sandbox takes every issue this suite opens - with whatever coder
+# IT runs. What the last run's issues carry says whether one did.
+others=$(live_foreign_takers 6 2>/dev/null | tr '\n' ';')
+[ -z "$others" ] || die "refusing: another Hephaisto took issues of the last run as work as well (issue and work item: ${others%;}) - an install with $LIVE_BOT's token that lists $LIVE_REPO, and it plans them with ITS coder. Take $LIVE_REPO out of that install's github.issues.repositories first"
 
 # --- from here on something is written, so from here on it is cleaned up ----------------------------
 
