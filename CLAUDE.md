@@ -369,6 +369,35 @@ why it is a value and not a default: this stack's collector writes `k8s_namespac
 `k8s_pod_name`, promtail writes `namespace` and `pod`. A runbook that needs logs should say
 "the previous container's logs" and name both sources, never `get_pod_logs` alone.
 
+## GitHub issues as work, as of v0.14.0
+
+`github.enabled`: an issue assigned to the agent's account, in a listed repository, is a
+`WorkItem` (`src/Hephaisto.Agent/GitHub/`, `src/Hephaisto.Agent/WorkItems/`, table `work_items`).
+Built so far (#245): the client, the poller, the work item, `github` in `/api/status`. No Job is
+started for one and nothing is written on an issue yet (#246, #247). Five things to know:
+
+- **The poller is level-triggered: no queue, no retry state.** A pass states what should be true
+  and makes it so; the next pass is the retry. Do not add "remember what failed". What comes
+  after taking an issue belongs in the same pass, asked every time ("every taken work item has
+  an attempt"), never hung on the moment a row is created.
+- **A 304 skips the comparison, and one rule makes that sound:** a list's ETag is kept only when
+  everything the list called for was done. Keep the tag after a write or a read failed and the
+  failure waits until somebody touches an issue.
+- **A rate limit is honoured in the client** (`GitHubRateLimit`, one per process), and the
+  client's resilience handler is removed on purpose. Never wrap a call in a retry.
+- **`Body` is a snapshot.** A later edit of the issue is not copied, and an issue assigned again
+  after a cancel is a NEW row - the partial unique index allows one `Taken` row per issue.
+- **A connection probe must be registered in `AddHephaistoWeb`.** The first one there is a
+  `TryAdd` on the service type, so a probe registered earlier makes Postgres's row vanish.
+
+The agent's token is `secrets.github`, a Secret of the agent's namespace - never the coder's
+`hephaisto-codefix`, which it still cannot read. Locally: `"github": "stand-in"` layers
+`charts/hephaisto/values-dev-github.yaml`; `curl "http://$H:8100/api/workitems?state=any"` and
+`curl http://$H:8110/github/control/state` show both sides, and `scripts/e2e/issues-local.sh`
+is how a change here is accepted (`scripts/e2e/README.md`; `issues/KNOWN_RED` lists what the
+later stages turn green). The `github` row follows the poller by up to a minute: it is served
+from `ConnectionHealthCache`.
+
 ## The Teams bot, as of v0.9.0-rc4
 
 `notifications.teamsBot`: one board in a channel, edited in place, and alerts by personal chat.
@@ -503,6 +532,11 @@ issue of every lower one - so a bare `#N` below 77 in a commit or a pull request
 There is one k3s node, shared with the whole stack in the `~/dev` workspace. Parallel agents
 can draft code and run unit tests freely, but **cluster verification is serial**. Two agents
 applying chaos fixtures at once produce garbage for both.
+
+**The working tree is part of the cluster while Tilt runs.** Tilt watches `src/`, the chart, the
+Tiltfile and `infra/`, so anything that rewrites them - `git stash`, a checkout, a rebase -
+re-renders the chart and replaces the agent's pod, twice, under whatever suite is running. To
+build or test one commit of a stack, use `git worktree add` somewhere else; committing is safe.
 
 ## Verifying a change
 

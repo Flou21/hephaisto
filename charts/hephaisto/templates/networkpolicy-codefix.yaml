@@ -14,7 +14,7 @@ contains a model holding a shell that has just read attacker-influenceable evide
                         API server, Postgres, the agent, the metadata service, the internet - is
                         denied here, and reachable only by name through the proxy's allowlist.
 
-  the proxy    ingress: coder pods on 3128, nothing else.
+  the proxy    ingress: coder pods on 3128 - and, with github.enabled, the agent's - nothing else.
                egress:  80 and 443 anywhere (the allowlist is enforced by squid, by domain -
                         a NetworkPolicy cannot express a domain), and DNS.
 
@@ -88,6 +88,17 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: hephaisto-investigator
+        {{- end }}
+        {{- if include "hephaisto.gitHubProxyUrl" . }}
+        # And the agent itself (v0.14.0), for its GitHub client: the one peer outside this
+        # namespace, by namespace AND label. What it can reach through here is what the
+        # allowlist names, which is less than it can reach without an egress policy.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              {{- include "hephaisto.selectorLabels" . | nindent 14 }}
         {{- end }}
       ports:
         - protocol: TCP

@@ -487,23 +487,24 @@ if agent:
     # The stand-in is the same pod as Teams', under a Service name of its own, so "stand-in" here
     # only makes sure that pod is applied - below, with Teams'.
     #
-    # STAGE 2.2 OF v0.14.0 POINTS THE AGENT AT IT HERE. The agent has no GitHub client yet, so
-    # nothing is set on it. When it has one, this is where its API base URL becomes
+    # The agent is pointed at it by a values file, like the Teams bot: its API base URL becomes
     #
     #     http://github-stand-in.hephaisto-obs:8080/github/api
     #
-    # its token the stand-in's GITHUB_STANDIN_TOKEN, and the account it polls for the stand-in's
-    # GITHUB_STANDIN_BOT_LOGIN (infra/e2e/teams-stand-in.yaml) - as a values file layered like
-    # values-dev-teams-bot.yaml, or appended to extraEnv by count as above, never by a fixed
-    # index. scripts/e2e/issues-local.sh reads GitHub__ApiBaseUrl off the Deployment to tell
-    # which GitHub an agent talks to; if the variable gets another name, change it there too.
+    # its token the stand-in's GITHUB_STANDIN_TOKEN - by the chart's own secretKeyRef, from the
+    # Secret hephaisto-github-stand-in that is applied with the stand-in below - and the account
+    # it polls for the stand-in's GITHUB_STANDIN_BOT_LOGIN (infra/e2e/teams-stand-in.yaml).
+    # scripts/e2e/issues-local.sh reads GitHub__ApiBaseUrl off the Deployment to tell which
+    # GitHub an agent talks to; if the variable gets another name, change it there too.
+    if github == 'stand-in':
+        chart_values.append('charts/hephaisto/values-dev-github.yaml')
 
     if teams_bot == 'stand-in' or github == 'stand-in':
 
         k8s_yaml('infra/e2e/teams-stand-in.yaml')
         k8s_resource(
             'teams-stand-in',
-            objects = ['hephaisto-notification-teams-bot-stand-in:secret'],
+            objects = ['hephaisto-notification-teams-bot-stand-in:secret', 'hephaisto-github-stand-in:secret'],
             resource_deps = ['notification-receiver-image'],
             port_forwards = [tailnet(8110, 8080)],
             labels = ['agent'],

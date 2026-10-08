@@ -202,6 +202,22 @@ spec:
             matchLabels:
               kubernetes.io/metadata.name: {{ .Values.observabilityNamespace }}
 
+    {{- if include "hephaisto.gitHubProxyUrl" . }}
+    # GitHub (v0.14.0), through the coder's egress proxy and to nothing else in that namespace:
+    # the proxy's pods, on its port. Without this the issue poller reports GitHub as unreachable
+    # and takes nothing, on an agent that is otherwise healthy.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ include "hephaisto.codeFixNamespace" . }}
+          podSelector:
+            matchLabels:
+              {{- include "hephaisto.codeFixEgressSelector" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 3128
+    {{- end }}
+
     {{- with .Values.networkPolicy.egress.extraEgressCIDRs }}
     # Outside the cluster: the LLM API, and wherever the notification channels point. This is
     # the one that has to be widened before an escalation can reach a person.

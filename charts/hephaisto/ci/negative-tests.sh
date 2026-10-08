@@ -741,5 +741,118 @@ else
 fi
 
 echo
+echo "GitHub issues as work (v0.14.0) is off unless asked for, and the agent's token is its own:"
+# The minimum an enabled block needs, so each refusal differs from a rendering install by one value.
+GH=(--set github.enabled=true --set secrets.github=hephaisto-github --set 'github.issues.repositories[0]=example/shop')
+renders "github enabled with a secret name and one repository" "${GH[@]}"
+refuses "github enabled without a secret name" \
+    --set github.enabled=true --set 'github.issues.repositories[0]=example/shop'
+refuses "github enabled with no repository listed" \
+    --set github.enabled=true --set secrets.github=hephaisto-github
+refuses "a repository given as a URL"          "${GH[@]}" --set 'github.issues.repositories[0]=https://github.com/example/shop'
+refuses "an approver named by login instead of account number" "${GH[@]}" --set 'github.approvers[0]=maintainer'
+refuses "a Go duration where a .NET TimeSpan belongs" "${GH[@]}" --set github.pollInterval=60s
+refuses "an API root that is not a URL"        "${GH[@]}" --set github.apiBaseUrl=api.github.com
+refuses "the token as a chart value"           "${GH[@]}" --set github.token=hunter2
+refuses "the coder's Secret as the agent's"    "${GH[@]}" --set codeFix.enabled=true --set secrets.github=hephaisto-codefix
+refuses "the token set behind the chart's back" \
+    --set 'extraEnv[0].name=GitHub__Token' --set 'extraEnv[0].value=hunter2'
+refuses "a repository added behind the chart's back" \
+    "${GH[@]}" --set 'extraEnv[0].name=GitHub__Repositories__1' --set 'extraEnv[0].value=example/other'
+
+if grep -q 'GitHub__' <<<"$OFF"; then
+    fail "with github off, no GitHub__ env is rendered"
+else
+    pass "with github off, no GitHub__ env is rendered"
+fi
+
+# What the agent is handed, read off the Deployment: the token by reference to key GITHUB_TOKEN
+# of the named Secret and never as a literal; an account number as its digits (a YAML number is a
+# float to Helm, and 12345678 printed carelessly is 1.2345678e+07); and the proxy, or not.
+github_env() {
+    python3 -c '
+import sys, yaml
+for doc in yaml.safe_load_all(sys.stdin):
+    if doc and doc.get("kind") == "Deployment":
+        for env in doc["spec"]["template"]["spec"]["containers"][0].get("env", []):
+            if env["name"].startswith("GitHub__"):
+                ref = env.get("valueFrom", {}).get("secretKeyRef")
+                print(env["name"] + "=" + (("secret:" + ref["name"] + "/" + ref["key"]) if ref else str(env.get("value"))))
+'
+}
+# Who may reach the proxy from outside the coder namespace, and where the agent may go in it.
+github_peers() {
+    python3 -c '
+import sys, yaml
+def sel(peer, key):
+    return peer.get(key, {}).get("matchLabels", {})
+for doc in yaml.safe_load_all(sys.stdin):
+    if not doc or doc.get("kind") != "NetworkPolicy":
+        continue
+    name = doc["metadata"]["name"]
+    if name.endswith("-coder-egress"):
+        for rule in doc["spec"].get("ingress", []):
+            for peer in rule.get("from", []):
+                ns = sel(peer, "namespaceSelector").get("kubernetes.io/metadata.name")
+                if ns:
+                    print("proxy-from=" + ns + "/" + str(sel(peer, "podSelector").get("app.kubernetes.io/name")) + "/" + ",".join(str(p["port"]) for p in rule["ports"]))
+    if name.endswith("-ingress") and not name.endswith("postgres-ingress"):
+        for rule in doc["spec"].get("egress", []):
+            for peer in rule.get("to", []):
+                if sel(peer, "podSelector").get("app.kubernetes.io/component") == "egress-proxy":
+                    print("agent-to=" + str(sel(peer, "namespaceSelector").get("kubernetes.io/metadata.name")) + "/" + ",".join(str(p["port"]) for p in rule.get("ports", [])))
+'
+}
+
+GH_ENV=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative "${GH[@]}" \
+    --set 'github.approvers[0]=12345678' 2>/dev/null | github_env)
+if grep -qx 'GitHub__Token=secret:hephaisto-github/GITHUB_TOKEN' <<<"$GH_ENV"; then
+    pass "the agent's token is a reference to key GITHUB_TOKEN of secrets.github, never a value"
+else
+    fail "GitHub__Token must be a secretKeyRef to secrets.github/GITHUB_TOKEN, found: $(grep Token <<<"$GH_ENV" | tr '\n' ' ')"
+fi
+if grep -qx 'GitHub__Approvers__0=12345678' <<<"$GH_ENV" && grep -qx 'GitHub__Repositories__0=example/shop' <<<"$GH_ENV"; then
+    pass "an account number of eight digits is rendered as its digits"
+else
+    fail "GitHub__Approvers__0 must be 12345678, found: $(grep Approvers <<<"$GH_ENV" | tr '\n' ' ')"
+fi
+if grep -q 'GitHub__ProxyUrl' <<<"$GH_ENV"; then
+    fail "without the coder's proxy there is no proxy to send the agent through"
+else
+    pass "without the coder's proxy the agent's GitHub client is given none"
+fi
+
+GH_PROXIED=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative "${GH[@]}" \
+    --set codeFix.enabled=true --set networkPolicy.egress.enabled=true 2>/dev/null)
+if grep -qx 'GitHub__ProxyUrl=http://hephaisto-coder-egress.hephaisto-coder.svc:3128' <<<"$(github_env <<<"$GH_PROXIED")"; then
+    pass "with the coder's proxy on, the agent's GitHub client goes through it"
+else
+    fail "GitHub__ProxyUrl must be the coder's egress proxy, found: $(github_env <<<"$GH_PROXIED" | grep Proxy | tr '\n' ' ')"
+fi
+# Both halves or neither: a proxy URL the agent's own egress policy does not let it reach, or
+# one the proxy's ingress policy refuses, is an agent that reports GitHub unreachable for ever.
+if [ "$(github_peers <<<"$GH_PROXIED" | sort | tr '\n' ' ')" = "agent-to=hephaisto-coder/3128 proxy-from=hephaisto/hephaisto/3128 " ]; then
+    pass "the agent may reach the proxy on 3128, and the proxy admits the agent's pods and no other outsider"
+else
+    fail "expected exactly agent-to=hephaisto-coder/3128 and proxy-from=hephaisto/hephaisto/3128, found: $(github_peers <<<"$GH_PROXIED" | sort | tr '\n' ' ')"
+fi
+
+GH_DIRECT=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative "${GH[@]}" \
+    --set codeFix.enabled=true --set networkPolicy.egress.enabled=true --set github.useEgressProxy=false 2>/dev/null)
+if [ -z "$(github_peers <<<"$GH_DIRECT")" ] && ! github_env <<<"$GH_DIRECT" | grep -q 'GitHub__ProxyUrl'; then
+    pass "with github.useEgressProxy off, the agent is neither sent to the proxy nor admitted by it"
+else
+    fail "github.useEgressProxy=false must render no proxy URL and no rule between the agent and the proxy"
+fi
+
+# Without github, the coder's proxy stays the coder's: nothing outside its namespace is admitted.
+if [ -z "$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative --set codeFix.enabled=true \
+        --set networkPolicy.egress.enabled=true 2>/dev/null | github_peers)" ]; then
+    pass "with github off, the proxy admits nothing from outside the coder namespace"
+else
+    fail "with github off, the agent must have no route to the coder's proxy"
+fi
+
+echo
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

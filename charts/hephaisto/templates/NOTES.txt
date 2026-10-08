@@ -192,6 +192,32 @@ Hephaisto may now create Jobs in {{ $ns }}, and nowhere else. Before the first a
 Note: codeFix.sdk is fake - coders run scripted, $0 plumbing and call no model.
 {{- end }}
 {{- end }}
+{{- if (.Values.github | default dict).enabled }}
+
+GITHUB ISSUES AS WORK ARE ENABLED - an issue assigned to {{ .Values.github.botLogin | default "the token's account" }} in one of
+{{ range .Values.github.issues.repositories }}
+    {{ . }}
+{{- end }}
+
+is taken as a work item. In this release it is recorded and nothing more.
+
+  The agent's token is key GITHUB_TOKEN of the Secret {{ .Values.secrets.github }} in {{ .Release.Namespace }}:
+
+    kubectl -n {{ .Release.Namespace }} create secret generic {{ .Values.secrets.github }} --from-literal=GITHUB_TOKEN=...
+
+  Is it working - the `github` row, and what has been taken:
+
+    curl -s http://<agent>:8080/api/status | jq '.connections[] | select(.name == "github")'
+    curl -s 'http://<agent>:8080/api/workitems?state=any'
+{{- if include "hephaisto.gitHubProxyUrl" . }}
+
+  GitHub is reached through the coder's egress proxy ({{ include "hephaisto.gitHubProxyUrl" . }}).
+{{- else if .Values.networkPolicy.egress.enabled }}
+
+  networkPolicy.egress is ON and the agent's GitHub calls do not go through the coder's proxy:
+  {{ .Values.github.apiBaseUrl }} has to be reachable through networkPolicy.egress.extraEgressCIDRs.
+{{- end }}
+{{- end }}
 {{- if .Values.postgres.embedded.enabled }}
 
 Note: postgres.embedded is on. One replica, one PVC, no backups. Fine for evaluating the

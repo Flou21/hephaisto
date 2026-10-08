@@ -151,3 +151,18 @@ metadata:
 type: Opaque
 stringData:
   clientSecret: stand-in-accepts-anything
+---
+# Not a credential either: the stand-in's GITHUB_STANDIN_TOKEN above, under the key the chart's
+# secrets.github reads (charts/hephaisto/values-dev-github.yaml). It opens nothing but this
+# pod's /github/api. In the agent's namespace, where the agent's own GitHub token lives - never
+# in hephaisto-coder, whose Secret the agent cannot read.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hephaisto-github-stand-in
+  namespace: hephaisto
+  labels:
+    app.kubernetes.io/part-of: hephaisto-e2e
+type: Opaque
+stringData:
+  GITHUB_TOKEN: stand-in-github-token

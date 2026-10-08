@@ -11,6 +11,47 @@ the links to it below are to that record.
 Versions are set by the git tag through MinVer; the chart version and the app version are always
 the same number.
 
+## v0.14.0 — unreleased
+
+**A second way in.** Until now the only thing Hephaisto could be handed was an alert. This
+release is about handing it a GitHub issue ([#243](https://github.com/Flou21/hephaisto/issues/243)).
+
+### New
+- **An issue assigned to Hephaisto's account is taken as work** ([#245](https://github.com/Flou21/hephaisto/issues/245)).
+  With `github.enabled`, the agent asks GitHub which open issues are assigned to its account in
+  the repositories listed in `github.issues.repositories` - once a minute, a free 304 while
+  nothing changed - and records each as a work item: `GET /api/workitems` and
+  `GET /api/workitems/{id}`. Unassigning the account, or closing the issue, cancels it; assigning
+  it again is a new work item, with the issue's text as it is then. An issue in a repository that
+  is not listed is never asked about. The agent only asks, so there is no webhook to expose.
+  **In this release a taken issue is recorded and nothing more**: no plan, no comment.
+- **GitHub among the dependencies.** `github` is a row in the connections of `GET /api/status`,
+  the status page and the MCP tool `get_status`: healthy while every listed repository answers,
+  degraded with one line of why - a refused token, a rate limit and until when, a 5xx, no
+  answer. A rate limit is waited out, not asked through.
+- **The agent's own token.** `secrets.github` names a Secret in the release namespace with the
+  key `GITHUB_TOKEN`: Issues read and write, Pull requests read. It is not the coder's Secret,
+  which the agent still cannot read, and the chart refuses the same name for both. With
+  `codeFix.egressProxy` rendered, the agent's GitHub calls go through that proxy
+  (`github.useEgressProxy`), and the chart adds the two NetworkPolicy rules that takes.
+- `github.approvers` lists who may answer a plan on the issue, by account number. Recorded and
+  checked now; read from the stage that reads comments.
+- Three metrics: `hephaisto.github.polls` by outcome, `hephaisto.workitems.taken` and
+  `hephaisto.workitems.closed`.
+
+### Fixed
+- **A credential named the way an environment names it is redacted.** `GITHUB_TOKEN=...`,
+  `GitHub__Token=...` and `CLAUDE_CODE_OAUTH_TOKEN=...` in a log line went to the coder's request
+  and to MCP readers as they were unless the value itself had a known prefix: `_` is a word
+  character, so the pattern for `token=` did not match inside a longer name. GitHub's `ghu_` and
+  `ghr_` tokens are now known by sight as well.
+
+### Upgrading
+- One migration, `WorkItems`: a new table, nothing existing changes. It runs when the agent
+  starts.
+- Nothing is on by default. Without `github.enabled` the agent holds no GitHub credential and
+  asks GitHub nothing; `/api/workitems` answers an empty list.
+
 ## v0.13.0 — unreleased
 
 **What v0.12.0 left open.** The three items that release carried over, and one production found

@@ -96,6 +96,18 @@ public static class HephaistoTelemetry
         public const string CodeFixDuration = "hephaisto.codefix.duration";
         public const string CodeFixJobsActive = "hephaisto.codefix.jobs_active";
         public const string CodeFixAwaitingApproval = "hephaisto.codefix.awaiting_approval";
+
+        /// <summary>
+        /// One poll of one repository's assigned issues, by <c>outcome</c>: <c>ok</c>,
+        /// <c>not_modified</c>, or the class of failure. Never a repository name.
+        /// </summary>
+        public const string GitHubPolls = "hephaisto.github.polls";
+
+        /// <summary>Issues that became work items, by <c>source</c>.</summary>
+        public const string WorkItemsTaken = "hephaisto.workitems.taken";
+
+        /// <summary>Work items that stopped being taken, by <c>state</c> and <c>reason</c>.</summary>
+        public const string WorkItemsClosed = "hephaisto.workitems.closed";
         public const string ActionsExecuted = "hephaisto.actions.executed";
         public const string ActionsRolledBack = "hephaisto.actions.rolled_back";
         public const string VerificationResult = "hephaisto.verification.result";

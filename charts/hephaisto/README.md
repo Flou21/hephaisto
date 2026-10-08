@@ -189,6 +189,45 @@ kubectl -n hephaisto patch cm hephaisto-switches --type merge -p '{"data":{"inve
 workload's repository at its running commit, so a finding can name file and line - shown on the
 finding and passed to a code fix, never counted as evidence.
 
+## GitHub issues as work (v0.14.0)
+
+With `github.enabled`, an issue **assigned to Hephaisto's account**, in a repository listed in
+`github.issues.repositories`, is taken as work. The agent asks GitHub - one poll per repository
+every `github.pollInterval`, answered with a free 304 while nothing changed - so nothing has to
+reach in and there is no webhook to expose. In this release a taken issue is recorded and nothing
+more: `GET /api/workitems`, and `github` among the connections of `GET /api/status` and the MCP
+tool `get_status`. Unassigning the account, or closing the issue, takes it back. Planning and
+answering on the issue come with the releases after it.
+
+It ships **off, and unrendered**. The account is an ordinary GitHub account (a machine user) and
+not a GitHub App, because an App cannot be an assignee; make it a collaborator on every listed
+repository. Its token is the **agent's own**, in a Secret of the release namespace - never
+`secrets.codeFix`, which lives in the coder namespace, may push, and stays unreadable to the
+agent. The chart refuses the same name for both.
+
+```sh
+# Signed in as the bot account. Organisation repositories: a fine-grained token limited to the
+# listed repositories - Issues read and write, Pull requests read. A repository a USER owns is
+# out of a fine-grained token's reach for a collaborator; that needs a classic token (`repo`).
+kubectl -n hephaisto create secret generic hephaisto-github --from-literal=GITHUB_TOKEN=github_pat_...
+
+helm upgrade hephaisto oci://ghcr.io/flou21/charts/hephaisto -n hephaisto --reuse-values \
+  --set github.enabled=true --set secrets.github=hephaisto-github \
+  --set 'github.issues.repositories[0]=you/shop' \
+  --set 'github.approvers[0]=1234567'        # gh api users/<login> --jq .id
+```
+
+`github.approvers` is who may answer a plan on the issue, by account **number** - a login can be
+renamed and taken by somebody else. It is recorded and checked now and read from the next release.
+
+**Egress.** With `codeFix.egressProxy` rendered, the agent's GitHub calls go through that proxy
+(`github.useEgressProxy`, on by default): `api.github.com` is already on its allowlist, its log
+then shows the agent's requests beside the coder's, and the chart adds the two NetworkPolicy
+rules that needs - the agent may reach the proxy's pods on 3128, and the proxy admits the agent's
+pods. Without the proxy and with `networkPolicy.egress.enabled`, GitHub has to be reachable
+through `networkPolicy.egress.extraEgressCIDRs` on 443. With the agent's `mode: Off` nothing is
+asked and nothing is taken.
+
 ## Try it without a cluster
 
 The published image can run with no Kubernetes behind it at all, loaded with recorded
