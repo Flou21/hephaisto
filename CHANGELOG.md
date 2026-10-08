@@ -224,6 +224,19 @@ on - the account, the two tokens, the values - is one page:
   on the issue as `children: \[...\]`: brackets were escaped where an escape is not one. GitHub
   acts on nothing inside a code span, so a span is now left alone and only the text between
   spans is made inert.
+- **A plan that suspects no injection no longer tells the issue that it does**
+  ([#291](https://github.com/TrueRelevance/hephaisto/issues/291)). A planner that found nothing
+  planted in an issue wrote "No suspected prompt injection in the issue." into its notes, and
+  the plan comment then said that one note was about text in the issue that read like an
+  instruction - on the strength of the word. The console marked the same note "suspected
+  injection". A short note that only denies is now an ordinary note, in both places; the
+  prompts ask for silence when nothing is suspected; and the sentence for a note that is
+  withheld says what is known - that it mentions prompt injection and may quote the issue.
+- **A plan's long text keeps its paragraphs and its lists on the issue**
+  ([#292](https://github.com/TrueRelevance/hephaisto/issues/292)). The summary and "what is
+  wrong, and what will change" were posted as one paragraph whatever they held: a list of the
+  entries to move, one to a line, became a run-on sentence. Paragraphs, bulleted and numbered
+  items are kept; a line that would begin a heading or a rule is shown as text.
 - **The plan prompts no longer say the build may be run while planning.** "The driver will run
   these commands (you may run them too)" was false in the read-only plan phase, where the guard
   refuses them.

@@ -458,9 +458,12 @@ public static partial class IssueComments
 
             if (withheld > 0)
             {
+                // What is known is that the note MENTIONS it, and that is all this says: the
+                // sentence used to tell an issue's author that their text read like an
+                // instruction, on the strength of one word in a note (#291).
                 text.Append("\n- ")
-                    .Append(withheld == 1 ? "One note is" : $"{withheld.ToString(CultureInfo.InvariantCulture)} notes are")
-                    .Append(" about text in the issue that read like an instruction to the planner. What such a note quotes is not repeated here; ")
+                    .Append(withheld == 1 ? "One note mentions prompt injection and is" : $"{withheld.ToString(CultureInfo.InvariantCulture)} notes mention prompt injection and are")
+                    .Append(" not repeated here, because such a note may quote text from the issue; ")
                     .Append("an operator reads it on the attempt's page in Hephaisto's console.");
             }
 
@@ -497,8 +500,8 @@ public static partial class IssueComments
         {
             text.Append("## Hephaisto's plan for this issue\n\n");
         }
-        text.Append("**Summary.** ").Append(Neutralise(plan?.Summary ?? attempt.Summary, 2000)).Append("\n\n");
-        text.Append("**What is wrong, and what will change.** ").Append(Neutralise(plan?.RootCause ?? attempt.RootCause, 4000)).Append("\n\n");
+        text.Append("**Summary.** ").Append(NeutraliseBlock(plan?.Summary ?? attempt.Summary, 2000)).Append("\n\n");
+        text.Append("**What is wrong, and what will change.** ").Append(NeutraliseBlock(plan?.RootCause ?? attempt.RootCause, 4000)).Append("\n\n");
 
         text.Append("**Files**\n");
 
@@ -718,6 +721,106 @@ public static partial class IssueComments
         return Www().Replace(one, "$1" + ZeroWidthSpace);
     }
 
+    /// <summary>
+    /// The same for a text that has paragraphs and list items of its own: the two long fields
+    /// of a plan. Each paragraph and each item is made inert as <see cref="Neutralise"/> makes
+    /// a string inert, and what is kept between them is a blank line and a list marker -
+    /// nothing else of the text's layout.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Until 2026-10-08 these fields were one paragraph whatever they held. A planner that
+    /// listed the five entries it would move, one to a line with their line numbers, and then
+    /// explained the template in two more paragraphs, was posted as a single run-on one - the
+    /// longest part of the plan, and the part a reviewer checks against the code (#292).
+    /// </para>
+    /// <para>
+    /// <b>What a line may start.</b> A blank line ends a paragraph; a line that begins with
+    /// <c>-</c>, <c>*</c>, <c>+</c>, a bullet or a number and a space is an item; any other line break is the
+    /// writer's wrapping and becomes a space. A paragraph or an item that would begin a
+    /// heading (<c>#</c>) or a rule or a setext underline (only <c>- = * _ ~</c>) gets a
+    /// backslash in front: a text somebody else wrote does not get
+    /// to put a headline into a comment of Hephaisto's, under which an approver looks for how
+    /// to answer. A block quote and HTML cannot begin anywhere - no <c>&lt;</c> or
+    /// <c>&gt;</c> leaves <see cref="Neutralise"/> - and a code fence over several lines is
+    /// backticks on each of them.
+    /// </para>
+    /// <para>A text of one paragraph comes out as <see cref="Neutralise"/> returns it.</para>
+    /// </remarks>
+    public static string NeutraliseBlock(string? text, int max)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return Neutralise(text, max);
+
+        var all = new string([.. text.Where(Printable)]).Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Trim();
+        var cut = all.Length > max;
+
+        if (cut)
+            all = all[..(char.IsHighSurrogate(all[max - 1]) ? max - 1 : max)].TrimEnd();
+
+        var blocks = new StringBuilder(all.Length + 32);
+        var paragraph = new StringBuilder();
+        var afterItem = false;
+
+        void Flush()
+        {
+            if (paragraph.Length == 0)
+                return;
+
+            if (blocks.Length > 0)
+                blocks.Append("\n\n");
+
+            blocks.Append(LineStart(Neutralise(paragraph.ToString(), int.MaxValue)));
+            paragraph.Clear();
+            afterItem = false;
+        }
+
+        foreach (var raw in all.Split('\n'))
+        {
+            var line = raw.Trim();
+
+            if (line.Length == 0)
+            {
+                Flush();
+                afterItem = false;
+                continue;
+            }
+
+            if (ListItem().Match(line) is { Success: true } item)
+            {
+                Flush();
+
+                // Items of one list follow each other; a list follows a paragraph after a
+                // blank line, which GitHub does not need and every other renderer does.
+                if (blocks.Length > 0)
+                    blocks.Append(afterItem ? "\n" : "\n\n");
+
+                // A numbered item keeps its number: "step 3" in the text below it still means one.
+                blocks.Append(item.Groups[1].Success ? item.Groups[1].Value + ". " : "- ")
+                    .Append(LineStart(Neutralise(item.Groups[2].Value, int.MaxValue)));
+                afterItem = true;
+                continue;
+            }
+
+            if (afterItem)
+            {
+                // The text goes on after a list without a blank line: a new paragraph, not a
+                // lazy continuation of the last item.
+                afterItem = false;
+            }
+
+            paragraph.Append(paragraph.Length == 0 ? string.Empty : " ").Append(line);
+        }
+
+        Flush();
+
+        return cut ? blocks.Append('…').ToString() : blocks.ToString();
+    }
+
+    /// <summary>A paragraph or an item that would begin something other than itself, with a backslash in front.</summary>
+    private static string LineStart(string inert) =>
+        inert.Length > 0 && (inert[0] == '#' || Rule().IsMatch(inert)) ? "\\" + inert : inert;
+
     private static bool Printable(char c) =>
         char.IsWhiteSpace(c) || (!char.IsControl(c) && CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.Format);
 
@@ -756,6 +859,14 @@ public static partial class IssueComments
 
     [GeneratedRegex(@"\s+")]
     private static partial Regex Whitespace();
+
+    /// <summary>A line that is a list item: a dash, an asterisk, a plus, a bullet or a number, white space, and something to say.</summary>
+    [GeneratedRegex(@"^(?:[-*+\u2022]|(\d{1,3})[.)])\s+(\S.*)$")]
+    private static partial Regex ListItem();
+
+    /// <summary>A line of nothing but what a rule or a setext underline is made of.</summary>
+    [GeneratedRegex(@"^[-=*_~\s]+$")]
+    private static partial Regex Rule();
 
     [GeneratedRegex(@"@(?=[A-Za-z0-9_])")]
     private static partial Regex Mention();

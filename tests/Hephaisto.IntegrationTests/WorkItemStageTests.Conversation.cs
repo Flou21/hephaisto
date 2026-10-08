@@ -46,7 +46,7 @@ public sealed partial class WorkItemStageTests
         var plan = world.GitHub.Comments.Single(c => c.Body.Contains(IssueComments.PlanMarker(attemptId), StringComparison.Ordinal));
 
         plan.Body.Should().Contain($"**Questions**\n\n1. {Asked[0]}\n2. {Asked[1]}\n");
-        plan.Body.Should().Contain("<details>\n<summary>The planner's notes (2)</summary>\n\n- Left out: the Fallbacks list.\n- One note is about text in the issue");
+        plan.Body.Should().Contain("<details>\n<summary>The planner's notes (2)</summary>\n\n- Left out: the Fallbacks list.\n- One note mentions prompt injection and is not repeated here");
         plan.Body.Should().NotContain("G07-ORDER", "what a note quotes as injected is not repeated under the bot's name");
 
         // Still two comments: the questions are part of the plan, not a third.
