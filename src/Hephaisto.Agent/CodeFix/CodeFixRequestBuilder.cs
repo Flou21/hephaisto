@@ -32,6 +32,22 @@ public sealed class CodeFixRequestBuilder(IOptionsMonitor<CodeFixOptions> option
 
     public const int MaxIssueTitleChars = 512;
 
+    /// <summary>How many comments a replanning request carries: the contract's own cap. The newest are kept.</summary>
+    public const int MaxComments = 50;
+
+    /// <summary>One comment. An answer is a sentence or a few paragraphs; a pasted log is cut here.</summary>
+    public const int MaxCommentChars = 16_000;
+
+    /// <summary>
+    /// All comments together. The request travels in a ConfigMap, which holds a megabyte, beside
+    /// an issue text of up to <see cref="MaxIssueBodyChars"/>: older comments are left out first.
+    /// </summary>
+    public const int MaxCommentsChars = 150_000;
+
+    public const int MaxPlanSteps = 20;
+    public const int MaxPlanStepChars = 2000;
+    public const int MaxPlanSummaryChars = 2000;
+
     public CodeFixRequest Build(
         CodeFixAttempt attempt,
         CodeFixPhase phase,
@@ -107,10 +123,27 @@ public sealed class CodeFixRequestBuilder(IOptionsMonitor<CodeFixOptions> option
     /// and scrubbed of the credential shapes people paste into issues with their logs.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// There is no image and no analysed commit: an issue names no running thing, so the runner
-    /// plans on the default branch's HEAD. Comments are not passed on yet.
+    /// plans on the default branch's HEAD.
+    /// </para>
+    /// <para>
+    /// <b>A first plan carries no comment and no earlier plan</b>, and is the document it was
+    /// before a work item could be planned twice. When it is planned again the caller hands in
+    /// the conversation - which comments are passed on is ITS decision (the issue's author and
+    /// the approvers, never Hephaisto's own) - and the earlier plan. Here they are only made
+    /// safe to send: the newest <see cref="MaxComments"/>, each cut at
+    /// <see cref="MaxCommentChars"/>, together at most <see cref="MaxCommentsChars"/> with the
+    /// oldest left out first, and every one through the redactor, like the body.
+    /// </para>
     /// </remarks>
-    public CodeFixWorkItemRequest BuildForWorkItem(CodeFixAttempt attempt, CodeFixPhase phase, WorkItem item, CodeFixPlanResult? plan)
+    public CodeFixWorkItemRequest BuildForWorkItem(
+        CodeFixAttempt attempt,
+        CodeFixPhase phase,
+        WorkItem item,
+        CodeFixPlanResult? plan,
+        IReadOnlyList<CodeFixWorkItemComment>? comments = null,
+        CodeFixPreviousPlan? previous = null)
     {
         ArgumentNullException.ThrowIfNull(attempt);
         ArgumentNullException.ThrowIfNull(item);
@@ -139,10 +172,41 @@ public sealed class CodeFixRequestBuilder(IOptionsMonitor<CodeFixOptions> option
                 Type = string.IsNullOrWhiteSpace(item.Type) ? null : Cap(item.Type, 64),
                 Author = Cap(item.AuthorLogin, 64),
                 Body = Cap(Redact(item.Body), MaxIssueBodyChars),
-                Comments = [],
+                Comments = Conversation(comments),
             },
+            Previous = previous is null
+                ? null
+                : new CodeFixPreviousPlan
+                {
+                    Summary = Cap(Redact(previous.Summary), MaxPlanSummaryChars),
+                    Questions = [.. CodeFixContract.Questions(previous.Questions).Select(q => Cap(Redact(q), CodeFixContract.MaxQuestionChars))],
+                    Steps = [.. previous.Steps.Take(MaxPlanSteps).Select(s => Cap(Redact(s), MaxPlanStepChars))],
+                },
             Plan = plan,
         };
+    }
+
+    /// <summary>The comments as they are sent: capped in number and size, scrubbed, in the order they were written.</summary>
+    private static List<CodeFixWorkItemComment> Conversation(IReadOnlyList<CodeFixWorkItemComment>? comments)
+    {
+        var kept = new List<CodeFixWorkItemComment>();
+        var budget = MaxCommentsChars;
+
+        // From the newest back: when not everything fits, what was said last is what a replan
+        // is about.
+        foreach (var comment in (comments ?? []).Reverse().Take(MaxComments))
+        {
+            var body = Cap(Redact(comment.Body), MaxCommentChars);
+
+            if (body.Length > budget)
+                break;
+
+            budget -= body.Length;
+            kept.Add(new CodeFixWorkItemComment(Cap(comment.Author, 64), body));
+        }
+
+        kept.Reverse();
+        return kept;
     }
 
     /// <summary>

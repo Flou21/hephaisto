@@ -152,21 +152,19 @@ public sealed partial class IssuesSuiteTests
     /// How many comments the agent may write for one work item is a constant of the agent's, and
     /// G10 asserts against the suite's copy of it. Two numbers that have to be one.
     /// </summary>
-    [Fact]
-    public void The_suites_comment_cap_is_the_agents_ceiling()
+    [Theory]
+    [InlineData("ISSUES_ATTEMPT_COMMENT_CAP", Hephaisto.Agent.WorkItems.IssueComments.MaxPerAttempt)]
+    [InlineData("ISSUES_ATTEMPT_CAP", Hephaisto.Agent.WorkItems.IssueComments.MaxAttemptsPerWorkItem)]
+    [InlineData("ISSUES_COMMENT_CAP", Hephaisto.Agent.WorkItems.IssueComments.MaxPerWorkItem)]
+    public void The_suites_comment_caps_are_the_agents_ceilings(string name, int ceiling)
     {
         var lib = File.ReadAllText(Path.Combine(RepoRoot(), "scripts", "e2e", "lib", "issues.sh"));
-        var cap = Regex.Match(lib, @"^ISSUES_COMMENT_CAP=""\$\{ISSUES_COMMENT_CAP:-(\d+)\}""$", RegexOptions.Multiline);
+        var cap = Regex.Match(lib, $@"^{name}=""\$\{{{name}:-(\d+)\}}""$", RegexOptions.Multiline);
 
-        cap.Success.Should().BeTrue("lib/issues.sh sets ISSUES_COMMENT_CAP with a default");
-        int.Parse(cap.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)
-            .Should().Be(Hephaisto.Agent.WorkItems.IssueComments.MaxPerWorkItem);
+        cap.Success.Should().BeTrue($"lib/issues.sh sets {name} with a default");
+        int.Parse(cap.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture).Should().Be(ceiling);
     }
 
-    /// <summary>
-    /// The twelve scenarios the milestone was written down as are green, and stay off the list:
-    /// an entry from now on is a scenario that landed red after them.
-    /// </summary>
     [Fact]
     public void Nothing_of_the_milestones_twelve_is_known_red_any_more()
     {

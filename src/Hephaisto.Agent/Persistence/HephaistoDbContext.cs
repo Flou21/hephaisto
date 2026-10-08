@@ -854,6 +854,9 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
             e.Property(w => w.DeclineCodes).HasMaxLength(512);
             e.Property(w => w.DeclineReason).HasMaxLength(MaxErrorLength);
 
+            // "github:" and a login of at most 39 characters (v0.14.0, /replan).
+            e.Property(w => w.ReplanRequestedBy).HasMaxLength(128);
+
             e.Property(w => w.Labels)
                 .HasConversion(StringListConverter, StringListComparer)
                 .HasColumnType("jsonb")

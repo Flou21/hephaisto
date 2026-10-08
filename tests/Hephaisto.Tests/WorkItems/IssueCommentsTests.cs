@@ -94,8 +94,13 @@ public sealed class IssueCommentsTests
         { "failed", "**It did not work.** the coder returned not_a_code_problem.\n\n**What it found.** This is a question, not a change." },
         { "let go", "**Hephaisto has let go of this issue:** the issue was closed. Anything that was running for it was stopped." },
         { "let go with pr", "**Hephaisto has let go of this issue:** hephaisto-bot is no longer an assignee. The draft pull request stays as it is: https://github.com/octo/shop/pull/7" },
-        { "done", "**Done.** The pull request was merged: https://github.com/octo/shop/pull/7\n\nFor more work on this issue, reopen it, or unassign Hephaisto and assign it again." },
-        { "pr closed", "**Hephaisto has let go of this issue:** its pull request was closed without merging: https://github.com/octo/shop/pull/7\n\nTo hand the issue back, unassign Hephaisto and assign it again." },
+        { "done", "**Done.** The pull request was merged: https://github.com/octo/shop/pull/7\n\nFor more work on this issue, reopen it, or unassign Hephaisto, wait a minute or two, and assign it again: Hephaisto has to have seen the issue without itself on it first." },
+        { "pr closed", "**Hephaisto has let go of this issue:** its pull request was closed without merging: https://github.com/octo/shop/pull/7\n\nTo hand the issue back, unassign Hephaisto, wait a minute or two, and assign it again: Hephaisto has to have seen the issue without itself on it first." },
+        { "replan asked", "**Planning again.** github:maintainer asked for a new plan. It is started on Hephaisto's next pass; nothing is changed." },
+        { "replan waiting", "**Waiting.** github:maintainer asked for a new plan, and it has not been started: 1 coder job(s) running (cap 1). Hephaisto asks again by itself" },
+        { "replan mode off", "**Not planned.** github:maintainer asked for a new plan, and the code-fix mode of this install is Off" },
+        { "planning again", "**Planning again.** A read-only Job is reading the code on branch `main` to write a new plan, with the earlier plan and what was answered on this issue. Nothing is changed." },
+        { "new plan ready", "**A new plan is ready**: [read the plan](https://github.com/octo/shop/issues/12#issuecomment-1791308488299). It replaces the earlier one. It waits for an approver's answer" },
     };
 
     private static IssueStatus StatusOf(string state) => state switch
@@ -121,8 +126,61 @@ public sealed class IssueCommentsTests
         {
             State = WorkItemState.Cancelled, StateReason = WorkItemReasons.PullRequestClosed,
         },
+        "replan asked" => Taken(Attempt(CodeFixState.Denied, failure: "replanned by github:maintainer", by: "github:maintainer")) with { ReplanRequestedBy = "github:maintainer" },
+        "replan waiting" => Taken(Attempt(CodeFixState.Failed, failure: "the coder returned failed"), codes: "ConcurrencyCapReached", reason: "1 coder job(s) running (cap 1)") with
+        {
+            ReplanRequestedBy = "github:maintainer",
+        },
+        "replan mode off" => Taken(Attempt(CodeFixState.Expired), codes: "ModeOff", reason: "code-fix mode is Off") with { ReplanRequestedBy = "github:maintainer" },
+        "planning again" => Taken(Attempt(CodeFixState.Planning)) with { Attempts = 2 },
+        "new plan ready" => Taken(Attempt(CodeFixState.PlanReady, planComment: 1791308488299)) with { Attempts = 3 },
         _ => throw new ArgumentOutOfRangeException(nameof(state), state, null),
     };
+
+    // --- how an attempt that ended is followed by another -------------------------------------
+
+    public static TheoryData<CodeFixState> Ended => [CodeFixState.Failed, CodeFixState.Denied, CodeFixState.Expired, CodeFixState.Cancelled];
+
+    [Theory]
+    [MemberData(nameof(Ended))]
+    public void AnAttemptThatEnded_SaysHowItIsTriedAgain_InWordsThatAreTrueOfTheInstall(CodeFixState state)
+    {
+        var ended = Taken(Attempt(state, failure: "why", by: "maintainer"));
+
+        // Somebody may answer on the issue: the command first, the hand-over for those who prefer it.
+        IssueComments.Status(ended).Should().Contain(
+            "Nothing was changed. To have it tried again, an approver replies `/replan` - after answering in a comment, where something was asked. "
+            + "Or unassign Hephaisto, wait until this comment says it has let go, and assign it again.");
+
+        // Nobody may: a command that would not be read is not named.
+        IssueComments.Status(ended with { Answerable = false }).Should()
+            .Contain("Nothing was changed. To have it tried again, unassign Hephaisto, wait until this comment says it has let go, and assign it again.")
+            .And.NotContain("/replan");
+
+        // The last attempt one hand-over has: only a new hand-over is left, and it says why.
+        IssueComments.Status(ended with { Attempts = IssueComments.MaxAttemptsPerWorkItem }).Should()
+            .Contain("This issue has been planned 5 times, which is the most for one hand-over. To hand it over again, unassign Hephaisto, wait until this comment says it has let go, and assign it again.")
+            .And.NotContain("/replan");
+    }
+
+    [Fact]
+    public void TheWordsAboutHandingOverAgain_SayToWait_BecauseAnUnassignmentIsOnlySeenByAPoll()
+    {
+        // 2026-10-08: unassigned at 09:28:53, assigned again at 09:29:00, a poll a minute apart.
+        // Nothing followed, and the issue still said "unassign Hephaisto and assign it again".
+        foreach (var state in States.Select(row => row.Data.Item1))
+        {
+            IssueComments.Status(StatusOf(state)).Should().NotContain("unassign Hephaisto and assign it again");
+        }
+    }
+
+    [Fact]
+    public void WhoAskedForANewPlan_IsText_LikeEveryOtherName()
+    {
+        var body = IssueComments.Status(Taken(Attempt(CodeFixState.Failed)) with { ReplanRequestedBy = "github:@octocat closes #5" });
+
+        body.Should().NotMatchRegex(@"@[A-Za-z0-9_]").And.NotMatchRegex(@"#\d");
+    }
 
     [Theory]
     [MemberData(nameof(States))]
@@ -205,12 +263,43 @@ public sealed class IssueCommentsTests
         body.Should().Contain("**Verification.** The change will be covered by tests");
         body.Should().Contain("What only a person looking at the running application can confirm:\n- whether the 2 % of carts that are empty still see a total\n");
         body.Should().Contain("**Cost of planning.** $1.25 · the plan's own confidence is 0.90");
-        body.Should().Contain("an approver replies `/approve`").And.Contain("an approver replies `/reject <reason>`");
+        body.Should().Contain(
+            "**To go ahead,** an approver replies `/approve`. **To have it planned again,** say in a comment what should be different, then reply `/replan`. "
+            + "**To refuse it,** an approver replies `/reject <reason>`. A command is the first line of its comment, and only an approver of this install is heard.");
         body.Should().Contain("What is approved is this plan as Hephaisto stored it");
         body.Should().Contain("branch `hephaisto/codefix-000000000001`");
         body.Should().Contain("analysed at `583b1e5b75ad`");
         body.Should().EndWith(IssueComments.PlanMarker(AttemptId));
         body.Should().NotContain("switched off", "in Pr mode an approval is taken");
+    }
+
+    [Fact]
+    public void APlanThatAsks_SaysWhatApprovingItMeans_AndHowToAnswerInstead()
+    {
+        var body = PlanText(PlanResult(questions: ["Should it move too? The plan leaves it."]));
+
+        body.Should().Contain(
+            "**To go ahead,** an approver replies `/approve`: that takes the plan as it is, with the assumptions above. "
+            + "**To have it planned again with your answers,** write them in a comment, then reply `/replan`. "
+            + "**To refuse it,** an approver replies `/reject <reason>`.");
+
+        // Below Pr the sentence about the mode still follows, and /replan is as possible as it was.
+        PlanText(PlanResult(questions: ["a?"]), CodeFixMode.Plan).Should()
+            .Contain("then reply `/replan`").And.Contain("Implementing is switched off on this install");
+    }
+
+    [Fact]
+    public void APlanThatFollowsAnother_SaysThatItReplacesIt()
+    {
+        var first = IssueComments.Plan(Stored(PlanResult()), PlanResult(), CodeFixMode.Pr, answerable: true);
+        var second = IssueComments.Plan(Stored(PlanResult()), PlanResult(), CodeFixMode.Pr, answerable: true, ordinal: 2);
+
+        first.Should().StartWith("## Hephaisto's plan for this issue\n\n**Summary.**");
+        second.Should().StartWith(
+            "## Hephaisto's new plan for this issue\n\nThis plan replaces the earlier one on this issue. "
+            + "It was made with that plan and with what the issue's author and the approvers wrote here since.\n\n**Summary.**");
+        second.Split('\n').Count(line => line.StartsWith('#')).Should().Be(1);
+        second.Should().EndWith(IssueComments.PlanMarker(AttemptId));
     }
 
     [Theory]
@@ -232,7 +321,7 @@ public sealed class IssueCommentsTests
 
         body.Should().Contain("**This plan cannot be approved here.**");
         body.Should().NotContain("an approver replies `/approve`");
-        body.Should().Contain("`/reject <reason>`");
+        body.Should().Contain("an approver then replies `/replan` to have this issue planned again").And.Contain("`/reject <reason>`");
     }
 
     [Fact]
@@ -241,7 +330,7 @@ public sealed class IssueCommentsTests
         var body = PlanText(PlanResult(), answerable: false);
 
         body.Should().Contain("**This plan is not answered on the issue.**").And.Contain("Hephaisto's console");
-        body.Should().NotContain("/approve").And.NotContain("/reject", "a reply that will not be read is not asked for");
+        body.Should().NotContain("/approve").And.NotContain("/reject").And.NotContain("/replan", "a reply that will not be read is not asked for");
         body.Should().Contain("**Summary.** Endpoints.Primary needs a null check.", "it is still the plan");
         body.Should().EndWith(IssueComments.PlanMarker(AttemptId));
 
@@ -284,6 +373,9 @@ public sealed class IssueCommentsTests
         { CodeFixRefusal.NeedsSecondRepository, null, "second-repository", "this plan needs a change in a second repository first, which a person makes. It cannot be approved here; reply `/reject <reason>` to close it." },
         { CodeFixRefusal.NotWaiting, null, "not-waiting", "this plan is no longer waiting for an answer." },
         { CodeFixRefusal.SubjectTakenBack, null, "taken-back", "this issue is no longer Hephaisto's." },
+        { CodeFixRefusal.JobRunning, null, "job-running", "a Job is running for this issue right now, so there is nothing to plan again yet. When it has ended the comment above says so, and a new `/replan` is read then." },
+        { CodeFixRefusal.PullRequestOpen, null, "pull-request", "a draft pull request is already open for this issue, and what it still needs is said in its review. To start over instead, close the pull request; then unassign Hephaisto, wait a minute or two, and assign it again: Hephaisto has to have seen the issue without itself on it first." },
+        { CodeFixRefusal.TooManyAttempts, null, "attempts", "this issue has been planned 5 times, which is the most for one hand-over. To hand it over again, unassign Hephaisto, wait until the comment above says it has let go, and assign it again." },
         { CodeFixRefusal.ActorForbidden, null, "refused", "it could not be recorded. An operator finds the reason in Hephaisto's console." },
         { CodeFixRefusal.NotFound, null, "refused", "it could not be recorded." },
     };
@@ -334,6 +426,17 @@ public sealed class IssueCommentsTests
         IssueComments.Refused(AttemptId, "maintainer", IssueCommandKind.Reject, CodeFixRefusal.NotWaiting, null)
             .Should().StartWith("**Not done.** `maintainer`'s `/reject` was read and refused: this plan is no longer waiting for an answer.");
 
+    [Theory]
+    [InlineData(CodeFixRefusal.JobRunning, "a Job is running")]
+    [InlineData(CodeFixRefusal.PullRequestOpen, "pull request is already open")]
+    public void AReplanThatWasRefused_SaysSo_TheWayTheSuiteLooksForIt(CodeFixRefusal refusal, string words)
+    {
+        // scripts/e2e/issues/G15.sh looks for exactly these words.
+        var body = IssueComments.Refused(AttemptId, "maintainer", IssueCommandKind.Replan, refusal, null);
+
+        body.Should().StartWith("**Not done.** `maintainer`'s `/replan` was read and refused: ").And.Contain(words);
+    }
+
     [Fact]
     public void AnAnswersMarker_IsFoundForItsOwnAttemptOnly()
     {
@@ -348,10 +451,15 @@ public sealed class IssueCommentsTests
     }
 
     [Fact]
-    public void TheCeilingIsAboveWhatTheRulesAllowByThemselves()
+    public void TheCeilingIsPerAttempt_AndAWorkItemsIsMadeOfIt()
     {
-        // One status comment, one plan, one answer to strangers, and room for three causes.
-        IssueComments.MaxPerWorkItem.Should().Be(6);
+        // For one attempt: its plan, one answer to strangers, and room for three causes. That
+        // was the whole ceiling while a work item had one attempt - with the status comment, six.
+        IssueComments.MaxPerAttempt.Should().Be(5);
+
+        // A work item: the one status comment, and that for each attempt one hand-over may have.
+        IssueComments.MaxAttemptsPerWorkItem.Should().Be(WorkItem.MaxAttempts).And.Be(5);
+        IssueComments.MaxPerWorkItem.Should().Be(1 + (5 * 5));
     }
 
     [Theory]

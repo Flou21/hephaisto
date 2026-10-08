@@ -44,16 +44,34 @@ public static class WorkItemReasons
 /// one: it has a different lifecycle, and nothing about it is a workload being unhealthy.
 /// </para>
 /// <para>
-/// <b><see cref="Body"/> is a snapshot, taken once.</b> The issue's text goes to a model as data.
-/// Somebody who can edit the issue after a plan was approved must not be able to change what the
+/// <b><see cref="Body"/> is a snapshot.</b> The issue's text goes to a model as data. Somebody
+/// who can edit the issue after a plan was approved must not be able to change what the
 /// approved plan is read against, so a later edit is not copied here - and the same issue handed
-/// over a second time, after a cancel, is a new row with its own snapshot.
+/// over a second time, after a cancel, is a new row with its own snapshot. The one moment it IS
+/// read again is when a person asks for a new plan on purpose (an approver's <c>/replan</c>, a
+/// fresh assignment): the plan that follows is a new attempt, and nothing was approved against
+/// the old text.
+/// </para>
+/// <para>
+/// <b>It has at most one OPEN attempt, and may have several in a row</b> - never more than
+/// <see cref="MaxAttempts"/>. The next one is asked for by naming the attempt it follows
+/// (<see cref="ReplanAfterAttemptId"/>): "a new plan is wanted after attempt X" is true until
+/// an attempt newer than X exists, which is a statement a loop can make true on any pass and
+/// across any restart, with nothing remembered beside it.
 /// </para>
 /// </remarks>
 public sealed class WorkItem
 {
     /// <summary>The one source there is. A column, so that a second one is a value and not a migration.</summary>
     public const string GitHubSource = "github";
+
+    /// <summary>
+    /// How many attempts one hand-over may have: the first, and four that a person asked for.
+    /// A ceiling for the day somebody keeps replanning - each attempt is a Job and a comment -
+    /// and what the ceiling on comments is made of (<c>IssueComments.MaxPerWorkItem</c>).
+    /// Handing the issue over again (unassign, wait, assign) is a new work item with its own.
+    /// </summary>
+    public const int MaxAttempts = 5;
 
     public Guid Id { get; set; } = Guid.CreateVersion7();
 
@@ -127,6 +145,17 @@ public sealed class WorkItem
     /// Always false for a work item that ended BY being taken back.
     /// </summary>
     public bool StillAssigned { get; set; }
+
+    /// <summary>
+    /// The attempt after which a new plan was asked for: an approver replied <c>/replan</c>, or
+    /// the issue was assigned afresh, once that attempt had a plan waiting or had ended. While
+    /// this names the work item's NEWEST attempt, a new one is wanted and is started as soon as
+    /// the caps allow; set back to null with the insert of that attempt. Null otherwise.
+    /// </summary>
+    public Guid? ReplanAfterAttemptId { get; set; }
+
+    /// <summary>Who asked for it: <c>github:&lt;login&gt;</c>. Null when nothing is asked for.</summary>
+    public string? ReplanRequestedBy { get; set; }
 
     public DateTimeOffset UpdatedAt { get; set; }
 

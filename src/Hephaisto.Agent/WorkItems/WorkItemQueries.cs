@@ -25,6 +25,10 @@ namespace Hephaisto.Agent.WorkItems;
 /// What was tried for it, newest first - on <c>GET /api/workitems/{id}</c>. Null in a list, whose
 /// rows do not carry them: <c>GET /api/codefixes</c> rows name their <c>workItemId</c>.
 /// </param>
+/// <param name="ReplanRequestedBy">
+/// Who asked for a new plan after the newest attempt (<c>github:&lt;login&gt;</c>), while that
+/// plan has not been started - a cap, a switch. Null otherwise.
+/// </param>
 public sealed record WorkItemView(
     Guid Id,
     string Source,
@@ -42,16 +46,20 @@ public sealed record WorkItemView(
     long? StatusCommentId = null,
     string? DeclineReason = null,
     bool StillAssigned = false,
-    IReadOnlyList<CodeFixAttemptView>? Attempts = null);
+    IReadOnlyList<CodeFixAttemptView>? Attempts = null,
+    string? ReplanRequestedBy = null);
 
 /// <summary>
-/// What became of a work item's one attempt, for a row of the console's list: enough to say
+/// What became of one attempt of a work item, for a row of the console's list: enough to say
 /// where it stands and to link its page and its pull request, and nothing a model wrote.
 /// </summary>
 public sealed record WorkItemAttemptRef(Guid Id, CodeFixState State, string? PrUrl, int? PrNumber);
 
-/// <summary>One row of the console's work-item list: the work item and, when it has one, its attempt.</summary>
-public sealed record WorkItemWithAttempt(WorkItemView Item, WorkItemAttemptRef? Attempt);
+/// <summary>
+/// One row of the console's work-item list: the work item, its newest attempt when it has one,
+/// and - since an issue can be planned again - the ones before it, oldest first.
+/// </summary>
+public sealed record WorkItemWithAttempt(WorkItemView Item, WorkItemAttemptRef? Attempt, IReadOnlyList<WorkItemAttemptRef> Earlier);
 
 /// <summary>Reads of <c>work_items</c> for the API. Never tracked, never written.</summary>
 public sealed class WorkItemQueries(HephaistoDbContext db)
@@ -89,20 +97,31 @@ public sealed class WorkItemQueries(HephaistoDbContext db)
 
         var attempts = await db.CodeFixAttempts.AsNoTracking()
             .Where(a => a.WorkItemId != null && ids.Contains(a.WorkItemId.Value))
-            .OrderByDescending(a => a.CreatedAt)
+            .OrderBy(a => a.CreatedAt)
+            .ThenBy(a => a.Id)
             .Select(a => new { WorkItemId = a.WorkItemId!.Value, a.Id, a.State, a.PrUrl, a.PrNumber })
             .ToListAsync(ct)
             .ConfigureAwait(false);
 
-        // Newest first, so the first of a work item is its latest - there is one today.
-        var latest = attempts
+        // Oldest first, so the last of a work item is its newest, and the ones before it are in order.
+        var byItem = attempts
             .GroupBy(a => a.WorkItemId)
-            .ToDictionary(g => g.Key, g => g.First());
+            .ToDictionary(g => g.Key, g => g.Select(a => new WorkItemAttemptRef(a.Id, a.State, a.PrUrl, a.PrNumber)).ToList());
 
-        return [.. items.Select(i => new WorkItemWithAttempt(
-            i,
-            latest.TryGetValue(i.Id, out var a) ? new WorkItemAttemptRef(a.Id, a.State, a.PrUrl, a.PrNumber) : null))];
+        return [.. items.Select(i => byItem.TryGetValue(i.Id, out var all)
+            ? new WorkItemWithAttempt(i, all[^1], all[..^1])
+            : new WorkItemWithAttempt(i, null, []))];
     }
+
+    /// <summary>The attempts of one work item, oldest first: what its issue was planned with, in order.</summary>
+    public async Task<IReadOnlyList<WorkItemAttemptRef>> AttemptsAsync(Guid workItemId, CancellationToken ct) =>
+        await db.CodeFixAttempts.AsNoTracking()
+            .Where(a => a.WorkItemId == workItemId)
+            .OrderBy(a => a.CreatedAt)
+            .ThenBy(a => a.Id)
+            .Select(a => new WorkItemAttemptRef(a.Id, a.State, a.PrUrl, a.PrNumber))
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
 
     public async Task<WorkItemView?> GetAsync(Guid id, CancellationToken ct) =>
         await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == id, ct).ConfigureAwait(false) is { } item
@@ -111,5 +130,6 @@ public sealed class WorkItemQueries(HephaistoDbContext db)
 
     public static WorkItemView View(WorkItem w) => new(
         w.Id, w.Source, w.Repository, w.Number, w.Url, w.Title, w.Type, w.AuthorLogin,
-        w.State, w.StateReason, w.TakenAt, w.ClosedAt, w.Body, w.StatusCommentId, w.DeclineReason, w.StillAssigned);
+        w.State, w.StateReason, w.TakenAt, w.ClosedAt, w.Body, w.StatusCommentId, w.DeclineReason, w.StillAssigned,
+        ReplanRequestedBy: w.ReplanAfterAttemptId is null ? null : w.ReplanRequestedBy);
 }

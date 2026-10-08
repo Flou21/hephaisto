@@ -6,20 +6,26 @@ public enum IssueCommandKind
 {
     Approve = 0,
     Reject = 1,
+
+    /// <summary>Plan it again, with what was written on the issue since (v0.14.0).</summary>
+    Replan = 2,
 }
 
 /// <param name="Reason">For a rejection: what was written after the word, or <see cref="IssueCommands.NoReason"/>. Null for an approval.</param>
 public sealed record IssueCommand(IssueCommandKind Kind, string? Reason);
 
 /// <summary>
-/// The two answers a plan can be given on its issue (v0.14.0), and nothing else: which comment is
-/// one, by its text alone. Pure, so the whole grammar is a table in a test.
+/// The three things an approver can say on an issue (v0.14.0), and nothing else: which comment
+/// is one, by its text alone. Pure, so the whole grammar is a table in a test.
 /// </summary>
 /// <remarks>
 /// <para><b>The grammar.</b> A comment is a command when its FIRST NON-BLANK LINE, with the white
 /// space around it taken off, is</para>
 /// <list type="bullet">
 /// <item><c>/approve</c> - exactly that, and nothing else on the line; or</item>
+/// <item><c>/replan</c> - exactly that, likewise. What the comment says after that line is not
+/// part of the command: it is an answer, like any other comment its author writes on the issue,
+/// and reaches the replanning Job with them; or</item>
 /// <item><c>/reject</c>, alone or followed by white space and a reason. The reason is the rest of
 /// that line and every line after it, trimmed and capped at <see cref="MaxReason"/> characters;
 /// without one it is recorded as <see cref="NoReason"/>.</item>
@@ -33,19 +39,32 @@ public sealed record IssueCommand(IssueCommandKind Kind, string? Reason);
 /// could be somebody TALKING about the command is not the command: text before it ("LGTM,
 /// /approve"), a quotation of somebody else's (<c>&gt; /approve</c>), a code fence around it or
 /// the four spaces that make it a code block, a list item, <c>/approve please</c>,
-/// <c>/approved</c>. What comes AFTER an <c>/approve</c> line is the writer's own remark and
-/// does not matter.
+/// <c>/approved</c>, <c>/replan with X</c>. What comes AFTER an <c>/approve</c> line is the
+/// writer's own remark and does not matter. A <c>/replan</c> wrongly read as one ends a plan
+/// that was waiting and starts a Job: it is held to the same line.
 /// </para>
 /// <para>
 /// <b>Who wrote it is not this type's question</b> beyond one case: a comment of the account
-/// Hephaisto writes as is never a command, whatever it says - its own plan comment spells both
-/// words out. Whether the author may answer is decided by the caller, by account NUMBER.
+/// Hephaisto writes as is never a command, whatever it says - its own plan comment spells all
+/// three words out. Whether the author may answer is decided by the caller, by account NUMBER.
 /// </para>
 /// </remarks>
 public static class IssueCommands
 {
     public const string Approve = "/approve";
     public const string Reject = "/reject";
+    public const string Replan = "/replan";
+
+    /// <summary>The word a command is given by, for a sentence about it.</summary>
+    public static string Word(IssueCommandKind kind) => kind switch
+    {
+        IssueCommandKind.Approve => Approve,
+        IssueCommandKind.Reject => Reject,
+        _ => Replan,
+    };
+
+    /// <summary>The same as a metric's <c>verb</c> label: a closed set.</summary>
+    public static string Verb(IssueCommandKind kind) => Word(kind)[1..];
 
     /// <summary>What a rejection without a reason is recorded as.</summary>
     public const string NoReason = "no reason given";
@@ -83,6 +102,9 @@ public static class IssueCommands
 
         if (string.Equals(line, Approve, StringComparison.Ordinal))
             return new IssueCommand(IssueCommandKind.Approve, null);
+
+        if (string.Equals(line, Replan, StringComparison.Ordinal))
+            return new IssueCommand(IssueCommandKind.Replan, null);
 
         if (!line.StartsWith(Reject, StringComparison.Ordinal))
             return null;

@@ -47,8 +47,9 @@ public sealed class GitHubMetrics
     /// <see cref="CommandAccepted"/>, <see cref="CommandNotApprover"/> or
     /// <see cref="CommandRefused"/> of the door's cause - each a closed set.
     /// </summary>
-    public void Command(bool approve, string outcome) =>
-        commands.Add(1, new("verb", approve ? "approve" : "reject"), new("outcome", outcome));
+    /// <param name="verb"><c>approve</c>, <c>reject</c> or <c>replan</c> (<c>IssueCommands.Verb</c>).</param>
+    public void Command(string verb, string outcome) =>
+        commands.Add(1, new("verb", verb), new("outcome", outcome));
 
     /// <summary><c>refused:&lt;cause&gt;</c>; the cause is the key of the one-time answer (<c>IssueComments.AnswerKey</c>).</summary>
     public static string CommandRefused(string cause) => $"refused:{cause}";

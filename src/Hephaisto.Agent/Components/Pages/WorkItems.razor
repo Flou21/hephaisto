@@ -117,6 +117,16 @@ else if (_rows.Count > 0)
                         {
                             <span class="hp-cf-line hp-cf-reason" data-testid="workitem-reason">@reason</span>
                         }
+                        else if (w.ReplanRequestedBy is { Length: > 0 } askedBy)
+                        {
+                            @* A new plan was asked for on the issue and has not been started: a cap, a
+                               switch. Asked again on every pass, like a first plan. *@
+                            <span class="hp-queued"><span class="glyph">.</span> a new plan was asked for by <span class="mono">@askedBy</span></span>
+                            @if (w.DeclineReason is { Length: > 0 } waiting)
+                            {
+                                <span class="hp-cf-line hp-cf-reason" title="@waiting" data-testid="workitem-declined">@Display.Truncate(waiting, 200)</span>
+                            }
+                        }
                         else if (row.Attempt is null && w.DeclineReason is { Length: > 0 } declined)
                         {
                             @* Asked again on every pass, and written down only when the reason
@@ -149,6 +159,26 @@ else if (_rows.Count > 0)
                         else
                         {
                             <span class="hp-no"><span class="glyph">-</span> none</span>
+                        }
+                        @if (row.Earlier.Count > 0)
+                        {
+                            @* An issue that was planned again: what came before the newest attempt,
+                               oldest first, each with its own page. *@
+                            <span class="hp-cf-line hp-muted" data-testid="workitem-earlier-attempts" title="This issue was planned more than once; the earlier attempts, oldest first">
+                                attempt @(row.Earlier.Count + 1), after
+                                @for (var i = 0; i < row.Earlier.Count; i++)
+                                {
+                                    var before = row.Earlier[i];
+
+                                    @if (i > 0)
+                                    {
+                                        <text> &middot; </text>
+                                    }
+
+                                    <a href="codefixes/@before.Id" data-testid="workitem-earlier-attempt" data-attempt="@before.Id"
+                                       data-attempt-state="@before.State">@(i + 1) @Display.CodeFixWord(before.State)</a>
+                                }
+                            </span>
                         }
                     </td>
                     <td class="c-time mono">@Display.Timestamp(w.TakenAt)</td>

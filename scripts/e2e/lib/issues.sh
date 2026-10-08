@@ -117,17 +117,14 @@ ISSUES_OUTSIDER="${ISSUES_OUTSIDER:-passerby}";  ISSUES_OUTSIDER_ID="${ISSUES_OU
 # The account issues are assigned to. The runner reads it from the stand-in.
 ISSUES_BOT="${ISSUES_BOT:-hephaisto-bot}"
 
-# How many comments the agent may ever write for one work item. Not a setting: it is
-# IssueComments.MaxPerWorkItem (src/Hephaisto.Agent/WorkItems/IssueComments.cs), and a unit test
-# (IssuesSuiteTests) fails when this number and that one differ.
-ISSUES_COMMENT_CAP="${ISSUES_COMMENT_CAP:-6}"
-
-# What that ceiling becomes once a work item can be planned again (#252): so many comments for
-# one attempt - its plan and its one-time answers - and so many attempts for one work item.
-# G15 holds an attempt to the first; the agent's numbers follow with the stage that builds
-# /replan, and ISSUES_COMMENT_CAP with them.
+# How many comments the agent may ever write: for one attempt (its plan and its one-time
+# answers), how many attempts one work item may have, and so - with the one status comment - for
+# one work item. Not settings: they are IssueComments.MaxPerAttempt, MaxAttemptsPerWorkItem and
+# MaxPerWorkItem (src/Hephaisto.Agent/WorkItems/IssueComments.cs), and a unit test
+# (IssuesSuiteTests) fails when a number here and its number there differ.
 ISSUES_ATTEMPT_COMMENT_CAP="${ISSUES_ATTEMPT_COMMENT_CAP:-5}"
 ISSUES_ATTEMPT_CAP="${ISSUES_ATTEMPT_CAP:-5}"
+ISSUES_COMMENT_CAP="${ISSUES_COMMENT_CAP:-26}"
 
 ISSUES_NS="${ISSUES_NS:-hephaisto}"
 ISSUES_DEPLOY="${ISSUES_DEPLOY:-hephaisto}"

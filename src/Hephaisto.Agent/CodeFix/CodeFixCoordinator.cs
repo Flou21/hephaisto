@@ -67,7 +67,19 @@ public enum CodeFixRefusal
 
     /// <summary>The issue was taken back between the pass that read it and this decision.</summary>
     SubjectTakenBack = 8,
+
+    /// <summary><c>/replan</c>: a Job is running for the issue. There is nothing to plan again yet.</summary>
+    JobRunning = 9,
+
+    /// <summary><c>/replan</c>: a pull request was opened. The work is reviewed there.</summary>
+    PullRequestOpen = 10,
+
+    /// <summary><c>/replan</c>: the work item has had <see cref="WorkItem.MaxAttempts"/> attempts.</summary>
+    TooManyAttempts = 11,
 }
+
+/// <summary>An issue's title and text as GitHub has them now: what a replan replaces the snapshot with.</summary>
+public sealed record IssueText(string Title, string? Body);
 
 /// <param name="Refusal">Why, when <paramref name="Outcome"/> is not <see cref="CodeFixDecisionOutcome.Done"/>.</param>
 /// <param name="Mode">For <see cref="CodeFixRefusal.ModeBelowPr"/>: the mode the code-fix arms declare.</param>
@@ -168,6 +180,9 @@ public sealed class CodeFixCoordinator(
     public const string AuditFailed = "codefix.failed";
     public const string AuditExpired = "codefix.expired";
     public const string AuditCancelled = "codefix.cancelled";
+
+    /// <summary>A person asked for a work item to be planned again. No incident id; the row names the work item and the attempt it follows.</summary>
+    public const string AuditReplanRequested = "codefix.replan_requested";
 
     private const string SubjectGone = "the incident or work item this attempt is for no longer exists";
 
@@ -356,9 +371,14 @@ public sealed class CodeFixCoordinator(
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>One attempt per work item, ever.</b> A work item that has an attempt - running, waiting,
-    /// denied, failed - is not judged again: its issue was planned once, and what became of that
-    /// plan is on the issue. Handing the issue over again (unassign, assign) is a new work item.
+    /// <b>One OPEN attempt per work item, and the next one only when a person asked for it.</b>
+    /// A work item that has an attempt - running, waiting, denied, failed - is not judged again
+    /// by itself: what became of its plan is on the issue. It IS judged again while
+    /// <see cref="WorkItem.ReplanAfterAttemptId"/> names its newest attempt
+    /// (<see cref="ReplanWorkItemAsync"/>): an approver replied <c>/replan</c>, or the issue was
+    /// assigned afresh. The attempt that follows is planned with the conversation - what the
+    /// issue's author and the approvers wrote since the hand-over - and with what the earlier
+    /// attempt planned and asked. Never more than <see cref="WorkItem.MaxAttempts"/>.
     /// </para>
     /// <para>
     /// <b>"Not now" is asked again, and written down once.</b> A cap that is reached, a switch
@@ -369,24 +389,43 @@ public sealed class CodeFixCoordinator(
     /// </para>
     /// <para>Throws on a database failure: the caller's next pass is the retry.</para>
     /// </remarks>
+    public Task<WorkItemEvaluation> EvaluateWorkItemAsync(
+        Guid workItemId, RepositoryBinding? repository, bool repositoryListed, CancellationToken ct) =>
+        EvaluateWorkItemAsync(workItemId, repository, repositoryListed, null, ct);
+
+    /// <inheritdoc cref="EvaluateWorkItemAsync(Guid, RepositoryBinding?, bool, CancellationToken)"/>
     /// <param name="repository">Where the code is and which branch a plan is made on; null when nothing says.</param>
     /// <param name="repositoryListed">The work item's repository is one the install lists for issues.</param>
+    /// <param name="conversation">
+    /// For a work item that is planned AGAIN: the comments on its issue that are passed on, as
+    /// the caller read and chose them. Ignored for a first attempt, whose request carries none.
+    /// </param>
     public async Task<WorkItemEvaluation> EvaluateWorkItemAsync(
-        Guid workItemId, RepositoryBinding? repository, bool repositoryListed, CancellationToken ct)
+        Guid workItemId,
+        RepositoryBinding? repository,
+        bool repositoryListed,
+        IReadOnlyList<CodeFixWorkItemComment>? conversation,
+        CancellationToken ct)
     {
         var item = await db.WorkItems.FirstOrDefaultAsync(w => w.Id == workItemId, ct).ConfigureAwait(false);
 
         if (item is null)
             return new(null, null);
 
-        if (await db.CodeFixAttempts.AsNoTracking()
-                .Where(a => a.WorkItemId == item.Id)
-                .OrderByDescending(a => a.CreatedAt)
-                .FirstOrDefaultAsync(ct)
-                .ConfigureAwait(false) is { } existing)
-        {
-            return new(null, existing);
-        }
+        var earlier = await db.CodeFixAttempts.AsNoTracking()
+            .Where(a => a.WorkItemId == item.Id)
+            .OrderByDescending(a => a.CreatedAt)
+            .ThenByDescending(a => a.Id)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        // It has an attempt, and nobody asked for another after it. Or it has had as many as
+        // one hand-over gets - which the door refuses before it records a request, so this is
+        // the same rule where a Job would start.
+        if (earlier.Count > 0 && (item.ReplanAfterAttemptId != earlier[0].Id || earlier[0].State.IsOpen() || earlier.Count >= WorkItem.MaxAttempts))
+            return new(null, earlier[0]);
+
+        var existing = earlier.Count > 0 ? earlier[0] : null;
 
         var o = options.CurrentValue;
         var mode = await codeFixSwitch.ResolveAsync(ct).ConfigureAwait(false);
@@ -468,12 +507,38 @@ public sealed class CodeFixCoordinator(
             WorkItemId = item.Id,
             RepositoryUrl = url,
             DefaultBranch = string.IsNullOrWhiteSpace(repository!.DefaultBranch) ? "main" : repository.DefaultBranch,
-            RequestedBy = IncidentStateMachine.SystemActor,
+
+            // Who started it: the system for a first plan, the person who asked for another.
+            RequestedBy = existing is null || string.IsNullOrWhiteSpace(item.ReplanRequestedBy) ? IncidentStateMachine.SystemActor : item.ReplanRequestedBy,
             CreatedAt = now,
             TraceId = System.Diagnostics.Activity.Current?.TraceId.ToString(),
+
+            // What the attempt before it has looked at on the issue is not looked at again for
+            // this one: the /replan that asked for it is behind that cursor, and read a second
+            // time it would be refused - "a Job is running" - in answer to itself.
+            CommandCommentId = existing is null ? null : Newest(existing.CommandCommentId, existing.PlanCommentId),
         };
 
         attempt.Branch = CodeFixJobSpec.BranchName(attempt.Id);
+
+        // The request is decided here, with the row, and not when the Job is created: a
+        // process that dies between the two relaunches the SAME request two minutes later
+        // (CodeFixJobWatcher), with the conversation as it was read for this attempt.
+        attempt.RequestJson = JsonSerializer.Serialize(
+            requests.BuildForWorkItem(
+                attempt,
+                CodeFixPhase.Plan,
+                item,
+                null,
+                existing is null ? null : conversation,
+                existing is null ? null : PreviousPlan(earlier)),
+            CodeFixContract.Json);
+
+        // Asked for, and now there: the same save, though nothing depends on it - a request
+        // that names an attempt which is no longer the newest asks for nothing.
+        item.ReplanAfterAttemptId = null;
+        item.ReplanRequestedBy = null;
+
         db.CodeFixAttempts.Add(attempt);
 
         try
@@ -531,8 +596,18 @@ public sealed class CodeFixCoordinator(
             {
                 // No image and no analysed commit: an issue names a repository, not something that
                 // runs. The runner plans on the default branch's HEAD.
+                //
+                // A plan is asked for with the request the attempt was created with - the
+                // issue and the conversation as they were read then. An implementation is told
+                // what its plan was told: the same comments, read out of that request, never a
+                // second read of the issue after somebody approved.
+                var asked = StoredRequest(attempt);
+
                 json = JsonSerializer.Serialize(
-                    requests.BuildForWorkItem(attempt, phase, subject.WorkItem!, plan), CodeFixContract.Json);
+                    phase == CodeFixPhase.Plan && asked is not null
+                        ? asked
+                        : requests.BuildForWorkItem(attempt, phase, subject.WorkItem!, plan, asked?.WorkItem.Comments, null),
+                    CodeFixContract.Json);
             }
 
             if (phase == CodeFixPhase.Plan)
@@ -703,6 +778,180 @@ public sealed class CodeFixCoordinator(
 
         return new(CodeFixDecisionOutcome.Done, attempt.State == CodeFixState.Implementing ? "approved; implementing" : $"approved, but {attempt.FailureReason}", attempt);
     }
+
+    /// <summary>
+    /// The third thing an approver can say about a work item's plan (v0.14.0): plan it again.
+    /// Records the request - and ends a plan that was waiting - and starts nothing itself: the
+    /// poller's pass starts the new attempt, as it starts a first one, when the caps allow.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Accepted</b> for the work item's NEWEST attempt, when its plan is waiting or it has
+    /// ended without a pull request (failed, denied, expired, cancelled). A waiting plan ends as
+    /// <see cref="CodeFixState.Denied"/> with the reason <c>replanned by &lt;actor&gt;</c>: a
+    /// person decided against it, and Denied is the edge that keeps who decided and through
+    /// what. Cancelled is the system's - a switch, an issue taken back - and tells a route that
+    /// something failed.
+    /// </para>
+    /// <para>
+    /// <b>Refused</b> while a Job is running for the issue, once a pull request is open, after
+    /// <see cref="WorkItem.MaxAttempts"/> attempts, and for an issue that was taken back.
+    /// </para>
+    /// <para>
+    /// <b>One transaction, under the work item's row lock:</b> the plan that is given up, the
+    /// request for a new one, the issue's text as it reads now, and the comment that asked -
+    /// put behind the attempt's cursor here and not by the caller afterwards, so that a process
+    /// that dies right after this cannot read the same <c>/replan</c> as a command to the
+    /// attempt it started. Twice is once: a second request after the same attempt changes
+    /// nothing but the text.
+    /// </para>
+    /// </remarks>
+    /// <param name="commentId">The comment on the issue that asked, when one did.</param>
+    /// <param name="fresh">The issue as it reads now. Replaces the snapshot: replanning is an explicit act.</param>
+    public async Task<CodeFixDecisionResult> ReplanWorkItemAsync(
+        Guid workItemId, Guid attemptId, string actor, ApprovalSource source, long? commentId, IssueText? fresh, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(actor) || IncidentStateMachine.IsForbiddenGranter(actor)
+            || actor.Trim().StartsWith("hephaisto/", StringComparison.OrdinalIgnoreCase))
+        {
+            return new(CodeFixDecisionOutcome.Forbidden, $"'{actor}' may not ask for a new plan; that is a human act.", Refusal: CodeFixRefusal.ActorForbidden);
+        }
+
+        return await NextAttemptAsync(workItemId, attemptId, actor.Trim(), source, commentId, fresh, $"replanned by {actor.Trim()}", ct).ConfigureAwait(false);
+    }
+
+    private async Task<CodeFixDecisionResult> NextAttemptAsync(
+        Guid workItemId, Guid attemptId, string actor, ApprovalSource source, long? commentId, IssueText? fresh, string reason, CancellationToken ct)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+
+        // The work item first, then its attempt: two requests for one issue wait here, and the
+        // second reads what the first wrote.
+        var item = await db.WorkItems
+            .FromSql($"SELECT * FROM work_items WHERE id = {workItemId} FOR UPDATE")
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+
+        var attempt = item is null
+            ? null
+            : await db.CodeFixAttempts
+                .FromSql($"SELECT * FROM code_fix_attempts WHERE id = {attemptId} FOR UPDATE")
+                .FirstOrDefaultAsync(ct)
+                .ConfigureAwait(false);
+
+        if (item is null || attempt is null || attempt.WorkItemId != item.Id)
+            return new(CodeFixDecisionOutcome.NotFound, "no such code fix on this work item", Refusal: CodeFixRefusal.NotFound);
+
+        if (item.State != WorkItemState.Taken)
+        {
+            return new(CodeFixDecisionOutcome.Conflict,
+                $"the issue is no longer Hephaisto's ({item.StateReason ?? item.State.ToString()}); it is not planned again", attempt,
+                CodeFixRefusal.SubjectTakenBack);
+        }
+
+        var all = await db.CodeFixAttempts.AsNoTracking()
+            .Where(a => a.WorkItemId == item.Id)
+            .OrderByDescending(a => a.CreatedAt)
+            .ThenByDescending(a => a.Id)
+            .Select(a => a.Id)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        if (all[0] != attempt.Id)
+        {
+            return new(CodeFixDecisionOutcome.Conflict, "a newer attempt exists for this issue; that one is asked", attempt, CodeFixRefusal.NotWaiting);
+        }
+
+        if (attempt.State.IsRunning() || attempt.State == CodeFixState.Eligible)
+        {
+            return new(CodeFixDecisionOutcome.Conflict, $"the code fix is {attempt.State}; a Job is running for the issue", attempt, CodeFixRefusal.JobRunning);
+        }
+
+        if (attempt.State == CodeFixState.PrOpened)
+        {
+            return new(CodeFixDecisionOutcome.Conflict, "a pull request was opened for the issue; it is not planned again", attempt, CodeFixRefusal.PullRequestOpen);
+        }
+
+        if (all.Count >= WorkItem.MaxAttempts)
+        {
+            return new(CodeFixDecisionOutcome.Conflict,
+                $"the issue has had {all.Count} attempts, the most for one hand-over", attempt, CodeFixRefusal.TooManyAttempts);
+        }
+
+        var subject = CodeFixSubject.Of(item);
+        var wasWaiting = attempt.State == CodeFixState.PlanReady;
+
+        if (wasWaiting)
+        {
+            machine.Deny(attempt, actor, reason, source);
+
+            audit.Enlist(Audit(subject, null, attempt.Id, AuditDenied, actor,
+                $"denied code fix {attempt.Id}: {attempt.FailureReason}", new { source = source.ToString(), reason }));
+        }
+
+        if (commentId is { } asked && asked > (attempt.CommandCommentId ?? 0))
+            attempt.CommandCommentId = asked;
+
+        item.ReplanAfterAttemptId = attempt.Id;
+        item.ReplanRequestedBy = Trim(actor, 127);
+        item.DeclineCodes = null;
+        item.DeclineReason = null;
+        item.UpdatedAt = clock.UtcNow;
+
+        if (fresh is not null)
+        {
+            item.Title = fresh.Title;
+            item.Body = fresh.Body ?? string.Empty;
+        }
+
+        audit.Enlist(Audit(subject, null, attempt.Id, AuditReplanRequested, actor,
+            $"a new plan was asked for {subject.Issue} after attempt {attempt.Id}",
+            new { source = source.ToString(), comment_id = commentId, ended = wasWaiting ? attempt.State.ToString() : null, reread = fresh is not null }));
+
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        await tx.CommitAsync(ct).ConfigureAwait(false);
+
+        if (wasWaiting)
+        {
+            metrics.AwaitingApproval(-1);
+            notifier.Publish(attempt);
+        }
+
+        return new(CodeFixDecisionOutcome.Done, wasWaiting ? "the waiting plan was given up; a new one is asked for" : "a new plan is asked for", attempt);
+    }
+
+    /// <summary>
+    /// What the newest earlier attempt that stored a plan result had planned and asked - a
+    /// failed one too: <c>insufficient_context</c> is a result, and its questions are what the
+    /// answers on the issue refer to. Null when no earlier attempt got that far.
+    /// </summary>
+    private static CodeFixPreviousPlan? PreviousPlan(IReadOnlyList<CodeFixAttempt> newestFirst)
+    {
+        foreach (var earlier in newestFirst)
+        {
+            if (CodeFixQueries.Plan(earlier) is { } plan)
+            {
+                return new CodeFixPreviousPlan { Summary = plan.Summary, Questions = CodeFixContract.Questions(plan.Questions), Steps = plan.Steps };
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>The request an attempt for a work item was created with, or null: none stored, or one from another contract.</summary>
+    private static CodeFixWorkItemRequest? StoredRequest(CodeFixAttempt attempt)
+    {
+        try
+        {
+            return attempt.RequestJson is { } json ? JsonSerializer.Deserialize<CodeFixWorkItemRequest>(json, CodeFixContract.Json) : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static long? Newest(long? a, long? b) => a is null ? b : b is null ? a : Math.Max(a.Value, b.Value);
 
     /// <summary>One watcher pass over one running attempt: deadline, completion, result.</summary>
     public async Task CollectAsync(CodeFixAttempt attempt, CancellationToken ct)

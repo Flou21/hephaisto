@@ -83,6 +83,33 @@ else
                     }
                     <span class="hp-muted"> &middot; taken <span class="mono">@Display.Timestamp(item.TakenAt)</span></span>
                 </dd>
+
+                @if (_detail.Attempts.Count > 1)
+                {
+                    @* The issue was planned more than once: this page is one of those plans, and
+                       says which, with the others a click away - oldest first. *@
+                    <dt title="An approver asked for a new plan on the issue, or it was handed over again">attempts</dt>
+                    <dd data-testid="codefix-attempts">
+                        @for (var i = 0; i < _detail.Attempts.Count; i++)
+                        {
+                            var other = _detail.Attempts[i];
+
+                            @if (i > 0)
+                            {
+                                <text> &middot; </text>
+                            }
+
+                            @if (other.Id == a.Id)
+                            {
+                                <span class="mono" data-testid="codefix-attempt-this">@(i + 1) this one</span>
+                            }
+                            else
+                            {
+                                <a href="codefixes/@other.Id" data-testid="codefix-attempt-other" data-attempt="@other.Id">@(i + 1) @Display.CodeFixWord(other.State)</a>
+                            }
+                        }
+                    </dd>
+                }
             }
             else if (a.IncidentId is { } incidentId)
             {

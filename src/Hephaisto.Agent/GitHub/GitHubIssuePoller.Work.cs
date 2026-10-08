@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Hephaisto.Agent.CodeFix;
+using Hephaisto.Agent.CodeFix.Contract;
 using Hephaisto.Agent.Persistence;
 using Hephaisto.Agent.WorkItems;
 using Hephaisto.Core.CodeFix;
@@ -19,16 +20,19 @@ namespace Hephaisto.Agent.GitHub;
 /// <item><b>No attempt outlives its work item.</b> An issue that was closed or taken back has its
 /// open attempt cancelled, and a running Job deleted - first, because that frees the slot the
 /// next statement may need.</item>
-/// <item><b>Every taken work item has an attempt, or a recorded reason why not.</b> The
-/// coordinator is asked for each one that has none, on every pass: a cap that was reached at
-/// noon is asked about again at five past, and answered in the audit trail only when the answer
-/// is a different one.</item>
+/// <item><b>Every taken work item has an attempt - and the next one, where a person asked for
+/// it - or a recorded reason why not.</b> The coordinator is asked for each one that has none,
+/// and for each whose newest attempt somebody asked to have followed by another
+/// (<c>/replan</c>), on every pass: a cap that was reached at noon is asked about again at five
+/// past, and answered in the audit trail only when the answer is a different one. A plan that
+/// is made again is made with the conversation, read from the issue at that moment.</item>
 /// <item><b>The issue says where its work stands.</b> One status comment per work item, edited
 /// in place when its text would be a different one; and for an attempt whose plan is waiting,
 /// one comment with the plan.</item>
-/// <item><b>A plan that waits has been asked whether somebody answered it</b>
-/// (<c>GitHubIssuePoller.Answers.cs</c>). The fourth statement, and made true before the third:
-/// what an answer led to is then on the issue in the pass that read it.</item>
+/// <item><b>What an approver said on an issue has been heard</b>
+/// (<c>GitHubIssuePoller.Answers.cs</c>). The fourth statement, and made true before the second
+/// and the third: a <c>/replan</c> is then planned, and what an answer led to is on the issue,
+/// in the pass that read it.</item>
 /// </list>
 /// <para>
 /// A write that GitHub refuses fails nothing but itself: the attempt stays where it is, the
@@ -58,7 +62,6 @@ public sealed partial class GitHubIssuePoller
     private async Task<string?> WorkAsync(IGitHubClient client, string repository, string bot, CancellationToken ct)
     {
         List<Guid> orphaned;
-        List<Guid> unplanned;
 
         await using (var scope = scopes.CreateAsyncScope())
         {
@@ -81,16 +84,6 @@ public sealed partial class GitHubIssuePoller
                 .Select(a => a.Id)
                 .ToListAsync(ct)
                 .ConfigureAwait(false);
-
-            unplanned = await db.WorkItems.AsNoTracking()
-                .Where(w => w.Source == WorkItem.GitHubSource
-                    && w.Repository == repository
-                    && w.State == WorkItemState.Taken
-                    && !db.CodeFixAttempts.Any(a => a.WorkItemId == w.Id))
-                .OrderBy(w => w.TakenAt)
-                .Select(w => w.Id)
-                .ToListAsync(ct)
-                .ConfigureAwait(false);
         }
 
         string? problem = null;
@@ -108,39 +101,9 @@ public sealed partial class GitHubIssuePoller
             }
         }
 
-        if (unplanned.Count > 0)
-        {
-            var (binding, unresolved) = await RepositoryAsync(client, repository, ct).ConfigureAwait(false);
-
-            if (unresolved is not null)
-            {
-                // Not "plan it on main and see": a plan made on the wrong branch is a plan
-                // somebody approves. GitHub is asked again on the next pass.
-                problem ??= unresolved;
-            }
-            else
-            {
-                foreach (var workItemId in unplanned)
-                {
-                    try
-                    {
-                        await using var scope = scopes.CreateAsyncScope();
-
-                        await scope.ServiceProvider.GetRequiredService<CodeFixCoordinator>()
-                            .EvaluateWorkItemAsync(workItemId, binding, repositoryListed: true, ct)
-                            .ConfigureAwait(false);
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
-                    {
-                        problem ??= $"a work item of {repository} could not be planned: {ex.GetType().Name}";
-                        logger.LogError(ex, "Could not start a plan for work item {WorkItemId}; retrying next interval.", workItemId);
-                    }
-                }
-            }
-        }
-
-        // Before the comments are put right, so that an answer and what it led to are on the
-        // issue in the pass that read it (GitHubIssuePoller.Answers.cs).
+        // What was said on the issues, first: a /replan that is accepted here is planned by the
+        // statement below in the same pass, and what an answer led to is on the issue when the
+        // comments are put right at the end of it (GitHubIssuePoller.Answers.cs).
         try
         {
             problem ??= await AnswersAsync(client, repository, bot, ct).ConfigureAwait(false);
@@ -149,6 +112,19 @@ public sealed partial class GitHubIssuePoller
         {
             problem ??= $"the answers on the issues of {repository} could not be read: {ex.GetType().Name}";
             logger.LogError(ex, "Could not read the answers on the issues of {Repository}; retrying next interval.", repository);
+        }
+
+        // Asked whatever the statement before it came to: one issue whose comments could not
+        // be read must not keep every other issue of the repository from being planned.
+        try
+        {
+            var unplanned = await PlanAsync(client, repository, bot, ct).ConfigureAwait(false);
+            problem ??= unplanned;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            problem ??= $"the work items of {repository} could not be planned: {ex.GetType().Name}";
+            logger.LogError(ex, "Could not plan the work items of {Repository}; retrying next interval.", repository);
         }
 
         try
@@ -162,6 +138,125 @@ public sealed partial class GitHubIssuePoller
         }
 
         return problem;
+    }
+
+    private sealed record Unplanned(Guid Id, int Number, DateTimeOffset TakenAt, long AuthorId, bool Again);
+
+    /// <summary>
+    /// The second statement: every taken work item has an attempt - and, where a person asked
+    /// for another after its newest one, that other one - or a recorded reason why not.
+    /// </summary>
+    private async Task<string?> PlanAsync(IGitHubClient client, string repository, string bot, CancellationToken ct)
+    {
+        List<Unplanned> unplanned;
+
+        await using (var scope = scopes.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<HephaistoDbContext>();
+
+            unplanned = await db.WorkItems.AsNoTracking()
+                .Where(w => w.Source == WorkItem.GitHubSource
+                    && w.Repository == repository
+                    && w.State == WorkItemState.Taken
+                    && (w.ReplanAfterAttemptId != null || !db.CodeFixAttempts.Any(a => a.WorkItemId == w.Id)))
+                .OrderBy(w => w.TakenAt)
+                .Select(w => new Unplanned(w.Id, w.Number, w.TakenAt, w.AuthorId, w.ReplanAfterAttemptId != null))
+                .ToListAsync(ct)
+                .ConfigureAwait(false);
+        }
+
+        if (unplanned.Count == 0)
+        {
+            return null;
+        }
+
+        var (binding, unresolved) = await RepositoryAsync(client, repository, ct).ConfigureAwait(false);
+
+        if (unresolved is not null)
+        {
+            // Not "plan it on main and see": a plan made on the wrong branch is a plan
+            // somebody approves. GitHub is asked again on the next pass.
+            return unresolved;
+        }
+
+        string? problem = null;
+
+        foreach (var item in unplanned)
+        {
+            try
+            {
+                IReadOnlyList<CodeFixWorkItemComment>? conversation = null;
+
+                if (item.Again)
+                {
+                    // Read for the plan that is about to be made, and kept with it: the
+                    // attempt's request is written with its row. A read that fails starts
+                    // nothing - a replan without the answers is the plan nobody asked for.
+                    (conversation, var unread) = await ConversationAsync(client, repository, bot, item, ct).ConfigureAwait(false);
+
+                    if (conversation is null)
+                    {
+                        problem ??= unread;
+                        continue;
+                    }
+                }
+
+                await using var scope = scopes.CreateAsyncScope();
+
+                await scope.ServiceProvider.GetRequiredService<CodeFixCoordinator>()
+                    .EvaluateWorkItemAsync(item.Id, binding, repositoryListed: true, conversation, ct)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                problem ??= $"a work item of {repository} could not be planned: {ex.GetType().Name}";
+                logger.LogError(ex, "Could not start a plan for work item {WorkItemId}; retrying next interval.", item.Id);
+            }
+        }
+
+        return problem;
+    }
+
+    /// <summary>
+    /// What was written on an issue since it was handed over, as far as a replanning Job is
+    /// given it: the comments of the issue's AUTHOR and of the install's APPROVERS, by account
+    /// number, oldest first - and nobody else's.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Nobody else's text reaches a Job.</b> An issue's comments are open to anybody with an
+    /// account; the issue itself is the author's, and a plan is an approver's to decide. What a
+    /// third person adds is read by people, on the issue. Hephaisto's own comments are left out
+    /// by the account it writes as: its plan is handed over as <c>previous</c>, structured.
+    /// </para>
+    /// <para>
+    /// "Since it was handed over" is the work item's <c>TakenAt</c> less
+    /// <see cref="ClockSlack"/>: a comment written between the assignment and the poll that
+    /// noticed it belongs to the hand-over, and GitHub's clock is not this one. One page of
+    /// <see cref="GitHubClient.PageSize"/>, oldest first, which is what GitHub offers for one
+    /// issue; the request builder keeps the newest and caps their size.
+    /// </para>
+    /// </remarks>
+    private async Task<(IReadOnlyList<CodeFixWorkItemComment>? Comments, string? Problem)> ConversationAsync(
+        IGitHubClient client, string repository, string bot, Unplanned item, CancellationToken ct)
+    {
+        var since = item.TakenAt - ClockSlack;
+        var approvers = options.Value.ApproverIds();
+        var list = await client.ListCommentsAsync(repository, item.Number, since, etag: null, ct).ConfigureAwait(false);
+
+        if (list is not { Ok: true, Value: { } comments })
+        {
+            return (null, $"{repository}#{item.Number}: its comments could not be read for a new plan: {list.Describe()}");
+        }
+
+        return ([.. comments
+            // `since` is by when a comment was last changed: an older one that was edited is not part of this hand-over.
+            .Where(c => c.CreatedAt >= since)
+            .Where(c => !string.Equals(c.Author.Login, bot, StringComparison.OrdinalIgnoreCase))
+            .Where(c => c.Author.Id > 0 && (c.Author.Id == item.AuthorId || approvers.Contains(c.Author.Id)))
+            .Where(c => !string.IsNullOrWhiteSpace(c.Body))
+            .OrderBy(c => c.Id)
+            .Select(c => new CodeFixWorkItemComment(c.Author.Login, c.Body))], null);
     }
 
     private async Task CancelAttemptAsync(Guid attemptId, CancellationToken ct)
@@ -241,7 +336,12 @@ public sealed partial class GitHubIssuePoller
         string? DeclineReason,
         DateTimeOffset TakenAt,
         long? StatusCommentId,
-        string? StatusCommentDigest);
+        string? StatusCommentDigest,
+        Guid? ReplanAfterAttemptId,
+        string? ReplanRequestedBy);
+
+    /// <summary>The newest attempt of a work item, how many it has had, and from when its plan comment can be on the issue.</summary>
+    private sealed record Newest(IssueAttempt Attempt, int Count, DateTimeOffset? PlanReadyAt);
 
     /// <summary>
     /// Makes the comments of a repository's work items say what is stored. Reads before it writes
@@ -252,7 +352,7 @@ public sealed partial class GitHubIssuePoller
         var closedSince = clock.UtcNow - ClosedStatusWindow;
 
         List<Commentable> items;
-        Dictionary<Guid, IssueAttempt> attempts;
+        Dictionary<Guid, Newest> attempts;
         CodeFixMode mode;
 
         await using (var scope = scopes.CreateAsyncScope())
@@ -267,7 +367,8 @@ public sealed partial class GitHubIssuePoller
                     && (w.State == WorkItemState.Taken || (w.StatusCommentId != null && w.ClosedAt >= closedSince)))
                 .OrderBy(w => w.TakenAt)
                 .Select(w => new Commentable(
-                    w.Id, w.Number, w.Url, w.State, w.StateReason, w.DeclineCodes, w.DeclineReason, w.TakenAt, w.StatusCommentId, w.StatusCommentDigest))
+                    w.Id, w.Number, w.Url, w.State, w.StateReason, w.DeclineCodes, w.DeclineReason, w.TakenAt, w.StatusCommentId, w.StatusCommentDigest,
+                    w.ReplanAfterAttemptId, w.ReplanRequestedBy))
                 .ToListAsync(ct)
                 .ConfigureAwait(false);
 
@@ -291,11 +392,12 @@ public sealed partial class GitHubIssuePoller
                         // asked and noted is said on the status comment, so it is read here -
                         // for that state only. This runs on every pass.
                         Plan = a.State == CodeFixState.Failed ? a.PlanResultJson : null,
+                        a.PlanReadyAt,
                     })
                     .ToListAsync(ct)
                     .ConfigureAwait(false))
                 .GroupBy(a => a.WorkItemId)
-                .ToDictionary(g => g.Key, g => WithWhatWasAsked(g.Last().Attempt, g.Last().Plan));
+                .ToDictionary(g => g.Key, g => new Newest(WithWhatWasAsked(g.Last().Attempt, g.Last().Plan), g.Count(), g.Last().PlanReadyAt));
 
             mode = (await scope.ServiceProvider.GetRequiredService<ICodeFixSwitch>().ResolveAsync(ct).ConfigureAwait(false)).Effective;
         }
@@ -320,7 +422,7 @@ public sealed partial class GitHubIssuePoller
 
         try
         {
-            var plan = System.Text.Json.JsonSerializer.Deserialize<CodeFix.Contract.CodeFixPlanResult>(planResultJson, CodeFix.Contract.CodeFixContract.Json);
+            var plan = System.Text.Json.JsonSerializer.Deserialize<CodeFixPlanResult>(planResultJson, CodeFixContract.Json);
 
             return attempt with { Questions = plan?.Questions, Notes = plan?.Notes };
         }
@@ -337,17 +439,18 @@ public sealed partial class GitHubIssuePoller
     /// on the issue", as the database tells it, is never true before the status says so too.
     /// </summary>
     private async Task<string?> CommentOnAsync(
-        IGitHubClient client, string repository, string bot, Commentable item, IssueAttempt? attempt, CodeFixMode mode, CancellationToken ct)
+        IGitHubClient client, string repository, string bot, Commentable item, Newest? newest, CodeFixMode mode, CancellationToken ct)
     {
         string? problem = null;
         long? planCommentId = null;
+        var attempt = newest?.Attempt;
         var since = item.TakenAt - ClockSlack;
 
         // With the mode Off the watcher is about to cancel the attempt; a plan that says how to
         // approve it would be untrue before anybody read it.
         if (item.State == WorkItemState.Taken && mode != CodeFixMode.Off && attempt is { State: CodeFixState.PlanReady, PlanCommentId: null })
         {
-            var (body, why) = await PlanBodyAsync(attempt.Id, mode, ct).ConfigureAwait(false);
+            var (body, why) = await PlanBodyAsync(attempt.Id, mode, newest!.Count, ct).ConfigureAwait(false);
 
             if (body is null)
             {
@@ -355,7 +458,12 @@ public sealed partial class GitHubIssuePoller
                 return why;
             }
 
-            var written = await EnsureCommentAsync(client, repository, item.Number, bot, IssueComments.PlanMarker(attempt.Id), body, since, edit: false, ct).ConfigureAwait(false);
+            // A plan's comment cannot be older than its plan: looked for from there, so that a
+            // long conversation - a page holds a hundred comments, oldest first - does not hide
+            // one that was written and never recorded.
+            var planSince = newest.PlanReadyAt is { } ready ? ready - ClockSlack : since;
+
+            var written = await EnsureCommentAsync(client, repository, item.Number, bot, IssueComments.PlanMarker(attempt.Id), body, planSince, edit: false, ct).ConfigureAwait(false);
 
             if (written.Id is null)
             {
@@ -368,7 +476,15 @@ public sealed partial class GitHubIssuePoller
             }
         }
 
-        var status = IssueComments.Status(new IssueStatus(item.Id, item.State, item.StateReason, item.DeclineCodes, item.DeclineReason, item.Url, attempt));
+        // Asked for after the newest attempt, and not started yet. A request that names an
+        // older attempt asks for nothing: the attempt it wanted exists.
+        var askedFor = attempt is not null && item.ReplanAfterAttemptId == attempt.Id ? item.ReplanRequestedBy ?? "somebody" : null;
+
+        var status = IssueComments.Status(new IssueStatus(
+            item.Id, item.State, item.StateReason, item.DeclineCodes, item.DeclineReason, item.Url, attempt,
+            Attempts: newest?.Count ?? 0,
+            ReplanRequestedBy: askedFor,
+            Answerable: options.Value.ApproverIds().Count > 0));
         string? digest = IssueComments.Digest(status);
         var statusCommentId = item.StatusCommentId;
         var statusWritten = false;
@@ -437,7 +553,7 @@ public sealed partial class GitHubIssuePoller
     }
 
     /// <summary>The plan comment's text, from the attempt as it is now - or nothing, when no plan is waiting any more.</summary>
-    private async Task<(string? Body, string? Problem)> PlanBodyAsync(Guid attemptId, CodeFixMode mode, CancellationToken ct)
+    private async Task<(string? Body, string? Problem)> PlanBodyAsync(Guid attemptId, CodeFixMode mode, int ordinal, CancellationToken ct)
     {
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<HephaistoDbContext>();
@@ -453,7 +569,7 @@ public sealed partial class GitHubIssuePoller
         // contract still has its denormalised columns.
         var view = CodeFixQueries.Plan(attempt);
 
-        return (IssueComments.Plan(attempt, view, mode, answerable: options.Value.ApproverIds().Count > 0), null);
+        return (IssueComments.Plan(attempt, view, mode, answerable: options.Value.ApproverIds().Count > 0, ordinal), null);
     }
 
     /// <summary>

@@ -124,7 +124,13 @@ public sealed record IncidentCodeFixView(
 /// The issue the attempt is for - its title, author and text are somebody else's words - or null
 /// for an incident's attempt, whose <see cref="CodeFixAttemptView.IncidentId"/> names its page.
 /// </param>
-public sealed record CodeFixAttemptDetail(CodeFixAttemptView Attempt, WorkItemView? WorkItem, CodeFixModeView Mode);
+/// <param name="Attempts">
+/// Every attempt of the work item this one belongs to, oldest first - itself among them. An
+/// issue can be planned again, and a page that shows the second plan says that there was a
+/// first. Empty for an incident's attempt.
+/// </param>
+public sealed record CodeFixAttemptDetail(
+    CodeFixAttemptView Attempt, WorkItemView? WorkItem, CodeFixModeView Mode, IReadOnlyList<WorkItemAttemptRef> Attempts);
 
 /// <summary>Read side of the code-fix stage, for the console and <c>/api</c>.</summary>
 public sealed class CodeFixQueries(
@@ -186,15 +192,17 @@ public sealed class CodeFixQueries(
             : new CodeFixAttemptDetail(
                 View(attempt),
                 attempt.WorkItem is { } item ? WorkItemQueries.View(item) : null,
-                await ModeAsync(ct).ConfigureAwait(false));
+                await ModeAsync(ct).ConfigureAwait(false),
+                attempt.WorkItemId is { } workItemId ? await new WorkItemQueries(db).AttemptsAsync(workItemId, ct).ConfigureAwait(false) : []);
     }
 
-    /// <summary>The attempts of one work item, newest first. One, until something plans an issue twice.</summary>
+    /// <summary>The attempts of one work item, newest first: one, or several when an approver asked for a new plan.</summary>
     public async Task<IReadOnlyList<CodeFixAttemptView>> ForWorkItemAsync(Guid workItemId, CancellationToken ct) =>
         (await db.CodeFixAttempts.AsNoTracking()
             .Include(a => a.WorkItem)
             .Where(a => a.WorkItemId == workItemId)
             .OrderByDescending(a => a.CreatedAt)
+            .ThenByDescending(a => a.Id)
             .ToListAsync(ct)
             .ConfigureAwait(false))
         .ConvertAll(View);
