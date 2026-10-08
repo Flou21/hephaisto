@@ -446,6 +446,59 @@ public sealed class IssueCommentsTests
     public void Html_Images_Links_Entities_AndTaskBoxes_AreText(string text, string expected) =>
         IssueComments.Neutralise(text, 500).Should().Contain(expected);
 
+    /// <summary>
+    /// The first plan Hephaisto posted in production (2026-10-08) named <c>children: [...]</c> in
+    /// a code span, and the issue showed <c>children: \[...\]</c>: a backslash escapes nothing
+    /// inside a code span, GitHub shows it. Asked of github.com (<c>POST /markdown</c>, gfm, in
+    /// the sandbox's context): between two runs of backticks of one length it acts on nothing -
+    /// not a mention, a reference, an address, an image or a tag.
+    /// </summary>
+    [Theory]
+    [InlineData("set `children: [...]` on the entry")]
+    [InlineData("`a[0] = b\\c`")]
+    [InlineData("``two `ticks` and [0]``")]
+    [InlineData("`@octocat #12 GH-7 https://x.y/issues/5 www.z <img src=x> &amp; ![i](u) [l](u)`")]
+    public void ACodeSpanOfTheTextsOwn_IsLeftExactlyAsItWasWritten(string text) =>
+        IssueComments.Neutralise(text, 500).Should().Be(text);
+
+    [Fact]
+    public void WhatStandsBetweenCodeSpans_IsStillMadeInert()
+    {
+        IssueComments.Neutralise("index `a[0]`, then [x](y) and @octocat, then `b[1]` and #12", 500)
+            .Should().Be($"index `a[0]`, then \\[x\\](y) and @{Zwsp}octocat, then `b[1]` and #{Zwsp}12");
+
+        // A backslash before a backtick is doubled like any other, so in what GitHub reads the
+        // backtick still opens the span this side took it to open.
+        IssueComments.Neutralise("a \\`[0]` b", 500).Should().Be("a \\\\`[0]` b");
+    }
+
+    [Theory]
+    [InlineData("an unclosed ` and [x](y) @octocat", "an unclosed ` and \\[x\\](y) @​octocat")]
+    [InlineData("``two, then one` [x]", "``two, then one` \\[x\\]")]
+    [InlineData("`one, then two`` [x]", "`one, then two`` \\[x\\]")]
+    [InlineData("[x] `", "\\[x\\] `")]
+    public void ABacktickThatClosesNothing_IsACharacter_AndWhatFollowsItIsText(string text, string expected) =>
+        IssueComments.Neutralise(text, 500).Should().Be(expected);
+
+    [Fact]
+    public void ASpanThatWasCut_IsNotOne()
+    {
+        // The cap falls inside the span: its closing backtick is gone, so it is text.
+        IssueComments.Neutralise("`abc [d] efg` tail", 8).Should().Be("`abc \\[d\\]…");
+    }
+
+    [Fact]
+    public void ACodeSpanCannotCarryOneOfHephaistosMarkers()
+    {
+        // A marker is how a restarted process finds what it wrote. Shown as code it would still
+        // be in the comment's text, under the bot's name.
+        var marker = IssueComments.AnswerMarker(AttemptId, IssueComments.NotApproverKey);
+        var inert = IssueComments.Neutralise($"see `{marker}` here", 500);
+
+        inert.Should().NotContain("<!--");
+        IssueComments.AnswerKeysIn(AttemptId, inert).Should().BeEmpty();
+    }
+
     [Fact]
     public void ItIsOneParagraph_SoNoLineOfItStartsAnything()
     {

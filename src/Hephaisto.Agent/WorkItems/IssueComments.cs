@@ -63,6 +63,15 @@ public sealed record IssueAttempt(
 /// and is not turned into a link.</item>
 /// </list>
 /// <para>
+/// <b>A code span of the text's own is left exactly as it was written.</b> Between two runs of
+/// backticks of the same length GitHub acts on nothing - asked of github.com with a mention, a
+/// reference, an address, an image and a tag inside one - and it shows every character,
+/// including a backslash. The first plan in production named <c>children: [...]</c> in a code
+/// span and was posted as <c>children: \[...\]</c>, because the brackets were escaped where an
+/// escape is not one. The one span that is not passed on is one that holds <c>&lt;!--</c>: a
+/// marker of Hephaisto's own must not be something a model can write into a comment.
+/// </para>
+/// <para>
 /// <b>The slash before a digit was missing until GitHub was asked</b> (the live tier,
 /// <c>scripts/e2e/github-live.sh</c>, L04). GitHub reads <c>/issues/12</c>, <c>/pull/12</c> and
 /// <c>/discussions/12</c> as references by themselves - with no scheme and no host before them,
@@ -429,7 +438,77 @@ public static partial class IssueComments
             one = one[..cut].TrimEnd() + "…";
         }
 
-        one = one
+        // Code spans stay as they were written, and everything between them is made inert.
+        // The spans are found the way GitHub finds them - a run of backticks, closed by the
+        // next run of the same length - and in the text as it leaves here: outside a span no
+        // "<" survives and every backslash is doubled, so nothing that comes before a run of
+        // backticks can stop it from opening one, and the two readings cannot differ.
+        var inert = new StringBuilder(one.Length + 16);
+        var at = 0;
+
+        while (at < one.Length)
+        {
+            var open = one.IndexOf('`', at);
+
+            if (open < 0)
+            {
+                inert.Append(Inert(one[at..]));
+                break;
+            }
+
+            var run = 1;
+
+            while (open + run < one.Length && one[open + run] == '`')
+                run++;
+
+            var close = ClosingRun(one, open + run, run);
+
+            // Unclosed, the backticks are characters. And a span that holds the start of an
+            // HTML comment is not passed on as one: a marker of Hephaisto's own, shown as code,
+            // would still be found by the process that looks for its markers.
+            if (close < 0 || one.AsSpan(open + run, close - open - run).Contains("<!--", StringComparison.Ordinal))
+            {
+                inert.Append(Inert(one[at..(open + run)]));
+                at = open + run;
+                continue;
+            }
+
+            inert.Append(Inert(one[at..open])).Append(one, open, close + run - open);
+            at = close + run;
+        }
+
+        return inert.ToString();
+    }
+
+    /// <summary>Where the run of exactly <paramref name="length"/> backticks that closes a code span starts, or -1.</summary>
+    private static int ClosingRun(string text, int from, int length)
+    {
+        for (var i = text.IndexOf('`', from); i >= 0; i = text.IndexOf('`', i))
+        {
+            var run = 1;
+
+            while (i + run < text.Length && text[i + run] == '`')
+                run++;
+
+            if (run == length)
+                return i;
+
+            i += run;
+
+            if (i >= text.Length)
+                break;
+        }
+
+        return -1;
+    }
+
+    /// <summary>Text outside a code span: no HTML, no link, no mention, no reference, no address.</summary>
+    private static string Inert(string text)
+    {
+        if (text.Length == 0)
+            return text;
+
+        var one = text
             .Replace("&", "&amp;", StringComparison.Ordinal)
             .Replace("<", "&lt;", StringComparison.Ordinal)
             .Replace(">", "&gt;", StringComparison.Ordinal)
