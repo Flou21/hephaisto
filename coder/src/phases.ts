@@ -14,7 +14,7 @@ import { minimalFailed } from './result.js';
 import { type CodeFixRequest, type ImplementResult, type PlanResult, type RepoEntry, rawSchema, validateWith } from './schemas.js';
 import type { QueryFn } from './sdk.js';
 import { isWorkItem, subjectOf, trailersOf, untrustedText } from './subject.js';
-import { type VerificationReport, feedRefusal, feedRefusalNote, runVerification } from './verify.js';
+import { type VerificationReport, feedRefusal, feedRefusalNote, runVerification, verificationLevel } from './verify.js';
 import { type Target, checkoutAnalysedRef, cloneTarget, ensureNugetConfig, makeDirs, nugetCredentialEnv, openPrepared, prepareCait, prepareContext, sanitizeTarget } from './workspace.js';
 
 // plan and implement, each cut where the model starts (backlog #116):
@@ -102,10 +102,10 @@ function commandsBlock(repo: RepoEntry): string {
 }
 
 function expectedLevel(repo: RepoEntry): string {
-  if (repo.commands.test && repo.verification.hasUnitTests) return 'tests';
-  if (repo.commands.build) return 'build-only';
-  if (repo.commands.typecheck) return 'typecheck-only';
-  return 'none';
+  return verificationLevel(
+    { test: !!repo.commands.test, typecheck: !!repo.commands.typecheck, build: !!repo.commands.build },
+    repo.verification.hasUnitTests,
+  );
 }
 
 function baseVars(req: CodeFixRequest, repo: RepoEntry, target: Target, paths: WorkPaths): Record<string, string> {

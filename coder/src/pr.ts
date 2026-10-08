@@ -105,20 +105,39 @@ export interface CreatedPr {
 }
 
 export async function createDraftPr(
-  opts: { repoUrl: string; base: string; head: string; title: string; bodyFile: string; assignee: string; labels: string[] },
+  opts: {
+    repoUrl: string;
+    base: string;
+    head: string;
+    title: string;
+    bodyFile: string;
+    assignee: string;
+    labels: string[];
+    /**
+     * The description again, for a pull request that is opened with something missing: given
+     * what is missing, it returns the file of a body that says so. Without it the body is the
+     * one that was written before anybody knew.
+     */
+    bodyFileWith?: (deviations: string[]) => string;
+  },
   env: NodeJS.ProcessEnv,
   cwd: string,
 ): Promise<CreatedPr> {
-  const base = ['pr', 'create', '--repo', ghRepoArg(opts.repoUrl), '--draft', '--base', opts.base, '--head', opts.head, '--title', opts.title, '--body-file', opts.bodyFile];
-  if (opts.assignee) base.push('--assignee', opts.assignee);
+  const args = (bodyFile: string): string[] => {
+    const a = ['pr', 'create', '--repo', ghRepoArg(opts.repoUrl), '--draft', '--base', opts.base, '--head', opts.head, '--title', opts.title, '--body-file', bodyFile];
+    if (opts.assignee) a.push('--assignee', opts.assignee);
+    return a;
+  };
   const deviations: string[] = [];
-  let r = await gh([...base, ...opts.labels.flatMap((l) => ['--label', l])], env, cwd);
+  let r = await gh([...args(opts.bodyFile), ...opts.labels.flatMap((l) => ['--label', l])], env, cwd);
   if (r.code !== 0 && opts.labels.length > 0) {
-    // Creating a missing label is not the runner's business; open the PR without it and say so.
+    // Creating a missing label is not the runner's business; open the PR without it and say so
+    // - in the result, and in the description: the first pull request that lost its label
+    // (2026-10-08, a repository without one named hephaisto) said "Deviations: none".
     const why = (r.stderr || r.stdout).trim().split('\n').pop() ?? '';
     log.warn(`gh pr create with labels failed (${why}); retrying without labels`);
     deviations.push(`The PR was opened without the label(s) ${opts.labels.join(', ')}: labelling failed (${why.slice(0, 300)}).`);
-    r = await gh(base, env, cwd);
+    r = await gh(args(opts.bodyFileWith ? opts.bodyFileWith(deviations) : opts.bodyFile), env, cwd);
   }
   if (r.code !== 0) throw new Error(`gh pr create failed: ${(r.stderr || r.stdout).trim().slice(-800)}`);
   const url = r.stdout.trim().split('\n').filter(Boolean).pop() ?? '';
@@ -173,9 +192,9 @@ export function renderPrBody(i: PrBodyInput): string {
   // model's summary and root cause as written - so a model repeating "fixes #<n>" from a log
   // line would have closed that issue on merge, in a repository whose issues are real.
   const model = {
-    summary: inert(plan.summary),
+    summary: inert(withoutComparison(plan.summary)),
     root_cause: inert(plan.root_cause),
-    change_summary: inert(i.changeSummary || plan.summary),
+    change_summary: inert(i.changeSummary || withoutComparison(plan.summary)),
     deviations: bullets(i.deviations.map(inert), '- none'),
     verification_weak: weak ? inert(weak) : '',
     notes: bullets([...plan.notes, ...i.notes].map(inert), '- none'),
@@ -208,14 +227,31 @@ export function renderPrBody(i: PrBodyInput): string {
   });
 }
 
+/** How a plan that replaces an earlier one begins the paragraph that says what changed (prompts/replan-block.md). */
+export const COMPARISON = 'Compared with the earlier plan:';
+
+/**
+ * A plan's summary as a pull request's description: without its last paragraph when that
+ * paragraph compares the plan with an earlier one. On the issue that paragraph is what a person
+ * who read the earlier plan looks for. A reviewer of the pull request never saw the earlier
+ * plan - the first one that came from a replanned issue (2026-10-08) opened with "What changed
+ * since the earlier plan: ..." and "Nothing is left open". From the marker to the end, and the
+ * whole summary when nothing would be left.
+ */
+export function withoutComparison(summary: string): string {
+  const at = summary.toLowerCase().lastIndexOf(COMPARISON.toLowerCase());
+  const kept = at > 0 ? summary.slice(0, at).trimEnd() : summary;
+  return kept.length > 0 ? kept : summary;
+}
+
 /**
  * `fix(<workload>): <first sentence of the plan's summary>` for an incident, and for an issue
  * `<type>: <the same>`, where the type is the issue's kind (subject.ts prType) - an issue names
  * no workload to scope by. Capped at 120 characters either way.
  */
-export function prTitle(req: CodeFixRequest, plan: PlanResult): string {
+export function prTitle(req: CodeFixRequest, plan: PlanResult, firstCommitSubject: string | null = null): string {
   const first = (plan.summary.split(/(?<=[.!?])\s/)[0] ?? plan.summary).trim().replace(/\s+/g, ' ');
-  const prefix = isWorkItem(req) ? prType(req.work_item.type) : `fix(${req.incident.target.workload.split('/').pop() || 'service'})`;
+  const prefix = isWorkItem(req) ? prType(req.work_item.type, firstCommitSubject) : `fix(${req.incident.target.workload.split('/').pop() || 'service'})`;
   // a title notifies and links like any other text: it is made inert as the body is, for an
   // incident as for an issue (the prefix is the runner's: a type, and a workload's name)
   const sentence = inert(first);

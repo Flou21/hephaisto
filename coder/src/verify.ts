@@ -52,6 +52,25 @@ function timeoutFor(repo: RepoEntry, step: StepName): number {
   return (s ?? DEFAULT_TIMEOUTS[step]) * 1000;
 }
 
+
+/**
+ * What a set of checks amounts to, in one place: the level a plan is told to expect
+ * (phases.ts) and the level a pull request reports are the same question asked before and
+ * after. `tests` needs a test command AND unit tests behind it; without them a repository that
+ * has a type check is `typecheck-only`, and one that only builds is `build-only`.
+ *
+ * Until 2026-10-08 a build came first, so a Nuxt app - which has both - was `build-only` here
+ * while the prompt's own field description and the context's rules call it `typecheck-only`:
+ * the first planner to meet that spent a note on reconciling its instructions, and the pull
+ * request named one level in its table and the other in its notes.
+ */
+export function verificationLevel(has: { test: boolean; typecheck: boolean; build: boolean }, hasUnitTests: boolean): VerificationLevel {
+  if (has.test && hasUnitTests) return 'tests';
+  if (has.typecheck) return 'typecheck-only';
+  if (has.build) return 'build-only';
+  return 'none';
+}
+
 export async function runVerification(repo: RepoEntry, opts: VerifyOptions): Promise<VerificationReport> {
   const order: StepName[] = opts.steps ?? ['restore', 'build', 'typecheck', 'test'];
   const steps: VerificationStep[] = [];
@@ -96,13 +115,7 @@ export async function runVerification(repo: RepoEntry, opts: VerifyOptions): Pro
   const buildLike = steps.filter((s) => s.name !== 'test');
   const buildPassed = buildLike.some((s) => s.name === 'build' || s.name === 'typecheck') && buildLike.every((s) => s.exit === 0);
   const testsPassed = !!ran('test') && !failed;
-  const level: VerificationLevel = ran('test') && repo.verification.hasUnitTests
-    ? 'tests'
-    : ran('build')
-      ? 'build-only'
-      : ran('typecheck')
-        ? 'typecheck-only'
-        : 'none';
+  const level = verificationLevel({ test: !!ran('test'), typecheck: !!ran('typecheck'), build: !!ran('build') }, repo.verification.hasUnitTests);
 
   const ranNames = steps.map((s) => s.name).join(', ') || 'nothing';
   let honestyNote = `The runner ran ${ranNames} itself; the exit codes above are its own, not the agent's.`;

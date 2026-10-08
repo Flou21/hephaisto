@@ -110,6 +110,11 @@ describe('real SDK + CLI against a mock Messages API', () => {
     expect(git(w.remote, 'show', `${BRANCH}:src/app.sh`)).toContain('# fixed');
     expect(readFileSync(join(w.ghState, 'prs', '1.body.md'), 'utf8')).toContain('## Verification — what the runner actually ran');
     const impl = api.requests.filter((r) => JSON.stringify(r.body.tools ?? []).includes('"Edit"'));
+    // Claude Code signs nothing here: with its attribution on, the instructions for a commit that
+    // the CLI sends the model spell out a `Co-Authored-By: Claude ...` trailer, and the first pull
+    // request for an issue carried one after the two Hephaisto trailers (agent.ts NO_ATTRIBUTION).
+    expect(impl.length).toBeGreaterThan(0);
+    for (const r of impl) expect(JSON.stringify(r.body)).not.toMatch(/Co-Authored-By|Generated with \[?Claude Code/i);
     expect(((impl[0]!.body.tools as { name: string }[]) ?? []).map((t) => t.name).sort()).toEqual(['Bash', 'Edit', 'Glob', 'Grep', 'Read', 'Skill', 'StructuredOutput', 'Write']);
   });
 });

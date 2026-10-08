@@ -214,6 +214,19 @@ describe('implement phase', () => {
     expect(pr).toMatchObject({ isDraft: true, baseRefName: 'main', headRefName: BRANCH, labels: ['hephaisto'], assignees: ['Flou21'] });
   });
 
+  it('calls a repository with a type check and no unit tests typecheck-only, before and after', async () => {
+    // A Nuxt app has a build AND a type check. The level was decided build first, so the plan
+    // prompt said "expected: build-only" beside a field description and rules that say
+    // typecheck-only, and the pull request named one level in its table and one in its notes.
+    const w = makeWorld({ commands: { build: 'sh -n src/app.sh', typecheck: 'sh -n src/app.sh' }, repoEntry: { verification: { hasUnitTests: false } } });
+    script(w, 'svc.implement.json', okImplement());
+    const { doc } = await runRequest(w, implementRequest(w));
+    expect(doc.outcome).toBe('pr_opened');
+    const body = readFileSync(join(w.ghState, 'prs', '1.body.md'), 'utf8');
+    expect(body).toMatch(/at level `typecheck-only`/);
+    expect(body).not.toMatch(/at level `build-only`/);
+  });
+
   it('writes the "Verification weak" section when the level is below tests', async () => {
     const w = makeWorld({ commands: { build: 'sh -n src/app.sh' }, repoEntry: { verification: { hasUnitTests: false } } });
     script(w, 'svc.implement.json', okImplement());
@@ -406,6 +419,23 @@ describe('implement phase', () => {
     const { doc } = await runRequest(w, implementRequest(w), { GH_SHIM_KNOWN_LABELS: '' });
     expect(doc.outcome).toBe('pr_opened');
     expect((doc.deviations as string[]).join(' ')).toMatch(/without the label\(s\) hephaisto/);
+
+    // And where a reviewer reads it: the first pull request that lost its label said
+    // "Deviations: none" in its description, because the description was written before
+    // anybody knew.
+    const body = readFileSync(join(w.ghState, 'prs', '1.body.md'), 'utf8');
+    expect(body).toMatch(/- The PR was opened without the label\(s\) hephaisto: labelling failed/);
+    expect(body).not.toMatch(/### Deviations from the approved plan\s+- none/);
+    // the description the agent keeps is the one that was posted
+    expect(String(doc.pr_body ?? body)).toContain('without the label(s) hephaisto');
+  });
+
+  it('says "none" under deviations when the label was there', async () => {
+    const w = makeWorld();
+    script(w, 'svc.implement.json', okImplement());
+    const { doc } = await runRequest(w, implementRequest(w));
+    expect(doc.outcome).toBe('pr_opened');
+    expect(readFileSync(join(w.ghState, 'prs', '1.body.md'), 'utf8')).not.toContain('without the label');
   });
 
   it('commits what the agent left uncommitted, with the trailers', async () => {

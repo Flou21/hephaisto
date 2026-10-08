@@ -63,6 +63,16 @@ export const IMPLEMENT_TOOLS = {
 };
 
 /**
+ * Claude Code signs what it commits and what it describes: a `Co-Authored-By: Claude ...` trailer
+ * on a commit, a "Generated with" line on a pull request. Neither belongs in a Job's work. A
+ * commit ends with the two Hephaisto trailers and nothing after them - the first pull request
+ * for an issue (2026-10-08) carried a third - and who wrote it is the account the pull request
+ * is opened as. An empty string is how the setting says "none". It is given here and not only
+ * in the context repository's settings, so that a context without the line gets the same.
+ */
+export const NO_ATTRIBUTION = { attribution: { commit: '', pr: '' } } as const;
+
+/**
  * The agent's environment: the runner's, minus every credential except the one Anthropic auth
  * variable the CLI needs. GITHUB_TOKEN and NUGET_GITHUB_TOKEN are not there to be removed: since
  * #116 the coder role runs in a container that was never handed them (and refuses to start in
@@ -76,6 +86,7 @@ export const IMPLEMENT_TOOLS = {
  * to it, /proc and env dumps, and egress is the proxy allowlist. That is what is left of the
  * same-uid caveat: one credential, the model's own, which can call the model and nothing else.
  */
+
 export function buildAgentEnv(env: RunnerEnv, paths: WorkPaths, guardEnv: Record<string, string>): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(env.base)) {
@@ -210,6 +221,7 @@ export async function runAgent<T>(o: AgentRunOptions): Promise<AgentRunResult<T>
     env: o.env,
     additionalDirectories: o.additionalDirectories,
     settingSources: ['user'],
+    settings: NO_ATTRIBUTION,
     mcpServers: {},
     strictMcpConfig: true,
     maxTurns,

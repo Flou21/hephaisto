@@ -237,6 +237,34 @@ on - the account, the two tokens, the values - is one page:
   wrong, and what will change" were posted as one paragraph whatever they held: a list of the
   entries to move, one to a line, became a run-on sentence. Paragraphs, bulleted and numbered
   items are kept; a line that would begin a heading or a rule is shown as text.
+- **A plan's step is shown whole on the issue, with the list inside it**
+  ([#294](https://github.com/TrueRelevance/hephaisto/issues/294)). A step was cut at 1000
+  characters - half of what a plan result allows - and a list written inside it became part of
+  the sentence: the one plan with a long step lost "do not change the template, any route or
+  any page". A step, a note and what only a person can confirm are now shown up to the plan
+  result's own limits, and a step keeps its paragraphs and its list, indented under its number.
+- **A Nuxt repository's verification level is `typecheck-only`, before and after**
+  ([#295](https://github.com/TrueRelevance/hephaisto/issues/295)). The runner decided the level
+  build first, so an app with a build and a type check was `build-only` in the plan prompt's
+  "expected level" and in the pull request's table, while the same prompt and the context's
+  rules call it `typecheck-only`. One definition now serves both: unit tests, else a type
+  check, else a build.
+- **A commit of a Job ends with Hephaisto's two trailers and nothing else.** Claude Code added
+  `Co-Authored-By: Claude ...` after them. The runner now starts it with its attribution for
+  commits and pull requests set to none; a test with the pinned CLI holds that the instruction
+  is gone from what the model is sent.
+- **A pull request that is opened without its label says so in its description.** A repository
+  without a `hephaisto` label got the pull request without one, as before, but under
+  "Deviations from the approved plan" the description said "none": it was written before
+  anybody knew. It is now written again for the second try.
+- **The pull request for an issue that names no kind is typed by its first commit.** Such an
+  issue was always `chore:`, also over a commit that said `feat(nav):`. The commit's type is
+  taken when it is one of feat, fix, chore, docs, refactor, perf and test; a kind the issue
+  does name still decides, and nothing else of the commit's subject is used.
+- **A replanned issue's pull request no longer opens with what changed since the earlier
+  plan.** The planner is asked to put that comparison into the summary's last paragraph,
+  beginning "Compared with the earlier plan:". The issue shows it; the pull request's
+  description, whose reviewer never saw the earlier plan, leaves that paragraph out.
 - **The plan prompts no longer say the build may be run while planning.** "The driver will run
   these commands (you may run them too)" was false in the read-only plan phase, where the guard
   refuses them.

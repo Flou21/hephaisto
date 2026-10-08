@@ -5,7 +5,7 @@ import { APP_ROOT } from '../src/config.js';
 import { ALIASES_FILE, loadScript, scriptAlias } from '../src/fake-sdk.js';
 import { readPrepareHandoff } from '../src/handoff.js';
 import { FAKE_REPEAT_MARKER, fakeRepeated } from '../src/phases.js';
-import { lowerFirstWord, prTitle, renderPrBody } from '../src/pr.js';
+import { COMPARISON, lowerFirstWord, prTitle, renderPrBody, withoutComparison } from '../src/pr.js';
 import { ISSUE_PROMPT_VARS, ISSUE_PR_BODY_VARS, buildIssueElement, inert, loadTemplate, render, renderIssueBlock } from '../src/prompts.js';
 import { parseLastPrBody } from '../src/result.js';
 import { validate } from '../src/schemas.js';
@@ -157,6 +157,22 @@ describe('the subject of a request', () => {
     expect(prType('feat!: $(rm -rf /)')).toBe('chore');
     expect(prType('')).toBe('chore');
     expect(prType(null)).toBe('chore');
+  });
+
+  it('takes the type its first commit states for an issue that names no kind, from a closed list', () => {
+    // CaitWebsite3, 2026-10-08: an issue without a type, a commit `feat(nav): ...`, a title `chore: ...`.
+    expect(prType(null, "feat(nav): move legacy admin pages into a new 'Legacy UIs' sidebar group")).toBe('feat');
+    expect(prType('', 'fix: treat a null list as empty')).toBe('fix');
+    expect(prType(null, 'refactor(cart)!: split the total')).toBe('refactor');
+    expect(prType(null, 'docs: say what the flag does')).toBe('docs');
+    // a kind the issue DOES name wins, whatever the commit says
+    expect(prType('Bug', 'feat: something')).toBe('fix');
+    expect(prType('Task', 'feat: something')).toBe('chore');
+    // and what a commit says is compared, never copied
+    for (const subject of ['wip: half of it', 'Feat: capitalised', 'feat add a thing', 'feat($(rm -rf /)): x', 'release: 1.0', 'feat:no space', '', 'chore(hephaisto): commit changes the agent left uncommitted'.replace('chore', 'evil')]) {
+      expect(prType(null, subject), subject).toBe('chore');
+    }
+    expect(prType(null, null)).toBe('chore');
   });
 });
 
@@ -626,6 +642,45 @@ describe('the title of a pull request', () => {
     expect(typed('enhancement')).toBe('feat: add a total to the empty cart');
     expect(typed('Task')).toBe('chore: add a total to the empty cart');
     expect(typed(null)).toBe('chore: add a total to the empty cart');
+  });
+
+  it('of an issue without a kind takes its type from the first commit, and nothing else from it', () => {
+    const w = makeWorld();
+    const req = issueImplementRequest(w);
+    const untyped = { ...req, work_item: { ...req.work_item, type: null } };
+    expect(prTitle(untyped, plan('Add a total to the empty cart. More.'), 'feat(cart): add the total @octocat asked for in #7')).toBe('feat: add a total to the empty cart');
+    expect(prTitle(untyped, plan('Add a total to the empty cart. More.'), null)).toBe('chore: add a total to the empty cart');
+    // an incident's title is typed by what an incident is
+    expect(prTitle(implementRequest(w), plan('Greet prints the wrong thing. More.'), 'feat: x')).toBe('fix(shop-api): greet prints the wrong thing');
+  });
+
+  it("a description leaves out the paragraph that compares the plan with an earlier one", () => {
+    const text = 'The sidebar gets a fourth group.\n\nCompared with the earlier plan: \'Legacy Queue\' moves too, as answered.';
+    expect(withoutComparison(text)).toBe('The sidebar gets a fourth group.');
+    expect(withoutComparison('The sidebar gets a fourth group. compared with the earlier plan: nothing changed.')).toBe('The sidebar gets a fourth group.');
+    expect(withoutComparison('The sidebar gets a fourth group.')).toBe('The sidebar gets a fourth group.');
+    // a summary that is nothing BUT the comparison is kept: a description is not left empty
+    expect(withoutComparison('Compared with the earlier plan: nothing changed.')).toBe('Compared with the earlier plan: nothing changed.');
+    expect(COMPARISON).toBe('Compared with the earlier plan:');
+    expect(loadTemplate('replan-block', null).text).toContain(`\`${COMPARISON}\``);
+
+    const w = makeWorld();
+    const req = issueImplementRequest(w);
+    const body = renderPrBody({
+      req,
+      plan: { ...req.plan!, summary: text },
+      changeSummary: '',
+      files: ['src/app.sh'],
+      deviations: [],
+      notes: [],
+      report: { level: 'build-only', steps: [], buildPassed: true, testsPassed: null, failed: null, logTail: '', honestyNote: '' },
+      costUsd: 0.1,
+      versions: 'v',
+      template: loadTemplate('pr-body-issue', null).text,
+    });
+    expect(body).toContain('The sidebar gets a fourth group.');
+    expect(body).not.toContain('Compared with the earlier plan');
+    expect(body).not.toContain('Legacy Queue');
   });
 
   it('is capped at 120 characters, as an incident\'s is', () => {

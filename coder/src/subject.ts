@@ -62,14 +62,25 @@ export function untrustedText(req: CodeFixRequest): string {
 
 /**
  * The type of a pull request's title for an issue: `fix` for a bug, `feat` for a feature or an
- * enhancement, `chore` for anything else - including an issue that says nothing about its kind.
- * Compared, never copied: the issue's type is a name somebody chose.
+ * enhancement, `chore` for any other kind the issue names. Compared, never copied: the issue's
+ * type is a name somebody chose.
+ *
+ * An issue that says NOTHING about its kind takes the type its first commit states, when that is
+ * one of the types below - the model read the change and called it something, and the first
+ * pull request for such an issue (2026-10-08) was titled `chore:` over a commit that said
+ * `feat(nav):`. The commit's subject is compared against a closed list too; its scope and its
+ * words are not taken. No commit to ask, or one that states no such type, is `chore` as before.
  */
-export function prType(type: string | null): 'fix' | 'feat' | 'chore' {
+export function prType(type: string | null, firstCommitSubject: string | null = null): PrType {
   const t = (type ?? '').trim().toLowerCase();
   if (t === 'bug') return 'fix';
   if (t === 'feature' || t === 'enhancement') return 'feat';
-  return 'chore';
+  if (t.length > 0) return 'chore';
+  const stated = /^([a-z]+)(?:\([^)\n]{1,60}\))?!?: /.exec(firstCommitSubject ?? '')?.[1];
+  return PR_TYPES.find((known) => known === stated) ?? 'chore';
 }
+
+const PR_TYPES = ['feat', 'fix', 'chore', 'docs', 'refactor', 'perf', 'test'] as const;
+export type PrType = (typeof PR_TYPES)[number];
 
 export type { IncidentRequest, WorkItemRequest };

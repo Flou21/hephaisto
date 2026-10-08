@@ -267,19 +267,25 @@ export async function runPublish(req: CodeFixRequest, deps: PublishDeps, sealed:
     if (remote.kind === 'foreign') throw new Refusal(remote.reason);
 
     // --- the PR body is rendered here, and may not carry what this container holds
-    const body = renderPrBody({
-      req,
-      plan,
-      changeSummary: h.change_summary,
-      files,
-      deviations: result.deviations,
-      notes: sealed.notes,
-      report: h.report,
-      costUsd: result.cost_usd,
-      versions: versionLine(sealed.context_sha),
-      template: sealed.pr.template,
-    });
-    const title = prTitle(req, plan);
+    const report = h.report;
+    const template = sealed.pr.template;
+    const bodyWith = (deviations: string[]): string =>
+      renderPrBody({
+        req,
+        plan,
+        changeSummary: h.change_summary,
+        files,
+        deviations,
+        notes: sealed.notes,
+        report,
+        costUsd: result.cost_usd,
+        versions: versionLine(sealed.context_sha),
+        template,
+      });
+    let body = bodyWith(result.deviations);
+    // an issue that names no kind is titled by the type its first commit states (subject.ts prType)
+    const firstSubject = (await git.ok(['log', '--reverse', '--format=%s', `${base}..${tip}`])).split('\n')[0]?.trim() || null;
+    const title = prTitle(req, plan, firstSubject);
     if (secretIn(body) || secretIn(title)) throw new Refusal('the pull request text would contain a credential of this container');
     const bodyFile = join(scratch, 'pr-body.md');
     writeFileSync(bodyFile, body, { mode: 0o600 });
@@ -298,6 +304,17 @@ export async function runPublish(req: CodeFixRequest, deps: PublishDeps, sealed:
         bodyFile,
         assignee: sealed.pr.assignee,
         labels: sealed.pr.labels,
+        // Opened without its label, the description says so too. What gh said goes through the
+        // same door as everything else in a body: inert, and refused if it holds a credential -
+        // then the pull request is opened with the body that was checked before.
+        bodyFileWith: (missing) => {
+          const again = bodyWith([...result.deviations, ...missing]);
+          if (secretIn(again)) return bodyFile;
+          body = again;
+          const file = join(scratch, 'pr-body-without-label.md');
+          writeFileSync(file, again, { mode: 0o600 });
+          return file;
+        },
       },
       ghEnv(env, join(scratch, 'home')),
       cwd,
