@@ -22,6 +22,13 @@ items that release carried over and one production found the same day, all four 
 on the dev cluster. See [v0.13.0](#v0130--what-v0120-left-open). It is not released until a
 candidate has run on the production install.
 
+**It grew on 2026-10-06, by the owner's choice of what to do before the full release.** The
+fifth candidate adds the rest of the Teams buttons ([#124](backlog.md#124)), one registration
+per metric ([#15](backlog.md#15)), and a fix for the one thing production found that day: every
+code fix it had started died looking for Cait's pinned commit ([#117](backlog.md#117)). Running
+the coder's agent and its driver in separate containers ([#116](backlog.md#116)) was chosen with
+them and is not in that candidate.
+
 `v0.12.0` shipped on 2026-10-02. **What production found**, and the first full release since
 v0.8.0: v0.9.0 (it proposes the fix), v0.10.0 (the only thing that tells a person) and v0.11.0
 (an agent can ask it) went out as release candidates only, seventeen candidates across the four
@@ -1715,6 +1722,9 @@ and a fourth that production found on the day of the release.
 | F3 | **Pod logs from Loki first, and from a pod with a sidecar.** `grafanaMcp.podLogSelector` sends the model to Loki; `get_pod_logs` picks the application container when none is named; a grounding rejection says why in the log | [#160](backlog.md#160) | built |
 | F4 | **Many at once.** `close_incidents` and the console's list close by filter: a dry run that counts, then a close that names the count, approver only, one audit row per incident | [#161](backlog.md#161) | built |
 | - | **The incident list says who acknowledged a row** | [#165](backlog.md#165) | built |
+| - | **The Teams card closes, re-investigates, approves and denies.** Reinvestigate for any member of the team; close for the Microsoft Entra object ids in `notifications.teamsBot.actions.approvers`, with a reason typed into the card; approve and deny for the same people, behind `actions.approvals.enabled`, which is off | [#124](backlog.md#124) | built, rc5 |
+| - | **One metric name is one instrument.** Six names were registered twice; three counters read double | [#15](backlog.md#15) | built, rc5 |
+| - | **A code fix for a service that pins Cait gets as far as planning.** The project file's versions are fetched in one request, not 974 | [#117](backlog.md#117) | built, rc5 |
 
 F3 is wider than v0.12.0 planned it. The owner decided on 2026-10-02 that pod logs should come
 from Loki first and the Kubernetes API second, not only that the Kubernetes API should cope
@@ -1735,6 +1745,22 @@ And one this milestone adds, which no test holds yet: with `grafanaMcp.podLogSel
 real model reads a crash-looping pod's logs from Loki. The prompt says so and a unit test holds
 the prompt; what a model does with it is measured on the production install.
 
+What the fifth candidate added, each a test where it can be one:
+
+- A click re-investigates as the person the roster names; an approver's click closes with the
+  reason typed into the card and writes one audit row; a member who is not an approver is told
+  why and changes nothing; approve and deny answer only an approver: pager scenarios P51 to P54,
+  against the Teams stand-in.
+- No metric name is registered in two places: `OneRegistrationPerMetricTests`.
+- The pinned Cait commit is found in a blobless clone without a request per version: three tests
+  in `coder/test/workspace.test.ts`.
+
+And three that no test holds. **An approval that runs**: the pager suite's model plans nothing,
+so no incident there waits for approval, and the click that approves one is unit-tested only. It
+needs one click on a waiting action before `approvals.enabled` goes on anywhere that matters.
+**Any of the buttons in a real tenant** ([#125](backlog.md#125)). And **Cait itself, from a coder
+pod, through the egress proxy**: the next plan production starts is that measurement.
+
 ### What is explicitly not in v0.13.0
 
 - **A Job or a deleted workload healing.** Those end by the sweeper, which now has chart values
@@ -1742,6 +1768,14 @@ the prompt; what a model does with it is measured on the production install.
 - **An HTTP route for the bulk close.** MCP and the console have it; nothing asked for a third.
 - **Pod labels on OTLP-shipped logs.** On the production install those carry `service_name`
   only, so a pod selector finds what promtail ships. That is the shipper's to fix.
+- **The coder's agent and driver in separate containers** ([#116](backlog.md#116)). Chosen on
+  2026-10-06 with what the fifth candidate carries, and not in it: it changes the pod every
+  investigation Job runs in, and goes into a candidate once the code-fix and the investigation
+  suites are green on it.
+- **A gate that runs a code fix against a real service** ([#117](backlog.md#117)). The failure
+  production found is fixed; the gate that would have found it first is not built.
+- **Which credential the Jobs run on** ([#118](backlog.md#118)). The documentation is read and
+  quoted there; the choice between the subscription token and an API key is the owner's.
 
 ---
 
