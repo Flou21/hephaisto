@@ -1176,7 +1176,7 @@ public sealed partial class WorkItemStageTests(PostgresFixture pg)
         LastSignalAt = Now,
     };
 
-    private static string PlanJson(Guid attemptId, decimal cost, string outcome, string summary) => JsonSerializer.Serialize(new CodeFixPlanResult
+    private static string PlanJson(Guid attemptId, decimal cost, string outcome, string summary, string[]? questions = null, string[]? notes = null) => JsonSerializer.Serialize(new CodeFixPlanResult
     {
         AttemptId = attemptId,
         Outcome = outcome,
@@ -1187,7 +1187,8 @@ public sealed partial class WorkItemStageTests(PostgresFixture pg)
         Steps = ["Treat a null list as empty."],
         Verification = new CodeFixVerification { Level = "tests", NotVerifiable = [] },
         NeedsCait = false,
-        Notes = [],
+        Notes = notes ?? [],
+        Questions = questions,
         AnalysedRef = "583b1e5b75ad0123456789abcdef0123456789ab",
         ContextSha = null,
         CostUsd = cost,
@@ -1334,12 +1335,13 @@ public sealed partial class WorkItemStageTests(PostgresFixture pg)
         }
 
         /// <summary>The plan Job finished and the watcher's loop collects it.</summary>
-        public async Task<Guid> CollectPlanAsync(decimal cost, string outcome = "planned", string summary = "Endpoints.Map needs a null check.")
+        public async Task<Guid> CollectPlanAsync(
+            decimal cost, string outcome = "planned", string summary = "Endpoints.Map needs a null check.", string[]? questions = null, string[]? notes = null)
         {
             await using var db = pg.CreateContext();
             var attempt = await db.CodeFixAttempts.SingleAsync(a => a.WorkItemId != null && a.State == CodeFixState.Planning, Ct);
 
-            Launcher.Log = CodeFixResultParser.Frame(PlanJson(attempt.Id, cost, outcome, summary));
+            Launcher.Log = CodeFixResultParser.Frame(PlanJson(attempt.Id, cost, outcome, summary, questions, notes));
             await Coordinator(db).CollectAsync(attempt, Ct);
 
             return attempt.Id;

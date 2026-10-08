@@ -27,6 +27,20 @@ public static class CodeFixContract
 
     public const int MaxQuestionChars = 600;
 
+    /// <summary>
+    /// The questions of a plan as they are shown and passed on: the ones that say something,
+    /// at most <see cref="MaxQuestions"/> of them, each at most <see cref="MaxQuestionChars"/>
+    /// characters. One reading for the comment on the issue, the console and the request of a
+    /// replan - so "to 2: yes" in somebody's answer names the same question in all three.
+    /// </summary>
+    public static IReadOnlyList<string> Questions(IReadOnlyList<string>? asked) =>
+        [.. (asked ?? [])
+            .Where(q => !string.IsNullOrWhiteSpace(q))
+            .Take(MaxQuestions)
+            .Select(q => q.Length <= MaxQuestionChars
+                ? q
+                : q[..(char.IsHighSurrogate(q[MaxQuestionChars - 1]) ? MaxQuestionChars - 1 : MaxQuestionChars)])];
+
     public static readonly JsonSerializerOptions Json = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,

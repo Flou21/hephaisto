@@ -41,6 +41,13 @@ public sealed record CodeFixAttemptView
     public IReadOnlyList<string> Files { get; init; } = [];
     public IReadOnlyList<string> Steps { get; init; } = [];
     public IReadOnlyList<string> Notes { get; init; } = [];
+
+    /// <summary>
+    /// What the planner asks of a person (v0.14.0), each with what the plan assumed meanwhile.
+    /// A model's text, like the notes. Empty when it asked nothing - and for a plan from before
+    /// there was such a member.
+    /// </summary>
+    public IReadOnlyList<string> Questions { get; init; } = [];
     public IReadOnlyList<string> NotVerifiable { get; init; } = [];
     public IReadOnlyList<CodeFixDenial> DeniedToolCalls { get; init; } = [];
     public string? AnalysedRef { get; init; }
@@ -245,6 +252,14 @@ public sealed class CodeFixQueries(
         }
     }
 
+    /// <summary>
+    /// Whether a note speaks of injected text. The plan prompt asks for a suspected injection
+    /// to be quoted in <c>notes</c>, so such a note is where a model repeats what a stranger
+    /// planted: the console marks it, and a comment on an issue does not repeat it.
+    /// </summary>
+    public static bool IsInjectionNote(string? note) =>
+        note is not null && note.Contains("injection", StringComparison.OrdinalIgnoreCase);
+
     public static CodeFixAttemptView View(CodeFixAttempt a)
     {
         CodeFixPlanResult? plan = null;
@@ -285,6 +300,7 @@ public sealed class CodeFixQueries(
             Files = plan?.Files ?? [],
             Steps = plan?.Steps ?? [],
             Notes = plan?.Notes ?? [],
+            Questions = CodeFixContract.Questions(plan?.Questions),
             NotVerifiable = plan?.Verification.NotVerifiable ?? [],
             DeniedToolCalls = [.. plan?.DeniedToolCalls ?? [], .. impl?.DeniedToolCalls ?? []],
             AnalysedRef = a.AnalysedRef,

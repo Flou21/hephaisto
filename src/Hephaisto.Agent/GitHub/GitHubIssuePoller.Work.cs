@@ -281,15 +281,21 @@ public sealed partial class GitHubIssuePoller
             attempts = (await db.CodeFixAttempts.AsNoTracking()
                     .Where(a => a.WorkItemId != null && ids.Contains(a.WorkItemId.Value))
                     .OrderBy(a => a.CreatedAt)
+                    .ThenBy(a => a.Id)
                     .Select(a => new
                     {
                         WorkItemId = a.WorkItemId!.Value,
                         Attempt = new IssueAttempt(a.Id, a.State, a.FailureReason, a.Summary, a.ApprovedBy, a.PrUrl, a.PlanCommentId, a.Branch, a.DefaultBranch),
+
+                        // An attempt that did not work has no plan comment: what its planner
+                        // asked and noted is said on the status comment, so it is read here -
+                        // for that state only. This runs on every pass.
+                        Plan = a.State == CodeFixState.Failed ? a.PlanResultJson : null,
                     })
                     .ToListAsync(ct)
                     .ConfigureAwait(false))
                 .GroupBy(a => a.WorkItemId)
-                .ToDictionary(g => g.Key, g => g.Last().Attempt);
+                .ToDictionary(g => g.Key, g => WithWhatWasAsked(g.Last().Attempt, g.Last().Plan));
 
             mode = (await scope.ServiceProvider.GetRequiredService<ICodeFixSwitch>().ResolveAsync(ct).ConfigureAwait(false)).Effective;
         }
@@ -302,6 +308,27 @@ public sealed partial class GitHubIssuePoller
         }
 
         return problem;
+    }
+
+    /// <summary>The attempt with its planner's questions and notes, read out of the plan result it stored - when it stored one.</summary>
+    private static IssueAttempt WithWhatWasAsked(IssueAttempt attempt, string? planResultJson)
+    {
+        if (planResultJson is null)
+        {
+            return attempt;
+        }
+
+        try
+        {
+            var plan = System.Text.Json.JsonSerializer.Deserialize<CodeFix.Contract.CodeFixPlanResult>(planResultJson, CodeFix.Contract.CodeFixContract.Json);
+
+            return attempt with { Questions = plan?.Questions, Notes = plan?.Notes };
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // Stored by another contract. The summary and the reason are columns, and are said.
+            return attempt;
+        }
     }
 
     /// <summary>

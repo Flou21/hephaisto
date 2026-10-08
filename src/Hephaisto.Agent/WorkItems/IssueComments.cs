@@ -19,7 +19,13 @@ public sealed record IssueStatus(
     string IssueUrl,
     IssueAttempt? Attempt);
 
-/// <summary>The columns of an attempt the status comment reads. Never its plan or its request.</summary>
+/// <summary>
+/// What the status comment reads of an attempt. Never its plan or its request - with one
+/// exception: for an attempt that did not work there is no plan comment, so what the planner
+/// asked and noted is said here, beside what it found.
+/// </summary>
+/// <param name="Questions">For an attempt that failed: what its planner asked of a person. Null otherwise.</param>
+/// <param name="Notes">For an attempt that failed: its planner's notes. Null otherwise.</param>
 public sealed record IssueAttempt(
     Guid Id,
     CodeFixState State,
@@ -29,7 +35,9 @@ public sealed record IssueAttempt(
     string? PrUrl,
     long? PlanCommentId,
     string Branch,
-    string DefaultBranch);
+    string DefaultBranch,
+    IReadOnlyList<string>? Questions = null,
+    IReadOnlyList<string>? Notes = null);
 
 /// <summary>
 /// Everything Hephaisto writes on an issue it was handed (v0.14.0): where the work stands, edited
@@ -106,6 +114,9 @@ public static partial class IssueComments
     /// is this number, and a test holds the two together.
     /// </summary>
     public const int MaxPerWorkItem = 6;
+
+    /// <summary>How many of a plan's notes a comment holds. The contract's own cap.</summary>
+    public const int MaxNotes = 20;
 
     /// <summary>The key of the one answer to everybody who answered a plan and is not an approver.</summary>
     public const string NotApproverKey = "not-approver";
@@ -296,8 +307,70 @@ public static partial class IssueComments
             _ =>
                 $"**It did not work.** {Clause(a.FailureReason, 500)}."
                 + (string.IsNullOrWhiteSpace(a.Summary) ? string.Empty : $"\n\n**What it found.** {Neutralise(a.Summary, 1500)}")
+                + AskedAndNoted(a.Questions, a.Notes)
                 + "\n\nNothing was changed." + again,
         };
+    }
+
+    /// <summary>
+    /// What the planner asked of a person and what it noted, for a comment: the questions as a
+    /// numbered list - they are answered by number - and the notes folded away, since they are
+    /// for whoever wants to know what was left out. Nothing at all when there is neither.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Until 2026-10-08 neither was shown anywhere. The first plan in production left an entry
+    /// where it was because the issue did not name it, and asked whether it should move too -
+    /// in <c>notes</c>, which no comment rendered. The owner asked why Hephaisto had not
+    /// suggested it.
+    /// </para>
+    /// <para>
+    /// <b>A note about injected text is counted and not quoted.</b> The plan prompt asks for a
+    /// suspected injection to be quoted in <c>notes</c>, so such a note is exactly where a model
+    /// repeats what a stranger planted in the issue - and a comment is written under
+    /// Hephaisto's name. The console shows those notes, marked, to an operator.
+    /// </para>
+    /// </remarks>
+    private static string AskedAndNoted(IReadOnlyList<string>? questions, IReadOnlyList<string>? notes)
+    {
+        var text = new StringBuilder();
+        var asked = CodeFixContract.Questions(questions);
+
+        if (asked.Count > 0)
+        {
+            text.Append("\n\n**Questions**\n");
+
+            for (var i = 0; i < asked.Count; i++)
+                text.Append('\n').Append((i + 1).ToString(CultureInfo.InvariantCulture)).Append(". ").Append(Neutralise(asked[i], CodeFixContract.MaxQuestionChars));
+        }
+
+        var noted = (notes ?? []).Where(n => !string.IsNullOrWhiteSpace(n)).Take(MaxNotes).ToList();
+
+        if (noted.Count > 0)
+        {
+            var withheld = noted.Count(CodeFixQueries.IsInjectionNote);
+
+            // A blank line after the summary, and one before the closing tag: between them
+            // GitHub reads Markdown again, and a list is a list.
+            text.Append("\n\n<details>\n<summary>The planner's notes (")
+                .Append(noted.Count.ToString(CultureInfo.InvariantCulture))
+                .Append(")</summary>\n");
+
+            foreach (var note in noted.Where(n => !CodeFixQueries.IsInjectionNote(n)))
+                text.Append("\n- ").Append(Neutralise(note, 1000));
+
+            if (withheld > 0)
+            {
+                text.Append("\n- ")
+                    .Append(withheld == 1 ? "One note is" : $"{withheld.ToString(CultureInfo.InvariantCulture)} notes are")
+                    .Append(" about text in the issue that read like an instruction to the planner. What such a note quotes is not repeated here; ")
+                    .Append("an operator reads it on the attempt's page in Hephaisto's console.");
+            }
+
+            text.Append("\n\n</details>");
+        }
+
+        return text.ToString();
     }
 
     /// <summary>
@@ -345,7 +418,9 @@ public static partial class IssueComments
 
         if (plan is { Verification.NotVerifiable.Count: > 0 })
         {
-            text.Append(" What only production can show:\n");
+            // For an issue the reader is a person at the running application, not a dashboard:
+            // an issue names no workload, and what the Job cannot run is somebody looking.
+            text.Append(" What only a person looking at the running application can confirm:\n");
 
             foreach (var item in plan.Verification.NotVerifiable.Take(10))
                 text.Append("- ").Append(Neutralise(item, 500)).Append('\n');
@@ -354,6 +429,11 @@ public static partial class IssueComments
         {
             text.Append('\n');
         }
+
+        // What it asks, and what it noted. Each block brings its own blank line before it, and
+        // the line above is already ended.
+        if (AskedAndNoted(plan?.Questions, plan?.Notes) is { Length: > 0 } asked)
+            text.Append(asked.AsSpan(1)).Append('\n');
 
         text.Append("\n**Cost of planning.** $")
             .Append(attempt.PlanCostUsd.ToString("0.00", CultureInfo.InvariantCulture))

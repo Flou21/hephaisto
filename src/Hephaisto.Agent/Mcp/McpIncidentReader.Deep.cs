@@ -582,6 +582,7 @@ public sealed partial class McpIncidentReader
         Files = [.. a.Files.Select(f => McpText.Name(f))],
         Steps = [.. a.Steps.Select(s => McpText.Untrusted(s, 800))],
         Notes = [.. a.Notes.Select(s => McpText.Untrusted(s, 800))],
+        Questions = [.. a.Questions.Select(s => McpText.Untrusted(s, 800))],
         NotVerifiable = [.. a.NotVerifiable.Select(s => McpText.Untrusted(s, 800))],
         BuildPassed = a.BuildPassed,
         TestsPassed = a.TestsPassed,

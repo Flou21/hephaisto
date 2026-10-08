@@ -801,6 +801,11 @@ so the first callback after a cold start throws NullReferenceException.</pre>
             <li>Return early from Complete when Customer is null and requeue the callback.</li>
             <li>Add a test for a callback that arrives before the customer is loaded.</li>
           </ol>
+          <h4>questions for a person <span class="hp-count">2</span></h4>
+          <ol class="hp-cf-steps" data-testid="codefix-questions">
+            <li>Should a callback that arrives before the customer is loaded be retried, or dropped with a log line? The plan requeues it.</li>
+            <li>RefundService.Complete reads Customer the same way and the incident does not name it. Should it get the same guard? The plan leaves it as it is.</li>
+          </ol>
           <h4>notes <span class="hp-count">2</span></h4>
           <ul class="hp-cf-notes" data-testid="codefix-notes">
             <li class="note-injection" data-testid="codefix-note-injection">

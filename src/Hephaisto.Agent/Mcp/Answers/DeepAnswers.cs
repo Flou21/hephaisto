@@ -398,6 +398,9 @@ public sealed record CodeFixDetail
 
     public required IReadOnlyList<McpText> Notes { get; init; }
 
+    /// <summary>What the planner asks of a person, each with what the plan assumed meanwhile. A model's text.</summary>
+    public required IReadOnlyList<McpText> Questions { get; init; }
+
     public required IReadOnlyList<McpText> NotVerifiable { get; init; }
 
     public bool? BuildPassed { get; init; }
