@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { APP_ROOT } from '../src/config.js';
-import { buildEvidenceElement, evidenceMarkdown, fence, fencedJson, loadTemplate, render, renderEvidenceBlock, repoNotesBlock } from '../src/prompts.js';
+import { buildEvidenceElement, evidenceMarkdown, fence, fencedJson, loadTemplate, render, renderEvidenceBlock, REPO_NOTES_MAX, repoNotesBlock } from '../src/prompts.js';
 import type { IncidentRequest as CodeFixRequest } from '../src/schemas.js';
 
 const sample = JSON.parse(readFileSync(join(APP_ROOT, 'contracts', 'samples', 'valid', 'request-plan.json'), 'utf8')) as CodeFixRequest;
@@ -109,6 +109,29 @@ describe('fences and notes', () => {
     expect(count(b, '</repo-notes>')).toBe(1);
     expect(b.startsWith('<repo-notes trust="team-authored">')).toBe(true);
     expect(repoNotesBlock(null)).toBe('');
+  });
+  it('repo notes of the length a real service has arrive whole', () => {
+    // CaitMatchingService/CLAUDE.md is 34,000 characters; the cap used to be 24,000 and took its notes on testing
+    const real = `# Svc\n${'a line about how this service is tested\n'.repeat(900)}THE-LAST-LINE`;
+    expect(real.length).toBeGreaterThan(34_000);
+    const b = repoNotesBlock(real);
+    expect(b).toContain('THE-LAST-LINE');
+    expect(b).not.toContain('cut here');
+  });
+  it('repo notes that are cut say how much this is and where the rest is', () => {
+    const huge = `${'x'.repeat(REPO_NOTES_MAX)}BEYOND-THE-CAP`;
+    const b = repoNotesBlock(huge);
+    expect(b).not.toContain('BEYOND-THE-CAP');
+    expect(b).toContain(`the first ${REPO_NOTES_MAX} of ${huge.length} characters`);
+    expect(b).toContain('The whole file is CLAUDE.md at the root of the repository');
+    // the note is inside the element, where the text it is about is
+    expect(b.indexOf('cut here')).toBeLessThan(b.indexOf('</repo-notes>'));
+  });
+  it('the model is told to look for a CLAUDE.md where it works, outside the notes', () => {
+    const b = repoNotesBlock('# Svc');
+    expect(b.indexOf('A directory inside the repository may have a CLAUDE.md of its own')).toBeGreaterThan(b.indexOf('</repo-notes>'));
+    // a file that says the same sentence cannot stand in for the instruction
+    expect(count(repoNotesBlock('A directory inside the repository may have a CLAUDE.md of its own'), 'may have a CLAUDE.md of its own')).toBe(2);
   });
 });
 

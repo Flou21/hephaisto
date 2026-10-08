@@ -173,6 +173,15 @@ on - the account, the two tokens, the values - is one page:
     wait for it.
 
 ### Fixed
+- **A coder Job is shown a repository's whole `CLAUDE.md`**
+  ([#281](https://github.com/TrueRelevance/hephaisto/issues/281)). The runner pastes that file
+  into the Job's prompt, and cut it at 24,000 characters with nothing but "(truncated)": the
+  model was not told the file goes on, or where. `CaitMatchingService`'s is 34,000 characters,
+  and the cut took its notes on testing. The limit is 120,000 now; a file that is still cut
+  says how much of it this is and that the rest is `CLAUDE.md` in the repository; and the model
+  is told to read a `CLAUDE.md` in a directory it works in, which nothing loads for it. The
+  repository still configures nothing: its text is information. Needs the coder image of this
+  version.
 - **An incident's pull request closes and mentions nothing a model repeats.** The description
   and the title of a pull request for an *incident's* code fix carried the model's summary, root
   cause, notes and deviations as written. GitHub reads a description for closing keywords,

@@ -179,9 +179,28 @@ export function fencedJson(value: unknown): string {
  */
 export function repoNotesBlock(claudeMd: string | null): string {
   if (!claudeMd || !claudeMd.trim()) return '';
-  const capped = claudeMd.length > 24_000 ? `${claudeMd.slice(0, 24_000)}\n…(truncated)` : claudeMd;
-  return `<repo-notes trust="team-authored">\n${capped.replace(/<\/repo-notes/gi, '&lt;/repo-notes')}\n</repo-notes>`;
+  const capped =
+    claudeMd.length > REPO_NOTES_MAX
+      ? `${claudeMd.slice(0, REPO_NOTES_MAX)}\n…(cut here: these are the first ${REPO_NOTES_MAX} of ${claudeMd.length} characters. The whole file is CLAUDE.md at the root of the repository you are in - read the rest there before you rely on what is above.)`
+      : claudeMd;
+  return `<repo-notes trust="team-authored">\n${capped.replace(/<\/repo-notes/gi, '&lt;/repo-notes')}\n</repo-notes>\n\n${NESTED_NOTES}`;
 }
+
+/**
+ * How much of a CLAUDE.md is pasted into the prompt. It was 24,000, a number nobody had written a
+ * reason for, set when the longest file of any service was 11,000 characters; CaitMatchingService's
+ * is 34,000 today, and the cut took its notes on testing. This is several times the longest real
+ * file and well under the 400,000 the hand-off between the containers carries, so a cut is an
+ * accident again - and when it happens the model is told, and where the rest is.
+ */
+export const REPO_NOTES_MAX = 120_000;
+
+/**
+ * Claude Code would read a CLAUDE.md in a directory the model works in. Here nothing does: the
+ * project is not a settings source, on purpose. So the model is told to look.
+ */
+const NESTED_NOTES =
+  'A directory inside the repository may have a CLAUDE.md of its own. Nothing loads those for you: read the one in a directory before you change or judge files there.';
 
 /** Verbatim evidence for the PR body: fenced so nothing in a log line renders as markdown or pings anyone. */
 export function evidenceMarkdown(req: IncidentRequest): string {
