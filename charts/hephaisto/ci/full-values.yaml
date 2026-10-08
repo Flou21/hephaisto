@@ -1,7 +1,7 @@
 # Everything on at once. Exists so that a template only exercised by an unusual combination
 # still gets rendered in CI.
 image:
-  repository: ghcr.io/flou21/hephaisto
+  repository: ghcr.io/truerelevance/hephaisto
   tag: "0.0.1"
   pullPolicy: IfNotPresent
 
@@ -166,7 +166,7 @@ codeFix:
   namespace: hephaisto-coder
   createNamespace: true
   image:
-    repository: ghcr.io/flou21/hephaisto-coder
+    repository: ghcr.io/truerelevance/hephaisto-coder
     tag: "0.0.1"
     pullPolicy: IfNotPresent
   contextRepository:

@@ -231,9 +231,9 @@ over once more; that is a new work item, with the issue's text as it is then.
 ## Limits, and what is not built
 
 - **Polling only.** A new assignment is seen within `github.pollInterval`. A webhook that tells
-  the poller to look now is [not built](https://github.com/Flou21/hephaisto/issues/250).
+  the poller to look now is [not built](https://github.com/TrueRelevance/hephaisto/issues/250).
 - **No replanning from a comment.** A plan cannot be asked to change; reject it, edit the issue
-  and hand it over again. [Not built](https://github.com/Flou21/hephaisto/issues/252).
+  and hand it over again. [Not built](https://github.com/TrueRelevance/hephaisto/issues/252).
 - **"Merged is done" was never run against github.com.** The test that runs against GitHub
   itself never merges, so that a merge ends the work item is held against a stand-in only.
 - **No real model has planned an issue in a test.** Every automated run used a scripted model;

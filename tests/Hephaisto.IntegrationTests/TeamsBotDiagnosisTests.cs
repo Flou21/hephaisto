@@ -75,7 +75,7 @@ public sealed class TeamsBotDiagnosisTests(PostgresFixture pg)
                 Hypothesis = "ConnectionHealthCache lets a probe timeout stop the host.",
                 Confidence = 0.85,
                 IsPrimary = true,
-                CodeRefs = [new CodeRef { Repository = "https://github.com/Flou21/hephaisto", Ref = "c421c38", Path = "src/ConnectionHealthCache.cs", Line = 84 }],
+                CodeRefs = [new CodeRef { Repository = "https://github.com/TrueRelevance/hephaisto", Ref = "c421c38", Path = "src/ConnectionHealthCache.cs", Line = 84 }],
             };
             finding.Evidence.Add(new Evidence { FindingId = finding.Id, StepId = step.Id, Excerpt = "at OidcProbe.ProbeAsync" });
             newest.Steps.Add(step);

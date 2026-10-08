@@ -35,7 +35,7 @@ BACKLOG = ROOT / "docs" / "backlog.md"
 ENTRIES = HERE / "entries.tsv"
 EXTRAS = HERE / "extras.md"
 MAP = HERE / "map.json"
-REPO = "Flou21/hephaisto"
+REPO = "TrueRelevance/hephaisto"
 BLOB = f"https://github.com/{REPO}/blob/main"
 
 HEADING = re.compile(r"^### (\d+)\. (.+?)\s*$")

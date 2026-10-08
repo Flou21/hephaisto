@@ -4,7 +4,7 @@ What changed in each release, for someone deciding whether to upgrade.
 
 Two companions carry the rest, and this file deliberately does not duplicate them:
 [`docs/history.md`](docs/history.md) is the engineering record — what was learned doing the work,
-including the wrong turns — and the [issues](https://github.com/Flou21/hephaisto/issues) are everything known to be broken, with the
+including the wrong turns — and the [issues](https://github.com/TrueRelevance/hephaisto/issues) are everything known to be broken, with the
 evidence for each. Until 2026-10-06 that was [`docs/backlog.md`](docs/backlog.md), frozen since;
 the links to it below are to that record.
 
@@ -14,7 +14,7 @@ the same number.
 ## v0.14.0 — unreleased
 
 **A second way in.** Until now the only thing Hephaisto could be handed was an alert. This
-release is about handing it a GitHub issue ([#243](https://github.com/Flou21/hephaisto/issues/243)):
+release is about handing it a GitHub issue ([#243](https://github.com/TrueRelevance/hephaisto/issues/243)):
 an issue assigned to its account is planned, the plan is posted and answered on the issue, and
 the draft pull request that follows closes it. It is off unless `github.enabled` is set, and an
 install that leaves it off changes in three small ways, listed under *Upgrading*. How to turn it
@@ -22,14 +22,14 @@ on - the account, the two tokens, the values - is one page:
 [GitHub issues as work](https://docs.hephaisto.dev/operate/github-issues).
 
 ### New
-- **An issue assigned to Hephaisto's account is taken as work** ([#245](https://github.com/Flou21/hephaisto/issues/245)).
+- **An issue assigned to Hephaisto's account is taken as work** ([#245](https://github.com/TrueRelevance/hephaisto/issues/245)).
   With `github.enabled`, the agent asks GitHub which open issues are assigned to its account in
   the repositories listed in `github.issues.repositories` - once a minute, a free 304 while
   nothing changed - and records each as a work item: `GET /api/workitems` and
   `GET /api/workitems/{id}`. Unassigning the account, or closing the issue, cancels it; assigning
   it again is a new work item, with the issue's text as it is then. An issue in a repository that
   is not listed is never asked about. The agent only asks, so there is no webhook to expose.
-- **A taken issue is planned, and the plan is posted on the issue** ([#246](https://github.com/Flou21/hephaisto/issues/246)).
+- **A taken issue is planned, and the plan is posted on the issue** ([#246](https://github.com/TrueRelevance/hephaisto/issues/246)).
   The same read-only plan Job an escalated incident gets, under the same `codeFix.mode`, switches
   and caps - with `codeFix.mode: off` nothing starts, and the issue is told so. There is no
   incident, no investigation and no running image behind it: the Job reads the issue and the
@@ -39,7 +39,7 @@ on - the account, the two tokens, the values - is one page:
   travels to the model as it was when the issue was taken, as data in one element of its own; an
   edit afterwards is not picked up. Unassigning or closing the issue cancels the attempt and
   deletes a running Job. An issue is planned once: to have it planned again, hand it over again.
-- **A plan is answered on the issue** ([#247](https://github.com/Flou21/hephaisto/issues/247)).
+- **A plan is answered on the issue** ([#247](https://github.com/TrueRelevance/hephaisto/issues/247)).
   An approver replies with a comment whose first line is `/approve`, or `/reject` with a reason
   after it (without one it is recorded as "no reason given"). Nothing else is a command: not
   `/approve please`, not `LGTM /approve`, not a quotation or a code block of either, not
@@ -93,7 +93,7 @@ on - the account, the two tokens, the values - is one page:
   issue's - what the runner sent GitHub, so that "does it close the issue" can be read without
   opening GitHub. Null without a pull request.
 - **The console shows what was handed over, and every code fix has a page**
-  ([#248](https://github.com/Flou21/hephaisto/issues/248)). *Work items* in the navigation lists
+  ([#248](https://github.com/TrueRelevance/hephaisto/issues/248)). *Work items* in the navigation lists
   the issues that were taken, newest first, with what became of each: its state, why it ended -
   or why no plan was started yet - and its attempt. `/codefixes/<attempt id>` is one attempt on
   a page of its own, for an incident's attempt as for an issue's: what it is for, its history
@@ -146,7 +146,7 @@ on - the account, the two tokens, the values - is one page:
 - Audit rows for a work item: `workitem.taken`, `workitem.cancelled`, `workitem.done`, and
   `workitem.command` - one per comment that decided a plan or was answered, with the account's
   number and the comment's id.
-- **All of it was asked of github.com before release** ([#249](https://github.com/Flou21/hephaisto/issues/249)).
+- **All of it was asked of github.com before release** ([#249](https://github.com/TrueRelevance/hephaisto/issues/249)).
   `scripts/e2e/github-live.sh` runs the road above against GitHub itself - a real bot account,
   its two fine-grained tokens, the real `gh`, the agent's client through the egress proxy - in
   a sandbox repository, with the model scripted. It is the first test of this project that
@@ -236,6 +236,15 @@ on - the account, the two tokens, the values - is one page:
 - `approvalSource` has a seventh value, `GitHub`. The others keep their names and numbers.
 
 ### Upgrading
+- **The chart and the images have a new address.** The repository moved from `Flou21/hephaisto`
+  to `TrueRelevance/hephaisto` on 2026-10-08, and from the release after `v0.14.0-rc1` on
+  everything is published under the organisation:
+  `oci://ghcr.io/truerelevance/charts/hephaisto`, `ghcr.io/truerelevance/hephaisto` and
+  `ghcr.io/truerelevance/hephaisto-coder`. **An install has to change the chart reference it
+  pulls from**; the chart's own defaults name the new images, so an install that does not pin
+  `image.repository` or `codeFix.image.repository` needs nothing else. Everything up to and
+  including `v0.14.0-rc1` stays where it was published, under `ghcr.io/flou21/`, and is not
+  published again. Links to the old repository redirect.
 - **Migrations run when the agent starts**: three, `WorkItems`, `WorkItemCodeFix` and
   `ApprovalOnIssue`. The first is a new table. The second makes `code_fix_attempts.incident_id`
   and `llm_usage.incident_id` nullable, adds `code_fix_attempts.work_item_id` with a check that

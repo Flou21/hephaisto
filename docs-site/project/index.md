@@ -9,11 +9,11 @@ somebody about to change the code and they change with it.
 
 | Document | What it is |
 |---|---|
-| [Issues](https://github.com/Flou21/hephaisto/issues) | Everything known to be broken, half-built, or lying. Numbered, evidenced, sized. Until October 2026 this was a file, the [backlog](https://github.com/Flou21/hephaisto/blob/main/docs/backlog.md), which is kept as it stood. |
-| [Roadmap](https://github.com/Flou21/hephaisto/blob/main/docs/roadmap.md) | Where the project stands and what is next. What each released milestone shipped, and what it deliberately did not, is in the [archive](https://github.com/Flou21/hephaisto/blob/main/docs/roadmap-archive.md). |
-| [History](https://github.com/Flou21/hephaisto/blob/main/docs/history.md) | Why the code is shaped the way it is. Several entries record a hypothesis that turned out to be wrong. |
-| [Verification](https://github.com/Flou21/hephaisto/blob/main/docs/verification.md) | The hand-run acceptance checklist, per release. |
-| [Design](https://github.com/Flou21/hephaisto/blob/main/docs/design.md) | The design language, and what a contributor reads before touching CSS. |
+| [Issues](https://github.com/TrueRelevance/hephaisto/issues) | Everything known to be broken, half-built, or lying. Numbered, evidenced, sized. Until October 2026 this was a file, the [backlog](https://github.com/TrueRelevance/hephaisto/blob/main/docs/backlog.md), which is kept as it stood. |
+| [Roadmap](https://github.com/TrueRelevance/hephaisto/blob/main/docs/roadmap.md) | Where the project stands and what is next. What each released milestone shipped, and what it deliberately did not, is in the [archive](https://github.com/TrueRelevance/hephaisto/blob/main/docs/roadmap-archive.md). |
+| [History](https://github.com/TrueRelevance/hephaisto/blob/main/docs/history.md) | Why the code is shaped the way it is. Several entries record a hypothesis that turned out to be wrong. |
+| [Verification](https://github.com/TrueRelevance/hephaisto/blob/main/docs/verification.md) | The hand-run acceptance checklist, per release. |
+| [Design](https://github.com/TrueRelevance/hephaisto/blob/main/docs/design.md) | The design language, and what a contributor reads before touching CSS. |
 | [Changelog](/project/changelog) | What shipped, per release, for somebody upgrading. |
 
 ## Why the backlog is public

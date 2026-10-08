@@ -847,7 +847,7 @@ codefix_kind_prepare() {
 
     E2E_HELM_EXTRA+=(
         --values "$REPO/charts/hephaisto/values-dev-coder.yaml"
-        --set-string "codeFix.image.repository=ghcr.io/flou21/hephaisto-coder"
+        --set-string "codeFix.image.repository=ghcr.io/truerelevance/hephaisto-coder"
         --set-string "codeFix.image.tag=$VERSION"
         --set-string "codeFix.image.pullPolicy=IfNotPresent"
         --set-string "codeFix.mode=pr"

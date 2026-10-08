@@ -14,7 +14,7 @@ nameOverride: ""
 fullnameOverride: ""
 
 image:
-  repository: ghcr.io/flou21/hephaisto
+  repository: ghcr.io/truerelevance/hephaisto
   # Defaults to .Chart.AppVersion, which CI stamps from the git tag - so the chart and the
   # image it asks for can never drift. Override only to pin something else deliberately.
   tag: ""
@@ -705,7 +705,7 @@ codeFix:
   # The coder image: Claude Code + the Agent SDK, git, gh, the .NET SDK, bun, python. Pinned by
   # the chart's appVersion like the agent image, so chart, agent and coder speak one contract.
   image:
-    repository: ghcr.io/flou21/hephaisto-coder
+    repository: ghcr.io/truerelevance/hephaisto-coder
     # Empty means .Chart.AppVersion.
     tag: ""
     pullPolicy: IfNotPresent

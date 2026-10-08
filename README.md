@@ -74,7 +74,7 @@ To drive the real console instead — two containers, no API key, no Kubernetes,
 runtime:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Flou21/hephaisto/main/demo/compose.yaml \
+curl -fsSL https://raw.githubusercontent.com/TrueRelevance/hephaisto/main/demo/compose.yaml \
   | docker compose -f - up
 # then open http://localhost:8080
 ```
@@ -180,7 +180,7 @@ times where the planner ran, against `deepseek-v4-flash`'s 4 of 8
 willingness to act; c12 measures an inference. If you need the agent to propose remediations on
 the harder shape, that is a model-selection decision.
 
-`docs/roadmap.md` says where the project stands, and the [issues](https://github.com/Flou21/hephaisto/issues) have everything known to
+`docs/roadmap.md` says where the project stands, and the [issues](https://github.com/TrueRelevance/hephaisto/issues) have everything known to
 be broken; `docs/backlog.md` is the frozen list they were moved from.
 
 The executor covers exactly the verbs the write `Role` grants: `RestartPod`,
@@ -296,7 +296,7 @@ Multi-arch images and the Helm chart are published to GHCR on every release tag,
 provenance attested, and both are pullable anonymously:
 
 ```sh
-helm install hephaisto oci://ghcr.io/flou21/charts/hephaisto \
+helm install hephaisto oci://ghcr.io/truerelevance/charts/hephaisto \
   --namespace hephaisto --create-namespace
 ```
 
@@ -314,7 +314,7 @@ You can also build from source.
 **On a laptop:**
 
 ```sh
-git clone https://github.com/Flou21/hephaisto
+git clone https://github.com/TrueRelevance/hephaisto
 cd hephaisto
 
 ./scripts/dev-db.sh up          # throwaway Postgres 17 + pgvector on :5433
@@ -568,7 +568,7 @@ prerelease instead of auto-incrementing past it. It is correct — `0.0.1-rc1.2`
 `git tag v0.0.1 && git push --tags`. That is the whole procedure — `.github/workflows/release.yml`
 builds the image on native amd64 and arm64 runners, pushes by digest, joins them into one
 multi-arch tag, attaches build provenance, and publishes the chart to
-`oci://ghcr.io/flou21/charts` with `version == appVersion == image tag`, then creates the
+`oci://ghcr.io/truerelevance/charts` with `version == appVersion == image tag`, then creates the
 GitHub release with the chart tarball attached.
 
 **There is no deploy job, and there must not be one.** CI holds no kubeconfig and no cluster
@@ -605,7 +605,7 @@ docs/                          architecture, roadmap, backlog, history, verifica
 
 Start with [`docs/architecture.md`](docs/architecture.md) for how it works,
 [`docs/roadmap.md`](docs/roadmap.md) for where it is going,
-the [issues](https://github.com/Flou21/hephaisto/issues) for what is known-broken and unfixed, and
+the [issues](https://github.com/TrueRelevance/hephaisto/issues) for what is known-broken and unfixed, and
 [`docs/history.md`](docs/history.md) for why it is shaped the way it is.
 
 **`Hephaisto.Core` has zero I/O dependencies, on purpose.** Every safety-critical decision —

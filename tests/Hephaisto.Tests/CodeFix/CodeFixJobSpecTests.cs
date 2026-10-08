@@ -21,7 +21,7 @@ public sealed class CodeFixJobSpecTests
 
     private static CodeFixOptions Options() => new()
     {
-        Image = "ghcr.io/flou21/hephaisto-coder:0.9.0",
+        Image = "ghcr.io/truerelevance/hephaisto-coder:0.9.0",
         EgressProxyUrl = "http://hephaisto-coder-egress.hephaisto-coder.svc:3128",
     };
 

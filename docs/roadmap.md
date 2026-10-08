@@ -1,14 +1,14 @@
 # Hephaisto roadmap
 
 **What is planned lives on GitHub since 2026-10-06**: a
-[milestone](https://github.com/Flou21/hephaisto/milestones) per release, an issue per piece of
+[milestone](https://github.com/TrueRelevance/hephaisto/milestones) per release, an issue per piece of
 work, and one tracking issue per open milestone. This page says where the project stands and
 what the next milestone is, written against what is **actually in the repo**: where the plan and
 the code disagree, this file follows the code.
 
 Its companions:
 
-- [Issues](https://github.com/Flou21/hephaisto/issues) — everything known to be broken or
+- [Issues](https://github.com/TrueRelevance/hephaisto/issues) — everything known to be broken or
   wanted, with the evidence for each. Until 2026-10-06 that was [`backlog.md`](backlog.md), which
   is frozen and kept because its numbers are cited across the code; the links into it below are
   to that record.
@@ -141,7 +141,7 @@ named as next - the heading this section had until it was built, and the anchor 
 links to it in the frozen backlog working. Until now the only way in was an alert. An issue assigned to Hephaisto's GitHub
 account becomes a work item, and the Jobs that plan and implement a code fix for an incident do
 the same for it: a plan, an approval, a draft pull request that closes the issue. The milestone
-is [#243](https://github.com/Flou21/hephaisto/issues/243).
+is [#243](https://github.com/TrueRelevance/hephaisto/issues/243).
 
 What was decided, each by the owner:
 
@@ -160,12 +160,12 @@ What was decided, each by the owner:
 
 | Stage | Item | Issue | State |
 |---|---|---|---|
-| 2.1 | **A GitHub stand-in and an issues suite, red before any code.** The REST subset the agent uses, with controls to open, assign, comment as a named account, merge, and fail on demand; twelve scenarios written first and listed as known red | [#244](https://github.com/Flou21/hephaisto/issues/244) | built |
-| 2.2 | **Hephaisto asks GitHub which issues are assigned to it.** A typed client, the agent's own token and Secret, a level-triggered poller, the `WorkItem`, `github` among the dependencies | [#245](https://github.com/Flou21/hephaisto/issues/245) | built |
-| 2.3 | **A code fix without an incident.** An attempt has one subject, an incident or a work item; contract version 2 for the Job; the plan is a comment on the issue | [#246](https://github.com/Flou21/hephaisto/issues/246) | built |
-| 2.4 | **A plan is approved on the issue, and the pull request closes it.** `/approve` and `/reject <reason>` by account number; the draft pull request says `Closes owner/repo#n` and is followed until it is merged or closed | [#247](https://github.com/Flou21/hephaisto/issues/247) | built |
-| 2.5 | **Work items in the console, the MCP endpoint and notifications.** A page per attempt and a list of work items; `list_work_items`, `get_work_item` and the code-fix tools for both kinds; the three code-fix notifications; a counter for commands | [#248](https://github.com/Flou21/hephaisto/issues/248) | built |
-| 2.6 | **The first run against real GitHub.** A sandbox repository, the real bot account and its two tokens, the real `gh`, the agent's client through the egress proxy; what it found is fixed in this release | [#249](https://github.com/Flou21/hephaisto/issues/249) | built |
+| 2.1 | **A GitHub stand-in and an issues suite, red before any code.** The REST subset the agent uses, with controls to open, assign, comment as a named account, merge, and fail on demand; twelve scenarios written first and listed as known red | [#244](https://github.com/TrueRelevance/hephaisto/issues/244) | built |
+| 2.2 | **Hephaisto asks GitHub which issues are assigned to it.** A typed client, the agent's own token and Secret, a level-triggered poller, the `WorkItem`, `github` among the dependencies | [#245](https://github.com/TrueRelevance/hephaisto/issues/245) | built |
+| 2.3 | **A code fix without an incident.** An attempt has one subject, an incident or a work item; contract version 2 for the Job; the plan is a comment on the issue | [#246](https://github.com/TrueRelevance/hephaisto/issues/246) | built |
+| 2.4 | **A plan is approved on the issue, and the pull request closes it.** `/approve` and `/reject <reason>` by account number; the draft pull request says `Closes owner/repo#n` and is followed until it is merged or closed | [#247](https://github.com/TrueRelevance/hephaisto/issues/247) | built |
+| 2.5 | **Work items in the console, the MCP endpoint and notifications.** A page per attempt and a list of work items; `list_work_items`, `get_work_item` and the code-fix tools for both kinds; the three code-fix notifications; a counter for commands | [#248](https://github.com/TrueRelevance/hephaisto/issues/248) | built |
+| 2.6 | **The first run against real GitHub.** A sandbox repository, the real bot account and its two tokens, the real `gh`, the agent's client through the egress proxy; what it found is fixed in this release | [#249](https://github.com/TrueRelevance/hephaisto/issues/249) | built |
 
 Stage 2.6 was built before 2.5, and found the last thing 2.5 fixed: the description of an
 **incident's** pull request carried a model's words as written, so a model repeating "fixes" and
@@ -213,11 +213,11 @@ The surfaces of stage 2.5 are held below the scenarios: the console by `scripts/
 
 ### What is explicitly not in v0.14.0
 
-- **A webhook** ([#250](https://github.com/Flou21/hephaisto/issues/250)). Hephaisto polls; a new
+- **A webhook** ([#250](https://github.com/TrueRelevance/hephaisto/issues/250)). Hephaisto polls; a new
   assignment is seen within `github.pollInterval`.
-- **The issues suite in GitHub Actions** ([#251](https://github.com/Flou21/hephaisto/issues/251)).
+- **The issues suite in GitHub Actions** ([#251](https://github.com/TrueRelevance/hephaisto/issues/251)).
   It runs on the dev cluster: its seed is a context repository that is private.
-- **Replanning from a comment** ([#252](https://github.com/Flou21/hephaisto/issues/252)). A plan
+- **Replanning from a comment** ([#252](https://github.com/TrueRelevance/hephaisto/issues/252)). A plan
   is approved or rejected; to have another, the issue is handed over again.
 - **"Merged is done", on github.com.** The live tier never merges - its sandbox's `main` has to
   stay where the scripted fix applies - so that a merge ends the work item is G11's, against the

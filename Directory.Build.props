@@ -55,7 +55,7 @@
     <MinVerMinimumMajorMinor>0.14</MinVerMinimumMajorMinor>
     <MinVerDefaultPreReleaseIdentifiers>main.0</MinVerDefaultPreReleaseIdentifiers>
     <AssemblyVersion>0.0.0.0</AssemblyVersion>
-    <RepositoryUrl>https://github.com/Flou21/hephaisto</RepositoryUrl>
+    <RepositoryUrl>https://github.com/TrueRelevance/hephaisto</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
   </PropertyGroup>
 

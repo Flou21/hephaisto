@@ -76,7 +76,7 @@ public static class BuildInfo
     /// using, which is the one thing section 13 is about.
     /// </para>
     /// </remarks>
-    public const string SourceUrl = "https://github.com/Flou21/hephaisto";
+    public const string SourceUrl = "https://github.com/TrueRelevance/hephaisto";
 
     /// <summary>
     /// The source of the exact build that is running, when the commit is known - so the link

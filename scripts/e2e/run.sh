@@ -37,7 +37,7 @@ set -Eeuo pipefail
 
 E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$E2E_DIR/../.." && pwd)"
-GH_REPO="${GH_REPO:-Flou21/hephaisto}"
+GH_REPO="${GH_REPO:-TrueRelevance/hephaisto}"
 
 # shellcheck source=lib/common.sh
 source "$E2E_DIR/lib/common.sh"

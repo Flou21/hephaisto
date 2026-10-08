@@ -25,12 +25,12 @@ the reasoning written on it and the label `limitation`. It is not closed by bein
 ## The documents, and which one you want
 
 - [`docs/architecture.md`](docs/architecture.md) — how the pipeline fits together. Start here.
-- [Issues](https://github.com/Flou21/hephaisto/issues) — everything known to be broken, with evidence. Check before reporting; the issue
+- [Issues](https://github.com/TrueRelevance/hephaisto/issues) — everything known to be broken, with evidence. Check before reporting; the issue
   probably exists and probably explains why, and a closed one labelled `limitation` is deliberate.
   [`docs/backlog.md`](docs/backlog.md) is the list they were moved from on 2026-10-06, frozen and
   kept because the code cites its numbers: from 77 up an entry's number is its issue's, and a
   table in the file names the rest.
-- [Milestones](https://github.com/Flou21/hephaisto/milestones) — what is planned.
+- [Milestones](https://github.com/TrueRelevance/hephaisto/milestones) — what is planned.
   [`docs/roadmap.md`](docs/roadmap.md) says where the project stands, written against what is in
   the repo: where the two disagree, the file follows the code.
   [`docs/roadmap-archive.md`](docs/roadmap-archive.md) is every released milestone as written.

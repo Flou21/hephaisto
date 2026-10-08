@@ -122,7 +122,7 @@ public sealed class GitHubOptionsTests
     [InlineData("GitHub:Token", "<unset>", "GitHub:Enabled needs GitHub:Token")]
     [InlineData("GitHub:Token", "   ", "GitHub:Enabled needs GitHub:Token")]
     [InlineData("GitHub:Repositories:0", "<unset>", "needs at least one entry in GitHub:Repositories")]
-    [InlineData("GitHub:Repositories:0", "https://github.com/Flou21/hephaisto", "is not owner/repo")]
+    [InlineData("GitHub:Repositories:0", "https://github.com/TrueRelevance/hephaisto", "is not owner/repo")]
     [InlineData("GitHub:Repositories:0", "hephaisto", "is not owner/repo")]
     [InlineData("GitHub:Approvers:0", "maintainer", "is not an account number")]
     [InlineData("GitHub:Approvers:0", "-5", "is not an account number")]

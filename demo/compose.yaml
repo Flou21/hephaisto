@@ -48,7 +48,7 @@ services:
       - /var/lib/postgresql/data
 
   hephaisto:
-    image: ghcr.io/flou21/hephaisto:${HEPHAISTO_VERSION:-0.6.0}
+    image: ghcr.io/truerelevance/hephaisto:${HEPHAISTO_VERSION:-0.6.0}
     depends_on:
       db:
         condition: service_healthy

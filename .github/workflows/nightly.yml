@@ -34,9 +34,9 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE: ghcr.io/flou21/hephaisto
-  CODER_IMAGE: ghcr.io/flou21/hephaisto-coder
-  CHART_REPO: oci://ghcr.io/flou21/charts
+  IMAGE: ghcr.io/truerelevance/hephaisto
+  CODER_IMAGE: ghcr.io/truerelevance/hephaisto-coder
+  CHART_REPO: oci://ghcr.io/truerelevance/charts
   DOTNET_NOLOGO: 1
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
 

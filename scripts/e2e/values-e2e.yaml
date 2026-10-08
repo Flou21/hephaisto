@@ -2,7 +2,7 @@
 #
 # Derived from values-dev.yaml, and the differences are the point rather than incidental:
 #
-#   * `image` is NOT set. Left alone it resolves to ghcr.io/flou21/hephaisto:<appVersion>,
+#   * `image` is NOT set. Left alone it resolves to ghcr.io/truerelevance/hephaisto:<appVersion>,
 #     which is the PUBLISHED image for the version under test. values-dev.yaml overrides it
 #     to a locally built hephaisto/agent:dev, and an e2e that installs a local build proves
 #     nothing about what was published.
