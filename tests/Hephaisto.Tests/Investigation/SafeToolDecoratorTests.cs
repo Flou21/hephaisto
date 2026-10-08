@@ -74,6 +74,42 @@ public class SafeToolDecoratorTests
         rejection.Should().Contain("no time bound");
     }
 
+    [Fact]
+    public void A_trace_search_is_a_query_tool_under_the_name_the_server_gives_it_now()
+    {
+        // mcp-grafana renamed its Tempo tools when they became its own, and the rule above
+        // matched the old names only: `search_tempo_traces` would have gone through unbounded
+        // without anybody having decided that. Its arguments are the server's - `start` and
+        // `end`, RFC 3339.
+        var tool = Wrap(Echo("ok", "search_tempo_traces"));
+
+        var unbounded = new Dictionary<string, object?>
+        {
+            ["datasourceUid"] = "tempo",
+            ["query"] = "{ status = error }",
+        };
+
+        tool.Reject(unbounded).Should().Contain("no time bound");
+
+        var bounded = new Dictionary<string, object?>(unbounded) { ["start"] = "2026-10-08T08:00:00Z" };
+
+        tool.Reject(bounded).Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("get_tempo_trace")]
+    [InlineData("list_tempo_attribute_names")]
+    [InlineData("list_tempo_attribute_values")]
+    [InlineData("alerting_rules_read")]
+    public void The_other_allowlisted_tools_of_that_server_need_no_time_bound(string name)
+    {
+        // One trace by its id, a list of names, a list of rules: none of them can be unbounded
+        // in time, and refusing one costs a step to learn nothing.
+        var tool = Wrap(Echo("ok", name));
+
+        tool.Reject(new Dictionary<string, object?> { ["datasourceUid"] = "tempo" }).Should().BeNull();
+    }
+
     [Theory]
     [InlineData("start")]
     [InlineData("startRfc3339")]

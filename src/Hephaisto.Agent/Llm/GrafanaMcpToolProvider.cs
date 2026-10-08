@@ -58,11 +58,23 @@ public sealed class GrafanaOptions
     /// beyond this list is dropped.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// grafana-mcp exposes fifty-odd tools. Handing all of them over costs input tokens on
     /// every single turn and - the part that actually hurts - measurably degrades tool
     /// selection, because the model has to discriminate between a dozen near-synonyms before
     /// it can start investigating. This list is the set that answers the questions the
     /// runbooks actually ask.
+    /// </para>
+    /// <para>
+    /// <b>Every name here was read from <c>tools/list</c> of mcp-grafana 2.0.1</b> (chart
+    /// grafana-mcp 0.27.1, started as <c>infra/observability/grafana-mcp.values.yaml</c> starts
+    /// it), on 2026-10-08. That is the only way a name gets onto this list. A name the server
+    /// does not offer is not an error anywhere: the tool is simply not handed to the model, the
+    /// status row turns Degraded, and the investigation concludes without it. Until that day the
+    /// list carried four Tempo names no server this repo has met ever offered, and
+    /// <c>grafana_api_request</c>; production's server offered none of the five, and every
+    /// investigation there ran without traces.
+    /// </para>
     /// </remarks>
     public List<string> AllowedTools { get; set; } =
     [
@@ -79,14 +91,32 @@ public sealed class GrafanaOptions
         "search_dashboards",
         "get_dashboard_panel_queries",
         "generate_deeplink",
-        "query_tempo_traces",
-        "query_tempo_traceql",
-        "list_tempo_tag_names",
-        "list_tempo_tag_values",
 
-        // The escape hatch, and the only way to read our alert rules at all - see
-        // AlertRulesCaveat below.
-        "grafana_api_request",
+        // Traces, in the order a runbook uses them: find the failing or slow requests with a
+        // TraceQL query, read one of them span by span, and - when the query matched nothing -
+        // find out what the attributes are called here and which values they hold. All four
+        // take `datasourceUid`, so an install should name its Tempo in
+        // Investigation:Environment:DatasourceUids (chart: grafanaMcp.datasourceUids.tempo).
+        //
+        // Three more exist on the server and are left out on purpose. `get_tempo_traceql_docs`
+        // is a manual, not a question a runbook asks: the runbooks carry the queries they
+        // need, and its declaration would be paid for on every turn of every investigation,
+        // including the ones without a trace in them. `query_tempo_metrics` is the near-synonym
+        // this list exists to keep away - span metrics are in Prometheus already, under names
+        // the runbooks give. `diff_tempo_traces` answers nothing a runbook asks.
+        "search_tempo_traces",
+        "get_tempo_trace",
+        "list_tempo_attribute_names",
+        "list_tempo_attribute_values",
+
+        // The alert's own rule: its expression, its `for:`, its annotations. See
+        // AlertRulesCaveat below for the one argument that decides whether it answers.
+        //
+        // Until 2026-10-08 this entry was `grafana_api_request`, the server's raw door to
+        // Grafana's HTTP API and then the only way to the rules. It still exists, in the
+        // category `api`, and production starts its server with --disable-api: any verb against
+        // any endpoint undoes every other restriction there. Do not put it back.
+        "alerting_rules_read",
     ];
 }
 
@@ -116,18 +146,36 @@ public sealed class GrafanaMcpToolProvider(
 {
     /// <summary>
     /// Surfaced in the environment card because it is a trap that costs a whole
-    /// investigation: mcp-grafana's <c>list_alert_rules</c> returns <b>Grafana-managed</b>
-    /// rules only. Hephaisto's rules are PrometheusRule CRs evaluated by Prometheus itself,
-    /// so that tool returns an empty list - which reads as "there are no alert rules" rather
-    /// than "you asked the wrong index".
+    /// investigation: mcp-grafana's <c>alerting_rules_read</c> answers for
+    /// <b>Grafana-managed</b> rules unless it is given a datasource. Hephaisto's rules are
+    /// PrometheusRule CRs evaluated by Prometheus itself, so a call without one returns
+    /// nothing - which reads as "there are no alert rules" rather than "you asked the wrong
+    /// index".
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Measured against mcp-grafana 2.0.1 and this repo's dev Grafana on 2026-10-08:
+    /// <c>{"operation":"list"}</c> returns the text <c>null</c>; with
+    /// <c>"datasource_uid":"prometheus"</c> it returns all 37 rules of the stack, 32 kB, each
+    /// with its expression, <c>for</c>, labels, annotations and state. <c>search_rule_name</c>
+    /// and <c>label_selectors</c> narrow that list (one rule, 1.1 kB); <c>rule_group</c> and
+    /// <c>states</c> were accepted and changed nothing for datasource rules, so they are not
+    /// recommended here.
+    /// </para>
+    /// <para>
+    /// Before that server the same trap had another name, <c>list_alert_rules</c>, and its way
+    /// out was <c>grafana_api_request</c> against Prometheus's rules API through Grafana's
+    /// proxy. Neither is on the list any more: the first no longer exists and the second is
+    /// switched off where it matters. See <see cref="GrafanaOptions.AllowedTools"/>.
+    /// </para>
+    /// </remarks>
     public const string AlertRulesCaveat =
-        "`list_alert_rules` returns Grafana-managed rules only and will come back EMPTY here: "
-        + "our rules are PrometheusRule custom resources evaluated by Prometheus. To read them, "
-        + "call `grafana_api_request` with path "
-        + "`/api/datasources/proxy/uid/{prometheusUid}/api/v1/rules` (or "
-        + "`/api/prometheus/{prometheusUid}/api/v1/rules`). An empty `list_alert_rules` is not "
-        + "evidence that no alert exists.";
+        "`alerting_rules_read` answers for Grafana-managed rules unless you name a datasource, "
+        + "and will come back EMPTY (`null`) here: our rules are PrometheusRule custom resources "
+        + "evaluated by Prometheus. To read them, pass `datasource_uid` with the uid of the "
+        + "Prometheus datasource, `operation` `list`, and the alert's name in `search_rule_name` "
+        + "- the whole list is long. The rule's expression is in `query`. An empty answer "
+        + "without `datasource_uid` is not evidence that no alert exists.";
 
     private readonly ILogger<GrafanaMcpToolProvider> _logger =
         loggerFactory.CreateLogger<GrafanaMcpToolProvider>();
@@ -278,18 +326,21 @@ public sealed class GrafanaMcpToolProvider(
     /// <remarks>
     /// <para>
     /// The tool names alone are not actionable by the person reading the log. Nobody scanning
-    /// startup output knows that <c>query_tempo_traceql</c> is the second hop of the five-hop
+    /// startup output knows that <c>search_tempo_traces</c> is the second hop of the five-hop
     /// correlation the c10 fixture exists to prove; they know that traces are missing, if you
     /// tell them that traces are missing.
     /// </para>
     /// <para>
-    /// This is backlog #31's cheap half. grafana-mcp ships here started with Tempo
-    /// unconfigured, so the four Tempo tools are never registered, so c10 - the fixture whose
-    /// own header calls it "THE IMPORTANT ONE", built to prove alert to exemplar to trace to
-    /// log to cause - cannot reach hops two, three and four. Recording it spent thirteen steps
-    /// and sixteen tool calls and produced no primary finding, the only fixture of eight to
-    /// produce none, and every replay of it still scores NoFinding. The line that would have
-    /// explained all of that was logged at Information and read like routine startup noise.
+    /// This is backlog #31's cheap half. Until 2026-10-08 the allowlist named four Tempo tools
+    /// that neither this repo's grafana-mcp nor, after its upgrade, production's ever
+    /// registered, so c10 - the fixture whose own header calls it "THE IMPORTANT ONE", built to
+    /// prove alert to exemplar to trace to log to cause - could not reach hops two, three and
+    /// four. Recording it spent thirteen steps and sixteen tool calls and produced no primary
+    /// finding, the only fixture of eight to produce none, and every replay of that recording
+    /// still scores NoFinding: a cassette holds the tools of the day it was made. The line that
+    /// would have explained all of that was logged at Information and read like routine
+    /// startup noise. The names are the server's now; the message stays, because the next
+    /// rename will look the same.
     /// </para>
     /// <para>
     /// Matching is by substring on the tool name because the allowlist is grouped by backend
@@ -308,7 +359,7 @@ public sealed class GrafanaMcpToolProvider(
             ("tempo", "follow an exemplar into a trace, which is how a metric is tied to the request that caused it"),
             ("loki", "read logs"),
             ("prometheus", "query metrics"),
-            ("grafana_api_request", "read its own alert rules"),
+            ("alert", "read its own alert rules"),
             ("dashboard", "read the queries behind a dashboard panel"),
             ("datasources", "discover which datasources exist"),
             ("deeplink", "hand a human a link back into Grafana"),

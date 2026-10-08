@@ -288,6 +288,11 @@ A route is `Channel`, `Events`, `MinSeverity` (default `Info`) and `Namespaces`.
 | `AnnotationTimeout` | TimeSpan | `00:00:05` |
 | `ToolCacheDuration` | TimeSpan | `00:00:30` |
 | `ConnectTimeout` | TimeSpan | `00:00:10` |
+| `AllowedTools` | list | the eighteen tools of the server handed to the model - see [requirements](/guide/requirements#grafana-optionally) |
+
+`AllowedTools` can be added to and not replaced: a configured entry is appended to the default
+list, as .NET configuration does for every list with a default. A name the server does not offer
+is not handed to the model and turns the `grafana-mcp` connection `Degraded`.
 
 ## `Alertmanager`
 

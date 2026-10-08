@@ -52,6 +52,13 @@ otel:
 
 grafanaMcp:
   url: http://grafana-mcp.hephaisto-obs:8000/mcp
+  # The uids infra/observability/grafana-datasources.yaml provisions. Every trace tool of the
+  # server requires one, and `alerting_rules_read` returns this stack's rules only when it is
+  # given `prometheus`.
+  datasourceUids:
+    prometheus: prometheus
+    loki: loki
+    tempo: tempo
   # What this stack's OTel collector labels a pod's log stream with.
   podLogSelector: '{k8s_namespace_name="<namespace>", k8s_pod_name="<pod>"}'
 

@@ -109,10 +109,10 @@ public sealed class KubernetesProbe(
 /// <remarks>
 /// <para>
 /// This is the row that earns the <see cref="ConnectionState.Degraded"/> state. A connected
-/// grafana-mcp started without Tempo registers none of the four trace tools, and the agent then
-/// cannot follow an exemplar into a trace - backlog #31, and the measured reason c10 spent
-/// thirteen steps and sixteen tool calls and produced no finding. A binary up/down row would
-/// have been green throughout.
+/// grafana-mcp that does not offer the four trace tools the allowlist names - an older server,
+/// or a newer one that renamed them - leaves the agent unable to follow an exemplar into a
+/// trace: backlog #31, and the measured reason c10 spent thirteen steps and sixteen tool calls
+/// and produced no finding. A binary up/down row would have been green throughout.
 /// </para>
 /// <para>
 /// The provider never throws and returns an empty list when unreachable, so zero tools against a

@@ -287,8 +287,10 @@ blocker.
   separately (`Llm:EmbeddingProvider`), so a fully self-hosted install can keep the semantic
   arm of search by pointing at any endpoint serving `/v1/embeddings` — no external account.
   Without one, search falls back to its lexical arm and says so
-- Optionally Grafana + `grafana-mcp`, which is what gives the agent PromQL and LogQL tools.
-  Without it the agent degrades to Kubernetes-only reads and says so in its logs.
+- Optionally Grafana + `grafana-mcp`, which is what gives the agent PromQL, LogQL and trace
+  tools. Without it the agent degrades to Kubernetes-only reads and says so in its logs. The
+  tool names are those of mcp-grafana 2.0.1 (chart `grafana-mcp` 0.27.1); an older server
+  shows as `Degraded` in `/api/status`, with the names it does not offer.
 
 ## Running it
 
