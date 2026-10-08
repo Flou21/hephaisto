@@ -143,6 +143,12 @@ notifications:
     actions:
       enabled: true
       port: 8082
+      # Entra object ids: who may close from a card.
+      approvers:
+        - 5f0c0000-0000-0000-0000-000000000001
+        - 5f0c0000-0000-0000-0000-000000000002
+      approvals:
+        enabled: true
   routes:
     - channel: webhook
       events: [IncidentEscalated, CodeFixPlanReady, CodeFixPrOpened, CodeFixFailed]

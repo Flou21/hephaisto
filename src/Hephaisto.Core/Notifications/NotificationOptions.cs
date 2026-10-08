@@ -229,7 +229,7 @@ public sealed class TeamsBotOptions
 }
 
 /// <summary>
-/// The one route Microsoft calls: a click on an alert's Acknowledge or Assign-to-me button.
+/// The one route Microsoft calls: a click on one of an alert's buttons that act.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -241,9 +241,16 @@ public sealed class TeamsBotOptions
 /// open that port without opening the console.
 /// </para>
 /// <para>
-/// <b>Acknowledge and assign-to-me only.</b> Both are read-level acts in the console already.
-/// Closing, approving and denying stay links: the click arrives as a Microsoft Entra identity,
-/// and the approver role lives in whatever <c>Auth:Authority</c> names (backlog #124).
+/// <b>Acknowledge, assign-to-me and reinvestigate are any team member's.</b> All three are
+/// read-level acts in the console already. <b>Closing is an approver's</b>, as it is there - and
+/// the click arrives as a Microsoft Entra identity while the console's approver role lives in
+/// whatever <c>Auth:Authority</c> names, so who is an approver here is said explicitly, in
+/// <see cref="Approvers"/>.
+/// </para>
+/// <para>
+/// <b>Approving and denying an action are an approver's too, and behind a switch of their own</b>,
+/// <see cref="Approvals"/>, off by default: they are the only clicks that can change the
+/// cluster, so turning the buttons on does not turn those on (backlog #124).
 /// </para>
 /// </remarks>
 public sealed class TeamsBotActionsOptions
@@ -277,6 +284,44 @@ public sealed class TeamsBotActionsOptions
     /// removed from the team can still click for at most this long.
     /// </summary>
     public TimeSpan MembershipCacheDuration { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Who holds the approver role in Teams: Microsoft Entra object ids, as a click carries one in
+    /// <c>from.aadObjectId</c>. Empty by default, and empty means nobody.
+    /// </summary>
+    /// <remarks>
+    /// A list in the configuration rather than a group read from Microsoft, on purpose: who may
+    /// close an incident is then a reviewed commit, and a change to somebody else's directory
+    /// cannot grant it. Being on it is not enough by itself - the click must also come from a
+    /// member of the team, which the route has checked before it asks this.
+    /// </remarks>
+    public List<string> Approvers { get; set; } = [];
+
+    /// <summary>
+    /// Whether that object id is mapped to the approver role. Nobody is, on an empty list.
+    /// </summary>
+    public bool IsApprover(string? aadObjectId) =>
+        !string.IsNullOrWhiteSpace(aadObjectId)
+        && Approvers.Any(a => string.Equals(a?.Trim(), aadObjectId.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Approve and Deny on an alert whose incident has an action awaiting approval.</summary>
+    public TeamsBotApprovalsOptions Approvals { get; set; } = new();
+}
+
+/// <summary>
+/// Approving or denying a proposed action from the card it was announced on.
+/// </summary>
+/// <remarks>
+/// Its own switch, because it is the one click here that ends in a change to the cluster: an
+/// install can let its team acknowledge and close from Teams and still keep every approval in the
+/// console. Startup refuses it without <see cref="TeamsBotActionsOptions.Enabled"/> - there would
+/// be no route - and without a single entry in <see cref="TeamsBotActionsOptions.Approvers"/> -
+/// there would be two buttons nobody may press.
+/// </remarks>
+public sealed class TeamsBotApprovalsOptions
+{
+    /// <summary>Whether the two buttons are drawn and the two verbs answered. Both or neither.</summary>
+    public bool Enabled { get; set; }
 }
 
 /// <summary>

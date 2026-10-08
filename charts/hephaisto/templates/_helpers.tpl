@@ -113,9 +113,18 @@ the whole argument for the route is that exposing that port exposes nothing else
 */}}
 {{- define "hephaisto.teamsActionsPort" -}}
 {{- $actions := .Values.notifications.teamsBot.actions | default dict -}}
+{{- /* Approvals (#124) are two more buttons on the same route. Asked for without it they would be
+       a switch that reads as on and does nothing, so this is checked whether or not the route is
+       on - and the agent refuses the same two things at startup. */ -}}
+{{- if and (include "hephaisto.teamsApprovals" .) (not $actions.enabled) -}}
+  {{- fail "notifications.teamsBot.actions.approvals.enabled is refused without notifications.teamsBot.actions.enabled: Approve and Deny are buttons, and without the actions route there is nothing for a click to reach." -}}
+{{- end -}}
 {{- if $actions.enabled -}}
   {{- if not .Values.notifications.teamsBot.enabled -}}
     {{- fail "notifications.teamsBot.actions.enabled is refused without notifications.teamsBot.enabled: a button belongs to a bot." -}}
+  {{- end -}}
+  {{- if and (include "hephaisto.teamsApprovals" .) (not $actions.approvers) -}}
+    {{- fail "notifications.teamsBot.actions.approvals.enabled is refused while notifications.teamsBot.actions.approvers is empty: nobody would be allowed to approve, and the card would offer two buttons that refuse everybody." -}}
   {{- end -}}
   {{- $port := int $actions.port -}}
   {{- if or (eq $port 8080) (and .Values.webhookPort (eq $port (int .Values.webhookPort))) -}}
@@ -123,6 +132,14 @@ the whole argument for the route is that exposing that port exposes nothing else
   {{- end -}}
   {{- $port -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+Whether approving and denying from a Teams card is switched on (#124): "true", or empty.
+*/}}
+{{- define "hephaisto.teamsApprovals" -}}
+{{- $actions := .Values.notifications.teamsBot.actions | default dict -}}
+{{- if ($actions.approvals | default dict).enabled -}}true{{- end -}}
 {{- end -}}
 
 {{/*
@@ -190,6 +207,12 @@ would also make at startup - rendering is just the earlier, cheaper place to hea
 {{- range .Values.extraEnv -}}
   {{- if has .name $reserved -}}
     {{- fail (printf "extraEnv may not set %q: the chart manages it, and because extraEnv is appended last a duplicate would silently win rather than conflict. Use the corresponding value instead - mode, secrets.llm, secrets.grafanaMcp, grafanaMcp.url, postgres.* or codeFix.* - or, for an indexed list, the next free index." .name) -}}
+  {{- end -}}
+  {{- if hasPrefix "Notifications__TeamsBot__Actions__Approvers__" .name -}}
+    {{- fail (printf "extraEnv may not set %q: who holds the approver role in Teams is notifications.teamsBot.actions.approvers, which the chart numbers and the schema checks - an entry here would add an approver no values file names." .name) -}}
+  {{- end -}}
+  {{- if hasPrefix "Notifications__TeamsBot__Actions__Approvals__" .name -}}
+    {{- fail (printf "extraEnv may not set %q: approving from a Teams card is notifications.teamsBot.actions.approvals.enabled, which the chart checks against the route and the approvers it needs." .name) -}}
   {{- end -}}
   {{- if hasPrefix "Mcp__" .name -}}
     {{- fail (printf "extraEnv may not set %q: every Mcp setting is an mcp.* value (and a token is secrets.mcp), and the chart checks them together - the port against the others, a token against its Secret." .name) -}}

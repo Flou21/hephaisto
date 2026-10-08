@@ -230,7 +230,9 @@ public sealed class TeamsBotNotificationChannel(
 
         if (s.IncidentId is { } id)
         {
-            var known = await incidents.ByIdAsync([id], ct).ConfigureAwait(false);
+            var known = await incidents
+                .ByIdAsync([id], ct, withPendingActions: TeamsBotLinks.Alert(o, null).Approvals)
+                .ConfigureAwait(false);
 
             if (known.TryGetValue(id, out var incident))
             {
@@ -243,15 +245,7 @@ public sealed class TeamsBotNotificationChannel(
                     .FirstOrDefaultAsync(ct)
                     .ConfigureAwait(false);
 
-                var links = new TeamsCardLinks
-                {
-                    BaseUrl = o.BaseUrl,
-                    GrafanaUrl = o.GrafanaUrl,
-                    BoardUrl = TeamsBotLinks.Board(o.TeamsBot, board),
-                    Actions = o.TeamsBot.Actions.Enabled,
-                };
-
-                var card = TeamsBotCards.Alert(incident, links);
+                var card = TeamsBotCards.Alert(incident, TeamsBotLinks.Alert(o, board));
 
                 return (TeamsBotCards.WithSummary(card, Announcement(message, incident.Title)), id);
             }

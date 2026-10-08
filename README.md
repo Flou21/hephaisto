@@ -433,14 +433,23 @@ that is later edited to say how the incident ended. Deleting is not used at all 
 "This message has been deleted." behind, for a post and for a reply alike, and nothing switches
 that off.
 
-**A Teams card carries a link, not an Approve button.** Approving in-card means accepting a
-Microsoft Entra identity as an approver, whose role lives in your own identity provider. The link
-goes to Hephaisto's own approval UI, where the audit row already lives. Two buttons do act, when
-`notifications.teamsBot.actions.enabled` is set: **Acknowledge** and **Assign to me**, which are
-read-level acts in the console too. Microsoft delivers the click to `POST /api/teams/messages`,
-the one inbound route it calls, on a port of its own where nothing else answers; the request must
-carry a Bot Framework token for this bot, signed by a key endorsed for Teams, from this tenant, by
-a member of the team, and the click is recorded as the team's member list names that person.
+**A Teams card carries a link, not an Approve button, until you ask for one.** Approving in-card
+means accepting a Microsoft Entra identity as an approver, whose role lives in your own identity
+provider. The link goes to Hephaisto's own approval UI, where the audit row already lives. Other
+buttons do act, when `notifications.teamsBot.actions.enabled` is set. **Acknowledge**, **Assign to
+me** and **Reinvestigate** are read-level acts in the console too, and any member of the team may
+click them. **Close** asks for a reason and takes an approver, as it does in the console - and
+because the click arrives as a Microsoft Entra identity, who is an approver is said explicitly:
+`notifications.teamsBot.actions.approvers` lists Entra object ids, and is empty until you fill it.
+**Approve** and **Deny** take the same approvers and a switch of their own,
+`notifications.teamsBot.actions.approvals.enabled`, off by default: the card then names the
+proposed action, its target, its arguments and its risk above the two buttons, and an approval
+runs exactly as one given in the console does. Everybody sees the same card, so every check is
+made at the click, and somebody who may not close or approve is told so. Microsoft delivers the
+click to `POST /api/teams/messages`, the one inbound route it
+calls, on a port of its own where nothing else answers; the request must carry a Bot Framework
+token for this bot, signed by a key endorsed for Teams, from this tenant, by a member of the team,
+and the click is recorded as the team's member list names that person.
 
 ### HTTP surface
 
@@ -462,7 +471,7 @@ a member of the team, and the click is recorded as the team's member list names 
 | `POST /api/alerts/{name}/note/entries` | add a line of what was done this time |
 | `PUT /api/alerts/{name}/note` | rewrite the note the agent reads beside its runbook (approver policy) |
 | `GET /healthz`, `/readyz`, `/metrics` | health and Prometheus metrics |
-| `POST /api/teams/messages` | a click on a Teams alert's Acknowledge or Assign-to-me button; off by default, its own port, a Bot Framework token |
+| `POST /api/teams/messages` | a click on one of a Teams alert's buttons that act (acknowledge, assign to me, reinvestigate; close for a mapped approver; approve and deny for one too, behind their own switch); off by default, its own port, a Bot Framework token |
 | `/` | Blazor Server UI |
 
 v0.9.0 added the code-fix rows, the first new inbound routes since v0.3.0 — all on the console

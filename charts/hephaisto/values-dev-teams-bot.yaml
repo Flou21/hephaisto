@@ -31,6 +31,15 @@ notifications:
     actions:
       enabled: true
       port: 8082
+      # The object id the stand-in gives oncall@example.com (TeamsStandIn.ObjectId: the first 16
+      # bytes of the address's SHA-256, as a GUID). A click as "user": "oncall@example.com" may
+      # close; one as dev@example.com or lead@example.com, members too, is told it may not.
+      approvers:
+        - 6bc676d8-34ad-8cef-60ff-07a371204c78
+      # Approve and Deny on the card too, so the whole surface can be clicked through here. A
+      # click takes "actionId" beside "incidentId".
+      approvals:
+        enabled: true
   routes:
     - channel: teamsBot
       events: [IncidentOpened, IncidentEscalated, ApprovalRequired, VerificationFailed, IncidentResolved,

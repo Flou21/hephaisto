@@ -103,66 +103,315 @@ public sealed class TeamsBotCardsTests
     public void With_the_actions_off_nothing_in_any_card_can_need_an_inbound_route()
     {
         // A button that acts means Microsoft calls this process. With Notifications:TeamsBot:Actions
-        // off - the default - no card may carry one, because nothing would answer it.
-        var incident = Incident(state: IncidentState.AwaitingApproval, codeFix: CodeFixState.PrOpened, pr: "https://github.com/o/r/pull/7")
-            with { AlertName = "ConsumerLagHigh", NoteExcerpt = "Check the upstream feed first." };
+        // off - the default - no card may carry one, because nothing would answer it. Asked of the
+        // incidents that draw the most with it on: one awaiting approval, and one escalated with
+        // nothing found, which is where Reinvestigate goes.
+        var waiting = Incident(state: IncidentState.AwaitingApproval, codeFix: CodeFixState.PrOpened, pr: "https://github.com/o/r/pull/7")
+            with { AlertName = "ConsumerLagHigh", NoteExcerpt = "Check the upstream feed first.", PendingActions = [Restart()] };
+        var undiagnosed = Incident();
 
-        var everything = string.Concat(
-            TeamsBotCards.Board([incident], 1, Links, Now).ToJsonString(),
-            TeamsBotCards.Alert(incident, Links).ToJsonString(),
-            TeamsBotCards.Superseded(incident, Links).ToJsonString());
+        undiagnosed.CanReinvestigate.Should().BeTrue("otherwise this no longer covers the retry");
 
-        everything.Should().NotContain("Action.Submit").And.NotContain("Action.Execute").And.NotContain("Action.Http");
+        // An approver being mapped, or approvals being asked for, draws nothing by itself: the
+        // buttons are off.
+        foreach (var links in new[] { Links, Links with { Closing = true }, Links with { Closing = true, Approvals = true } })
+        {
+            links.Actions.Should().BeFalse();
 
-        var kinds = Actions(TeamsBotCards.Alert(incident, Links)).Select(a => a.GetProperty("type").GetString());
+            var everything = string.Concat(
+                TeamsBotCards.Board([waiting, undiagnosed], 2, links, Now).ToJsonString(),
+                TeamsBotCards.Alert(waiting, links).ToJsonString(),
+                TeamsBotCards.Alert(undiagnosed, links).ToJsonString(),
+                TeamsBotCards.Superseded(waiting, links).ToJsonString());
 
-        kinds.Should().OnlyContain(k => k == "Action.OpenUrl");
+            everything.Should().NotContain("Action.Submit").And.NotContain("Action.Execute").And.NotContain("Action.Http");
+            everything.Should().NotContain("Input.", "an input belongs to a button that sends it somewhere");
+            everything.Should().NotContain("Waiting for approval").And.NotContain(Restart().Id.ToString());
+
+            foreach (var incident in new[] { waiting, undiagnosed })
+            {
+                Actions(TeamsBotCards.Alert(incident, links)).Select(a => a.GetProperty("type").GetString())
+                    .Should().OnlyContain(k => k == "Action.OpenUrl");
+            }
+        }
     }
 
     [Fact]
-    public void With_the_actions_on_only_an_open_alert_carries_the_two_verbs()
+    public void With_the_actions_on_only_an_open_alert_carries_verbs_and_only_the_ones_its_state_allows()
     {
         var acting = Links with { Actions = true };
         var open = Incident(state: IncidentState.AwaitingApproval, codeFix: CodeFixState.PrOpened, pr: "https://github.com/o/r/pull/7");
 
-        var executes = Actions(TeamsBotCards.Alert(open, acting))
-            .Where(a => a.GetProperty("type").GetString() == "Action.Execute")
-            .ToList();
+        var executes = Executes(TeamsBotCards.Alert(open, acting));
 
         executes.Select(a => a.GetProperty("verb").GetString())
             .Should().BeEquivalentTo([TeamsBotVerbs.Acknowledge, TeamsBotVerbs.AssignToMe]);
         executes.Should().OnlyContain(a => a.GetProperty("data").GetProperty("incidentId").GetString() == open.Id.ToString());
 
         // Nothing else acts: not the board, not a superseded alert, not a closed one, and no
-        // other kind of acting button anywhere.
-        var elsewhere = string.Concat(
-            TeamsBotCards.Board([open], 1, acting, Now).ToJsonString(),
-            TeamsBotCards.Superseded(open, acting).ToJsonString(),
-            TeamsBotCards.Alert(open with { State = IncidentState.Closed }, acting).ToJsonString());
+        // other kind of acting button anywhere - with every button the configuration can draw,
+        // and an action that still says it is waiting.
+        var everyButton = acting with { Closing = true, Approvals = true };
+        var decidable = open with { PendingActions = [Restart()] };
 
-        elsewhere.Should().NotContain("Action.Execute");
-        TeamsBotCards.Alert(open, acting).ToJsonString().Should().NotContain("Action.Submit").And.NotContain("Action.Http");
+        var elsewhere = string.Concat(
+            TeamsBotCards.Board([decidable, Incident()], 2, everyButton, Now).ToJsonString(),
+            TeamsBotCards.Superseded(decidable, everyButton).ToJsonString(),
+            TeamsBotCards.Superseded(Incident(), everyButton).ToJsonString(),
+            TeamsBotCards.Alert(decidable with { State = IncidentState.Closed }, everyButton).ToJsonString(),
+            TeamsBotCards.Alert(Incident(state: IncidentState.Expired), everyButton).ToJsonString(),
+            TeamsBotCards.Alert(Incident(state: IncidentState.Resolved), everyButton).ToJsonString());
+
+        elsewhere.Should().NotContain("Action.Execute").And.NotContain("Input.");
+        TeamsBotCards.Alert(open, everyButton).ToJsonString().Should().NotContain("Action.Submit").And.NotContain("Action.Http");
 
         // Acknowledged once, it does not ask again; taking it over still can.
-        Actions(TeamsBotCards.Alert(open with { AcknowledgedBy = "oncall@example.com" }, acting))
-            .Where(a => a.GetProperty("type").GetString() == "Action.Execute")
-            .Select(a => a.GetProperty("verb").GetString())
+        Verbs(TeamsBotCards.Alert(open with { AcknowledgedBy = "oncall@example.com" }, acting))
             .Should().Equal(TeamsBotVerbs.AssignToMe);
     }
 
+    [Theory]
+    [InlineData(IncidentState.Escalated, false, true)]
+    [InlineData(IncidentState.Escalated, true, false)]
+    [InlineData(IncidentState.Investigating, false, false)]
+    [InlineData(IncidentState.AwaitingApproval, false, false)]
+    [InlineData(IncidentState.Expired, false, false)]
+    [InlineData(IncidentState.Closed, false, false)]
+    [InlineData(IncidentState.Resolved, false, false)]
+    public void Reinvestigate_is_drawn_where_the_console_offers_the_retry_and_the_card_is_still_live(
+        IncidentState state, bool diagnosed, bool drawn)
+    {
+        // The console (IncidentDetail.razor, CanReinvestigate; IncidentDetailRetryTests) offers the
+        // retry for an Escalated or Expired incident with no primary finding in any investigation.
+        // Expired is over, and a card for an incident that is over is edited once and then left -
+        // so of those two only Escalated gets a button. A diagnosed one never does: the banner
+        // beside it would say "no diagnosis was produced" above the diagnosis.
+        var incident = Incident(state: state) with { Diagnosed = diagnosed };
+
+        incident.CanReinvestigate.Should().Be(drawn);
+
+        var verbs = Verbs(TeamsBotCards.Alert(incident, Links with { Actions = true }));
+
+        (verbs.Contains(TeamsBotVerbs.Reinvestigate)).Should().Be(drawn);
+    }
+
     [Fact]
-    public void Every_verb_a_button_can_send_has_a_handler()
+    public void Close_is_a_card_that_asks_why_and_is_drawn_only_when_somebody_may_close()
+    {
+        var acting = Links with { Actions = true };
+        var incident = Incident();
+
+        // Nobody mapped to the approver role: every click would be refused, so nothing is drawn.
+        Verbs(TeamsBotCards.Alert(incident, acting)).Should().NotContain(TeamsBotVerbs.Close);
+        TeamsBotCards.Alert(incident, acting).ToJsonString().Should().NotContain("Input.");
+
+        var close = Actions(TeamsBotCards.Alert(incident, acting with { Closing = true }))
+            .Single(a => a.GetProperty("type").GetString() == "Action.ShowCard");
+
+        close.GetProperty("title").GetString().Should().Be("Close");
+
+        // Unfolding it sends nothing. The reason is asked for before the button that does.
+        var input = close.GetProperty("card").GetProperty("body")[0];
+
+        input.GetProperty("type").GetString().Should().Be("Input.Text");
+        input.GetProperty("id").GetString().Should().Be(TeamsBotVerbs.ReasonInput).And.Be("reason");
+        input.GetProperty("isRequired").GetBoolean().Should().BeTrue();
+        input.GetProperty("errorMessage").GetString().Should().NotBeNullOrWhiteSpace("a required input without one fails silently");
+        input.GetProperty("maxLength").GetInt32().Should().Be(TeamsBotCards.MaxReasonLength);
+
+        var send = close.GetProperty("card").GetProperty("actions").EnumerateArray().Single();
+
+        send.GetProperty("type").GetString().Should().Be("Action.Execute");
+        send.GetProperty("verb").GetString().Should().Be(TeamsBotVerbs.Close);
+        send.GetProperty("data").GetProperty("incidentId").GetString().Should().Be(incident.Id.ToString());
+
+        // The card is the same for everybody: nothing in it names who may press the button.
+        send.GetProperty("data").EnumerateObject().Select(p => p.Name).Should().Equal("incidentId");
+    }
+
+    [Fact]
+    public void Every_verb_a_button_can_send_has_a_handler_and_every_handler_has_a_button()
     {
         // A button whose verb the route does not know would be a click that does nothing. The
-        // handler answers exactly TeamsBotVerbs.All, so every verb drawn must be in it.
-        var acting = Links with { Actions = true };
+        // handler answers exactly TeamsBotVerbs.All, so every verb drawn must be in it - and a
+        // verb nothing draws would be a route nobody can reach from a card, which is a way in
+        // nobody reviews. Drawn anywhere in the card: its own row, or the card a button unfolds.
+        var everyButton = Links with { Actions = true, Closing = true, Approvals = true };
 
-        var drawn = Actions(TeamsBotCards.Alert(Incident(), acting))
-            .Where(a => a.GetProperty("type").GetString() == "Action.Execute")
-            .Select(a => a.GetProperty("verb").GetString());
+        var drawn = new[]
+            {
+                Incident(),
+                Incident(state: IncidentState.AwaitingApproval) with { PendingActions = [Restart()] },
+                Incident(state: IncidentState.Investigating),
+                Incident() with { Diagnosed = true },
+            }
+            .SelectMany(i => Verbs(TeamsBotCards.Alert(i, everyButton)))
+            .Distinct()
+            .ToList();
 
-        drawn.Should().NotBeEmpty().And.OnlyContain(v => TeamsBotVerbs.All.Contains(v!));
-        TeamsBotVerbs.All.Should().BeEquivalentTo([TeamsBotVerbs.Acknowledge, TeamsBotVerbs.AssignToMe]);
+        drawn.Should().NotBeEmpty().And.OnlyContain(v => TeamsBotVerbs.All.Contains(v));
+        TeamsBotVerbs.All.Should().OnlyContain(v => drawn.Contains(v), "every verb the route answers is one a card can send");
+
+        TeamsBotVerbs.All.Should().BeEquivalentTo(
+        [
+            TeamsBotVerbs.Acknowledge, TeamsBotVerbs.AssignToMe, TeamsBotVerbs.Reinvestigate,
+            TeamsBotVerbs.Close, TeamsBotVerbs.Approve, TeamsBotVerbs.Deny,
+        ]);
+
+        // What the console puts behind its approver policy: close, approve and deny - and not
+        // acknowledge, assign or reinvestigate (IncidentEndpoints).
+        TeamsBotVerbs.Approver.Should()
+            .BeEquivalentTo([TeamsBotVerbs.Close, TeamsBotVerbs.Approve, TeamsBotVerbs.Deny])
+            .And.BeSubsetOf(TeamsBotVerbs.All);
+        TeamsBotVerbs.Approval.Should()
+            .BeEquivalentTo([TeamsBotVerbs.Approve, TeamsBotVerbs.Deny])
+            .And.BeSubsetOf(TeamsBotVerbs.Approver, "nobody approves without the approver role");
+    }
+
+    [Fact]
+    public void An_action_awaiting_approval_is_named_above_its_own_two_buttons()
+    {
+        var deciding = Links with { Actions = true, Closing = true, Approvals = true };
+        var action = Restart() with { Arguments = """{"gracePeriodSeconds":30}""", Risk = RiskTier.Medium };
+        var incident = Incident(state: IncidentState.AwaitingApproval) with { PendingActions = [action] };
+
+        var card = Card(TeamsBotCards.Alert(incident, deciding));
+
+        var section = card.GetProperty("body").EnumerateArray()
+            .Single(e => e.GetProperty("type").GetString() == "Container" && e.ToString().Contains("Waiting for approval", StringComparison.Ordinal));
+        var items = section.GetProperty("items").EnumerateArray().ToList();
+
+        // Nobody approves blind: what, on what, with what, and how risky - and it comes first.
+        var said = items.FindIndex(i => i.ToString().Contains("RestartPod on cait/Pod/api-7d9f", StringComparison.Ordinal));
+        var buttons = items.FindIndex(i => i.GetProperty("type").GetString() == "ActionSet");
+
+        said.Should().BeGreaterThan(0);
+        buttons.Should().Be(said + 1, "the buttons sit directly under the sentence that says what they decide");
+        items[said].ToString().Should().Contain("gracePeriodSeconds").And.Contain("risk Medium");
+
+        var pair = items[buttons].GetProperty("actions").EnumerateArray().ToList();
+
+        pair.Select(b => b.GetProperty("type").GetString()).Should().Equal("Action.Execute", "Action.Execute");
+        pair.Select(b => b.GetProperty("verb").GetString()).Should().Equal(TeamsBotVerbs.Approve, TeamsBotVerbs.Deny);
+        pair.Select(b => b.GetProperty("title").GetString()).Should().Equal("Approve RestartPod", "Deny RestartPod");
+
+        // Two verbs. Neither carries a boolean that could be defaulted, and both name the action.
+        foreach (var button in pair)
+        {
+            var data = button.GetProperty("data");
+
+            data.EnumerateObject().Select(p => p.Name).Should().BeEquivalentTo(["incidentId", TeamsBotVerbs.ActionId]);
+            data.GetProperty("incidentId").GetString().Should().Be(incident.Id.ToString());
+            data.GetProperty(TeamsBotVerbs.ActionId).GetString().Should().Be(action.Id.ToString());
+        }
+
+        // The link into the console stays: it is where the evidence and the rollback are.
+        Actions(TeamsBotCards.Alert(incident, deciding)).Select(a => a.GetProperty("title").GetString())
+            .Should().Contain("Review and approve in Hephaisto");
+    }
+
+    [Fact]
+    public void Without_the_approvals_switch_an_awaiting_action_changes_nothing_on_the_card()
+    {
+        // Close on, approvals off: the card of an incident awaiting approval is the card it was
+        // before any of this existed plus Close - so an install that turns only the buttons on
+        // gets no approval surface, and no card is edited because an action exists.
+        var closing = Links with { Actions = true, Closing = true };
+        var bare = Incident(state: IncidentState.AwaitingApproval);
+        var pending = bare with { PendingActions = [Restart()] };
+
+        TeamsBotCards.Alert(pending, closing).ToJsonString().Should().Be(TeamsBotCards.Alert(bare, closing).ToJsonString());
+        Verbs(TeamsBotCards.Alert(pending, closing)).Should().NotContain(TeamsBotVerbs.Approve).And.NotContain(TeamsBotVerbs.Deny);
+    }
+
+    [Fact]
+    public void An_action_that_starts_or_stops_waiting_is_a_different_card()
+    {
+        // The reconciler edits an alert when its content hash differs. That is the trigger that
+        // puts the buttons on a card already sent, and takes them off again once somebody decided.
+        var deciding = Links with { Actions = true, Closing = true, Approvals = true };
+        var bare = Incident(state: IncidentState.AwaitingApproval);
+        var pending = bare with { PendingActions = [Restart()] };
+
+        TeamsBotCards.Hash(TeamsBotCards.Alert(pending, deciding))
+            .Should().NotBe(TeamsBotCards.Hash(TeamsBotCards.Alert(bare, deciding)));
+
+        // And it is stable: the same actions in the same order are the same card.
+        TeamsBotCards.Hash(TeamsBotCards.Alert(pending, deciding))
+            .Should().Be(TeamsBotCards.Hash(TeamsBotCards.Alert(bare with { PendingActions = [Restart()] }, deciding)));
+    }
+
+    [Fact]
+    public void What_a_model_wrote_about_an_action_cannot_become_a_link_or_reverse_the_line()
+    {
+        // The target and the arguments come from a plan a model wrote after reading logs.
+        var hostile = Restart() with
+        {
+            Target = "cait/Pod/[click here](https://evil.example)",
+            Arguments = "{\"note\":\"\u202Eevil\"}",
+        };
+        var incident = Incident(state: IncidentState.AwaitingApproval) with { PendingActions = [hostile] };
+
+        var card = Card(TeamsBotCards.Alert(incident, Links with { Actions = true, Approvals = true }));
+
+        var holders = new List<JsonElement>();
+        Find(card, e => e.ValueKind == JsonValueKind.Object
+            && e.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String
+            && t.GetString()!.Contains("evil.example", StringComparison.Ordinal), holders);
+
+        // A TextRun is never parsed as markdown; a TextBlock would turn it into a link.
+        holders.Should().ContainSingle().Which.GetProperty("type").GetString().Should().Be("TextRun");
+        holders[0].GetProperty("text").GetString().Should().NotContain("\u202E");
+    }
+
+    [Fact]
+    public void More_waiting_actions_than_a_card_holds_are_counted_not_dropped()
+    {
+        var many = Enumerable.Range(1, 5)
+            .Select(i => Restart() with { Id = Guid.Parse($"0192a6f0-0000-7000-8000-0000000000b{i}") })
+            .ToList();
+        var incident = Incident(state: IncidentState.AwaitingApproval) with { PendingActions = many };
+
+        var alert = TeamsBotCards.Alert(incident, Links with { Actions = true, Approvals = true });
+
+        Verbs(alert).Count(v => v == TeamsBotVerbs.Approve).Should().Be(3);
+        Verbs(alert).Count(v => v == TeamsBotVerbs.Deny).Should().Be(3);
+        alert.ToJsonString().Should().Contain("and 2 more, in Hephaisto.");
+    }
+
+    [Fact]
+    public void The_same_alert_is_drawn_wherever_it_is_rendered()
+    {
+        // Posted by the channel, compared by the reconciler, answered by a click: three places,
+        // one set of links. If they differed the comparison would edit the card back every tick.
+        var options = new Hephaisto.Core.Notifications.NotificationOptions { BaseUrl = "https://hephaisto.example/" };
+
+        TeamsBotLinks.Alert(options, null).Should().BeEquivalentTo(new TeamsCardLinks { BaseUrl = "https://hephaisto.example/" });
+
+        options.TeamsBot.Actions.Approvers.Add("5f0c0000-0000-0000-0000-000000000001");
+        TeamsBotLinks.Alert(options, null).Closing.Should().BeFalse("an approver is mapped, and the buttons are off");
+
+        options.TeamsBot.Actions.Enabled = true;
+        TeamsBotLinks.Alert(options, null).Should().BeEquivalentTo(
+            new TeamsCardLinks { BaseUrl = "https://hephaisto.example/", Actions = true, Closing = true });
+
+        // Approvals are their own switch: the buttons and an approver do not turn them on.
+        TeamsBotLinks.Alert(options, null).Approvals.Should().BeFalse();
+
+        options.TeamsBot.Actions.Approvals.Enabled = true;
+        TeamsBotLinks.Alert(options, null).Should().BeEquivalentTo(
+            new TeamsCardLinks { BaseUrl = "https://hephaisto.example/", Actions = true, Closing = true, Approvals = true });
+
+        options.TeamsBot.Actions.Enabled = false;
+        TeamsBotLinks.Alert(options, null).Should().BeEquivalentTo(
+            new TeamsCardLinks { BaseUrl = "https://hephaisto.example/" },
+            "nothing acts with the buttons off, whatever else is set");
+
+        options.TeamsBot.Actions.Enabled = true;
+        options.TeamsBot.Actions.Approvers.Clear();
+        TeamsBotLinks.Alert(options, null).Should().BeEquivalentTo(
+            new TeamsCardLinks { BaseUrl = "https://hephaisto.example/", Actions = true },
+            "with nobody mapped, Close, Approve and Deny would be buttons every click on which is refused");
     }
 
     [Fact]
@@ -348,9 +597,86 @@ public sealed class TeamsBotCardsTests
             PullRequestUrl = pr,
         };
 
+    private static TeamsPendingAction Restart() => new()
+    {
+        Id = Guid.Parse("0192a6f0-0000-7000-8000-0000000000ac"),
+        Type = ActionType.RestartPod,
+        Risk = RiskTier.Low,
+        Target = "cait/Pod/api-7d9f",
+    };
+
+    private static void Find(JsonElement node, Func<JsonElement, bool> wanted, List<JsonElement> into)
+    {
+        if (wanted(node))
+        {
+            into.Add(node);
+        }
+
+        switch (node.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in node.EnumerateObject())
+                {
+                    Find(property.Value, wanted, into);
+                }
+
+                break;
+
+            case JsonValueKind.Array:
+                foreach (var item in node.EnumerateArray())
+                {
+                    Find(item, wanted, into);
+                }
+
+                break;
+        }
+    }
+
     private static JsonElement Card(JsonObject activity) =>
         JsonDocument.Parse(activity.ToJsonString()).RootElement.GetProperty("attachments")[0].GetProperty("content");
 
     private static List<JsonElement> Actions(JsonObject activity) =>
         Card(activity).TryGetProperty("actions", out var actions) ? [.. actions.EnumerateArray()] : [];
+
+    /// <summary>Every <c>Action.Execute</c> anywhere in the card, however deep a button sits.</summary>
+    private static List<JsonElement> Executes(JsonObject activity)
+    {
+        var found = new List<JsonElement>();
+
+        Walk(Card(activity));
+
+        return found;
+
+        void Walk(JsonElement node)
+        {
+            switch (node.ValueKind)
+            {
+                case JsonValueKind.Object:
+                    if (node.TryGetProperty("type", out var type)
+                        && type.ValueKind == JsonValueKind.String
+                        && type.GetString() == "Action.Execute")
+                    {
+                        found.Add(node);
+                    }
+
+                    foreach (var property in node.EnumerateObject())
+                    {
+                        Walk(property.Value);
+                    }
+
+                    break;
+
+                case JsonValueKind.Array:
+                    foreach (var item in node.EnumerateArray())
+                    {
+                        Walk(item);
+                    }
+
+                    break;
+            }
+        }
+    }
+
+    private static List<string> Verbs(JsonObject activity) =>
+        [.. Executes(activity).Select(a => a.GetProperty("verb").GetString()!)];
 }

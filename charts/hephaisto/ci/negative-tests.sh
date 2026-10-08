@@ -116,11 +116,78 @@ refuses "buttons that act on the webhook's port" \
 refuses "the actions switch set behind the chart's back" \
     --set 'extraEnv[0].name=Notifications__TeamsBot__Actions__Enabled' --set 'extraEnv[0].value=true'
 
-OFF=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative "${BOT[@]}" 2>&1)
-if grep -q 'teams-actions\|Notifications__TeamsBot__Actions' <<<"$OFF"; then
+# Who may close from a card (#124): Microsoft Entra object ids, and nothing that only looks like
+# a person. An address would never match a click's from.aadObjectId, so it would map nobody.
+APPROVER=6bc676d8-34ad-8cef-60ff-07a371204c78
+refuses "an approver named by address instead of object id" \
+    "${BOT[@]}" --set notifications.teamsBot.actions.enabled=true \
+    --set 'notifications.teamsBot.actions.approvers[0]=oncall@example.com'
+refuses "an approver's object id without its dashes" \
+    "${BOT[@]}" --set notifications.teamsBot.actions.enabled=true \
+    --set-string 'notifications.teamsBot.actions.approvers[0]=6bc676d834ad8cef60ff07a371204c78'
+refuses "an approver added behind the chart's back" \
+    "${BOT[@]}" --set notifications.teamsBot.actions.enabled=true \
+    --set 'extraEnv[0].name=Notifications__TeamsBot__Actions__Approvers__0' --set "extraEnv[0].value=$APPROVER"
+
+# With an approver named, too: a list of approvers is not a reason for a route to exist.
+OFF=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative "${BOT[@]}" \
+    --set "notifications.teamsBot.actions.approvers[0]=$APPROVER" 2>&1)
+if grep -q 'teams-actions\|Notifications__TeamsBot__Actions' <<<"$OFF" || ! grep -q 'kind: Deployment' <<<"$OFF"; then
     fail "with the buttons off, nothing of the inbound route is rendered"
 else
     pass "with the buttons off, nothing of the inbound route is rendered"
+fi
+
+APPROVERS=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative "${BOT[@]}" \
+    --set notifications.teamsBot.actions.enabled=true \
+    --set "notifications.teamsBot.actions.approvers[0]=$APPROVER" \
+    --set 'notifications.teamsBot.actions.approvers[1]=0D6C2BEB-1B06-5CBD-AA54-5B6D1184A188' 2>&1 \
+    | grep -A1 'name: Notifications__TeamsBot__Actions__Approvers__' | grep 'value:' | tr -d ' "' | tr '\n' ' ')
+if [ "$APPROVERS" = "value:$APPROVER value:0D6C2BEB-1B06-5CBD-AA54-5B6D1184A188 " ]; then
+    pass "the approvers reach the pod as the list they were written as"
+else
+    fail "the approvers must reach the pod in order, found: '$APPROVERS'"
+fi
+
+NOBODY=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative "${BOT[@]}" \
+    --set notifications.teamsBot.actions.enabled=true 2>&1)
+if grep -q 'Notifications__TeamsBot__Actions__Enabled' <<<"$NOBODY" && ! grep -q 'Actions__Approvers' <<<"$NOBODY"; then
+    pass "with the buttons on and nobody named, nobody is an approver"
+else
+    fail "the default must map nobody to the approver role"
+fi
+
+# Approve and Deny from a card (#124): the one click that can change the cluster, so a switch of
+# its own - which needs the route to exist and somebody who may press the buttons.
+refuses "approvals from a card without the buttons" \
+    "${BOT[@]}" --set notifications.teamsBot.actions.approvals.enabled=true \
+    --set "notifications.teamsBot.actions.approvers[0]=$APPROVER"
+refuses "approvals from a card with nobody mapped to approve" \
+    "${BOT[@]}" --set notifications.teamsBot.actions.enabled=true \
+    --set notifications.teamsBot.actions.approvals.enabled=true
+refuses "approvals switched on behind the chart's back" \
+    "${BOT[@]}" --set notifications.teamsBot.actions.enabled=true \
+    --set "notifications.teamsBot.actions.approvers[0]=$APPROVER" \
+    --set 'extraEnv[0].name=Notifications__TeamsBot__Actions__Approvals__Enabled' --set-string 'extraEnv[0].value=true'
+
+# The buttons and an approver do not turn approvals on.
+if grep -q 'Actions__Approvals' <<<"$NOBODY" || helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative "${BOT[@]}" \
+    --set notifications.teamsBot.actions.enabled=true \
+    --set "notifications.teamsBot.actions.approvers[0]=$APPROVER" 2>&1 | grep -q 'Actions__Approvals'; then
+    fail "approvals must stay off until notifications.teamsBot.actions.approvals.enabled says otherwise"
+else
+    pass "with the buttons on and an approver named, approvals are still off"
+fi
+
+APPROVALS=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative "${BOT[@]}" \
+    --set notifications.teamsBot.actions.enabled=true \
+    --set "notifications.teamsBot.actions.approvers[0]=$APPROVER" \
+    --set notifications.teamsBot.actions.approvals.enabled=true 2>&1 \
+    | grep -A1 'name: Notifications__TeamsBot__Actions__Approvals__Enabled' | grep -c 'value: "true"')
+if [ "$APPROVALS" = "1" ]; then
+    pass "approvals asked for with the route and an approver reach the pod"
+else
+    fail "approvals must render as Notifications__TeamsBot__Actions__Approvals__Enabled=true, found $APPROVALS"
 fi
 
 ON=$(helm template t "$CHART" --namespace hephaisto --set cluster.name=ci-negative "${BOT[@]}" --set notifications.teamsBot.actions.enabled=true --set networkPolicy.enabled=true 2>&1)

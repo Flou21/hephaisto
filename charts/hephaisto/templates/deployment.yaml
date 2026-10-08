@@ -421,6 +421,18 @@ spec:
               value: "true"
             - name: Notifications__TeamsBot__Actions__Port
               value: {{ . | quote }}
+            {{- /* The approver role, by Entra object id. Only beside the route it belongs to:
+                   with the buttons off there is nothing for an approver to press. */}}
+            {{- range $a, $approver := $.Values.notifications.teamsBot.actions.approvers }}
+            - name: Notifications__TeamsBot__Actions__Approvers__{{ $a }}
+              value: {{ $approver | quote }}
+            {{- end }}
+            {{- if include "hephaisto.teamsApprovals" $ }}
+            # Approve and Deny on a card. Its own switch: the one click here that can end in a
+            # change to the cluster.
+            - name: Notifications__TeamsBot__Actions__Approvals__Enabled
+              value: "true"
+            {{- end }}
             {{- end }}
             {{- range $r, $recipient := .teamsBot.recipients }}
             - name: Notifications__TeamsBot__Recipients__{{ $r }}
