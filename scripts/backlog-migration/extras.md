@@ -15,7 +15,7 @@ description and topics, the Artifact Hub file, the chart's maintainers and scree
 ## v0.13.0 — what v0.12.0 left open
 <!-- id: v013 | state: open | labels: | milestone: v0.13.0 -->
 In release candidates since 2026-10-02. It is released when a candidate has run on the production
-install; the write-up is in [`docs/roadmap-archive.md`](https://github.com/Flou21/hephaisto/blob/main/docs/roadmap-archive.md).
+install; the write-up is in [`docs/roadmap-archive.md`](https://github.com/TrueRelevance/hephaisto/blob/main/docs/roadmap-archive.md).
 
 - [x] A watcher incident ends when its fault does (#158)
 - [x] Pod logs from Loki first, and from a pod with a sidecar (#160)

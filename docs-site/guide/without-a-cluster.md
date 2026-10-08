@@ -16,7 +16,7 @@ pages. Nothing to install, nothing to run, no key.
 Two containers, no API key, no Kubernetes, nothing fetched at runtime:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Flou21/hephaisto/main/demo/compose.yaml \
+curl -fsSL https://raw.githubusercontent.com/TrueRelevance/hephaisto/main/demo/compose.yaml \
   | docker compose -f - up
 # then open http://localhost:8080
 ```

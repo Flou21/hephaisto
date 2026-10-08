@@ -33,7 +33,7 @@
     <a href="https://demo.hephaisto.dev">Demo</a>
     <a href="https://docs.hephaisto.dev">Docs</a>
     <a href="#install">Install</a>
-    <a href="https://github.com/Flou21/hephaisto">GitHub</a>
+    <a href="https://github.com/TrueRelevance/hephaisto">GitHub</a>
   </nav>
 
   <header class="hero">
@@ -161,7 +161,7 @@
       It will do nothing until you tell it otherwise.
     </p>
 <pre><span class="c"># installs in observe mode, acting nowhere</span>
-helm install hephaisto <span class="k">oci://ghcr.io/flou21/charts/hephaisto</span> \
+helm install hephaisto <span class="k">oci://ghcr.io/truerelevance/charts/hephaisto</span> \
   --namespace hephaisto --create-namespace</pre>
     <p class="lede">
       The console is on port 8080. Point it at Prometheus, Loki and Alertmanager, and it will
@@ -190,7 +190,7 @@ helm install hephaisto <span class="k">oci://ghcr.io/flou21/charts/hephaisto</sp
       came from.
     </p>
 <pre><span class="c"># then open http://localhost:8080</span>
-curl -fsSL <span class="k">https://raw.githubusercontent.com/Flou21/hephaisto/main/demo/compose.yaml</span> \
+curl -fsSL <span class="k">https://raw.githubusercontent.com/TrueRelevance/hephaisto/main/demo/compose.yaml</span> \
   | docker compose -f - up</pre>
     <p class="lede" style="margin-bottom:0">
       Ten of them were replayed from recorded tool traces, and nine of those ten were graded
@@ -205,10 +205,10 @@ curl -fsSL <span class="k">https://raw.githubusercontent.com/Flou21/hephaisto/ma
   </section>
 
   <footer>
-    <a href="https://github.com/Flou21/hephaisto">Source</a>
+    <a href="https://github.com/TrueRelevance/hephaisto">Source</a>
     <a href="https://docs.hephaisto.dev">Docs</a>
     <a href="https://docs.hephaisto.dev/internals/architecture">Architecture</a>
-    <a href="https://github.com/Flou21/hephaisto/issues">Everything known broken</a>
+    <a href="https://github.com/TrueRelevance/hephaisto/issues">Everything known broken</a>
     <span>AGPL-3.0</span>
   </footer>
 </div>

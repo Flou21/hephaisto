@@ -37,8 +37,8 @@ e2e_node_image() {
 }
 E2E_NODE_IMAGE_VERSIONS="1.37.0 1.36.4 1.35.8 1.34.11"
 
-IMAGE_REPO="ghcr.io/flou21/hephaisto"
-CHART_REPO="oci://ghcr.io/flou21/charts"
+IMAGE_REPO="ghcr.io/truerelevance/hephaisto"
+CHART_REPO="oci://ghcr.io/truerelevance/charts"
 
 APP_NS=hephaisto
 OBS_NS=hephaisto-obs

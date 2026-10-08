@@ -10,7 +10,7 @@ import { defineConfig } from 'vitepress'
 const SITE = 'https://hephaisto.dev'
 const DOCS = `${SITE.replace('https://', 'https://docs.')}`
 const DEMO = `${SITE.replace('https://', 'https://demo.')}`
-const REPO = 'https://github.com/Flou21/hephaisto'
+const REPO = 'https://github.com/TrueRelevance/hephaisto'
 
 /**
  * Resolve the theme before first paint.

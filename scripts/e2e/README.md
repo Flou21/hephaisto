@@ -30,7 +30,7 @@ says so at the end of every run rather than letting a green tick imply otherwise
 | 1-2 | get a build (dispatch `nightly.yml`, or cut an rc) and wait until it is genuinely pullable |
 | 3 | create a single-node kind cluster on a pinned Kubernetes |
 | 4 | install kube-prometheus-stack, Loki, Tempo, the OTel collector and grafana-mcp |
-| 5 | `helm install` the published chart from `oci://ghcr.io/flou21/charts` |
+| 5 | `helm install` the published chart from `oci://ghcr.io/truerelevance/charts` |
 | 6 | apply chaos fixtures `c2 c3 c4 c7` simultaneously |
 | 7 | assert detection, investigation, budget arithmetic, RBAC, zero mutation; grade the diagnoses |
 | 8 | delete the cluster |
@@ -391,7 +391,7 @@ kubectl -n hephaisto-obs delete pod -l app.kubernetes.io/name=teams-stand-in
 ## The live tier (`github-live.sh`), v0.14.0
 
 The issues suite asks a stand-in, and a stand-in answers what its authors believed GitHub
-answers. `github-live.sh` asks GitHub ([#249](https://github.com/Flou21/hephaisto/issues/249)):
+answers. `github-live.sh` asks GitHub ([#249](https://github.com/TrueRelevance/hephaisto/issues/249)):
 the dev agent against `https://api.github.com`, a real bot account with its two real tokens, the
 real `gh` in the coder Job. It is the only automated test in this repository that leaves the
 cluster for github.com. The model stays the script, so a run costs nothing but a quarter of an

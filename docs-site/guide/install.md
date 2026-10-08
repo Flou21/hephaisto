@@ -4,7 +4,7 @@ Multi-arch images and the Helm chart are published to GHCR on every release tag,
 provenance attested, and both are pullable anonymously.
 
 ```sh
-helm install hephaisto oci://ghcr.io/flou21/charts/hephaisto \
+helm install hephaisto oci://ghcr.io/truerelevance/charts/hephaisto \
   --namespace hephaisto --create-namespace \
   --set cluster.name=<the cluster label on this cluster's metrics>
 ```
@@ -41,7 +41,7 @@ kubectl -n hephaisto create secret generic hephaisto-llm \
 Then install:
 
 ```sh
-helm install hephaisto oci://ghcr.io/flou21/charts/hephaisto -n hephaisto \
+helm install hephaisto oci://ghcr.io/truerelevance/charts/hephaisto -n hephaisto \
   --set cluster.name=<your-cluster-label> \
   --set prometheusOperator.selectorLabels.release=<your-kube-prometheus-stack-release> \
   --set postgres.embedded.enabled=true
@@ -134,7 +134,7 @@ quietly. See [Reserved env and safety rails](/reference/env-and-rails).
 **On a laptop:**
 
 ```sh
-git clone https://github.com/Flou21/hephaisto
+git clone https://github.com/TrueRelevance/hephaisto
 cd hephaisto
 
 ./scripts/dev-db.sh up          # throwaway Postgres 17 + pgvector on :5433

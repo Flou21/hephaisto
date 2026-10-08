@@ -1,6 +1,6 @@
 # Artifact Hub repository metadata.
 #
-# This claims ownership of the chart repository at oci://ghcr.io/flou21/charts, so Artifact Hub
+# This claims ownership of the chart repository at oci://ghcr.io/truerelevance/charts, so Artifact Hub
 # shows it as a verified publisher rather than an unclaimed listing. It has to sit at the ROOT of
 # the OCI repository rather than next to Chart.yaml, so release.yml pushes it alongside the
 # packaged chart.

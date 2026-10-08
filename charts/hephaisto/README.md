@@ -8,7 +8,7 @@ used, and — where you have allowed it to — executes a narrow allowlist of re
 verifies them, and reverts or escalates when they do not hold.
 
 ```sh
-helm install hephaisto oci://ghcr.io/flou21/charts/hephaisto \
+helm install hephaisto oci://ghcr.io/truerelevance/charts/hephaisto \
   --namespace hephaisto --create-namespace \
   --set cluster.name=<the cluster label on this cluster's metrics>
 ```
@@ -56,7 +56,7 @@ kubectl -n hephaisto create secret generic hephaisto-postgres \
 kubectl -n hephaisto create secret generic hephaisto-llm \
   --from-literal=GEMINI_API_KEY='...'
 
-helm install hephaisto oci://ghcr.io/flou21/charts/hephaisto \
+helm install hephaisto oci://ghcr.io/truerelevance/charts/hephaisto \
   -n hephaisto \
   --set cluster.name=<your-cluster-label> \
   --set prometheusOperator.selectorLabels.release=<your-kube-prometheus-stack-release>
@@ -148,7 +148,7 @@ kubectl -n hephaisto-coder create secret generic hephaisto-codefix \
   --from-literal=CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-... \
   --from-literal=GITHUB_TOKEN=github_pat_...
 
-helm upgrade hephaisto oci://ghcr.io/flou21/charts/hephaisto -n hephaisto --reuse-values \
+helm upgrade hephaisto oci://ghcr.io/truerelevance/charts/hephaisto -n hephaisto --reuse-values \
   --set codeFix.enabled=true --set codeFix.mode=plan \
   --set codeFix.contextRepository.url=https://github.com/you/dev-context \
   --set 'codeFix.repositories[0].workload=shop/Deployment/shop-api' \
@@ -178,7 +178,7 @@ coder's namespace, image, Secret and proxy - but no code-fix mode. A run that ca
 vanishes or hits a subscription limit is replaced by the in-process investigation.
 
 ```sh
-helm upgrade hephaisto oci://ghcr.io/flou21/charts/hephaisto -n hephaisto --reuse-values \
+helm upgrade hephaisto oci://ghcr.io/truerelevance/charts/hephaisto -n hephaisto --reuse-values \
   --set investigation.job.enabled=true --set investigation.job.executor=job \
   --set investigation.job.model=opus
 # and back, without a rollout:
@@ -214,7 +214,7 @@ agent. The chart refuses the same name for both.
 # out of a fine-grained token's reach for a collaborator; that needs a classic token (`repo`).
 kubectl -n hephaisto create secret generic hephaisto-github --from-literal=GITHUB_TOKEN=github_pat_...
 
-helm upgrade hephaisto oci://ghcr.io/flou21/charts/hephaisto -n hephaisto --reuse-values \
+helm upgrade hephaisto oci://ghcr.io/truerelevance/charts/hephaisto -n hephaisto --reuse-values \
   --set github.enabled=true --set secrets.github=hephaisto-github \
   --set 'github.issues.repositories[0]=you/shop' \
   --set 'github.approvers[0]=1234567'        # gh api users/<login> --jq .id
@@ -277,14 +277,14 @@ The published image can run with no Kubernetes behind it at all, loaded with rec
 investigations from a real cluster:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Flou21/hephaisto/main/demo/compose.yaml \
+curl -fsSL https://raw.githubusercontent.com/TrueRelevance/hephaisto/main/demo/compose.yaml \
   | docker compose -f - up
 ```
 
 ## Links
 
-- [Source, and the documentation](https://github.com/Flou21/hephaisto)
-- [What is known to be broken](https://github.com/Flou21/hephaisto/issues)
-- [How it is verified](https://github.com/Flou21/hephaisto/blob/main/docs/verification.md)
+- [Source, and the documentation](https://github.com/TrueRelevance/hephaisto)
+- [What is known to be broken](https://github.com/TrueRelevance/hephaisto/issues)
+- [How it is verified](https://github.com/TrueRelevance/hephaisto/blob/main/docs/verification.md)
 
 Licensed AGPL-3.0-only.

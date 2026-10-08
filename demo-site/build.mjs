@@ -40,7 +40,7 @@ const DIST = join(HERE, 'dist')
 /** The domain, in one place - see docs-site/.vitepress/config.ts for the other three. */
 const SITE = 'https://hephaisto.dev'
 const DOCS = 'https://docs.hephaisto.dev'
-const REPO_URL = 'https://github.com/Flou21/hephaisto'
+const REPO_URL = 'https://github.com/TrueRelevance/hephaisto'
 
 const ordinal = (id) => {
     const m = /^c(\d+)/.exec(id)

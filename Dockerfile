@@ -65,7 +65,7 @@ ARG VERSION
 ARG COMMIT
 LABEL org.opencontainers.image.title="Hephaisto" \
       org.opencontainers.image.description="An autonomous SRE agent that investigates Kubernetes incidents." \
-      org.opencontainers.image.source="https://github.com/Flou21/hephaisto" \
+      org.opencontainers.image.source="https://github.com/TrueRelevance/hephaisto" \
       org.opencontainers.image.licenses="AGPL-3.0-only" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${COMMIT}"
