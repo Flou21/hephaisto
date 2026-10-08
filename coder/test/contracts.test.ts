@@ -3,7 +3,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { CONTRACTS_DIR, ImplementResultZ, InvestigateRequestZ, InvestigateResultZ, PlanResultZ, RequestZ, ReposZ, type SchemaName, rawSchema } from '../src/schemas.js';
+import { CONTRACTS_DIR, ImplementResultZ, InvestigateRequestZ, InvestigateResultZ, PlanResultZ, RequestZ, ReposZ, type SchemaName, WorkItemRequestZ, rawSchema } from '../src/schemas.js';
 
 // The vendored contract must be byte-identical to what SCHEMAS.lock pins (so drift shows up as a
 // lock change in a PR, never as a runtime ContractViolation), and the zod mirrors that give the
@@ -81,6 +81,7 @@ function shape(node: Obj, rootIn: Obj): Shape {
 
 const mirrors: [SchemaName, z.ZodType][] = [
   ['request', RequestZ],
+  ['requestV2', WorkItemRequestZ],
   ['plan', PlanResultZ],
   ['implement', ImplementResultZ],
   ['repos', ReposZ],
@@ -102,10 +103,11 @@ describe('zod mirrors match the vendored JSON Schemas', () => {
 
 // ---- the same samples through zod
 
-/** Sample file name -> the schema it is a sample of (investigate-request-*, investigate-result-*, request-*, plan-result-*, implement-result-*). */
+/** Sample file name -> the schema it is a sample of (investigate-request-*, investigate-result-*, request-v2-*, request-*, plan-result-*, implement-result-*). */
 function sampleSchema(f: string): SchemaName {
   if (f.startsWith('investigate-request')) return 'investigateRequest';
   if (f.startsWith('investigate-result')) return 'investigate';
+  if (f.startsWith('request-v2')) return 'requestV2';
   if (f.startsWith('request')) return 'request';
   if (f.startsWith('plan-result')) return 'plan';
   if (f.startsWith('implement-result')) return 'implement';
@@ -124,6 +126,7 @@ function samples(kind: 'valid' | 'invalid'): { file: string; schema: SchemaName;
 }
 const zodFor: Record<SchemaName, z.ZodType> = {
   request: RequestZ,
+  requestV2: WorkItemRequestZ,
   plan: PlanResultZ,
   implement: ImplementResultZ,
   repos: ReposZ,

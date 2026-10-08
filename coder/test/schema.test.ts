@@ -8,10 +8,11 @@ import { CONTRACTS_DIR, type SchemaName, rawSchema, validate, validateWith } fro
 // ajv against the vendored contract is what the runner uses at runtime: for every request before
 // anything runs, and for every result before it is written.
 
-/** Sample file name -> the schema it is a sample of (investigate-request-*, investigate-result-*, request-*, plan-result-*, implement-result-*). */
+/** Sample file name -> the schema it is a sample of (investigate-request-*, investigate-result-*, request-v2-*, request-*, plan-result-*, implement-result-*). */
 function sampleSchema(f: string): SchemaName {
   if (f.startsWith('investigate-request')) return 'investigateRequest';
   if (f.startsWith('investigate-result')) return 'investigate';
+  if (f.startsWith('request-v2')) return 'requestV2';
   if (f.startsWith('request')) return 'request';
   if (f.startsWith('plan-result')) return 'plan';
   if (f.startsWith('implement-result')) return 'implement';
@@ -32,7 +33,7 @@ function samples(kind: 'valid' | 'invalid') {
 describe('vendored samples', () => {
   it('there are valid and invalid samples for every document kind', () => {
     for (const kind of ['valid', 'invalid'] as const) {
-      expect(new Set(samples(kind).map((s) => s.schema))).toEqual(new Set(['request', 'plan', 'implement', 'investigateRequest', 'investigate']));
+      expect(new Set(samples(kind).map((s) => s.schema))).toEqual(new Set(['request', 'requestV2', 'plan', 'implement', 'investigateRequest', 'investigate']));
     }
   });
   for (const s of samples('valid')) {
@@ -65,6 +66,34 @@ describe('runner-side schema facts', () => {
   });
   it('an unknown member in a request is rejected', () => {
     expect(validate('request', { ...planReq, extra: 1 }).ok).toBe(false);
+  });
+  it('a request is held to the schema of the version it states, and to neither when it mixes them', () => {
+    const v2 = samples('valid').find((s) => s.file === 'request-v2-plan.json')!.doc;
+    // each version's own valid sample is refused by the other's schema
+    expect(validate('request', v2).ok).toBe(false);
+    expect(validate('requestV2', planReq).ok).toBe(false);
+    // a work item smuggled into a version-1 request, and an incident into a version-2 one
+    expect(validate('request', { ...planReq, work_item: v2.work_item }).ok).toBe(false);
+    expect(validate('requestV2', { ...v2, incident: planReq.incident }).ok).toBe(false);
+    expect(validate('requestV2', { ...v2, findings: [] }).ok).toBe(false);
+    expect(validate('requestV2', { ...v2, investigation_summary: null }).ok).toBe(false);
+    // the version is not a free choice of the sender's
+    expect(validate('requestV2', { ...v2, contract_version: '1' }).ok).toBe(false);
+    expect(validate('request', { ...planReq, contract_version: '2' }).ok).toBe(false);
+  });
+  it('a version-2 request takes an issue of any length GitHub allows, with or without a type, and the same repository URLs', () => {
+    const v2 = samples('valid').find((s) => s.file === 'request-v2-plan.json')!.doc;
+    const item = v2.work_item as Record<string, unknown>;
+    expect(validate('requestV2', { ...v2, work_item: { ...item, type: null, body: '' } }).errors).toEqual([]);
+    expect(validate('requestV2', { ...v2, work_item: { ...item, body: 'x'.repeat(65536) } }).errors).toEqual([]);
+    expect(validate('requestV2', { ...v2, work_item: { ...item, body: 'x'.repeat(65537) } }).ok).toBe(false);
+    expect(validate('requestV2', { ...v2, work_item: { ...item, source: 'gitlab' } }).ok).toBe(false);
+    expect(validate('requestV2', { ...v2, work_item: { ...item, repository: 'owner/repo#1' } }).ok).toBe(false);
+    expect(validate('requestV2', { ...v2, work_item: { ...item, comments: [{ author: 'a', body: 'b', id: 1 }] } }).ok).toBe(false);
+    for (const url of ['http://coder-git.hephaisto-coder.svc/Flou21/x.git', 'file:///tmp/remote.git']) {
+      expect(validate('requestV2', { ...v2, repository: { ...(v2.repository as object), url } }).ok).toBe(true);
+    }
+    expect(validate('requestV2', { ...v2, repository: { ...(v2.repository as object), branch: 'main' } }).ok).toBe(false);
   });
   it("the plan agent's output schema is cut from the plan result schema, caps included", () => {
     const s = planOutputSchema() as { properties: Record<string, unknown>; required: string[] };

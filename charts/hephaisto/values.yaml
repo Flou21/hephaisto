@@ -907,13 +907,23 @@ github:
     # THE AUTHORIZATION LIST: owner/repo. An issue anywhere else is never asked about, however
     # it is assigned. Required when enabled - an empty list would poll nothing and look fine.
     #
+    # An issue taken from one of these is planned by a coder Job, under codeFix.mode and every
+    # codeFix cap and switch (with the mode off, the issue is told so and nothing starts). Where
+    # the code is cloned from: the FIRST codeFix.repositories entry whose url names the
+    # repository - it ends in /owner/repo or /owner/repo.git - with that entry's defaultBranch
+    # and path; with no such entry, https://github.com/owner/repo on the default branch GitHub
+    # reports. Either way the host has to be in codeFix.allowedRepositoryHosts, and the
+    # repository has to be enabled in the context repository's repos.yaml.
+    #
     # repositories:
     #   - example/shop
     repositories: []
 
   # Who may answer a plan on the issue, by account NUMBER - a login can be renamed and taken
   # by somebody else. `gh api users/<login> --jq .id`. Recorded and checked in this release;
-  # nothing reads a comment as a command yet.
+  # nothing reads a comment as a command yet. Until it does, a plan for an issue is approved
+  # through the API by whoever the console's approver policy admits:
+  # POST /api/workitems/{id}/codefix/{attemptId}/approve.
   approvers: []
 
   # Send the agent's GitHub calls through codeFix.egressProxy when that proxy is rendered

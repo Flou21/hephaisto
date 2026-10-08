@@ -373,8 +373,10 @@ why it is a value and not a default: this stack's collector writes `k8s_namespac
 
 `github.enabled`: an issue assigned to the agent's account, in a listed repository, is a
 `WorkItem` (`src/Hephaisto.Agent/GitHub/`, `src/Hephaisto.Agent/WorkItems/`, table `work_items`).
-Built so far (#245): the client, the poller, the work item, `github` in `/api/status`. No Job is
-started for one and nothing is written on an issue yet (#246, #247). Five things to know:
+Built so far: the client, the poller, the work item, `github` in `/api/status` (#245); and a
+code fix without an incident (#246) - a taken work item gets ONE attempt, the plan Job runs for
+it, and the plan is a comment on the issue. Not yet (#247): reading an answer on the issue,
+following the pull request, `Done`. Five things to know about the poller:
 
 - **The poller is level-triggered: no queue, no retry state.** A pass states what should be true
   and makes it so; the next pass is the retry. Do not add "remember what failed". What comes
@@ -390,13 +392,56 @@ started for one and nothing is written on an issue yet (#246, #247). Five things
 - **A connection probe must be registered in `AddHephaistoWeb`.** The first one there is a
   `TryAdd` on the service type, so a probe registered earlier makes Postgres's row vanish.
 
+And five about an attempt that is for a work item (`GitHubIssuePoller.Work.cs`,
+`CodeFixCoordinator.EvaluateWorkItemAsync`, `WorkItems/IssueComments.cs`, `coder/src/subject.ts`):
+
+- **An attempt has exactly one subject**, `IncidentId` or `WorkItemId` - a check constraint, and
+  one partial unique index each. Everything after the start asks `CodeFixSubject`, never
+  `attempt.IncidentId`: a new path that loads `db.Incidents.First(...)` for an attempt throws for
+  every issue. Surfaces that are keyed on an incident (MCP `list_code_fixes`, the Teams board,
+  the notification routes) leave a work item's attempt out on purpose until #248.
+- **One attempt per work item, ever.** A failed, denied, expired or cancelled one is not followed
+  by another; handing the issue over again is a new work item. "Not now" (a cap, a switch) is no
+  attempt at all: it is asked again on every pass and written down - audit row,
+  `WorkItem.DeclineReason`, the status comment - only when the reason CODES change.
+- **Two comments, and the text is a function of the row.** The status comment is edited when its
+  digest differs from `WorkItem.StatusCommentDigest`, so nothing that changes by itself (a clock,
+  the mode, a counter) may go into `IssueComments.Status`. The plan comment is written once and
+  never edited. Both end in a marker with their id, by which a restart finds what it wrote.
+  GitHub first, the ids afterwards - `planCommentId` is visible only once both writes happened.
+- **Nothing of the issue's text is repeated in a comment, and a model's text goes through
+  `IssueComments.Neutralise`** (the runner's counterpart for a pull request is `inert()`). A plan's
+  `notes` are not posted at all: that is where a model quotes what it was told to ignore.
+- **The request is contract version 2** (`codefix-request-v2.schema.json`, a file of its own;
+  version 1 is byte for byte what it was, and a test holds it). The body is `WorkItem.Body`, the
+  snapshot - never a second read of the issue.
+
+What the stage that reads an answer on the issue (#247) starts from:
+
+- **Where it hooks in:** a fourth statement in `GitHubIssuePoller.WorkAsync` - for a taken work
+  item whose attempt is `PlanReady` and has a `PlanCommentId`, read the issue's comments since
+  that comment, and call `CodeFixCoordinator.DecideForWorkItemAsync` (the door
+  `POST /api/workitems/{id}/codefix/{attemptId}/approve|deny` already calls; it needs an
+  `ApprovalSource` of its own, and `authenticated: true` is the approver list's to earn).
+- **A closed issue cancels its work item - also one whose pull request was just merged.** GitHub
+  closes the issue on merge, the poller finds it closed, and today that is `Cancelled`. The pull
+  request has to be read before that is decided (G11), and an attempt in `PrOpened` is not open,
+  so nothing cancels it either way.
+- **A work item that is Done while its issue is still open and assigned is taken again** by the
+  next full comparison, and now also planned again.
+- **The pull request's body is nowhere a suite can read it.** `publish` logs no body and the `gh`
+  shim's copy is gone with the pod; `issues_pr_body` in `lib/issues.sh` is still ASSUMED.
+- **A commit message is the one text nobody neutralises.** A closing keyword there closes an
+  issue on merge; the implement prompt forbids it and nothing checks.
+
 The agent's token is `secrets.github`, a Secret of the agent's namespace - never the coder's
 `hephaisto-codefix`, which it still cannot read. Locally: `"github": "stand-in"` layers
 `charts/hephaisto/values-dev-github.yaml`; `curl "http://$H:8100/api/workitems?state=any"` and
 `curl http://$H:8110/github/control/state` show both sides, and `scripts/e2e/issues-local.sh`
 is how a change here is accepted (`scripts/e2e/README.md`; `issues/KNOWN_RED` lists what the
 later stages turn green). The `github` row follows the poller by up to a minute: it is served
-from `ConnectionHealthCache`.
+from `ConnectionHealthCache`. Until comments are read (#247), a plan for an issue is decided with
+`curl -X POST "http://$H:8100/api/workitems/<id>/codefix/<attemptId>/approve" -H 'content-type: application/json' -d '{"decidedBy":"you"}'`.
 
 ## The Teams bot, as of v0.9.0-rc4
 
@@ -537,6 +582,18 @@ applying chaos fixtures at once produce garbage for both.
 Tiltfile and `infra/`, so anything that rewrites them - `git stash`, a checkout, a rebase -
 re-renders the chart and replaces the agent's pod, twice, under whatever suite is running. To
 build or test one commit of a stack, use `git worktree add` somewhere else; committing is safe.
+
+`.tiltignore` keeps `src/**/bin` and `src/**/obj` out of that: the agent's image is a
+`custom_build`, which does not read `.dockerignore`, and without the file every local
+`dotnet build` synced a macOS apphost over the pod's Linux one - the pod's next start was
+`Exec format error`, with a green build above it. If you see that, touch a `.cs` file.
+
+Images the agent only NAMES are not rebuilt by a pod restart, and a Tilt-triggered build can
+fail on the macOS keychain in a background session. Build inside the VM:
+`rdctl shell sh -c 'cd ~/hephaisto && docker build -q -t hephaisto/coder:dev coder'` (and
+`-f infra/e2e/notification-receiver/Dockerfile -t hephaisto/notification-receiver:dev .` for the
+stand-in, then delete its pod). The node's image GC removes a locally built tag nothing runs:
+`ImagePullBackOff` on one of these means "rebuild it", not "push it".
 
 ## Verifying a change
 

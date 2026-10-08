@@ -27,12 +27,20 @@
 #   2. BUILT for Cancelled (stage 2.2): a work item whose issue was unassigned or closed is
 #      Cancelled, with why in stateReason, and the same issue assigned again is a SECOND work
 #      item. ASSUMED for Done: a work item whose pull request was merged (stage 2.4).
-#   3. ASSUMED. A row of GET /api/codefixes carries `workItemId` where it has no incident, and
-#      keeps the fields it has today: state, summary, branch, planJobName, implementJobName,
-#      prUrl, prNumber, approvedBy. A rejection's reason is somewhere in the row.
-#   4. ASSUMED. A Job and its request ConfigMap keep today's labels hephaisto.dev/attempt and
-#      hephaisto.dev/phase, and the request is still <job>-req, key request.json - with the
-#      issue under `work_item` (contract v2).
+#   3. BUILT (stage 2.3, #246). A row of GET /api/codefixes carries `workItemId` where it has no
+#      incident (`incidentId` is then null), and keeps the fields it has today: state, summary,
+#      files, branch, planJobName, implementJobName, prUrl, prNumber, approvedBy, and
+#      failureReason - which is where a rejection's reason is. It also carries `issue`
+#      ("owner/repo#12"), `issueUrl` and `planCommentId`: the id of the comment on the issue that
+#      holds the plan, null until the poller's next pass has written it. PlanReady is the
+#      database's word and the comment follows it by one poll, so issues_plan_ready waits for
+#      both. GET /api/workitems/{id} is the work item with `attempts`, newest first.
+#      An attempt is made once per work item: a failed, denied or cancelled one is not followed
+#      by another, and handing the issue over again (unassign, assign) is a new work item.
+#   4. BUILT (stage 2.3). A Job and its request ConfigMap keep the labels hephaisto.dev/attempt
+#      and hephaisto.dev/phase (and carry hephaisto.dev/work-item in place of
+#      hephaisto.dev/incident), and the request is still <job>-req, key request.json - contract
+#      version 2, with the issue under `work_item` and nothing of an incident beside it.
 #   5. BUILT (stage 2.2). GitHub is a row named "github" in GET /api/status `.connections`:
 #      Healthy when the last poll of every listed repository was answered (a 304 is an
 #      answer), Degraded with one line of why otherwise, NotConfigured with GitHub off or the
@@ -40,7 +48,14 @@
 #      so it follows GitHub by up to a minute, which is why a scenario waits for it.
 #   6. ASSUMED. The publish container's log shows the pull request's body (issues_pr_body). It
 #      does not today, and the `gh` shim's copy is gone with the pod: stage 2.4 decides where
-#      the body can be read, and changes that one function.
+#      the body can be read, and changes that one function. (What the body says is built and
+#      unit-tested in the runner since stage 2.3: `Closes owner/repo#n` on a line of its own.)
+#
+# What the bot writes on an issue, since stage 2.3: ONE status comment per work item, edited in
+# place (it ends with <!-- hephaisto:status:<work item id> -->), and ONE comment per attempt
+# with its plan, never edited (<!-- hephaisto:plan:<attempt id> -->), which says how to answer:
+# `/approve`, `/reject <reason>`. Nothing reads an answer yet (stage 2.4); until then a plan is
+# decided through POST /api/workitems/{id}/codefix/{attemptId}/approve|deny.
 #
 # shellcheck disable=SC2034
 
@@ -260,8 +275,25 @@ wi_attempt_in() {
 }
 
 #   wi_wait_attempt <work-item-id> <timeout> <state> [state ...]
+#
+# A plan that is waiting moves when somebody answers it on the issue, and the agent learns of an
+# answer only by reading the issue's comments. An agent that reads none cannot make a wait on a
+# waiting plan come true - which is what one is between stage 2.3 and stage 2.4 - and the ceiling
+# of an implementation is half an hour. So a wait that long, on a plan that is waiting - and
+# for something other than that - is first a short one: for the plan to have moved, or for the
+# agent to have read the comments at all.
 wi_wait_attempt() {
     local id="$1" timeout="$2"; shift 2
+    if [ "$timeout" -gt "$ISSUES_SEEN_WAIT" ] && ! wi_attempt_in "$id" "$@" && wi_attempt_in "$id" PlanReady; then
+        local item repo number mark
+        item=$(_issues_curl "$ISSUES_API/api/workitems/$id")
+        repo=$(jq -r '.repository // empty' <<<"$item"); number=$(jq -r '.number // empty' <<<"$item")
+        mark=$(gh_mark)
+        _wi_answerable() {
+            ! wi_attempt_in "$id" PlanReady || [ "$(gh_comment_reads_since "$mark" "$repo" "${number:-0}")" -ge 1 ]
+        }
+        wait_for "the agent to read what was answered on $repo#$number" "$ISSUES_SEEN_WAIT" _wi_answerable || return 1
+    fi
     wait_for "the attempt of work item $id to be $*" "$timeout" wi_attempt_in "$id" "$@"
 }
 
@@ -291,6 +323,19 @@ issues_plan_ready() {
         pass "its plan is ready"
     else
         fail "its plan is ready" "$(jq -r '(.state // "no attempt") + ": " + (.failureReason // "")' <<<"$ATTEMPT")"
+        return 1
+    fi
+
+    # PlanReady is the database's word, written by the loop that collects a Job; the comment on
+    # the issue is written by the poller's next pass, and the attempt names it (planCommentId)
+    # once it is there and the status comment says so too. Every scenario that starts on this
+    # road reads the issue next, so the road ends where the issue has been told.
+    _wi_plan_posted() { [ -n "$(wi_attempt "$WI" | jq -r '.planCommentId // empty')" ]; }
+    if wait_for "the plan to be written on the issue" "$ISSUES_SEEN_WAIT" _wi_plan_posted; then
+        pass "the plan is on the issue"
+        ATTEMPT=$(wi_attempt "$WI")
+    else
+        fail "the plan is on the issue" "the attempt names no plan comment within ${ISSUES_SEEN_WAIT}s"
         return 1
     fi
 }

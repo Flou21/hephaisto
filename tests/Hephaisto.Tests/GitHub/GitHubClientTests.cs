@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 namespace Hephaisto.Tests.GitHub;
 
 /// <summary>
-/// The seven calls to GitHub's REST API, against a handler that records what was sent and
+/// The eight calls to GitHub's REST API, against a handler that records what was sent and
 /// answers with GitHub's own shapes: its field names, its headers, its error bodies.
 /// </summary>
 /// <remarks>
@@ -398,6 +398,34 @@ public sealed class GitHubClientTests
         draft.Value.Draft.Should().BeTrue();
         draft.Value.MergedAt.Should().BeNull();
         draft.Value.HeadRef.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task A_repository_is_asked_for_its_default_branch()
+    {
+        var (client, handler, _) = Build(request => request.Uri.EndsWith("/octo/shop", StringComparison.Ordinal)
+            ? Json(HttpStatusCode.OK, """{"id":1,"full_name":"octo/shop","private":true,"default_branch":"develop","archived":false}""")
+            : Json(HttpStatusCode.OK, """{"id":2,"full_name":"octo/empty","default_branch":null}"""));
+
+        var shop = await client.GetRepositoryAsync(Repo, Ct);
+        var empty = await client.GetRepositoryAsync("octo/empty", Ct);
+
+        handler.Requests[0].Method.Should().Be(HttpMethod.Get);
+        handler.Requests[0].Uri.Should().Be("https://github.example/api/v3/repos/octo/shop");
+
+        shop.Value.Should().Be(new GitHubRepository("octo/shop", "develop"));
+        empty.Value!.DefaultBranch.Should().BeNull("an empty repository has no branch yet, and the caller decides what that means");
+    }
+
+    [Fact]
+    public async Task A_repository_the_token_cannot_see_is_not_found_and_says_nothing_about_a_branch()
+    {
+        var (client, _, _) = Build(_ => Json(HttpStatusCode.NotFound, """{"message":"Not Found"}"""));
+
+        var result = await client.GetRepositoryAsync(Repo, Ct);
+
+        result.Outcome.Should().Be(GitHubOutcome.NotFound);
+        result.Value.Should().BeNull();
     }
 
     // --- GitHub's shapes ------------------------------------------------------------------------

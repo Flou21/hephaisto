@@ -7,7 +7,7 @@ import { APP_ROOT } from '../src/config.js';
 import { resetRedactions } from '../src/log.js';
 import { main } from '../src/main.js';
 import { parseLastFrame, resetEmitted } from '../src/result.js';
-import type { CodeFixRequest, InvestigateRequest } from '../src/schemas.js';
+import type { IncidentRequest, InvestigateRequest, WorkItemRequest } from '../src/schemas.js';
 
 // A whole world in a temp dir: a bare "GitHub" remote seeded with a tiny shell-script repository
 // (its test command is `sh test.sh`, so no dotnet is needed), a dev-context repository whose
@@ -156,9 +156,9 @@ export function makeWorld(opts: WorldOptions = {}): World {
   };
 }
 
-const samplePlan = JSON.parse(readFileSync(join(APP_ROOT, 'contracts', 'samples', 'valid', 'request-plan.json'), 'utf8')) as CodeFixRequest;
+const samplePlan = JSON.parse(readFileSync(join(APP_ROOT, 'contracts', 'samples', 'valid', 'request-plan.json'), 'utf8')) as IncidentRequest;
 
-export function planRequest(w: World, over: Partial<CodeFixRequest> = {}): CodeFixRequest {
+export function planRequest(w: World, over: Partial<IncidentRequest> = {}): IncidentRequest {
   const r = structuredClone(samplePlan);
   r.attempt_id = ATTEMPT;
   r.incident_id = INCIDENT;
@@ -169,7 +169,7 @@ export function planRequest(w: World, over: Partial<CodeFixRequest> = {}): CodeF
   return { ...r, ...over };
 }
 
-export function implementRequest(w: World, over: Partial<CodeFixRequest> = {}): CodeFixRequest {
+export function implementRequest(w: World, over: Partial<IncidentRequest> = {}): IncidentRequest {
   const r = planRequest(w);
   r.phase = 'implement';
   r.budget = { max_cost_usd: 15, deadline_seconds: 3600 };
@@ -193,6 +193,40 @@ export function implementRequest(w: World, over: Partial<CodeFixRequest> = {}): 
     error: null,
     denied_tool_calls: [],
   };
+  return { ...r, ...over };
+}
+
+// ---- a work item: a GitHub issue instead of an incident (contract version 2)
+
+export const ISSUE = 'octo/shop#12';
+
+const sampleIssuePlan = JSON.parse(readFileSync(join(APP_ROOT, 'contracts', 'samples', 'valid', 'request-v2-plan.json'), 'utf8')) as WorkItemRequest;
+
+/** The same world, asked through an issue: the repository is the test remote, the issue is octo/shop#12. */
+export function issuePlanRequest(w: World, over: Partial<WorkItemRequest> = {}): WorkItemRequest {
+  const r = structuredClone(sampleIssuePlan);
+  r.attempt_id = ATTEMPT;
+  r.repository = { url: w.remoteUrl, default_branch: 'main', path: '', branch: BRANCH };
+  r.context = { repository_url: w.contextUrl, ref: 'main' };
+  r.work_item = {
+    source: 'github',
+    repository: 'octo/shop',
+    number: 12,
+    url: 'https://github.com/octo/shop/issues/12',
+    title: 'greet prints the wrong thing',
+    type: 'Bug',
+    author: 'reporter',
+    body: 'greet() in src/app.sh prints the wrong thing under load.',
+    comments: [],
+  };
+  return { ...r, ...over };
+}
+
+export function issueImplementRequest(w: World, over: Partial<WorkItemRequest> = {}): WorkItemRequest {
+  const r = issuePlanRequest(w);
+  r.phase = 'implement';
+  r.budget = { max_cost_usd: 15, deadline_seconds: 3600 };
+  r.plan = structuredClone(implementRequest(w).plan);
   return { ...r, ...over };
 }
 

@@ -89,6 +89,9 @@ public sealed class WorkItemPersistenceTests(PostgresFixture pg)
         [
             "id", "source", "repository", "number", "node_id", "url", "title", "type", "author_login", "author_id",
             "body", "labels", "state", "state_reason", "taken_at", "closed_at", "status_comment_id", "updated_at",
+
+            // v0.14.0 stage 2.3 (#246): what the status comment last said, and why no plan was started.
+            "status_comment_digest", "decline_codes", "decline_reason",
         ]);
     }
 

@@ -154,19 +154,23 @@ public sealed class LlmBudgetService(
     public const string WindowHourCost = "hour-cost";
     public const string WindowDayCost = "day-cost";
 
-    public async Task<BudgetVerdict> CheckAsync(Guid incidentId, CancellationToken ct)
+    /// <param name="incidentId">
+    /// Null for spend that is no incident's (a coder for a work item): the hour and the day are
+    /// checked, and there is no per-incident ceiling to hold it to.
+    /// </param>
+    public async Task<BudgetVerdict> CheckAsync(Guid? incidentId, CancellationToken ct)
     {
         var o = options.CurrentValue;
         var now = clock.UtcNow;
 
         var hour = await SumAsync(now.AddHours(-1), null, ct);
         var day = await SumAsync(now.AddDays(-1), null, ct);
-        var incident = await SumAsync(DateTimeOffset.MinValue, incidentId, ct);
+        var incident = incidentId is { } id ? await SumAsync(DateTimeOffset.MinValue, id, ct) : (Tokens: 0L, Cost: 0m);
 
         var hourlyTokens = Ratio(hour.Tokens, o.MaxTokensPerHour);
         var hourlyCost = Ratio(hour.Cost, o.MaxCostUsdPerHour);
         var dailyCost = Ratio(day.Cost, o.MaxCostUsdPerDay);
-        var incidentCost = Ratio(incident.Cost, o.MaxCostUsdPerIncident);
+        var incidentCost = incidentId is null ? 0 : Ratio(incident.Cost, o.MaxCostUsdPerIncident);
 
         var latched = (await modes.GetAsync(ct)).RunawayLatched;
 
@@ -193,7 +197,7 @@ public sealed class LlmBudgetService(
             block = BudgetBlock.DailyCost;
             reasons.Add($"${day.Cost:F4} today (max ${o.MaxCostUsdPerDay:F2})");
         }
-        else if (incident.Cost >= o.MaxCostUsdPerIncident)
+        else if (incidentId is not null && incident.Cost >= o.MaxCostUsdPerIncident)
         {
             block = BudgetBlock.IncidentCost;
             reasons.Add($"${incident.Cost:F4} spent on incident {incidentId} (max ${o.MaxCostUsdPerIncident:F2})");

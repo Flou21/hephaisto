@@ -6,7 +6,7 @@ import { addRedaction, log, redact, setLogPrefix } from './log.js';
 import { type PhaseDeps, coderImplement, coderPlan, prepareImplement, preparePlan } from './phases.js';
 import { runPublish } from './publish.js';
 import { NIL_UUID, emitResult, hasEmitted, minimalFailed, validUuid } from './result.js';
-import { type AnyResult, type CodeFixRequest, type InvestigateRequest, type InvestigateResult, type Phase, validate } from './schemas.js';
+import { type AnyResult, type CodeFixRequest, type InvestigateRequest, type InvestigateResult, type Phase, SCHEMA_FILES, validate } from './schemas.js';
 import { loadQuery } from './sdk.js';
 
 // Entry point. One invariant above all others: exactly ONE framed result is the last thing on
@@ -186,9 +186,13 @@ export async function main(opts: MainOptions = {}): Promise<MainResult> {
   identity = identityFrom(raw);
   printing = prints(role, identity.phase);
   const investigating = identity.phase === 'investigate';
-  const v = validate(investigating ? 'investigateRequest' : 'request', raw);
+  // A code-fix request is one of two documents, told apart by the version it states: 1 is for an
+  // incident, 2 for a work item. Each is held to its own schema, so a refusal names one file and
+  // one member - never "matches neither of two shapes".
+  const schema = investigating ? 'investigateRequest' : (raw as { contract_version?: unknown } | null)?.contract_version === '2' ? 'requestV2' : 'request';
+  const v = validate(schema, raw);
   if (!v.ok) {
-    log.error(`request does not match ${investigating ? 'investigate' : 'codefix'}-request.schema.json: ${v.errors.join('; ')}`);
+    log.error(`request does not match ${SCHEMA_FILES[schema]}: ${v.errors.join('; ')}`);
     return finish(minimalFailed(identity.phase, identity.attemptId, `request does not match the contract: ${v.errors.slice(0, 10).join('; ')}`, billingOf(env)));
   }
   if (investigating) addRedaction((raw as InvestigateRequest).endpoint.token);

@@ -84,6 +84,23 @@ public sealed class WorkItem
     /// <summary>The one comment Hephaisto keeps up to date on the issue. GitHub's id, beyond 32 bits.</summary>
     public long? StatusCommentId { get; set; }
 
+    /// <summary>
+    /// SHA-256 of the status comment's text as it was last written. What makes "edit only when
+    /// the text changed" true across a restart: the comparison is with this, never with a read
+    /// of the comment.
+    /// </summary>
+    public string? StatusCommentDigest { get; set; }
+
+    /// <summary>
+    /// The reason codes of the last answer "no plan now", comma-separated, while there is no
+    /// attempt. Asked again on every pass; recorded - and said on the issue - only when the
+    /// codes are different ones. Null once an attempt exists.
+    /// </summary>
+    public string? DeclineCodes { get; set; }
+
+    /// <summary>The same answer as a sentence, as it was when the codes last changed.</summary>
+    public string? DeclineReason { get; set; }
+
     public DateTimeOffset UpdatedAt { get; set; }
 
     public bool IsOpen => State == WorkItemState.Taken;

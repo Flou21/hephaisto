@@ -300,9 +300,10 @@ public sealed class TeamsBotIncidents(HephaistoDbContext db)
 
         var ids = incidents.Select(i => i.Id).ToList();
 
+        // An attempt for a work item has no incident and is on no card of this board.
         var attempts = await db.CodeFixAttempts.AsNoTracking()
-            .Where(a => ids.Contains(a.IncidentId))
-            .Select(a => new { a.IncidentId, a.State, a.PrUrl, a.CreatedAt })
+            .Where(a => a.IncidentId != null && ids.Contains(a.IncidentId.Value))
+            .Select(a => new { IncidentId = a.IncidentId!.Value, a.State, a.PrUrl, a.CreatedAt })
             .ToListAsync(ct)
             .ConfigureAwait(false);
 

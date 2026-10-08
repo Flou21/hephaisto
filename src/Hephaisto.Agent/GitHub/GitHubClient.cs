@@ -105,7 +105,10 @@ public sealed record GitHubPullRequest(
     string Url,
     string? HeadRef);
 
-/// <summary>What the agent asks of GitHub. Seven calls, and nothing that deletes or closes.</summary>
+/// <param name="DefaultBranch">The branch a pull request targets unless told otherwise. Null when GitHub did not say.</param>
+public sealed record GitHubRepository(string FullName, string? DefaultBranch);
+
+/// <summary>What the agent asks of GitHub. Eight calls, and nothing that deletes or closes.</summary>
 public interface IGitHubClient
 {
     /// <summary>Whose token this is.</summary>
@@ -132,6 +135,12 @@ public interface IGitHubClient
     Task<GitHubResult<GitHubComment>> UpdateCommentAsync(string repository, long commentId, string body, CancellationToken ct);
 
     Task<GitHubResult<GitHubPullRequest>> GetPullRequestAsync(string repository, int number, CancellationToken ct);
+
+    /// <summary>
+    /// A repository's own facts - asked for its default branch, which is where the plan for an
+    /// issue is made when no <c>CodeFix:Repositories</c> entry names the repository.
+    /// </summary>
+    Task<GitHubResult<GitHubRepository>> GetRepositoryAsync(string repository, CancellationToken ct);
 }
 
 /// <summary>
@@ -236,6 +245,15 @@ public sealed class GitHubClient(
 
     public Task<GitHubResult<GitHubPullRequest>> GetPullRequestAsync(string repository, int number, CancellationToken ct) =>
         SendAsync(HttpMethod.Get, $"repos/{repository}/pulls/{Number(number)}", null, null, (json, _) => PullRequest(json), ct);
+
+    public Task<GitHubResult<GitHubRepository>> GetRepositoryAsync(string repository, CancellationToken ct) =>
+        SendAsync(
+            HttpMethod.Get,
+            $"repos/{repository}",
+            null,
+            null,
+            (json, _) => new GitHubRepository(Text(json, "full_name") ?? repository, Text(json, "default_branch")),
+            ct);
 
     private async Task<GitHubResult<T>> SendAsync<T>(
         HttpMethod method,

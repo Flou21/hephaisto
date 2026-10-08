@@ -12,8 +12,20 @@ namespace Hephaisto.Agent.CodeFix;
 public sealed record CodeFixAttemptView
 {
     public required Guid Id { get; init; }
-    public required Guid IncidentId { get; init; }
+
+    /// <summary>The incident this attempt is for. Null when it is for a work item.</summary>
+    public required Guid? IncidentId { get; init; }
+
+    /// <summary>The incident's title; empty for a work item's attempt.</summary>
     public required string IncidentTitle { get; init; }
+
+    /// <summary>The work item this attempt is for (v0.14.0). Null when it is for an incident.</summary>
+    public Guid? WorkItemId { get; init; }
+
+    /// <summary><c>owner/repo#12</c>, and the issue's page. Null for an incident's attempt.</summary>
+    public string? Issue { get; init; }
+
+    public string? IssueUrl { get; init; }
     public required string Workload { get; init; }
     public required string Repository { get; init; }
     public required string DefaultBranch { get; init; }
@@ -36,6 +48,8 @@ public sealed record CodeFixAttemptView
     public string? ImplementJobName { get; init; }
     public decimal PlanCostUsd { get; init; }
     public decimal ImplementCostUsd { get; init; }
+    /// <summary>The comment on the issue that carries the plan, once it is written. Null for an incident's attempt.</summary>
+    public long? PlanCommentId { get; init; }
     public string? PrUrl { get; init; }
     public int? PrNumber { get; init; }
     public bool? BuildPassed { get; init; }
@@ -91,7 +105,7 @@ public sealed class CodeFixQueries(
 {
     public async Task<IReadOnlyList<CodeFixAttemptView>> ListAsync(CodeFixState? state, int limit, CancellationToken ct)
     {
-        var query = db.CodeFixAttempts.AsNoTracking().Include(a => a.Incident).AsQueryable();
+        var query = db.CodeFixAttempts.AsNoTracking().Include(a => a.Incident).Include(a => a.WorkItem).AsQueryable();
 
         if (state is { } s)
             query = query.Where(a => a.State == s);
@@ -125,6 +139,16 @@ public sealed class CodeFixQueries(
             await db.CodeFixAttempts.CountAsync(a => a.State == CodeFixState.PlanReady, ct).ConfigureAwait(false),
             await db.CodeFixAttempts.CountAsync(a => a.State == CodeFixState.PrOpened && a.FinishedAt >= weekAgo, ct).ConfigureAwait(false));
     }
+
+    /// <summary>The attempts of one work item, newest first. One, until something plans an issue twice.</summary>
+    public async Task<IReadOnlyList<CodeFixAttemptView>> ForWorkItemAsync(Guid workItemId, CancellationToken ct) =>
+        (await db.CodeFixAttempts.AsNoTracking()
+            .Include(a => a.WorkItem)
+            .Where(a => a.WorkItemId == workItemId)
+            .OrderByDescending(a => a.CreatedAt)
+            .ToListAsync(ct)
+            .ConfigureAwait(false))
+        .ConvertAll(View);
 
     public async Task<IncidentCodeFixView> ForIncidentAsync(Guid incidentId, CancellationToken ct)
     {
@@ -161,6 +185,24 @@ public sealed class CodeFixQueries(
         return new CodeFixModeView(mode.Effective, mode.Explain(), blocked is null, blocked);
     }
 
+    /// <summary>
+    /// The plan an attempt stored, or null when it stored none - or one an older contract wrote,
+    /// which the denormalised columns still describe.
+    /// </summary>
+    public static CodeFixPlanResult? Plan(CodeFixAttempt a)
+    {
+        ArgumentNullException.ThrowIfNull(a);
+
+        try
+        {
+            return a.PlanResultJson is { } json ? JsonSerializer.Deserialize<CodeFixPlanResult>(json, CodeFixContract.Json) : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     public static CodeFixAttemptView View(CodeFixAttempt a)
     {
         CodeFixPlanResult? plan = null;
@@ -184,6 +226,9 @@ public sealed class CodeFixQueries(
             Id = a.Id,
             IncidentId = a.IncidentId,
             IncidentTitle = a.Incident?.Title ?? string.Empty,
+            WorkItemId = a.WorkItemId,
+            Issue = a.WorkItem is { } w ? $"{w.Repository}#{w.Number}" : null,
+            IssueUrl = a.WorkItem?.Url,
             Workload = a.Workload,
             Repository = a.RepositoryUrl,
             DefaultBranch = a.DefaultBranch,
@@ -206,6 +251,7 @@ public sealed class CodeFixQueries(
             ImplementJobName = a.ImplementJobName,
             PlanCostUsd = a.PlanCostUsd,
             ImplementCostUsd = a.ImplementCostUsd,
+            PlanCommentId = a.PlanCommentId,
             PrUrl = a.PrUrl,
             PrNumber = a.PrNumber,
             BuildPassed = impl?.BuildPassed,

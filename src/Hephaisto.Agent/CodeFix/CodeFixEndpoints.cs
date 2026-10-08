@@ -36,12 +36,12 @@ public static class CodeFixEndpoints
             .RequireAuthorization(AuthenticationExtensions.ApprovePolicy);
 
         incident.MapPost("/{attemptId:guid}/approve", (Guid id, Guid attemptId, CodeFixDecisionRequest body, HttpContext http, CodeFixCoordinator c, CodeFixQueries q, CancellationToken ct)
-                => DecideAsync(id, attemptId, true, body, http, c, ct))
+                => DecideAsync(body, http, (actor, source, authenticated, reason) => c.DecideAsync(id, attemptId, true, actor, source, authenticated, reason, ct)))
             .WithName("ApproveCodeFix")
             .RequireAuthorization(AuthenticationExtensions.ApprovePolicy);
 
         incident.MapPost("/{attemptId:guid}/deny", (Guid id, Guid attemptId, CodeFixDecisionRequest body, HttpContext http, CodeFixCoordinator c, CodeFixQueries q, CancellationToken ct)
-                => DecideAsync(id, attemptId, false, body, http, c, ct))
+                => DecideAsync(body, http, (actor, source, authenticated, reason) => c.DecideAsync(id, attemptId, false, actor, source, authenticated, reason, ct)))
             .WithName("DenyCodeFix")
             .RequireAuthorization(AuthenticationExtensions.ApprovePolicy);
 
@@ -81,8 +81,15 @@ public static class CodeFixEndpoints
             : TypedResults.Ok(new CodeFixDecisionResponse("started", attempt.State.ToString(), CodeFixQueries.View(attempt)));
     }
 
-    private static async Task<Results<Ok<CodeFixDecisionResponse>, NotFound, Conflict<CodeFixDecisionResponse>, ForbidHttpResult, ValidationProblem>> DecideAsync(
-        Guid id, Guid attemptId, bool approve, CodeFixDecisionRequest? body, HttpContext http, CodeFixCoordinator coordinator, CancellationToken ct)
+    /// <summary>
+    /// One answer to a plan, whoever's attempt it is: who is deciding, from the token before the
+    /// body, and the door's outcome as a status. <paramref name="decide"/> is the coordinator's
+    /// door for an incident's attempt or for a work item's (<c>/api/workitems/{id}/codefix</c>).
+    /// </summary>
+    internal static async Task<Results<Ok<CodeFixDecisionResponse>, NotFound, Conflict<CodeFixDecisionResponse>, ForbidHttpResult, ValidationProblem>> DecideAsync(
+        CodeFixDecisionRequest? body,
+        HttpContext http,
+        Func<string, ApprovalSource, bool, string?, Task<CodeFixDecisionResult>> decide)
     {
         var authenticated = http.User?.Identity?.IsAuthenticated == true;
         var actor = ActorResolution.Resolve(http.User, body?.DecidedBy);
@@ -90,8 +97,7 @@ public static class CodeFixEndpoints
         if (string.IsNullOrWhiteSpace(actor))
             return Missing("decidedBy");
 
-        var result = await coordinator.DecideAsync(
-            id, attemptId, approve, actor, authenticated ? ApprovalSource.Oidc : ApprovalSource.Api, authenticated, body?.Reason, ct);
+        var result = await decide(actor, authenticated ? ApprovalSource.Oidc : ApprovalSource.Api, authenticated, body?.Reason);
 
         var response = new CodeFixDecisionResponse(
             result.Outcome.ToString(), result.Message, result.Attempt is null ? null : CodeFixQueries.View(result.Attempt));

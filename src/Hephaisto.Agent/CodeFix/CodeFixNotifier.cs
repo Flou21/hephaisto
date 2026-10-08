@@ -58,10 +58,15 @@ public sealed class CodeFixNotifier(
     }
 
     /// <summary>Call after the save: a live event about an uncommitted change would be a lie.</summary>
+    /// <remarks>
+    /// An attempt for a work item has no incident, and the event is published all the same with
+    /// no incident's id: the code-fixes page and the counts in the navigation refresh on the
+    /// kind alone, and no incident page takes an id that is nobody's for its own.
+    /// </remarks>
     public void Publish(CodeFixAttempt attempt, string? detail = null) =>
         live.Publish(new IncidentLiveEvent
         {
-            IncidentId = attempt.IncidentId,
+            IncidentId = attempt.IncidentId ?? Guid.Empty,
             Kind = IncidentLiveEventKind.CodeFixChanged,
             Detail = detail ?? attempt.State.ToString(),
         });

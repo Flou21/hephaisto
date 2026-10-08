@@ -2,17 +2,18 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { type AgentRunResult, buildAgentEnv, guardEnvFor, runAgent } from './agent.js';
 import { IMPLEMENT_MAX_TURNS, PATCH_MAX_BYTES, PLAN_MAX_TURNS, type RunnerEnv, type WorkPaths } from './config.js';
-import { Git, trailers } from './git.js';
+import { Git } from './git.js';
 import { type GuardContext, realish } from './guard.js';
 import { BUNDLE_FILE, type CoderHandoff, HANDOFF_VERSION, type PrepareHandoff, newPrepareHandoff } from './handoff.js';
 import { log } from './log.js';
 import { changedFiles, policyCheck } from './policy.js';
 import { BRANCH_RE, findOpenPr, ghEnv, inspectRemoteBranch } from './pr.js';
-import { fencedJson, loadTemplate, render, renderEvidenceBlock, repoNotesBlock } from './prompts.js';
+import { fencedJson, loadTemplate, render, renderEvidenceBlock, renderIssueBlock, repoNotesBlock } from './prompts.js';
 import { NOT_ENABLED, enabledRepo, protectedGlobs, repoDirName } from './repos.js';
 import { minimalFailed } from './result.js';
 import { type CodeFixRequest, type ImplementResult, type PlanResult, type RepoEntry, rawSchema, validateWith } from './schemas.js';
 import type { QueryFn } from './sdk.js';
+import { isWorkItem, subjectOf, trailersOf, untrustedText } from './subject.js';
 import { type VerificationReport, feedRefusal, feedRefusalNote, runVerification } from './verify.js';
 import { type Target, checkoutAnalysedRef, cloneTarget, ensureNugetConfig, makeDirs, nugetCredentialEnv, openPrepared, prepareCait, prepareContext, sanitizeTarget } from './workspace.js';
 
@@ -98,14 +99,33 @@ function expectedLevel(repo: RepoEntry): string {
 }
 
 function baseVars(req: CodeFixRequest, repo: RepoEntry, target: Target, paths: WorkPaths): Record<string, string> {
-  return {
+  const common = {
     attempt_id: req.attempt_id,
-    incident_id: req.incident_id,
     phase: req.phase,
     repo_url: req.repository.url,
     repo_name: repo.name,
     default_branch: req.repository.default_branch,
     branch: req.repository.branch,
+    commands: commandsBlock(repo),
+    verification_level: expectedLevel(repo),
+    repo_notes: repoNotesBlock(target.claudeMd),
+    cait_ref: target.caitDir ? join(paths.ref, 'Cait') : '(none: this repository does not pin Cait)',
+    memory_dir: join(paths.context, 'memory'),
+    workspace: target.dir,
+    trailers: trailersOf(req),
+  };
+  if (isWorkItem(req)) {
+    return {
+      ...common,
+      // owner/repo#n: Hephaisto's configuration and an integer. Everything of the issue that
+      // somebody typed - title, author, body, comments - is INSIDE issue_block and nowhere else.
+      issue_ref: subjectOf(req).ref,
+      issue_block: renderIssueBlock(req, paths.context),
+    };
+  }
+  return {
+    ...common,
+    incident_id: req.incident_id,
     image: req.incident.image ?? '(unknown)',
     incident_title: req.incident.title,
     incident_kind: req.incident.kind,
@@ -115,12 +135,6 @@ function baseVars(req: CodeFixRequest, repo: RepoEntry, target: Target, paths: W
     evidence_block: renderEvidenceBlock(req, paths.context),
     // investigation_summary is log-derived: it lives INSIDE the evidence element, never here
     investigation_summary: '',
-    commands: commandsBlock(repo),
-    verification_level: expectedLevel(repo),
-    repo_notes: repoNotesBlock(target.claudeMd),
-    cait_ref: target.caitDir ? join(paths.ref, 'Cait') : '(none: this repository does not pin Cait)',
-    memory_dir: join(paths.context, 'memory'),
-    workspace: target.dir,
   };
 }
 
@@ -130,10 +144,10 @@ function additionalDirs(paths: WorkPaths, target: Target): string[] {
   return dirs.filter((d) => existsSync(d));
 }
 
-/** Evidence-named file for the fake scripts: a path in an excerpt, else a type name from a stack frame, else the first tracked file. */
+/** Evidence-named file for the fake scripts: a path in an excerpt - or in the issue - else a type name from a stack frame, else the first tracked file. */
 async function firstEvidenceFile(req: CodeFixRequest, git: Git): Promise<string> {
   const files = (await git.ok(['ls-files'])).split('\n').filter(Boolean);
-  const text = [req.investigation_summary ?? '', ...req.findings.flatMap((f) => [f.hypothesis, ...f.evidence.map((e) => e.excerpt)])].join('\n');
+  const text = untrustedText(req);
   for (const m of text.matchAll(/[\w./-]+\.(?:cs|ts|js|vue|py|sh|go|java|json|ya?ml)\b/g)) {
     const hit = files.find((f) => f === m[0] || f.endsWith(`/${m[0]}`) || m[0].endsWith(`/${f}`));
     if (hit) return hit;
@@ -178,7 +192,14 @@ export async function preparePlan(req: CodeFixRequest, deps: PrepareDeps): Promi
     const target = await cloneTarget(req, ctx.repos, repo, env, paths, deps.abort.signal);
     h.repo_dir = repoDirName(repo);
     h.claude_md = target.claudeMd;
-    h.analysed_ref = await checkoutAnalysedRef(target, req.incident.image, req.repository.default_branch);
+    if (isWorkItem(req)) {
+      // An issue names a repository, not something that runs: there is no image whose commit
+      // could be analysed, and nothing "deployed" for the default branch's HEAD to differ from.
+      h.analysed_ref = await target.git.head();
+      log.info(`analysing ${req.repository.default_branch} HEAD ${h.analysed_ref} (an issue names no running image)`);
+    } else {
+      h.analysed_ref = await checkoutAnalysedRef(target, req.incident.image, req.repository.default_branch);
+    }
     await sanitizeTarget(target);
     await prepareCait(target, req.repository.url, ctx.repos, env, paths, deps.abort.signal);
     h.cait = target.caitDir !== null;
@@ -199,7 +220,7 @@ export async function coderPlan(req: CodeFixRequest, deps: PhaseDeps, h: Prepare
     const { repos, repo, target } = openPrepared(req.repository.url, h, env, paths, deps.abort.signal);
 
     const vars = { ...baseVars(req, repo, target, paths), analysed_ref: result.analysed_ref ?? '', result_schema: JSON.stringify(planOutputSchema(), null, 2) };
-    const prompt = render(loadTemplate('plan', paths.context).text, vars);
+    const prompt = render(loadTemplate(subjectOf(req).templates.plan, paths.context).text, vars);
     const guard: GuardContext = { targetDir: realish(target.dir), protectedGlobs: protectedGlobs(repos, repo), homeDir: paths.home };
     const query = await deps.makeQuery({
       repoName: repo.name,
@@ -261,7 +282,8 @@ async function ensureTrailers(git: Git, base: string, req: CodeFixRequest): Prom
   if (commits.every((c) => (c.split('\x1f')[1] ?? '').includes(req.attempt_id))) return;
   log.info('adding Hephaisto trailers to the agent\'s commits that lack them');
   // ids are schema-validated uuids, safe to put in the exec line
-  const exec = `git -c trailer.ifexists=addIfDifferent commit --amend --no-edit --no-verify --quiet --trailer 'Hephaisto-Incident: ${req.incident_id}' --trailer 'Hephaisto-Attempt: ${req.attempt_id}'`;
+  // and a work item's is owner/repo#n, held to a pattern with no quote and no space in it
+  const exec = `git -c trailer.ifexists=addIfDifferent commit --amend --no-edit --no-verify --quiet --trailer '${subjectOf(req).trailer}' --trailer 'Hephaisto-Attempt: ${req.attempt_id}'`;
   await git.ok(['rebase', '--quiet', '--exec', exec, base]);
 }
 
@@ -377,7 +399,7 @@ export async function prepareImplement(req: CodeFixRequest, deps: PrepareDeps): 
     h.deviations = deviations;
     h.main_moved = mainMoved;
     h.protected_globs = protectedGlobs(ctx.repos, repo);
-    h.pr = { assignee: ctx.repos.defaults.pr.assignee, labels: ctx.repos.defaults.pr.labels, template: loadTemplate('pr-body', paths.context).text };
+    h.pr = { assignee: ctx.repos.defaults.pr.assignee, labels: ctx.repos.defaults.pr.labels, template: loadTemplate(subjectOf(req).templates.prBody, paths.context).text };
     return h;
   } catch (e) {
     log.error(`implement could not be prepared: ${(e as Error).stack ?? String(e)}`);
@@ -429,7 +451,7 @@ export async function coderImplement(req: CodeFixRequest, deps: PhaseDeps, h: Pr
       plan_files: planFiles,
       result_schema: JSON.stringify(implementOutputSchema(), null, 2),
     };
-    const prompt = render(loadTemplate('implement', paths.context).text, vars);
+    const prompt = render(loadTemplate(subjectOf(req).templates.implement, paths.context).text, vars);
     const firstFile = plan.files[0] ?? 'README.md';
     const query = await deps.makeQuery({
       repoName: repo.name,
@@ -473,7 +495,7 @@ export async function coderImplement(req: CodeFixRequest, deps: PhaseDeps, h: Pr
       const staged = await git.try(['diff', '--cached', '--quiet']);
       if (staged.code !== 0) {
         await git.ok(['commit', '--quiet', '--no-verify', '-F', '-'], {
-          input: `chore(hephaisto): commit changes the agent left uncommitted\n\n${trailers(req.incident_id, req.attempt_id)}\n`,
+          input: `chore(hephaisto): commit changes the agent left uncommitted\n\n${trailersOf(req)}\n`,
         });
         deviations.push('The agent left uncommitted changes; the driver committed them.');
       }

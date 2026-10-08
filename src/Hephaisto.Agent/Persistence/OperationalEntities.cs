@@ -21,7 +21,12 @@ public sealed class LlmUsageRecord
 {
     public Guid Id { get; set; } = Guid.CreateVersion7();
 
-    public Guid IncidentId { get; set; }
+    /// <summary>
+    /// The incident the spend was for. Null for a coder Job that worked on a work item
+    /// (v0.14.0): that row is found by <see cref="CodeFixAttemptId"/>, and counts in every
+    /// window like any other.
+    /// </summary>
+    public Guid? IncidentId { get; set; }
 
     public Guid? InvestigationId { get; set; }
 

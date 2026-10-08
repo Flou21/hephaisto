@@ -111,6 +111,48 @@ public sealed class CodeFixOptions
     public RepositoryBinding? BindingFor(string workloadKey) =>
         Repositories.FirstOrDefault(r => string.Equals(r.Workload.Trim(), workloadKey, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// Where the code of <c>owner/repo</c> is cloned from, for a work item (v0.14.0): the FIRST
+    /// entry of <see cref="Repositories"/> whose URL names that repository - its path ends with
+    /// <c>/owner/repo</c> or <c>/owner/repo.git</c>, whatever the case and whatever the host -
+    /// with its default branch and path. Null when no entry does; the caller then asks GitHub.
+    /// </summary>
+    /// <remarks>
+    /// The first, because one repository is routinely mapped by several workloads, and on a dev
+    /// cluster by several fixture branches. An issue names a repository and nothing that runs,
+    /// so there is nothing to choose between them by; an operator who wants another branch for
+    /// issues puts that entry first.
+    /// </remarks>
+    public RepositoryBinding? BindingForRepository(string ownerRepo)
+    {
+        var wanted = "/" + ownerRepo.Trim().Trim('/');
+
+        return wanted.Length <= 1
+            ? null
+            : Repositories.FirstOrDefault(r =>
+                CodeFixResultParser.RepositoryPath(r.Url) is { } path && path.EndsWith(wanted, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// What is assumed of a listed repository that <see cref="Repositories"/> does not name: it
+    /// is on github.com under its own name. <paramref name="defaultBranch"/> is what GitHub's API
+    /// said, or nothing - then <c>main</c>.
+    /// </summary>
+    public static RepositoryBinding GitHubRepository(string ownerRepo, string? defaultBranch) => new()
+    {
+        Url = "https://github.com/" + ownerRepo.Trim().Trim('/'),
+        DefaultBranch = string.IsNullOrWhiteSpace(defaultBranch) ? "main" : defaultBranch.Trim(),
+    };
+
+    /// <summary>
+    /// The subdirectory an attempt works in: its workload's entry for an incident, and for a work
+    /// item - which has no workload - the first entry with its repository URL.
+    /// </summary>
+    public string PathFor(string workload, string repositoryUrl) =>
+        (string.IsNullOrEmpty(workload)
+            ? Repositories.FirstOrDefault(r => string.Equals(r.Url.Trim(), repositoryUrl, StringComparison.OrdinalIgnoreCase))
+            : BindingFor(workload))?.Path ?? string.Empty;
+
     public CodeFixEligibilityOptions ToEligibilityOptions() => new()
     {
         EligibleCategories = EligibleCategories,

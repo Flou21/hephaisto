@@ -122,7 +122,7 @@ namespace Hephaisto.Agent.Persistence.Migrations
                         .HasColumnType("numeric(14,6)")
                         .HasColumnName("cost_usd");
 
-                    b.Property<Guid>("IncidentId")
+                    b.Property<Guid?>("IncidentId")
                         .HasColumnType("uuid")
                         .HasColumnName("incident_id");
 
@@ -733,7 +733,7 @@ namespace Hephaisto.Agent.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("implement_started_at");
 
-                    b.Property<Guid>("IncidentId")
+                    b.Property<Guid?>("IncidentId")
                         .HasColumnType("uuid")
                         .HasColumnName("incident_id");
 
@@ -744,6 +744,10 @@ namespace Hephaisto.Agent.Persistence.Migrations
                     b.Property<bool>("NeedsCait")
                         .HasColumnType("boolean")
                         .HasColumnName("needs_cait");
+
+                    b.Property<long?>("PlanCommentId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("plan_comment_id");
 
                     b.Property<decimal>("PlanCostUsd")
                         .HasColumnType("numeric(14,6)")
@@ -812,6 +816,10 @@ namespace Hephaisto.Agent.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("verification_level");
 
+                    b.Property<Guid?>("WorkItemId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("work_item_id");
+
                     b.Property<string>("Workload")
                         .IsRequired()
                         .HasColumnType("text")
@@ -829,12 +837,23 @@ namespace Hephaisto.Agent.Persistence.Migrations
                     b.HasIndex(new[] { "IncidentId" }, "ix_code_fix_attempts_incident_id")
                         .HasDatabaseName("ix_code_fix_attempts_incident_id");
 
+                    b.HasIndex(new[] { "WorkItemId" }, "ix_code_fix_attempts_work_item_id")
+                        .HasDatabaseName("ix_code_fix_attempts_work_item_id");
+
                     b.HasIndex(new[] { "IncidentId" }, "ux_code_fix_attempts_one_open_per_incident")
                         .IsUnique()
                         .HasDatabaseName("ux_code_fix_attempts_one_open_per_incident")
                         .HasFilter("state IN ('Eligible', 'Planning', 'PlanReady', 'Implementing')");
 
-                    b.ToTable("code_fix_attempts", (string)null);
+                    b.HasIndex(new[] { "WorkItemId" }, "ux_code_fix_attempts_one_open_per_work_item")
+                        .IsUnique()
+                        .HasDatabaseName("ux_code_fix_attempts_one_open_per_work_item")
+                        .HasFilter("state IN ('Eligible', 'Planning', 'PlanReady', 'Implementing')");
+
+                    b.ToTable("code_fix_attempts", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_code_fix_attempts_one_subject", "(incident_id IS NULL) <> (work_item_id IS NULL)");
+                        });
                 });
 
             modelBuilder.Entity("Hephaisto.Core.Domain.Evidence", b =>
@@ -1595,6 +1614,16 @@ namespace Hephaisto.Agent.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("closed_at");
 
+                    b.Property<string>("DeclineCodes")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("decline_codes");
+
+                    b.Property<string>("DeclineReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("decline_reason");
+
                     b.Property<string>("Labels")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -1633,6 +1662,11 @@ namespace Hephaisto.Agent.Persistence.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)")
                         .HasColumnName("state_reason");
+
+                    b.Property<string>("StatusCommentDigest")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("status_comment_digest");
 
                     b.Property<long?>("StatusCommentId")
                         .HasColumnType("bigint")
@@ -1783,10 +1817,17 @@ namespace Hephaisto.Agent.Persistence.Migrations
                         .WithMany("CodeFixAttempts")
                         .HasForeignKey("IncidentId")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
                         .HasConstraintName("fk_code_fix_attempts_incidents_incident_id");
 
+                    b.HasOne("Hephaisto.Core.Domain.WorkItem", "WorkItem")
+                        .WithMany()
+                        .HasForeignKey("WorkItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .HasConstraintName("fk_code_fix_attempts_work_items_work_item_id");
+
                     b.Navigation("Incident");
+
+                    b.Navigation("WorkItem");
                 });
 
             modelBuilder.Entity("Hephaisto.Core.Domain.Evidence", b =>
