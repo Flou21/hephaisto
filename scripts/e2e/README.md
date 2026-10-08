@@ -278,3 +278,64 @@ Two more tiers, local and on demand, never in CI:
 
 A scenario that needs an investigation with evidence scripts the model stand-in first
 (`mcp_script`, `POST /llm/script`): it reads one tool, then concludes citing the step it read.
+
+## The issues suite (`issues-local.sh`), v0.14.0
+
+A third suite, about a third question: can Hephaisto be handed a GitHub issue. An issue assigned
+to its account is planned by a Job, the plan is a comment on the issue, an approver answers
+`/approve` or `/reject <reason>` in a comment, and the implementing Job opens a draft pull request
+that closes the issue (#243). One scenario per file (`issues/G*.sh`; `issues-local.sh --list`
+prints them), in the pager suite's shape: a header line, a `scenario()` function, `KNOWN_RED`
+with a milestone per entry, `--strict` as the release gate, `IssuesSuiteTests` for the
+bookkeeping.
+
+```sh
+# tilt_config.json: "github": "stand-in", "coder": true, "coder-mode": "pr", "coder-sdk": "fake"
+scripts/e2e/issues-local.sh                 # every scenario, one at a time
+scripts/e2e/issues-local.sh --only G01,G03
+```
+
+It runs on the dev cluster only. Not in CI yet: a plan clones a repository and the dev-context,
+and the in-cluster git server is seeded from a private one.
+
+**GitHub is a stand-in** (`infra/e2e/notification-receiver/GitHubStandIn.cs`), in the pod that
+is Teams and the model too, under a Service name of its own: an agent's API base URL is
+`http://github-stand-in.hephaisto-obs:8080/github/api`. It answers the seven REST calls the agent
+makes, with GitHub's field names, and copies what a client gets wrong against the real thing:
+`ETag` and a 304 for a list already given, 30 per page unless asked, `"body": null`, `since`
+inclusive at whole seconds, comment ids beyond 32 bits, a rate limit as a 403. What it does not
+copy: GitHub's issue list also returns pull requests, and this one never does.
+
+The other half is for the harness - a person at github.com, and a witness. Through Tilt's
+forward (`$H:8110`), no token:
+
+| | |
+|---|---|
+| `POST /github/control/repos/{o}/{r}/issues` `{title, body?, login, id?}` | somebody opens an issue |
+| `POST .../issues/{n}/assign`, `.../unassign` | the bot becomes, or stops being, an assignee |
+| `PATCH .../issues/{n}` `{body?, title?, state?}` | an edit; `state` closes and reopens |
+| `POST .../issues/{n}/comments` `{body, login, id?}` | a comment as that account |
+| `PUT .../pulls/{n}` `{merged?, state?}` | what became of a pull request; one nobody registered is an open draft |
+| `POST /github/control/fail/{500\|rate-limit\|off}?count=N` | the next N API calls fail |
+| `GET /github/control/requests` | every API call the agent made: `seq`, method, path, query, status |
+| `GET /github/control/comments` | every comment, with its issue, its author and how often it was edited |
+| `GET /github/control/state`, `DELETE /github/control` | everything it holds; forget it |
+
+An account is a login **and** a number, and a scenario comments as an approver by number
+(`lib/issues.sh`: `maintainer`, 1001) - which is what the install under test has to list. The
+stand-in's token and the bot's login are in `infra/e2e/teams-stand-in.yaml`.
+
+`lib/issues.sh` has two halves and says which is which: `gh_*` drives the stand-in and was
+exercised when it was written; `wi_*` reads an agent API that did not exist yet, and is the one
+place a later stage adjusts when a path or a field turns out differently.
+
+**The stand-in's image can vanish.** It is a fixed tag (`hephaisto/notification-receiver:dev`)
+that no container uses between a rebuild and the pod's restart, and a kubelet whose disk is
+filling up deletes images nothing uses (seen on the dev node on 2026-10-06, at 84%: `kubectl get
+events -A --field-selector reason=ImageGCFailed`). The restart then ends in `ImagePullBackOff`
+and takes Teams and the model stand-in with it. Rebuild the image and delete the pod:
+
+```sh
+docker build -f infra/e2e/notification-receiver/Dockerfile -t hephaisto/notification-receiver:dev .
+kubectl -n hephaisto-obs delete pod -l app.kubernetes.io/name=teams-stand-in
+```

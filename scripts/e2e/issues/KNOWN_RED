@@ -1,0 +1,24 @@
+# Scenarios of scripts/e2e/issues/ that are known not to pass yet, one per line:
+#
+#   <id> <milestone> <the stage that turns it green, and why it is red until then>
+#
+# Same rules as scripts/e2e/pager/KNOWN_RED: a red scenario listed here is reported and does not
+# fail the run; a GREEN one listed here fails it - so a fix and its removal from this list land in
+# the same commit. The milestone is the version whose release needs the scenario green: once
+# Directory.Build.props' floor passes it, the entry is stale and a unit test fails
+# (IssuesSuiteTests). issues-local.sh --strict, the release gate, fails every entry.
+#
+# All twelve landed before any of the agent's side (v0.14.0 stage 2.1, #244): the suite is what
+# the stages after it are accepted by.
+G01 0.14 stage 2.3 (#246): a code fix without an incident, and the plan as a comment
+G02 0.14 stage 2.2 (#245): the client, the poller and the work item; no issue is found before it
+G03 0.14 stage 2.4 (#247): approval on the issue, the implementing Job and Closes
+G04 0.14 stage 2.4 (#247): who may answer a plan, by account number, and the one refusal
+G05 0.14 stage 2.4 (#247): /reject and its reason
+G06 0.14 stage 2.4 (#247): unassigning cancels
+G07 0.14 stage 2.3 (#246): contract v2 carries the issue in its own element, snapshotted
+G08 0.14 stage 2.3 (#246): one open attempt per work item, across a restart
+G09 0.14 stage 2.2 (#245): github in the dependency health, and a poll that fails is retried by the next
+G10 0.14 stage 2.4 (#247): the status comment and the cap
+G11 0.14 stage 2.4 (#247): the pull request is read until it is merged
+G12 0.14 stage 2.4 (#247): the mode outranks a comment

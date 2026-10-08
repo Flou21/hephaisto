@@ -95,6 +95,15 @@ config.define_bool('pager-e2e',     args = False, usage = 'Layer scripts/e2e/val
 # The MCP endpoint (#157) with the pager suite's five tokens (scripts/e2e/values-mcp.yaml), forwarded
 # to 8183. On whenever pager-e2e is, because the suite's P29-P48 ask it.
 config.define_bool('mcp',           args = False, usage = 'The MCP endpoint on 8183, with the tokens mcp-secrets.sh makes')
+# GitHub issues as work (v0.14.0, #243): an issue assigned to Hephaisto's account is polled for,
+# planned, and approved in a comment.
+#   off       (default)
+#   stand-in  against infra/e2e/teams-stand-in.yaml, whose pod is GitHub too (GitHubStandIn.cs,
+#             Service github-stand-in) - no account, nothing leaves the cluster. It is what
+#             scripts/e2e/issues-local.sh runs against.
+#   live      against github.com with the real bot account. Reserved: it arrives with the live
+#             tier, and until then asking for it fails here rather than doing nothing quietly.
+config.define_string('github',      args = False, usage = 'GitHub issues as work: off | stand-in | live (default off)')
 cfg = config.parse()
 
 HOST    = cfg.get('host', 'localhost')
@@ -113,6 +122,7 @@ investigator_sdk = cfg.get('investigator-sdk', 'fake')
 teams_bot     = cfg.get('teams-bot', 'off')
 pager_e2e     = cfg.get('pager-e2e', False)
 mcp           = cfg.get('mcp', False) or pager_e2e
+github        = cfg.get('github', 'off')
 if pager_e2e:
     local_llm = False
     teams_bot = 'stand-in'
@@ -121,6 +131,10 @@ if coder_mode not in ['off', 'plan', 'pr']:
     fail("coder-mode must be off, plan or pr - got '%s'" % coder_mode)
 if teams_bot not in ['off', 'stand-in', 'real']:
     fail('teams-bot must be off, stand-in or real, not %r' % teams_bot)
+if github not in ['off', 'stand-in', 'live']:
+    fail('github must be off, stand-in or live, not %r' % github)
+if github == 'live':
+    fail('github=live arrives with the live tier of v0.14.0 (scripts/e2e/github-live.sh); until then it is off or stand-in.')
 if coder_sdk not in ['fake', 'real']:
     fail("coder-sdk must be fake or real - got '%s'" % coder_sdk)
 if investigator_sdk not in ['fake', 'real']:
@@ -271,9 +285,9 @@ if tracing:
 
 # --- the agent ----------------------------------------------------------------------------
 
-# One binary, two jobs: the c19 egress canary and the Teams stand-in. Built once, here, so
-# that neither depends on the other being switched on.
-if chaos or teams_bot == 'stand-in':
+# One binary, three jobs: the c19 egress canary, the Teams stand-in and the GitHub one. Built
+# once, here, so that none depends on another being switched on.
+if chaos or teams_bot == 'stand-in' or github == 'stand-in':
     local_resource(
         'notification-receiver-image',
         cmd = 'docker build -q -f infra/e2e/notification-receiver/Dockerfile -t hephaisto/notification-receiver:dev .',
@@ -283,6 +297,7 @@ if chaos or teams_bot == 'stand-in':
             'infra/e2e/notification-receiver/LlmStandIn.cs',
             'infra/e2e/notification-receiver/DecoyMcp.cs',
             'infra/e2e/notification-receiver/OidcStandIn.cs',
+            'infra/e2e/notification-receiver/GitHubStandIn.cs',
             'scripts/e2e/mcp/neighbour-tools.json',
             'infra/e2e/notification-receiver/notification-receiver.csproj',
             'infra/e2e/notification-receiver/Dockerfile',
@@ -467,7 +482,23 @@ if agent:
         # bool parsing trims it. values-pager.yaml quotes it and never needed this.
         chart_set.append("extraEnv[%d].value=false " % (taken + 4))
 
-    if teams_bot == 'stand-in':
+    # --- GitHub issues as work ---------------------------------------------------------------
+    #
+    # The stand-in is the same pod as Teams', under a Service name of its own, so "stand-in" here
+    # only makes sure that pod is applied - below, with Teams'.
+    #
+    # STAGE 2.2 OF v0.14.0 POINTS THE AGENT AT IT HERE. The agent has no GitHub client yet, so
+    # nothing is set on it. When it has one, this is where its API base URL becomes
+    #
+    #     http://github-stand-in.hephaisto-obs:8080/github/api
+    #
+    # its token the stand-in's GITHUB_STANDIN_TOKEN, and the account it polls for the stand-in's
+    # GITHUB_STANDIN_BOT_LOGIN (infra/e2e/teams-stand-in.yaml) - as a values file layered like
+    # values-dev-teams-bot.yaml, or appended to extraEnv by count as above, never by a fixed
+    # index. scripts/e2e/issues-local.sh reads GitHub__ApiBaseUrl off the Deployment to tell
+    # which GitHub an agent talks to; if the variable gets another name, change it there too.
+
+    if teams_bot == 'stand-in' or github == 'stand-in':
 
         k8s_yaml('infra/e2e/teams-stand-in.yaml')
         k8s_resource(
