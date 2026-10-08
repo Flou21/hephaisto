@@ -582,7 +582,10 @@ Six things to know:
   suite's issues too** - with a real model, if that is what it runs. On 2026-10-08 production
   listed the sandbox: one run of this suite was four real plans there. Before a run, make sure
   no other install lists `TrueRelevance/hephaisto-sandbox`; the runner can only see it
-  afterwards, in the status comments of the last run's issues (`live_foreign_takers`).
+  afterwards, in the status comments of the last run's issues (`live_foreign_takers`), and in
+  this run's after every scenario, where it stops. After a run that met one, the refusal is
+  lifted once with `--other-install-gone` - by whoever took the sandbox off that install and
+  saw the rollout, never to get a run through.
 - **Never read the two tokens.** They are in `hephaisto-github` (namespace `hephaisto`) and
   `hephaisto-codefix` (namespace `hephaisto-coder`), they see more than the sandbox, and nothing
   here needs their value: the suite plays the person with the `gh` of whoever runs it.

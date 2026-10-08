@@ -271,14 +271,25 @@ gh_comment_reads_since() { gh_polls_since "$1"; }
 # that looks at the dev agent can see that; what an earlier run left on GitHub can.
 #   live_foreign_takers [how many of the newest closed issues to look at]
 live_foreign_takers() {
+    # shellcheck disable=SC2046
+    live_foreign_takers_of $(_live_api GET "issues?state=closed&sort=created&direction=desc&per_page=${1:-6}" \
+        | jq -r --arg p "$LIVE_TITLE_PREFIX" '.[] | select(.pull_request == null) | select(.title | startswith($p)) | .number')
+}
+
+# The same question about named issues - the ones THIS run opened, asked after every scenario,
+# so that a second install costs one scenario and not a run (#289).
+#
+# "Does not know" is the agent's 404 and nothing else: an agent that is restarting answers
+# nothing, and that says nothing about who took an issue.
+#   live_foreign_takers_of <issue number>...
+live_foreign_takers_of() {
     local n id uuid
-    for n in $(_live_api GET "issues?state=closed&sort=created&direction=desc&per_page=${1:-6}" \
-            | jq -r --arg p "$LIVE_TITLE_PREFIX" '.[] | select(.pull_request == null) | select(.title | startswith($p)) | .number'); do
+    for n in "$@"; do
         for id in $(_live_api GET "issues/$n/comments?per_page=100" \
                 | jq -r --arg b "$LIVE_BOT" '.[] | select(.user.login == $b) | .body' \
                 | grep -o 'hephaisto:status:[0-9a-f]\{32\}' | cut -d: -f3 | sort -u); do
             uuid="${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20:12}"
-            [ "$(_issues_curl -o /dev/null -w '%{http_code}' "$ISSUES_API/api/workitems/$uuid")" = 200 ] || echo "$n $uuid"
+            [ "$(_issues_curl -o /dev/null -w '%{http_code}' "$ISSUES_API/api/workitems/$uuid")" != 404 ] || echo "$n $uuid"
         done
     done
 }

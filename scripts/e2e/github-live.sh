@@ -8,6 +8,8 @@
 #   scripts/e2e/github-live.sh --only L01,L04  # some
 #   scripts/e2e/github-live.sh --list          # what exists
 #   scripts/e2e/github-live.sh --sweep         # close whatever an aborted run left, and stop
+#   scripts/e2e/github-live.sh --other-install-gone   # once, after another install was taken
+#                                                     # off the sandbox (see below)
 #
 # Everything else that tests issues as work runs against a stand-in for GitHub
 # (scripts/e2e/issues-local.sh), which answers what this project's authors believed GitHub
@@ -36,7 +38,14 @@
 #
 # IT ALSO REFUSES when the issues of the last run were taken by ANOTHER Hephaisto as well - an
 # install that holds the bot's token and lists the sandbox, which plans them with its own coder
-# and its own money (production did, on 2026-10-08).
+# and its own money (production did, on 2026-10-08). What the last run left on GitHub does not
+# change when that install is taken off the sandbox, so the refusal is lifted by the person who
+# did that, saying so: --other-install-gone, once. It is a statement about another cluster that
+# this script cannot check, so it is not taken on trust for longer than one scenario: after
+# EVERY scenario, with or without the flag, the issues THIS run opened are asked the same
+# question, and the run stops at the first one another install took - the cleanup closes them,
+# which cancels that install's Jobs. A run that passes leaves clean issues, and the next one
+# needs no flag (#289).
 #
 # IT REFUSES TO RUN unless all of this is so, read off the agent's Deployment and off GitHub:
 # the kube context is this machine's; the agent talks to https://api.github.com; the ONE
@@ -89,6 +98,7 @@ source "$E2E_DIR/lib/live.sh"
 ONLY=""
 LIST=false
 SWEEP=false
+OTHER_GONE=false
 OUT=""
 
 while [ $# -gt 0 ]; do
@@ -96,6 +106,7 @@ while [ $# -gt 0 ]; do
         --only)    ONLY="$2"; shift 2 ;;
         --list)    LIST=true; shift ;;
         --sweep)   SWEEP=true; shift ;;
+        --other-install-gone) OTHER_GONE=true; shift ;;
         --results) OUT="$2"; shift 2 ;;
         -h|--help) awk 'NR>1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "$0"; exit 0 ;;
         *)         die "unknown argument: $1" ;;
@@ -240,7 +251,10 @@ held=$(_issues_curl "$ISSUES_API/api/workitems?limit=200" | jq --arg r "$LIVE_RE
 # that holds it and lists the sandbox takes every issue this suite opens - with whatever coder
 # IT runs. What the last run's issues carry says whether one did.
 others=$(live_foreign_takers 6 2>/dev/null | tr '\n' ';')
-[ -z "$others" ] || die "refusing: another Hephaisto took issues of the last run as work as well (issue and work item: ${others%;}) - an install with $LIVE_BOT's token that lists $LIVE_REPO, and it plans them with ITS coder. Take $LIVE_REPO out of that install's github.issues.repositories first"
+if [ -n "$others" ]; then
+    $OTHER_GONE || die "refusing: another Hephaisto took issues of the last run as work as well (issue and work item: ${others%;}) - an install with $LIVE_BOT's token that lists $LIVE_REPO, and it plans them with ITS coder. Take $LIVE_REPO out of that install's github.issues.repositories first; when that is done and rolled out, run this once with --other-install-gone"
+    warn "another Hephaisto took issues of the last run (${others%;}); going on because --other-install-gone says it no longer lists $LIVE_REPO. This run's issues are asked after every scenario"
+fi
 
 # --- from here on something is written, so from here on it is cleaned up ----------------------------
 
@@ -291,6 +305,13 @@ for f in $SELECTED; do
     wait_for "the agent to answer" 300 issues_agent_up || warn "the agent did not answer within 300s before $(field "$f" 1)"
     say "run $(field "$f" 1): $(field "$f" 2)"
     run_one "$f" || true
+
+    # Whoever said the sandbox is ours alone may be wrong, and so may nobody having said
+    # anything: what this scenario's issues carry is the first thing that can tell. Stopping
+    # here closes them (the trap), and a closed issue is a cancelled Job on the other side too.
+    # shellcheck disable=SC2046
+    others=$(live_foreign_takers_of $(sort -un "$LIVE_CREATED") 2>/dev/null | tr '\n' ';')
+    [ -z "$others" ] || die "stopping: another Hephaisto took issues of THIS run as work as well (issue and work item: ${others%;}) - an install with $LIVE_BOT's token still lists $LIVE_REPO. Nothing after $(field "$f" 1) was run"
 done
 
 # --- the sandbox is left as it was found -----------------------------------------------------------
