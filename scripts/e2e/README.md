@@ -478,6 +478,13 @@ on nothing but a comment count. No preflight that looks at the dev agent sees th
 runner looks at GitHub: the last run's issues must carry no status comment of a work item the
 agent under test does not know (`live_foreign_takers`).
 
+What the last run left does not change when that install is taken off the sandbox, so the
+refusal is lifted by whoever did that, saying so once: `scripts/e2e/github-live.sh
+--other-install-gone`. The flag is a statement about another cluster and is not trusted for
+longer than a scenario: after every scenario, with or without it, the issues THIS run opened are
+asked the same question, and the run stops at the first one another install took. A run that
+passes leaves clean issues, and the next one needs no flag.
+
 **What it does not test**, and where that is tested instead:
 
 - **Merged is `Done`.** A merge would move `main`, and the scripted fix would no longer apply.

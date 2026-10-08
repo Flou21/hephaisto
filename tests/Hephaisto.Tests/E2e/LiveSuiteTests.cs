@@ -63,6 +63,20 @@ public sealed partial class LiveSuiteTests
         runner.Should().Contain("refusing: another Hephaisto took issues of the last run");
         runner.IndexOf("live_foreign_takers 6", StringComparison.Ordinal)
             .Should().BeLessThan(runner.IndexOf("trap 'cleanup' EXIT", StringComparison.Ordinal), "asked before anything is written");
+
+        // What the last run left does not change when that install is taken off the sandbox,
+        // so the refusal is lifted by a person saying so - and only that one: the flag turns
+        // a `die` into a warning nowhere else (#289).
+        runner.Should().Contain("--other-install-gone) OTHER_GONE=true; shift ;;");
+        runner.Should().Contain("$OTHER_GONE || die \"refusing: another Hephaisto took issues of the last run");
+        Regex.Matches(runner, @"\$OTHER_GONE\b").Should().HaveCount(1, "one refusal can be lifted, and no other");
+
+        // And the statement is not trusted for longer than a scenario: this run's issues are
+        // asked after each one, flag or no flag, and the run stops at the first that was taken.
+        var loop = runner[runner.IndexOf("run_one \"$f\" || true", StringComparison.Ordinal)..];
+        loop.Should().Contain("live_foreign_takers_of $(sort -un \"$LIVE_CREATED\")");
+        loop.Should().Contain("|| die \"stopping: another Hephaisto took issues of THIS run");
+        File.ReadAllText(Path.Combine(E2e(), "lib", "live.sh")).Should().Contain("!= 404 ] || echo \"$n $uuid\"", "an agent that does not answer says nothing about who took an issue");
     }
 
     /// <summary>
