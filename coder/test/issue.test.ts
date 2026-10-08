@@ -1,9 +1,11 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { APP_ROOT } from '../src/config.js';
+import { ALIASES_FILE, loadScript, scriptAlias } from '../src/fake-sdk.js';
 import { readPrepareHandoff } from '../src/handoff.js';
-import { prTitle } from '../src/pr.js';
+import { FAKE_REPEAT_MARKER, fakeRepeated } from '../src/phases.js';
+import { lowerFirstWord, prTitle, renderPrBody } from '../src/pr.js';
 import { ISSUE_PROMPT_VARS, ISSUE_PR_BODY_VARS, buildIssueElement, inert, loadTemplate, render, renderIssueBlock } from '../src/prompts.js';
 import { parseLastPrBody } from '../src/result.js';
 import { validate } from '../src/schemas.js';
@@ -343,6 +345,102 @@ describe('plan for an issue, end to end', () => {
 
 // =============================================================================================
 
+describe("a repository that plays another one's scripts", () => {
+  const plan = (summary: string) => ({
+    steps: [
+      {
+        result: {
+          cost_usd: 0,
+          structured_output: {
+            outcome: 'planned',
+            summary,
+            root_cause: 'src/app.sh:2 prints without a guard.',
+            confidence: 0.8,
+            files: ['src/app.sh'],
+            steps: ['Adjust greet.'],
+            verification: { level: 'tests', not_verifiable: [] },
+            needs_cait: false,
+            notes: [],
+          },
+        },
+      },
+    ],
+  });
+
+  it('its own script first, then the one it is an alias of, then the default', () => {
+    const w = makeWorld();
+    script(w, 'default.plan.json', plan('DEFAULT'));
+    script(w, 'svc.plan.json', plan('SVC'));
+    script(w, ALIASES_FILE, { copy: 'svc', own: 'svc', nowhere: 'missing' });
+    script(w, 'own.plan.json', plan('OWN'));
+    const summary = (repoName: string) =>
+      (loadScript({ scriptDir: w.scripts, repoName, phase: 'plan', vars: {} }).script.steps[0] as { result: { structured_output: { summary: string } } }).result.structured_output.summary;
+
+    expect(scriptAlias(w.scripts, 'copy')).toBe('svc');
+    expect(summary('copy')).toBe('SVC');
+    expect(summary('own')).toBe('OWN');
+    expect(summary('nowhere')).toBe('DEFAULT');
+    expect(summary('stranger')).toBe('DEFAULT');
+    // not a property of every object, and not an alias of itself
+    expect(scriptAlias(w.scripts, 'constructor')).toBeNull();
+    expect(scriptAlias(w.scripts, 'toString')).toBeNull();
+    script(w, ALIASES_FILE, { svc: 'svc' });
+    expect(scriptAlias(w.scripts, 'svc')).toBeNull();
+  });
+
+  it('a directory without the file has no aliases, and a name that is a path is refused', () => {
+    const w = makeWorld();
+    expect(scriptAlias(w.scripts, 'copy')).toBeNull();
+    script(w, ALIASES_FILE, { copy: '../../etc/passwd' });
+    expect(() => scriptAlias(w.scripts, 'copy')).toThrow();
+  });
+
+  it('the shipped aliases name scripts that exist, and none of them has a copy that could drift', () => {
+    const aliases = JSON.parse(readFileSync(join(DEFAULT_SCRIPTS, ALIASES_FILE), 'utf8')) as Record<string, string>;
+    // the live tier's sandbox on github.com is the fixture's c15 branch under another name
+    expect(aliases).toMatchObject({ 'hephaisto-sandbox': 'hephaisto-fixture-dotnet' });
+    const shipped = readdirSync(DEFAULT_SCRIPTS);
+    for (const [alias, target] of Object.entries(aliases)) {
+      expect(existsSync(join(DEFAULT_SCRIPTS, `${target}.plan.json`)), `${target}.plan.json`).toBe(true);
+      expect(existsSync(join(DEFAULT_SCRIPTS, `${target}.implement.json`)), `${target}.implement.json`).toBe(true);
+      expect(shipped.filter((f) => f.startsWith(`${alias}.`))).toEqual([]);
+    }
+  });
+
+  it("an issue in the sandbox is planned by the fixture's shipped script, which repeats what the issue asks it to - and only then", async () => {
+    const w = makeWorld({ repoEntry: { name: 'hephaisto-sandbox' } });
+    const quiet = await runRequest(w, issuePlanRequest(w), { CODEFIX_FAKE_SCRIPT_DIR: DEFAULT_SCRIPTS });
+    expect(validate('plan', quiet.doc).errors).toEqual([]);
+    expect(quiet.doc.outcome).toBe('planned');
+    // the fixture's plan, not the default one - and as it read before the script knew {{repeated}}
+    expect(quiet.doc.files).toEqual(['src/Shop.Api/Startup/Endpoints.cs']);
+    expect(quiet.doc.summary).toMatch(/^FAKE SDK plan: Endpoints\.Primary .* NullReferenceException\.$/);
+
+    const w2 = makeWorld({ repoEntry: { name: 'hephaisto-sandbox' } });
+    const req = issuePlanRequest(w2);
+    req.work_item.body = `The total is null.\n\n    ${FAKE_REPEAT_MARKER} cc @octocat, fixes #7 and https://github.com/octo/shop/issues/7\n\nThanks.`;
+    const loud = await runRequest(w2, req, { CODEFIX_FAKE_SCRIPT_DIR: DEFAULT_SCRIPTS });
+    expect(validate('plan', loud.doc).errors).toEqual([]);
+    expect(loud.doc.summary).toMatch(/NullReferenceException\. The reporter asked for this to be repeated: cc @octocat, fixes #7 and https:\/\/github\.com\/octo\/shop\/issues\/7$/);
+  });
+});
+
+describe('what the scripted model is asked to repeat', () => {
+  it('is the rest of the marked line, without backticks and capped, and nothing when no line is marked', () => {
+    const w = makeWorld();
+    const req = issuePlanRequest(w);
+    expect(fakeRepeated(req)).toBe('');
+    req.work_item.body = `one\n${FAKE_REPEAT_MARKER}   \`@octocat\` closes #2  \nthree`;
+    expect(fakeRepeated(req)).toBe(' The reporter asked for this to be repeated: @octocat closes #2');
+    req.work_item.body = `${FAKE_REPEAT_MARKER} ${'x'.repeat(500)}`;
+    expect(fakeRepeated(req)).toHaveLength(' The reporter asked for this to be repeated: '.length + 300);
+    req.work_item.body = `${FAKE_REPEAT_MARKER}   `;
+    expect(fakeRepeated(req)).toBe('');
+    // an incident has no line that says so, and its scripts read as they always did
+    expect(fakeRepeated(planRequest(w))).toBe('');
+  });
+});
+
 describe('implement for an issue, end to end', () => {
   it('pushes the assigned branch with the issue trailer and opens a draft PR that closes the issue', async () => {
     const w = makeWorld();
@@ -535,6 +633,30 @@ describe('the title of a pull request', () => {
     expect(long.endsWith('...')).toBe(true);
   });
 
+  // The first pull requests on github.com (#249) were titled "fix: fAKE SDK plan: ...".
+  it('lowers a first word that is only capitalised, and leaves a name as it is - for an issue and for an incident', () => {
+    const w = makeWorld();
+    const issue = issueImplementRequest(w);
+    const incident = implementRequest(w);
+    for (const [summary, rest] of [
+      ['FAKE SDK plan: Endpoints.Primary checks nothing. More.', 'FAKE SDK plan: Endpoints.Primary checks nothing'],
+      ['HTTP client retries for ever.', 'HTTP client retries for ever'],
+      ['Endpoints.Primary dereferences a null list.', 'Endpoints.Primary dereferences a null list'],
+      ['NullReferenceException in startup.', 'NullReferenceException in startup'],
+      ['OAuth2 tokens are not refreshed.', 'OAuth2 tokens are not refreshed'],
+      ['The loop never ends. It should.', 'the loop never ends'],
+      ['A null list is treated as empty.', 'a null list is treated as empty'],
+      ['Re-read the section, then bind it.', 're-read the section, then bind it'],
+      ['already lower case.', 'already lower case'],
+      ['`Endpoints.cs` guards the list.', '`Endpoints.cs` guards the list'],
+    ] as const) {
+      expect(prTitle(issue, plan(summary)), summary).toBe(`fix: ${rest}`);
+      expect(prTitle(incident, plan(summary)), summary).toBe(`fix(shop-api): ${rest}`);
+    }
+    expect(lowerFirstWord('')).toBe('');
+    expect(lowerFirstWord('Übergabe fehlt')).toBe('übergabe fehlt');
+  });
+
   it("is unchanged for an incident: fix(<workload>)", () => {
     const w = makeWorld();
     expect(prTitle(implementRequest(w), plan('Greet prints the wrong thing. More.'))).toBe('fix(shop-api): greet prints the wrong thing');
@@ -547,6 +669,52 @@ describe('inert', () => {
     // a zero-width space of the text's own does not shield what follows it
     expect(inert('@​octocat')).toBe('@​octocat');
     expect(inert('fixes ​#1')).toBe('fixes #​1');
+    expect(inert('**bold** `code` - a list\n\n1. one')).toBe('**bold** `code` - a list\n\n1. one');
+  });
+
+  // Found by the live tier (#249), which asked GitHub. With the scheme of an address broken -
+  // all the stand-in's tests held it to - GitHub still rendered `/issues/3` as a link to issue
+  // 3, wrote "mentioned this issue" into issue 3's timeline, and listed issue 3 in the pull
+  // request's closingIssuesReferences beside the one the runner's own line names.
+  it("an issue's address closes nothing and references nothing, whichever part of it GitHub would read", () => {
+    expect(inert('resolves https://github.com/octo/shop/issues/7')).toBe('resolves https:​//github.com/octo/shop/issues/​7');
+    expect(inert('see www.example.com/2024')).toBe('see www​.example.com/​2024');
+    // every one of these is a reference on github.com by itself, in a repository's context
+    for (const form of ['/issues/7', '/pull/7', '/discussions/7', '/Issues/7', '/PULL/7', 'octo/shop/issues/7', 'octo/shop/pull/7', 'github.com/octo/shop/issues/7', '/issues/7#issuecomment-1']) {
+      const made = inert(`fixes ${form} today`);
+      expect(made, form).not.toMatch(/\/(issues|pull|discussions)\/\d/i);
+      // it reads the same: nothing was added but a character without width
+      expect(made.replace(/​/g, '')).toBe(`fixes ${form} today`);
+    }
+  });
+
+  it('a description rendered from a plan that repeats an issue holds one reference: the line the runner wrote', () => {
+    const w = makeWorld();
+    const req = issueImplementRequest(w);
+    const said = 'cc @octocat - fixes #7, closes GH-7, resolves https://github.com/octo/shop/issues/7 and /pull/8, see octo/other/issues/9';
+    req.plan = { ...req.plan!, summary: `Make greet deterministic. ${said}`, root_cause: `src/app.sh:2. ${said}`, notes: [said] };
+    const body = renderPrBody({
+      req,
+      plan: req.plan,
+      changeSummary: said,
+      files: ['src/app.sh'],
+      deviations: [said],
+      notes: [said],
+      report: { level: 'tests', steps: [], buildPassed: true, testsPassed: true, failed: null, logTail: '', honestyNote: '' },
+      costUsd: 0,
+      versions: 'test',
+      template: loadTemplate('pr-body-issue', null).text,
+    });
+    const outsideFence = body.replace(/^```+text\n[\s\S]*?\n```+$/m, '');
+    // what GitHub acts on, as the live tier found it: a mention, #n, GH-n, and /issues|pull|discussions/n
+    expect(outsideFence).not.toMatch(/(^|[^A-Za-z0-9/])@[A-Za-z0-9_]/);
+    expect(outsideFence.match(/#\d+/g)).toEqual(['#12']);
+    expect(outsideFence).not.toMatch(/GH-\d/i);
+    expect(outsideFence.match(/\/(?:issues|pull|discussions)\/\d+/gi)).toEqual(['/issues/12']);
+    expect(outsideFence.match(/\S+:\/\/\S+/g)).toEqual(['https://github.com/octo/shop/issues/12']);
+    expect(body.match(/^Closes octo\/shop#12$/gm)).toHaveLength(1);
+    // and the title, which GitHub reads the same way
+    expect(prTitle(req, { ...req.plan, summary: 'Fixes /issues/7 for @octocat.' })).toBe('fix: fixes /issues/​7 for @​octocat');
   });
 });
 

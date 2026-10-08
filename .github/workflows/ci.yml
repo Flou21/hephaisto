@@ -196,7 +196,8 @@ jobs:
           # overlays (coder, local model) are never installed alone.
           for values in ci/minimal-values.yaml ci/full-values.yaml values-dev.yaml \
                         "values-dev.yaml values-dev-coder.yaml values-dev-local-llm.yaml" \
-                        "values-dev.yaml values-dev-coder.yaml values-dev-github.yaml"; do
+                        "values-dev.yaml values-dev-coder.yaml values-dev-github.yaml" \
+                        "values-dev.yaml values-dev-coder.yaml values-dev-github-live.yaml"; do
             echo "::group::$values"
             args=()
             for f in $values; do args+=(--values "charts/hephaisto/$f"); done

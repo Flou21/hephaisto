@@ -234,6 +234,25 @@ An issue whose pull request was merged or closed is not started over while it si
 assigned: unassign the account and assign it again (or close and reopen the issue) to hand it
 back.
 
+**What it takes on github.com**, as measured against it (`scripts/e2e/github-live.sh`), not as
+read in its documentation:
+
+- The agent's token above is enough: with Issues and Pull requests it can also ask whose token
+  it is and what the repository's default branch is. It cannot push, and should not be able to.
+- The coder's token (`secrets.codeFix`, key `GITHUB_TOKEN`): Contents read and write, Pull
+  requests read and write. That clones, pushes the one branch, opens the **draft** pull request
+  and assigns it. A plan without draft pull requests in private repositories refuses the
+  `--draft`, and Hephaisto opens nothing else (GitHub's documentation; not measured).
+- The account has to be **assignable** in the repository - a member or collaborator with write.
+  GitHub answers an assignment it ignores with success.
+- A **label** the context repository names for pull requests (`defaults.pr.labels` in its
+  `repos.yaml`) has to exist in the target repository. `gh` refuses one that does not; the pull
+  request is then opened without it, and the attempt's `deviations` say so.
+- Text a model or a stranger wrote is posted with a zero-width space wherever GitHub would act
+  on it - after `@`, `#`, `GH-`, inside `://`, after every `/` before a digit - so a copy of an
+  address or a path out of a plan comment or a pull request's description carries that
+  character.
+
 **Egress.** With `codeFix.egressProxy` rendered, the agent's GitHub calls go through that proxy
 (`github.useEgressProxy`, on by default): `api.github.com` is already on its allowlist, its log
 then shows the agent's requests beside the coder's, and the chart adds the two NetworkPolicy

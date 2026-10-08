@@ -406,8 +406,34 @@ public sealed class IssueCommentsTests
     [Fact]
     public void WhereTheZeroWidthSpaceGoes()
     {
-        IssueComments.Neutralise("@octocat #12 GH-7 http://x.y www.z e@mail a # b @ c", 500)
-            .Should().Be($"@{Zwsp}octocat #{Zwsp}12 GH-{Zwsp}7 http:{Zwsp}//x.y www{Zwsp}.z e@{Zwsp}mail a # b @ c");
+        IssueComments.Neutralise("@octocat #12 GH-7 http://x.y www.z e@mail a # b @ c /issues/5 a/b 1/2", 500)
+            .Should().Be($"@{Zwsp}octocat #{Zwsp}12 GH-{Zwsp}7 http:{Zwsp}//x.y www{Zwsp}.z e@{Zwsp}mail a # b @ c /issues/{Zwsp}5 a/b 1/{Zwsp}2");
+    }
+
+    /// <summary>
+    /// Found by the live tier (#249), which asked github.com. Every one of these is a reference
+    /// there BY ITSELF, in a comment on an issue: no scheme, no host. With only the scheme of an
+    /// address broken - all that the test above this one held it to for a stage - GitHub
+    /// rendered <c>https:(zwsp)//github.com/octo/shop/issues/5</c> as a link to issue 5 and wrote
+    /// "mentioned this issue" into issue 5's timeline, under Hephaisto's account.
+    /// </summary>
+    [Theory]
+    [InlineData("/issues/5")]
+    [InlineData("/pull/5")]
+    [InlineData("/discussions/5")]
+    [InlineData("/Issues/5")]
+    [InlineData("/PULL/5/files")]
+    [InlineData("octo/shop/issues/5")]
+    [InlineData("octo/shop/pull/5")]
+    [InlineData("github.com/octo/shop/issues/5")]
+    [InlineData("https://github.com/octo/shop/issues/5#issuecomment-6040615842")]
+    [InlineData("https://github.com/orgs/octo/discussions/5")]
+    public void AnIssuesAddress_IsNotAReference_WhicheverPartOfItGitHubWouldRead(string address)
+    {
+        var inert = IssueComments.Neutralise($"this is {address} again", 500);
+
+        inert.Should().NotMatchRegex(@"(?i)/(issues|pull|discussions)/[0-9]", "that is all GitHub needs to see");
+        inert.Replace(Zwsp.ToString(), string.Empty, StringComparison.Ordinal).Should().Be($"this is {address} again");
     }
 
     [Theory]

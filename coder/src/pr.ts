@@ -221,6 +221,19 @@ export function prTitle(req: CodeFixRequest, plan: PlanResult): string {
   const prefix = isWorkItem(req) ? prType(req.work_item.type) : `fix(${req.incident.target.workload.split('/').pop() || 'service'})`;
   // a title notifies and links like any other text: an issue's is made inert as its body is
   const sentence = isWorkItem(req) ? inert(first) : first;
-  const t = `${prefix}: ${sentence.charAt(0).toLowerCase()}${sentence.slice(1)}`.replace(/\.$/, '');
+  const t = `${prefix}: ${lowerFirstWord(sentence)}`.replace(/\.$/, '');
   return t.length > 120 ? `${t.slice(0, 117)}...` : t;
+}
+
+/**
+ * A conventional title goes on in lower case after its type - but only a word that is
+ * capitalised because it starts the sentence is lowered: one upper-case letter, then lower-case
+ * ones ("The loop ..." -> "the loop ..."). An acronym (HTTP), an identifier
+ * (Endpoints.Primary, NullReferenceException) and a word with a digit or a capital inside it
+ * are names, and "hTTP client" is not one. The first real pull requests on github.com were
+ * titled "fix: fAKE SDK plan: ...".
+ */
+export function lowerFirstWord(sentence: string): string {
+  const word = /^\S+/.exec(sentence)?.[0] ?? '';
+  return /^\p{Lu}[\p{Ll}'\u2019-]*[,;:]?$/u.test(word) ? `${sentence.charAt(0).toLowerCase()}${sentence.slice(1)}` : sentence;
 }

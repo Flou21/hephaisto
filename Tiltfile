@@ -101,8 +101,10 @@ config.define_bool('mcp',           args = False, usage = 'The MCP endpoint on 8
 #   stand-in  against infra/e2e/teams-stand-in.yaml, whose pod is GitHub too (GitHubStandIn.cs,
 #             Service github-stand-in) - no account, nothing leaves the cluster. It is what
 #             scripts/e2e/issues-local.sh runs against.
-#   live      against github.com with the real bot account. Reserved: it arrives with the live
-#             tier, and until then asking for it fails here rather than doing nothing quietly.
+#   live      against github.com: the real bot account, its two tokens, the real `gh`
+#             (charts/hephaisto/values-dev-github-live.yaml). For scripts/e2e/github-live.sh and
+#             nothing else: it lists ONE repository, the sandbox, and needs `coder`. The Secrets
+#             are made by hand; see that file's header.
 config.define_string('github',      args = False, usage = 'GitHub issues as work: off | stand-in | live (default off)')
 cfg = config.parse()
 
@@ -133,8 +135,10 @@ if teams_bot not in ['off', 'stand-in', 'real']:
     fail('teams-bot must be off, stand-in or real, not %r' % teams_bot)
 if github not in ['off', 'stand-in', 'live']:
     fail('github must be off, stand-in or live, not %r' % github)
-if github == 'live':
-    fail('github=live arrives with the live tier of v0.14.0 (scripts/e2e/github-live.sh); until then it is off or stand-in.')
+if github == 'live' and not coder:
+    fail('github=live needs coder: an issue is planned and implemented by a coder Job, and the live tier is about its real `gh`.')
+if github == 'live' and pager_e2e:
+    fail('github=live and pager-e2e do not go together: the pager suite replaces the model and every window under a run against github.com.')
 if coder_sdk not in ['fake', 'real']:
     fail("coder-sdk must be fake or real - got '%s'" % coder_sdk)
 if investigator_sdk not in ['fake', 'real']:
@@ -389,8 +393,10 @@ if agent:
         chart_set.append('codeFix.sdk=%s' % coder_sdk)
         # The shim follows where the repositories live, not which SDK runs: every dev mapping points
         # at the in-cluster git server, which real gh refuses, so a real-model run would push its
-        # branch and then fail at `gh pr create`.
-        chart_set.append('codeFix.gh=shim')
+        # branch and then fail at `gh pr create`. With github=live the one repository is on
+        # github.com, and running the real gh against it is what that mode is for.
+        if github != 'live':
+            chart_set.append('codeFix.gh=shim')
         if investigator:
             chart_values.append('charts/hephaisto/values-dev-investigator.yaml')
             chart_set.append('investigation.job.sdk=%s' % investigator_sdk)
@@ -498,6 +504,15 @@ if agent:
     # GitHub an agent talks to; if the variable gets another name, change it there too.
     if github == 'stand-in':
         chart_values.append('charts/hephaisto/values-dev-github.yaml')
+
+    # Live: github.com itself, through the coder's egress proxy, with the token of the Secret
+    # hephaisto-github - made by hand and applied by nobody here. Layered after
+    # values-dev-coder.yaml, whose context ref and workload mappings it replaces. The stand-in
+    # pod is not applied for it (Teams' still is, when teams-bot says so).
+    # scripts/e2e/github-live.sh reads GitHub__ApiBaseUrl, GitHub__Repositories__*,
+    # GitHub__Approvers__* and CodeFix__Sdk off the Deployment and refuses anything but this.
+    if github == 'live':
+        chart_values.append('charts/hephaisto/values-dev-github-live.yaml')
 
     if teams_bot == 'stand-in' or github == 'stand-in':
 

@@ -104,6 +104,31 @@ release is about handing it a GitHub issue ([#243](https://github.com/Flou21/hep
 - Audit rows for a work item: `workitem.taken`, `workitem.cancelled`, `workitem.done`, and
   `workitem.command` - one per comment that decided a plan or was answered, with the account's
   number and the comment's id.
+- **All of it was asked of github.com before release** ([#249](https://github.com/Flou21/hephaisto/issues/249)).
+  `scripts/e2e/github-live.sh` runs the road above against GitHub itself - a real bot account,
+  its two fine-grained tokens, the real `gh`, the agent's client through the egress proxy - in
+  a sandbox repository, with the model scripted. It is the first test of this project that
+  leaves the cluster for GitHub, and what it found is in this release rather than in yours:
+  - **What a model repeats cannot close or mention another issue.** GitHub reads `/issues/12`,
+    `/pull/12` and `/discussions/12` as references *by themselves* - no scheme, no host - and
+    takes a closing keyword before an issue's address as it does before `#12`. A plan that
+    repeated "resolves `<another issue's address>`" from its issue was a pull request GitHub
+    listed as closing that other issue too, and a comment that wrote "mentioned this issue"
+    into its timeline under the bot's name. Text a model or a stranger wrote now has a
+    zero-width space after every slash before a digit, in comments and in a pull request's
+    description alike, and in a description no address is a link.
+  - **The token permissions named above are enough**, measured: Issues read and write and
+    Pull requests read for the agent (it cannot push); Contents and Pull requests read and
+    write for the coder, which covers the draft pull request and its assignee. A **label**
+    named in dev-context's `repos.yaml` has to exist in the repository: `gh` refuses one that
+    does not, and the pull request is then opened without it and the attempt says so
+    (`deviations`).
+  - **A title keeps a name's capitals.** The first word after `fix:` is lowered only when it
+    is an ordinary capitalised word: "The loop ..." becomes "the loop ...", and "HTTP client
+    ..." no longer becomes "hTTP client ...". For an incident's pull request too.
+  - **What a pull request closes is worked out by GitHub afterwards** - seconds as a rule,
+    minutes on a bad day. Nothing in Hephaisto reads it; a script of yours that does should
+    wait for it.
 
 ### Fixed
 - **A credential named the way an environment names it is redacted.** `GITHUB_TOKEN=...`,
