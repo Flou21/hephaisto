@@ -7,7 +7,7 @@
 #                                         read-only root, exactly as a Job would run it
 set -euo pipefail
 
-MIN_TESTS=${MIN_TESTS:-559}
+MIN_TESTS=${MIN_TESTS:-577}
 here=$(cd "$(dirname "$0")/.." && pwd)
 
 if [ "${1:-}" = "--in-image" ]; then
