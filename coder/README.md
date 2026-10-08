@@ -296,8 +296,18 @@ Every string may use `{{target}}`, `{{attempt_id}}`, `{{incident_id}}`, `{{branc
 approved plan's first file and a comment prefix for it).
 
 The plan-phase structured output is the plan result's `outcome, summary, root_cause, confidence,
-files, steps, verification, needs_cait, notes`; the implement phase's is `files, deviations` and
-an optional `summary`. Both are cut from the vendored result schemas.
+files, steps, verification, needs_cait, notes, questions`; the implement phase's is `files,
+deviations` and an optional `summary`. Both are cut from the vendored result schemas. `questions`
+is required of the agent - an empty list says "nothing is open" - and optional in the result,
+where the runner leaves it out when it is empty.
+
+A plan script may have **variants**: `<name>.plan.<variant>.json` is looked for before
+`<name>.plan.json`, for the repository, its alias and `default` in that order. A request that
+carries `previous` plays `replan`; otherwise a line `FAKE-SDK-PLAN: <word>` in the request's
+untrusted text names one. Shipped: `hephaisto-fixture-dotnet.plan.replan.json` (a plan that says
+it is a replan, asks nothing, and may use `{{comment_count}}` and
+`{{previous_question_count}}`) and `default.plan.unclear.json` (`insufficient_context` with one
+question).
 
 ## A request for an issue (contract version 2)
 
@@ -320,6 +330,14 @@ Everything that follows from "what is this for" is in `src/subject.ts`, and noth
 | PR title | `fix(<workload>): <first sentence of the plan's summary>` | `<type>: <the same>` - `fix` for a `bug`, `feat` for a `feature` or an `enhancement`, else `chore` |
 | PR body | the incident, its evidence in fences | `Closes owner/repo#<n>` on a line of its own, the issue's title in a fence, its body not at all |
 
+**A work item can be planned again.** The request then carries `previous {summary, questions,
+steps}` - the earlier attempt's plan - and `work_item.comments` holds what the issue's author and
+the install's approvers wrote since the issue was handed over. The comments are `<comment
+by="...">` entries of the one `<untrusted-issue>` element; the earlier plan is an element of its
+own, `<earlier-plan>`, escaped the same way and placed after it behind `replan-block.md`
+(`{{replan_block}}`, empty for a first plan), which says that an answer overrides the issue, that
+nothing answered is asked again, and that the summary says what changed.
+
 `Hephaisto-Attempt` is the second trailer either way, and it alone is what `publish` and a retried
 Job recognise their own commits by. The scripted SDK still picks its script by the repository's
 `repos.yaml` name, so a fixture's script plays for an issue on that repository.
@@ -336,7 +354,8 @@ prompt tells the model to write no closing keyword in one, and nothing checks th
 `scripts/test.sh` fails below its test-count floor. The suites: `hooks` (guard table + `bin/guard`
 protocol), `schema` + `contracts` (samples, lock hashes, zod ↔ JSON Schema), `prompt`, `result`,
 `issue` (a version-2 request end to end: the prompt as the SDK receives it, the trailer, the
-pull request that closes the issue),
+pull request that closes the issue), `replan` (what the plan prompt says about asking, a
+replanning prompt with the answers and the earlier plan, and the scripted plans' variants),
 `workspace` (image tags, credentials, nuget.config, Cait pinning), `driver` (main() end to end with
 the fake SDK against a bare remote and the gh shim, every role in one process), `roles` (each role
 as its own main() with only its container's environment: who prints, who refuses which

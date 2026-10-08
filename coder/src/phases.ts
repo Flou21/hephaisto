@@ -8,7 +8,7 @@ import { BUNDLE_FILE, type CoderHandoff, HANDOFF_VERSION, type PrepareHandoff, n
 import { log } from './log.js';
 import { changedFiles, policyCheck } from './policy.js';
 import { BRANCH_RE, findOpenPr, ghEnv, inspectRemoteBranch } from './pr.js';
-import { fencedJson, loadTemplate, render, renderEvidenceBlock, renderIssueBlock, repoNotesBlock } from './prompts.js';
+import { fencedJson, loadTemplate, render, renderEvidenceBlock, renderIssueBlock, renderReplanBlock, repoNotesBlock } from './prompts.js';
 import { NOT_ENABLED, enabledRepo, protectedGlobs, repoDirName } from './repos.js';
 import { minimalFailed } from './result.js';
 import { type CodeFixRequest, type ImplementResult, type PlanResult, type RepoEntry, rawSchema, validateWith } from './schemas.js';
@@ -42,14 +42,20 @@ export interface PhaseDeps {
   deadline: number;
   abort: AbortController;
   /** Built lazily, once the workspace exists (the fake needs to know the target). */
-  makeQuery: (fake: { repoName: string; vars: Record<string, string> }) => Promise<QueryFn>;
+  makeQuery: (fake: { repoName: string; vars: Record<string, string>; variant?: string | undefined }) => Promise<QueryFn>;
 }
 
 // ---------------------------------------------------------------------------------------------
 // The agent's structured-output schemas are cut from the vendored result schemas, so the caps the
 // model is held to are the caps the contract enforces.
 
-const AGENT_PLAN_FIELDS = ['outcome', 'summary', 'root_cause', 'confidence', 'files', 'steps', 'verification', 'needs_cait', 'notes'] as const;
+// `questions` is optional in the RESULT (absent means none, so a plan that asks nothing is the
+// document it always was) and REQUIRED of the agent: a model that has to write the list, even an
+// empty one, has been made to consider whether anything is open.
+const AGENT_PLAN_FIELDS = ['outcome', 'summary', 'root_cause', 'confidence', 'files', 'steps', 'verification', 'needs_cait', 'notes', 'questions'] as const;
+
+const QUESTIONS_FOR_THE_AGENT =
+  'What only a PERSON can decide, one decision per entry, answerable in one line. Each entry states, in the same sentence or the next, what the plan assumed in the meantime. Shown to whoever answers the plan. Always present: an empty list when nothing is open.';
 
 export function planOutputSchema(): Record<string, unknown> {
   const props = rawSchema('plan').properties as Record<string, unknown>;
@@ -57,7 +63,11 @@ export function planOutputSchema(): Record<string, unknown> {
     type: 'object',
     additionalProperties: false,
     required: [...AGENT_PLAN_FIELDS],
-    properties: Object.fromEntries(AGENT_PLAN_FIELDS.map((k) => [k, props[k]])),
+    properties: {
+      ...Object.fromEntries(AGENT_PLAN_FIELDS.map((k) => [k, props[k]])),
+      // the contract's own description says "optional; absent means none", which is true of the result and not of this answer
+      questions: { ...(props.questions as Record<string, unknown>), description: QUESTIONS_FOR_THE_AGENT },
+    },
   };
 }
 
@@ -75,7 +85,7 @@ export function implementOutputSchema(): Record<string, unknown> {
   };
 }
 
-export type AgentPlan = Pick<PlanResult, (typeof AGENT_PLAN_FIELDS)[number]>;
+export type AgentPlan = Required<Pick<PlanResult, (typeof AGENT_PLAN_FIELDS)[number]>>;
 export interface AgentImplement {
   files: string[];
   deviations: string[];
@@ -121,6 +131,8 @@ function baseVars(req: CodeFixRequest, repo: RepoEntry, target: Target, paths: W
       // somebody typed - title, author, body, comments - is INSIDE issue_block and nowhere else.
       issue_ref: subjectOf(req).ref,
       issue_block: renderIssueBlock(req, paths.context),
+      // Empty for a first plan. For a replan: how to read the answers, and the earlier plan.
+      replan_block: renderReplanBlock(req, paths.context),
     };
   }
   return {
@@ -176,6 +188,27 @@ export function fakeRepeated(req: CodeFixRequest): string {
   if (at < 0) return '';
   const said = (text.slice(at + FAKE_REPEAT_MARKER.length).split(/\r?\n/)[0] ?? '').replace(/`/g, '').trim().slice(0, 300);
   return said ? ` The reporter asked for this to be repeated: ${said}` : '';
+}
+
+/** What an issue asks the scripted model to answer with, instead of its usual plan. */
+export const FAKE_PLAN_MARKER = 'FAKE-SDK-PLAN:';
+
+/**
+ * Which variant of the plan script the scripted model plays, or none: `<name>.plan.<variant>.json`
+ * is looked for before `<name>.plan.json`. A request that carries `previous` is a replan and plays
+ * `replan`, whatever else it says - so the issues suite can tell a second plan from a first.
+ * Otherwise a line `FAKE-SDK-PLAN: <word>` in the request's untrusted text names one, which is
+ * how a scenario makes a first plan end as insufficient_context (`unclear`) without a model and
+ * without the agent knowing. A file name is never taken from the text: the word is held to
+ * lower-case letters, digits and hyphens, and only selects among the scripts that ship.
+ */
+export function fakePlanVariant(req: CodeFixRequest): string | undefined {
+  if (isWorkItem(req) && req.previous) return 'replan';
+  const text = untrustedText(req);
+  const at = text.indexOf(FAKE_PLAN_MARKER);
+  if (at < 0) return undefined;
+  const word = (text.slice(at + FAKE_PLAN_MARKER.length).split(/\r?\n/)[0] ?? '').trim();
+  return /^[a-z0-9-]{1,32}$/.test(word) ? word : undefined;
 }
 
 function lineComment(file: string): string {
@@ -242,7 +275,15 @@ export async function coderPlan(req: CodeFixRequest, deps: PhaseDeps, h: Prepare
     const guard: GuardContext = { targetDir: realish(target.dir), protectedGlobs: protectedGlobs(repos, repo), homeDir: paths.home };
     const query = await deps.makeQuery({
       repoName: repo.name,
-      vars: { ...vars, target: target.dir, first_evidence_file: await firstEvidenceFile(req, target.git), repeated: fakeRepeated(req) },
+      vars: {
+        ...vars,
+        target: target.dir,
+        first_evidence_file: await firstEvidenceFile(req, target.git),
+        repeated: fakeRepeated(req),
+        comment_count: String(isWorkItem(req) ? req.work_item.comments.length : 0),
+        previous_question_count: String(isWorkItem(req) ? (req.previous?.questions.length ?? 0) : 0),
+      },
+      variant: fakePlanVariant(req),
     });
     const schema = planOutputSchema();
     const agent: AgentRunResult<AgentPlan> = await runAgent<AgentPlan>({
@@ -282,6 +323,8 @@ export async function coderPlan(req: CodeFixRequest, deps: PhaseDeps, h: Prepare
       verification: o.verification,
       needs_cait: o.needs_cait,
       notes: [...target.notes, ...o.notes],
+      // absent when nothing was asked: the result is then what it was before the member existed
+      ...(o.questions.length > 0 ? { questions: o.questions } : {}),
       error: o.outcome === 'failed' ? (o.summary || 'the agent reported failed') : null,
     };
   } catch (e) {

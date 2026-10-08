@@ -1,0 +1,23 @@
+{
+  "description": "FAKE SDK plan that cannot plan: played for any repository when the request's untrusted text carries the line `FAKE-SDK-PLAN: unclear` and the request is not a replan. It looks at the repository and answers insufficient_context with one question - what a planner does with an issue that does not say enough - so a suite can have an attempt that did not work, cheaply, and then answer the question. No model runs.",
+  "steps": [
+    { "tool": "Bash", "input": { "command": "git log --oneline -5" } },
+    {
+      "result": {
+        "cost_usd": 0,
+        "structured_output": {
+          "outcome": "insufficient_context",
+          "summary": "FAKE SDK (no model ran): the issue does not say which total is wrong, so nothing can be planned yet. Which total is meant, and for which cart?",
+          "root_cause": "",
+          "confidence": 0.1,
+          "files": [],
+          "steps": [],
+          "verification": { "level": "none", "not_verifiable": [] },
+          "needs_cait": false,
+          "notes": ["Produced by CODEFIX_SDK=fake: no model ran and no analysis happened."],
+          "questions": ["Which total is wrong, and for which cart: the order total of an empty cart, or something else? Nothing is planned until this is known."]
+        }
+      }
+    }
+  ]
+}

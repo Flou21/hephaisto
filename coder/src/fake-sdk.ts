@@ -73,6 +73,11 @@ export interface FakeContext {
   scripts?: string[];
   /** investigate: what ${request.<path>} reads. */
   request?: unknown;
+  /**
+   * plan: `<name>.<phase>.<variant>.json` is looked for before `<name>.<phase>.json`, for the
+   * repository, its alias and `default` in that order. Lower-case letters, digits and hyphens.
+   */
+  variant?: string | undefined;
 }
 
 /** The file in a script directory that says which repositories play another one's scripts. */
@@ -97,7 +102,10 @@ export function scriptAlias(scriptDir: string, repoName: string): string | null 
 export function loadScript(ctx: FakeContext): { script: FakeScript; path: string } {
   // its own script first, then the one it is an alias of, then the default
   const names = ctx.scripts ? [] : [ctx.repoName, scriptAlias(ctx.scriptDir, ctx.repoName), 'default'].filter((n): n is string => n !== null);
-  const candidates = ctx.scripts ? ctx.scripts.map((f) => join(ctx.scriptDir, f)) : names.map((n) => join(ctx.scriptDir, `${n}.${ctx.phase}.json`));
+  const variant = ctx.variant && /^[a-z0-9-]{1,32}$/.test(ctx.variant) ? ctx.variant : null;
+  const candidates = ctx.scripts
+    ? ctx.scripts.map((f) => join(ctx.scriptDir, f))
+    : [...(variant ? names.map((n) => `${n}.${ctx.phase}.${variant}.json`) : []), ...names.map((n) => `${n}.${ctx.phase}.json`)].map((f) => join(ctx.scriptDir, f));
   const path = candidates.find((p) => existsSync(p));
   if (!path) throw new Error(`no fake script: looked for ${candidates.join(', ')}`);
   const raw: unknown = JSON.parse(readFileSync(path, 'utf8'));

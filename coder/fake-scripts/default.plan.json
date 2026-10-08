@@ -16,7 +16,8 @@
           "steps": ["Append a one-line marker comment to {{first_evidence_file}}."],
           "verification": { "level": "build-only", "not_verifiable": ["Everything: this plan came from the fake SDK."] },
           "needs_cait": false,
-          "notes": ["Produced by CODEFIX_SDK=fake: no model ran and no analysis happened."]
+          "notes": ["Produced by CODEFIX_SDK=fake: no model ran and no analysis happened."],
+          "questions": []
         }
       }
     }

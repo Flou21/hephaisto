@@ -18,7 +18,9 @@ export type TemplateName =
   | 'plan-issue'
   | 'implement-issue'
   | 'issue-block'
-  | 'pr-body-issue';
+  | 'pr-body-issue'
+  // for a work item that is planned again: the earlier plan, and how to read the answers
+  | 'replan-block';
 
 /** investigate.md, the section appended to Hephaisto's investigation prompt. */
 export const INVESTIGATE_VARS = ['context_dir', 'memory_dir', 'source_block'] as const;
@@ -32,7 +34,7 @@ export const PROMPT_VARS = [
 
 /** plan-issue.md and implement-issue.md. No image, no workload, no incident - and nothing of the issue's text but `issue_block`. */
 export const ISSUE_PROMPT_VARS = [
-  'attempt_id', 'issue_ref', 'phase', 'repo_url', 'repo_name', 'default_branch', 'branch', 'analysed_ref', 'issue_block',
+  'attempt_id', 'issue_ref', 'phase', 'repo_url', 'repo_name', 'default_branch', 'branch', 'analysed_ref', 'issue_block', 'replan_block',
   'plan_json', 'plan_steps', 'plan_files', 'main_moved', 'commands', 'verification_level', 'repo_notes', 'result_schema',
   'cait_ref', 'memory_dir', 'workspace', 'trailers',
 ] as const;
@@ -118,6 +120,31 @@ export function buildIssueElement(req: WorkItemRequest): string {
 /** The `issue_block` variable: issue-block.md, the preamble, directly before the escaped element. */
 export function renderIssueBlock(req: WorkItemRequest, contextDir: string | null): string {
   return behindPreamble('issue-block', 'untrusted-issue', 'issue_element', buildIssueElement(req), contextDir);
+}
+
+/**
+ * What an earlier attempt for the same work item planned and asked, in ONE <earlier-plan>
+ * element, escaped like the issue: a model wrote it about text a stranger wrote, and a summary
+ * that quoted the issue must not be able to close the element. Questions and steps are numbered
+ * as the issue shows them, so that "to 2: yes" in a comment names the same question here.
+ */
+export function buildEarlierPlanElement(previous: NonNullable<WorkItemRequest['previous']>): string {
+  const lines: string[] = ['<earlier-plan>'];
+  lines.push(`<summary>${xmlEscape(previous.summary)}</summary>`);
+  previous.questions.forEach((q, i) => lines.push(`<question n="${i + 1}">${xmlEscape(q)}</question>`));
+  previous.steps.forEach((s, i) => lines.push(`<step n="${i + 1}">${xmlEscape(s)}</step>`));
+  lines.push('</earlier-plan>');
+  return lines.join('\n');
+}
+
+/**
+ * The `replan_block` variable: replan-block.md and the earlier plan behind it when the request
+ * carries `previous`, and nothing at all for a first plan - whose prompt is then, apart from one
+ * empty line, the prompt it was before a work item could be planned twice.
+ */
+export function renderReplanBlock(req: WorkItemRequest, contextDir: string | null): string {
+  if (!req.previous) return '';
+  return behindPreamble('replan-block', 'earlier-plan', 'earlier_plan_element', buildEarlierPlanElement(req.previous), contextDir);
 }
 
 /**

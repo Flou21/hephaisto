@@ -289,7 +289,7 @@ export async function main(opts: MainOptions = {}): Promise<MainResult> {
       paths,
       deadline,
       abort,
-      makeQuery: (fake) => loadQuery(e.sdkMode, { scriptDir: e.fakeScriptDir, repoName: fake.repoName, phase: req.phase, vars: fake.vars }),
+      makeQuery: (fake) => loadQuery(e.sdkMode, { scriptDir: e.fakeScriptDir, repoName: fake.repoName, phase: req.phase, vars: fake.vars, variant: fake.variant }),
     };
     if (req.phase === 'plan') {
       const result = await coderPlan(req, deps, h);

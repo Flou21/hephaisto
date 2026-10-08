@@ -1,0 +1,30 @@
+{
+  "description": "FAKE SDK plan for the hephaisto-fixture-dotnet fixture when the request carries `previous`: the work item is planned AGAIN, with a person's answers among its comments. It reads the same code and returns a plan that differs from the first one - it says it is a replan and what changed, asks nothing, and repeats whatever a comment asked to have repeated - so a suite can tell the two plans apart. No model runs.",
+  "steps": [
+    { "tool": "Bash", "input": { "command": "git log --oneline -5" } },
+    { "tool": "Read", "input": { "file_path": "{{target}}/src/Shop.Api/Startup/Endpoints.cs" } },
+    {
+      "result": {
+        "cost_usd": 0,
+        "structured_output": {
+          "outcome": "planned",
+          "summary": "FAKE SDK replan: Endpoints.Primary treats an absent Shop:Endpoints section as no endpoints, as answered. Changed against the earlier plan: the reading it had assumed is now the answered one, and nothing is asked any more.{{repeated}}",
+          "root_cause": "src/Shop.Api/Startup/Endpoints.cs:17 dereferences options.Endpoints, which the binder leaves null (not empty) when Shop:Endpoints is absent; the code guards only against an empty list.",
+          "confidence": 0.9,
+          "files": ["src/Shop.Api/Startup/Endpoints.cs"],
+          "steps": [
+            "Treat a null Endpoints list as empty in Endpoints.Primary, as the answer on the issue says.",
+            "Keep EndpointsOptionsTests.Empty_endpoints_do_not_throw green; do not add configuration under deploy/."
+          ],
+          "verification": { "level": "tests", "not_verifiable": [] },
+          "needs_cait": false,
+          "notes": [
+            "Replanned with {{comment_count}} comment(s) from the issue and the earlier plan's {{previous_question_count}} question(s) in hand.",
+            "Produced by CODEFIX_SDK=fake: no model ran."
+          ],
+          "questions": []
+        }
+      }
+    }
+  ]
+}
