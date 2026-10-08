@@ -323,13 +323,19 @@ public static partial class IssueComments
         // the work stands, whatever became of the attempt.
         if (s.ReplanRequestedBy is { Length: > 0 } by)
         {
+            // A person who replied /replan, or one who assigned the issue again: both asked.
+            // Where GitHub did not say who assigned it, nobody is named.
+            var asked = by.StartsWith("github:", StringComparison.Ordinal)
+                ? $"{Clause(by, 100)} asked for a new plan"
+                : "The issue was assigned to Hephaisto again";
+
             if (string.IsNullOrWhiteSpace(s.DeclineReason))
-                return $"**Planning again.** {Clause(by, 100)} asked for a new plan. It is started on Hephaisto's next pass; nothing is changed.";
+                return $"**Planning again.** {asked}. The new plan is started on Hephaisto's next pass; nothing is changed.";
 
             return string.Equals(s.DeclineCodes, nameof(CodeFixReasonCode.ModeOff), StringComparison.Ordinal)
-                ? $"**Not planned.** {Clause(by, 100)} asked for a new plan, and the code-fix mode of this install is Off, so no Job is started for this issue. "
+                ? $"**Not planned.** {asked}, and the code-fix mode of this install is Off, so no Job is started for this issue. "
                     + "When an operator turns it on, Hephaisto plans it without being asked again."
-                : $"**Waiting.** {Clause(by, 100)} asked for a new plan, and it has not been started: {Clause(s.DeclineReason, 500)}. "
+                : $"**Waiting.** {asked}, and the new plan has not been started: {Clause(s.DeclineReason, 500)}. "
                     + "Hephaisto asks again by itself; nothing has to be done on this issue.";
         }
 
@@ -378,27 +384,29 @@ public static partial class IssueComments
     /// <summary>
     /// How an attempt that has ended is followed by another, in words that are true of this
     /// install and this work item: an approver's <c>/replan</c> where somebody may answer on the
-    /// issue at all, handing the issue over again otherwise - and after the last attempt a
-    /// hand-over has, only that.
+    /// issue at all, or assigning the issue again - and after the last attempt a hand-over has,
+    /// only a new hand-over.
     /// </summary>
     /// <remarks>
     /// "Unassign Hephaisto and assign it again" stood here alone until 2026-10-08, when somebody
-    /// did exactly that within seven seconds and nothing happened: an unassignment is noticed
-    /// by a poll that finds the issue without Hephaisto on it. So it says to wait for that.
+    /// did exactly that within seven seconds and nothing happened: an unassignment was noticed
+    /// only by a poll that found the issue without Hephaisto on it. For an attempt that has
+    /// ended the sentence is true since then, however quickly it is done - the assignment is
+    /// known by its time on GitHub (<c>GitHubIssuePoller.Assignments.cs</c>). After the last
+    /// attempt it is not: that needs a new work item, and so the poll, and it says to wait.
     /// </remarks>
     private static string Again(IssueStatus s)
     {
-        const string handOver = "unassign Hephaisto, wait until this comment says it has let go, and assign it again.";
-
         if (s.Attempts >= MaxAttemptsPerWorkItem)
         {
             return $" This issue has been planned {s.Attempts.ToString(CultureInfo.InvariantCulture)} times, which is the most for one hand-over. "
-                + "To hand it over again, " + handOver;
+                + "To hand it over again, unassign Hephaisto, wait until this comment says it has let go, and assign it again.";
         }
 
         return s.Answerable
-            ? " To have it tried again, an approver replies `/replan` - after answering in a comment, where something was asked. Or " + handOver
-            : " To have it tried again, " + handOver;
+            ? " To have it tried again, an approver replies `/replan` - after answering in a comment, where something was asked. "
+                + "Or unassign Hephaisto and assign it again."
+            : " To have it tried again, unassign Hephaisto and assign it again.";
     }
 
     /// <summary>

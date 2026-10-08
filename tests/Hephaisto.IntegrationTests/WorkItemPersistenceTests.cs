@@ -97,6 +97,7 @@ public sealed class WorkItemPersistenceTests(PostgresFixture pg)
             "still_assigned",
             "replan_after_attempt_id",
             "replan_requested_by",
+            "assignment_seen_at",
         ]);
     }
 

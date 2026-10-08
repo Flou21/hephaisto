@@ -96,8 +96,8 @@ public sealed class IssueCommentsTests
         { "let go with pr", "**Hephaisto has let go of this issue:** hephaisto-bot is no longer an assignee. The draft pull request stays as it is: https://github.com/octo/shop/pull/7" },
         { "done", "**Done.** The pull request was merged: https://github.com/octo/shop/pull/7\n\nFor more work on this issue, reopen it, or unassign Hephaisto, wait a minute or two, and assign it again: Hephaisto has to have seen the issue without itself on it first." },
         { "pr closed", "**Hephaisto has let go of this issue:** its pull request was closed without merging: https://github.com/octo/shop/pull/7\n\nTo hand the issue back, unassign Hephaisto, wait a minute or two, and assign it again: Hephaisto has to have seen the issue without itself on it first." },
-        { "replan asked", "**Planning again.** github:maintainer asked for a new plan. It is started on Hephaisto's next pass; nothing is changed." },
-        { "replan waiting", "**Waiting.** github:maintainer asked for a new plan, and it has not been started: 1 coder job(s) running (cap 1). Hephaisto asks again by itself" },
+        { "replan asked", "**Planning again.** github:maintainer asked for a new plan. The new plan is started on Hephaisto's next pass; nothing is changed." },
+        { "replan waiting", "**Waiting.** github:maintainer asked for a new plan, and the new plan has not been started: 1 coder job(s) running (cap 1). Hephaisto asks again by itself" },
         { "replan mode off", "**Not planned.** github:maintainer asked for a new plan, and the code-fix mode of this install is Off" },
         { "planning again", "**Planning again.** A read-only Job is reading the code on branch `main` to write a new plan, with the earlier plan and what was answered on this issue. Nothing is changed." },
         { "new plan ready", "**A new plan is ready**: [read the plan](https://github.com/octo/shop/issues/12#issuecomment-1791308488299). It replaces the earlier one. It waits for an approver's answer" },
@@ -150,11 +150,11 @@ public sealed class IssueCommentsTests
         // Somebody may answer on the issue: the command first, the hand-over for those who prefer it.
         IssueComments.Status(ended).Should().Contain(
             "Nothing was changed. To have it tried again, an approver replies `/replan` - after answering in a comment, where something was asked. "
-            + "Or unassign Hephaisto, wait until this comment says it has let go, and assign it again.");
+            + "Or unassign Hephaisto and assign it again.");
 
         // Nobody may: a command that would not be read is not named.
         IssueComments.Status(ended with { Answerable = false }).Should()
-            .Contain("Nothing was changed. To have it tried again, unassign Hephaisto, wait until this comment says it has let go, and assign it again.")
+            .Contain("Nothing was changed. To have it tried again, unassign Hephaisto and assign it again.")
             .And.NotContain("/replan");
 
         // The last attempt one hand-over has: only a new hand-over is left, and it says why.
@@ -164,14 +164,42 @@ public sealed class IssueCommentsTests
     }
 
     [Fact]
-    public void TheWordsAboutHandingOverAgain_SayToWait_BecauseAnUnassignmentIsOnlySeenByAPoll()
+    public void OffAndOnAgain_IsOnlyPromisedWithoutAWait_WhereItsTimeIsRead()
     {
         // 2026-10-08: unassigned at 09:28:53, assigned again at 09:29:00, a poll a minute apart.
         // Nothing followed, and the issue still said "unassign Hephaisto and assign it again".
+        // For an attempt that ENDED that sentence is true now, however quickly: the assignment
+        // is known by its time (GitHubIssuePoller.Assignments.cs). Everywhere else a poll still
+        // has to see the gap, and the sentence says to leave one.
+        const string unqualified = "unassign Hephaisto and assign it again";
+
         foreach (var state in States.Select(row => row.Data.Item1))
         {
-            IssueComments.Status(StatusOf(state)).Should().NotContain("unassign Hephaisto and assign it again");
+            var status = StatusOf(state);
+            var body = IssueComments.Status(status);
+            var ended = status is { State: WorkItemState.Taken, ReplanRequestedBy: null, Attempt.State: CodeFixState.Failed or CodeFixState.Denied or CodeFixState.Expired or CodeFixState.Cancelled };
+
+            if (ended)
+                body.Should().Contain(unqualified, $"'{state}' is an attempt that ended on an issue Hephaisto still has");
+            else
+                body.Should().NotContain(unqualified, $"'{state}' is not, and there nothing reads an assignment's time");
         }
+
+        // The last attempt of a hand-over is followed by nothing on the same work item.
+        IssueComments.Status(Taken(Attempt(CodeFixState.Failed)) with { Attempts = IssueComments.MaxAttemptsPerWorkItem })
+            .Should().NotContain(unqualified).And.Contain("wait until this comment says it has let go");
+    }
+
+    [Fact]
+    public void AnIssueThatWasAssignedAgain_SaysSo_AndNamesWhoeverGitHubNamed()
+    {
+        IssueComments.Status(Taken(Attempt(CodeFixState.Failed)) with { ReplanRequestedBy = "github:reporter" })
+            .Should().Contain("**Planning again.** github:reporter asked for a new plan. The new plan is started on Hephaisto's next pass; nothing is changed.");
+
+        // GitHub did not say who: nobody is named, and the system's own name is not shown as a person.
+        IssueComments.Status(Taken(Attempt(CodeFixState.Failed), codes: "ConcurrencyCapReached", reason: "1 coder job(s) running (cap 1)") with { ReplanRequestedBy = "hephaisto/system" })
+            .Should().Contain("**Waiting.** The issue was assigned to Hephaisto again, and the new plan has not been started: 1 coder job(s) running (cap 1).")
+            .And.NotContain("hephaisto/system");
     }
 
     [Fact]

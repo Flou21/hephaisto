@@ -154,8 +154,19 @@ public sealed class WorkItem
     /// </summary>
     public Guid? ReplanAfterAttemptId { get; set; }
 
-    /// <summary>Who asked for it: <c>github:&lt;login&gt;</c>. Null when nothing is asked for.</summary>
+    /// <summary>
+    /// Who asked for it: <c>github:&lt;login&gt;</c> - the approver who replied <c>/replan</c>,
+    /// or whoever assigned the issue afresh. Null when nothing is asked for.
+    /// </summary>
     public string? ReplanRequestedBy { get; set; }
+
+    /// <summary>
+    /// GitHub's time of the newest assignment of the issue to Hephaisto that was acted on as a
+    /// new hand-over of THIS work item. An assignment is new when it is later than the end of
+    /// the newest attempt - and later than this, so that one assignment is one hand-over
+    /// whatever the two clocks make of "later". Null until the first.
+    /// </summary>
+    public DateTimeOffset? AssignmentSeenAt { get; set; }
 
     public DateTimeOffset UpdatedAt { get; set; }
 

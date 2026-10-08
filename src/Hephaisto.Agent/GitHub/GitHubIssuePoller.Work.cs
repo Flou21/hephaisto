@@ -33,6 +33,9 @@ namespace Hephaisto.Agent.GitHub;
 /// (<c>GitHubIssuePoller.Answers.cs</c>). The fourth statement, and made true before the second
 /// and the third: a <c>/replan</c> is then planned, and what an answer led to is on the issue,
 /// in the pass that read it.</item>
+/// <item><b>An issue whose attempt has ended has been asked whether it was assigned again</b>
+/// (<c>GitHubIssuePoller.Assignments.cs</c>). The fifth, and made true before the second as
+/// well.</item>
 /// </list>
 /// <para>
 /// A write that GitHub refuses fails nothing but itself: the attempt stays where it is, the
@@ -114,7 +117,20 @@ public sealed partial class GitHubIssuePoller
             logger.LogError(ex, "Could not read the answers on the issues of {Repository}; retrying next interval.", repository);
         }
 
-        // Asked whatever the statement before it came to: one issue whose comments could not
+        // And whether an issue whose attempt has ended was handed over again by assigning it
+        // (GitHubIssuePoller.Assignments.cs) - before the plans, for the same reason.
+        try
+        {
+            var unasked = await AssignedAgainAsync(client, repository, bot, ct).ConfigureAwait(false);
+            problem ??= unasked;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            problem ??= $"the assignments on the issues of {repository} could not be read: {ex.GetType().Name}";
+            logger.LogError(ex, "Could not read the assignments on the issues of {Repository}; retrying next interval.", repository);
+        }
+
+        // Asked whatever the statements before it came to: one issue whose comments could not
         // be read must not keep every other issue of the repository from being planned.
         try
         {

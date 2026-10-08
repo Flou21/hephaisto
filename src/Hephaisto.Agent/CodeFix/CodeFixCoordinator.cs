@@ -817,11 +817,39 @@ public sealed class CodeFixCoordinator(
             return new(CodeFixDecisionOutcome.Forbidden, $"'{actor}' may not ask for a new plan; that is a human act.", Refusal: CodeFixRefusal.ActorForbidden);
         }
 
-        return await NextAttemptAsync(workItemId, attemptId, actor.Trim(), source, commentId, fresh, $"replanned by {actor.Trim()}", ct).ConfigureAwait(false);
+        return await NextAttemptAsync(workItemId, attemptId, actor.Trim(), source, commentId, fresh, $"replanned by {actor.Trim()}", null, ct).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// The issue was assigned to Hephaisto AGAIN, after the work item's newest attempt had
+    /// ended (v0.14.0): a new hand-over, known by its time on GitHub because no poll saw the
+    /// issue unassigned in between. Asks for a new plan the way <see cref="ReplanWorkItemAsync"/>
+    /// does, with two differences.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>A waiting plan is left alone.</b> Assigning an issue again does not answer its plan,
+    /// and a second Job for a plan nobody has read would be a way to spend money by clicking.
+    /// Only an attempt that has ENDED is followed by another one this way.
+    /// </para>
+    /// <para>
+    /// <b>The assignment's time is written with the request</b>
+    /// (<see cref="WorkItem.AssignmentSeenAt"/>), in the same transaction, so that it is acted
+    /// on once - however this process's clock and GitHub's differ.
+    /// </para>
+    /// </remarks>
+    /// <param name="assignedBy">The login GitHub names as having assigned it, when it names one.</param>
+    public Task<CodeFixDecisionResult> HandOverAgainAsync(
+        Guid workItemId, Guid attemptId, string? assignedBy, DateTimeOffset assignedAt, IssueText? fresh, CancellationToken ct) =>
+        NextAttemptAsync(
+            workItemId, attemptId, string.IsNullOrWhiteSpace(assignedBy) ? IncidentStateMachine.SystemActor : $"github:{assignedBy.Trim()}",
+            ApprovalSource.NotApplicable, null, fresh, null, assignedAt, ct);
+
+    /// <param name="reason">Why a WAITING plan ends. Null: a waiting plan is not ended, and nothing is asked for.</param>
+    /// <param name="assignedAt">For a fresh assignment: its time on GitHub.</param>
     private async Task<CodeFixDecisionResult> NextAttemptAsync(
-        Guid workItemId, Guid attemptId, string actor, ApprovalSource source, long? commentId, IssueText? fresh, string reason, CancellationToken ct)
+        Guid workItemId, Guid attemptId, string actor, ApprovalSource source, long? commentId, IssueText? fresh, string? reason, DateTimeOffset? assignedAt,
+        CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
 
@@ -881,6 +909,11 @@ public sealed class CodeFixCoordinator(
         var subject = CodeFixSubject.Of(item);
         var wasWaiting = attempt.State == CodeFixState.PlanReady;
 
+        if (wasWaiting && reason is null)
+        {
+            return new(CodeFixDecisionOutcome.Conflict, "a plan is waiting for an answer; assigning the issue again does not answer it", attempt, CodeFixRefusal.NotWaiting);
+        }
+
         if (wasWaiting)
         {
             machine.Deny(attempt, actor, reason, source);
@@ -894,6 +927,9 @@ public sealed class CodeFixCoordinator(
 
         item.ReplanAfterAttemptId = attempt.Id;
         item.ReplanRequestedBy = Trim(actor, 127);
+
+        if (assignedAt is { } at && (item.AssignmentSeenAt is null || at > item.AssignmentSeenAt))
+            item.AssignmentSeenAt = at;
         item.DeclineCodes = null;
         item.DeclineReason = null;
         item.UpdatedAt = clock.UtcNow;
@@ -906,7 +942,14 @@ public sealed class CodeFixCoordinator(
 
         audit.Enlist(Audit(subject, null, attempt.Id, AuditReplanRequested, actor,
             $"a new plan was asked for {subject.Issue} after attempt {attempt.Id}",
-            new { source = source.ToString(), comment_id = commentId, ended = wasWaiting ? attempt.State.ToString() : null, reread = fresh is not null }));
+            new
+            {
+                source = assignedAt is null ? source.ToString() : "assignment",
+                comment_id = commentId,
+                assigned_at = assignedAt,
+                ended = wasWaiting ? attempt.State.ToString() : null,
+                reread = fresh is not null,
+            }));
 
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
         await tx.CommitAsync(ct).ConfigureAwait(false);

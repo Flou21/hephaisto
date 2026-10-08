@@ -531,7 +531,7 @@ public sealed partial class WorkItemStageTests
 
         world.Launcher.Launched.Should().HaveCount(2);
         var status = world.GitHub.Comments.Single(c => c.Number == issue && c.Body.Contains("hephaisto:status:"));
-        status.Body.Should().Contain("**Waiting.** github:maintainer asked for a new plan, and it has not been started:").And.Contain("Hephaisto asks again by itself");
+        status.Body.Should().Contain("**Waiting.** github:maintainer asked for a new plan, and the new plan has not been started:").And.Contain("Hephaisto asks again by itself");
 
         // The same answer on every pass is said once.
         var edits = status.Edits;
@@ -578,5 +578,178 @@ public sealed partial class WorkItemStageTests
 
         // Everything Hephaisto wrote on this issue: one status, five plans, one refusal.
         world.GitHub.Comments.Count(c => c.Number == issue && c.Author == Bot).Should().Be(7).And.BeLessThanOrEqualTo(IssueComments.MaxPerWorkItem);
+    }
+
+    // --- assigned again, faster than a poll ---------------------------------------------------------
+
+    /// <summary>An issue whose plan an approver rejected: its one attempt has ended, and it is still assigned.</summary>
+    private async Task<(World World, int Issue, Guid WorkItemId, Guid AttemptId)> RejectedOnTheIssueAsync()
+    {
+        var (world, issue, workItemId, attemptId) = await PlanOnTheIssueAsync();
+
+        world.GitHub.Comment(Repo, issue, Maintainer, "/reject not this way", MaintainerId);
+        await world.Poller().PassAsync(Ct);
+
+        (await AttemptAsync()).State.Should().Be(CodeFixState.Denied);
+        return (world, issue, workItemId, attemptId);
+    }
+
+    [Fact]
+    public async Task An_issue_assigned_again_between_two_polls_after_its_attempt_ended_is_planned_again_once()
+    {
+        var (world, issue, workItemId, first) = await RejectedOnTheIssueAsync();
+        var poller = world.Poller();
+
+        // Polls go by, and nothing: the assignment it was taken with is older than the attempt's end.
+        await poller.PassAsync(Ct);
+        await poller.PassAsync(Ct);
+
+        (await AttemptsAsync()).Should().ContainSingle();
+        world.GitHub.TimelineReads.Should().NotBeEmpty("an attempt that ended is asked about");
+        world.GitHub.TimelineReads[^1].Should().Match<(int Number, string? ETagSent, GitHubOutcome Answered)>(
+            r => r.Number == issue && r.ETagSent != null && r.Answered == GitHubOutcome.NotModified, "and an unchanged timeline costs nothing");
+
+        // What happened on the first real issue: off at 09:28:53, on again at 09:29:00, and no
+        // poll in between. The list of assigned issues is as it was.
+        world.GitHub.Edit(Repo, issue, Body + " AS-IT-READS-AT-THE-NEW-HAND-OVER");
+        await poller.PassAsync(Ct);
+        world.GitHub.Lists.Clear();
+        world.GitHub.Reassign(issue, Now.AddSeconds(30));
+
+        await poller.PassAsync(Ct);
+
+        world.GitHub.Lists.Should().ContainSingle().Which.Answered.Should().Be(GitHubOutcome.NotModified, "the list of assigned issues did not show it");
+
+        var attempts = await AttemptsAsync();
+        attempts.Should().HaveCount(2, "the same pass that read the timeline started the plan");
+        attempts[0].Should().Match<CodeFixAttempt>(a => a.Id == first && a.State == CodeFixState.Denied && a.FailureReason == "not this way");
+        attempts[1].State.Should().Be(CodeFixState.Planning);
+        attempts[1].RequestedBy.Should().Be("github:reporter", "whoever GitHub names as having assigned it");
+
+        var item = (await WorkItemsAsync()).Should().ContainSingle("no poll saw the gap: it is the same work item").Subject;
+        item.Id.Should().Be(workItemId);
+        item.State.Should().Be(WorkItemState.Taken);
+        item.AssignmentSeenAt.Should().Be(Now.AddSeconds(30));
+        item.Body.Should().EndWith("AS-IT-READS-AT-THE-NEW-HAND-OVER", "a hand-over reads the issue as it is, as one a poll saw does");
+
+        // Like /replan without an answer: the earlier plan, and the conversation - here the
+        // approver's rejection - are in the request.
+        var request = JsonSerializer.Deserialize<CodeFixWorkItemRequest>(world.Launcher.Launched[^1].Json, CodeFixContract.Json)!;
+        request.Previous!.Summary.Should().Be("Endpoints.Map needs a null check.");
+        request.WorkItem.Comments.Should().Equal(new CodeFixWorkItemComment(Maintainer, "/reject not this way"));
+
+        await using (var db = pg.CreateContext())
+        {
+            var row = await db.AuditEvents.AsNoTracking().SingleAsync(e => e.Type == CodeFixCoordinator.AuditReplanRequested, Ct);
+            row.Actor.Should().Be("github:reporter");
+            JsonDocument.Parse(row.Detail!).RootElement.GetProperty("detail").GetProperty("source").GetString().Should().Be("assignment");
+            (await db.AuditEvents.CountAsync(e => e.Type == CodeFixCoordinator.AuditDenied, Ct)).Should().Be(1, "the first plan was rejected by a person, once; nothing was denied by an assignment");
+        }
+
+        world.GitHub.Comments.Single(c => c.Body.Contains("hephaisto:status:")).Body.Should().Contain("**Planning again.** A read-only Job");
+
+        // One assignment is one hand-over. The second attempt ends - by THIS clock at the very
+        // instant the first did, which is before the assignment by GitHub's - and nothing follows.
+        await CollectNewestPlanAsync(world, "the second plan");
+        await poller.PassAsync(Ct);
+        world.GitHub.Comment(Repo, issue, Maintainer, "/reject nor this", MaintainerId);
+        await poller.PassAsync(Ct);
+        await poller.PassAsync(Ct);
+        await new World(pg, world.GitHub, world.Launcher) { Mode = "pr" }.Poller().PassAsync(Ct);
+
+        (await AttemptsAsync()).Select(a => a.State).Should().Equal(CodeFixState.Denied, CodeFixState.Denied);
+        world.Launcher.Launched.Should().HaveCount(2);
+
+        // And the next assignment is a new one again.
+        world.GitHub.Reassign(issue, Now.AddMinutes(5));
+        await poller.PassAsync(Ct);
+
+        (await AttemptsAsync()).Should().HaveCount(3);
+        (await WorkItemsAsync()).Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task Assigning_again_does_not_answer_a_waiting_plan_and_its_timeline_is_not_even_read()
+    {
+        var (world, issue, _, attemptId) = await PlanOnTheIssueAsync();
+        var poller = world.Poller();
+
+        world.GitHub.Reassign(issue, Now.AddSeconds(30));
+        await poller.PassAsync(Ct);
+        await poller.PassAsync(Ct);
+
+        (await AttemptsAsync()).Should().ContainSingle().Which.State.Should().Be(CodeFixState.PlanReady);
+        world.GitHub.TimelineReads.Should().BeEmpty("a plan that waits asks GitHub nothing more than it did");
+
+        // Nor while its Job runs, nor once a pull request is open.
+        world.GitHub.Comment(Repo, issue, Maintainer, "/approve", MaintainerId);
+        await poller.PassAsync(Ct);
+        world.GitHub.Reassign(issue, Now.AddSeconds(60));
+        await poller.PassAsync(Ct);
+        await world.CollectImplementAsync(attemptId, $"{CloneUrl}/pull/7");
+        await poller.PassAsync(Ct);
+        world.GitHub.Reassign(issue, Now.AddSeconds(90));
+        await poller.PassAsync(Ct);
+
+        (await AttemptsAsync()).Should().ContainSingle().Which.State.Should().Be(CodeFixState.PrOpened);
+        world.GitHub.TimelineReads.Should().BeEmpty();
+
+        // The door itself: asked directly, it leaves a waiting plan alone.
+        var (other, _, workItemId, waiting) = await PlanOnTheIssueAsync();
+
+        await using var db = pg.CreateContext();
+        var asked = await other.Coordinator(db).HandOverAgainAsync(workItemId, waiting, "reporter", Now.AddSeconds(30), null, Ct);
+
+        asked.Outcome.Should().Be(CodeFixDecisionOutcome.Conflict);
+        (await AttemptAsync()).State.Should().Be(CodeFixState.PlanReady);
+        (await WorkItemsAsync()).Single().Should().Match<WorkItem>(w => w.ReplanAfterAttemptId == null && w.AssignmentSeenAt == null);
+    }
+
+    [Fact]
+    public async Task A_timeline_github_does_not_answer_starts_nothing_and_is_asked_again()
+    {
+        var (world, issue, _, _) = await RejectedOnTheIssueAsync();
+        var poller = world.Poller();
+
+        world.GitHub.Reassign(issue, Now.AddSeconds(30));
+        world.GitHub.FailTimeline = GitHubOutcome.ServerError;
+        await poller.PassAsync(Ct);
+
+        (await AttemptsAsync()).Should().ContainSingle();
+        world.Health.Polls.Should().ContainSingle().Which.Detail.Should().Contain("its timeline could not be read for a new assignment");
+
+        world.GitHub.FailTimeline = null;
+        await poller.PassAsync(Ct);
+
+        (await AttemptsAsync()).Should().HaveCount(2);
+        world.GitHub.TimelineReads[^1].ETagSent.Should().BeNull("a read that failed leaves no tag to ask with");
+    }
+
+    [Fact]
+    public async Task After_the_last_attempt_a_hand_over_has_the_timeline_is_not_read_any_more()
+    {
+        var (world, issue, workItemId, _) = await PlanOnTheIssueAsync(configure: w => w.Options.MaxAttemptsPerRepositoryPerDay = 50);
+        var poller = world.Poller();
+
+        for (var n = 2; n <= WorkItem.MaxAttempts; n++)
+        {
+            world.GitHub.Comment(Repo, issue, Maintainer, "/replan", MaintainerId);
+            await poller.PassAsync(Ct);
+            await CollectNewestPlanAsync(world, $"plan {n}");
+            await poller.PassAsync(Ct);
+        }
+
+        world.GitHub.Comment(Repo, issue, Maintainer, "/reject none of these", MaintainerId);
+        await poller.PassAsync(Ct);
+
+        var reads = world.GitHub.TimelineReads.Count;
+        world.GitHub.Reassign(issue, Now.AddMinutes(1));
+        await poller.PassAsync(Ct);
+        await poller.PassAsync(Ct);
+
+        (await AttemptsAsync()).Count(a => a.WorkItemId == workItemId).Should().Be(WorkItem.MaxAttempts);
+        world.GitHub.TimelineReads.Should().HaveCount(reads, "nothing could follow, so nothing is asked");
+        world.GitHub.Comments.Single(c => c.Body.Contains("hephaisto:status:")).Body.Should()
+            .Contain("This issue has been planned 5 times").And.Contain("wait until this comment says it has let go");
     }
 }

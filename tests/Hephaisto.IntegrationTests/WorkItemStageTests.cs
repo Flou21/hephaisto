@@ -1492,9 +1492,65 @@ public sealed partial class WorkItemStageTests(PostgresFixture pg)
             return number;
         }
 
-        public void Assign(string repository, int number) => Change(repository, number, i => i.Assigned = true);
+        /// <summary>The issue's timeline, as far as assignments go: who was assigned when. GitHub's clock, in whole seconds.</summary>
+        public List<(int Number, string Kind, DateTimeOffset At)> Timeline { get; } = [];
 
-        public void Unassign(string repository, int number) => Change(repository, number, i => i.Assigned = false);
+        /// <summary>Every read of an issue's timeline: the tag that was sent, and what was answered.</summary>
+        public List<(int Number, string? ETagSent, GitHubOutcome Answered)> TimelineReads { get; } = [];
+
+        public GitHubOutcome? FailTimeline { get; set; }
+
+        /// <param name="at">
+        /// When, by GitHub's clock. Ten minutes before the tests' one instant unless said: the
+        /// assignment a work item begins with is well before anything that happens to it.
+        /// </param>
+        public void Assign(string repository, int number, DateTimeOffset? at = null)
+        {
+            Change(repository, number, i => i.Assigned = true);
+            Timeline.Add((number, "assigned", at ?? Now.AddMinutes(-10)));
+        }
+
+        public void Unassign(string repository, int number, DateTimeOffset? at = null)
+        {
+            Change(repository, number, i => i.Assigned = false);
+            Timeline.Add((number, "unassigned", at ?? Now.AddMinutes(-10)));
+        }
+
+        /// <summary>
+        /// Off and on again between two polls: the issue is assigned whenever a list is read,
+        /// and the list is as it was - only the timeline knows.
+        /// </summary>
+        public void Reassign(int number, DateTimeOffset at)
+        {
+            Timeline.Add((number, "unassigned", at.AddSeconds(-7)));
+            Timeline.Add((number, "assigned", at));
+        }
+
+        public Task<GitHubResult<IReadOnlyList<GitHubAssignment>>> ListAssignmentsAsync(string repository, int number, string? etag, CancellationToken ct)
+        {
+            if (FailTimeline is { } failing)
+            {
+                TimelineReads.Add((number, etag, failing));
+                return Task.FromResult(new GitHubResult<IReadOnlyList<GitHubAssignment>>(failing, null, "HTTP 500: Server Error"));
+            }
+
+            var events = Timeline.Where(e => e.Number == number).ToList();
+            var tag = $"W/\"timeline:{number}:{events.Count}:{Comments.Count(c => c.Number == number)}\"";
+
+            if (etag == tag)
+            {
+                TimelineReads.Add((number, etag, GitHubOutcome.NotModified));
+                return Task.FromResult(new GitHubResult<IReadOnlyList<GitHubAssignment>>(GitHubOutcome.NotModified, null, ETag: tag));
+            }
+
+            TimelineReads.Add((number, etag, GitHubOutcome.Ok));
+
+            IReadOnlyList<GitHubAssignment> assigned = [.. events
+                .Where(e => e.Kind == "assigned")
+                .Select(e => new GitHubAssignment(new GitHubAccount(Bot, 9001), "reporter", e.At))];
+
+            return Task.FromResult(new GitHubResult<IReadOnlyList<GitHubAssignment>>(GitHubOutcome.Ok, assigned, ETag: tag));
+        }
 
         public void Close(string repository, int number) => Change(repository, number, i => i.State = "closed");
 

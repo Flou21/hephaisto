@@ -134,6 +134,8 @@ public sealed partial class IssuesSuiteTests
     [Theory]
     [InlineData("\"/repos/{owner}/{repo}/issues\"", "POST \"/repos/$repo/issues\"")]
     [InlineData("/issues/{{number:int}}/{verb}", "\"/repos/$1/issues/$2/assign\"")]
+    [InlineData("\"assign\", \"unassign\", \"reassign\"", "\"/repos/$1/issues/$2/reassign\"")]
+    [InlineData("\"/repos/{owner}/{repo}/issues/{number:int}/timeline\"", "\"/repos/$2/issues/$3/timeline\"")]
     [InlineData("\"/repos/{owner}/{repo}/issues/{number:int}/comments\"", "\"/repos/$1/issues/$2/comments\"")]
     [InlineData("\"/repos/{owner}/{repo}/pulls/{number:int}\"", "\"/repos/$1/pulls/$2\"")]
     [InlineData("control.MapDelete(\"/repos/{owner}/{repo}/pulls/{number:int}\"", "DELETE \"/repos/$1/pulls/$2\"")]
