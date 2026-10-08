@@ -1,4 +1,5 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildAgentEnv } from '../src/agent.js';
@@ -7,7 +8,7 @@ import { Git, gitEnv, shaFromImage } from '../src/git.js';
 import { ghEnv } from '../src/pr.js';
 import { findRepo } from '../src/repos.js';
 import type { RepoEntry, Repos } from '../src/schemas.js';
-import { type Target, ensureNugetConfig, findCaitVersion, nugetCredentialEnv, prepareCait } from '../src/workspace.js';
+import { type Target, ensureNugetConfig, findCaitVersion, nugetCredentialEnv, prefetchPathHistory, prepareCait } from '../src/workspace.js';
 import { git, makeWorld } from './helpers.js';
 
 const SHA = '0123456789abcdef0123456789abcdef01234567';
@@ -190,6 +191,86 @@ describe('Cait at the pinned version', () => {
     await prepareCait(t, `file://${w.root}/nowhere/Svc.git`, repos, runnerEnv({ githubToken: undefined }), paths);
     expect(t.caitDir).toBeNull();
     expect(t.notes.join(' ')).toMatch(/could not be cloned/);
+    expect(existsSync(join(paths.repos, 'Cait'))).toBe(false);
+  });
+
+  /**
+   * Production's shape: Cait cloned without file contents, and a project file that changed in
+   * every release. Each version git has to fetch by itself arrives as a pack of its own, so the
+   * packs count the requests.
+   */
+  function bloblessCaitWorld(versions: number) {
+    const w = makeWorld();
+    const seed = join(w.root, 'cait-seed');
+    mkdirSync(join(seed, 'Cait'), { recursive: true });
+    git(seed, 'init', '-q', '-b', 'main');
+    const shas: string[] = [];
+    for (let i = 0; i < versions; i++) {
+      writeFileSync(join(seed, 'Cait', 'Cait.csproj'), `<Project>\n  <PropertyGroup>\n    <Version>51.${i}.0</Version>\n  </PropertyGroup>\n</Project>\n`);
+      git(seed, 'add', '-A');
+      git(seed, 'commit', '-q', '-m', `bump 51.${i}.0`);
+      shas.push(git(seed, 'rev-parse', 'HEAD'));
+    }
+    const bare = join(w.root, 'Cait.git');
+    git(w.root, 'clone', '-q', '--bare', seed, bare);
+    // what github.com allows: a clone without blobs, and asking for one by its id afterwards
+    git(bare, 'config', 'uploadpack.allowFilter', 'true');
+    git(bare, 'config', 'uploadpack.allowAnySHA1InWant', 'true');
+    const target = join(w.root, 'work', 'repos', 'Svc');
+    mkdirSync(target, { recursive: true });
+    writeFileSync(join(target, 'Svc.csproj'), '<Project><ItemGroup><PackageReference Include="Cait" Version="51.7.0" /></ItemGroup></Project>');
+    return { w, shas, target, bare };
+  }
+  const blobless: Repos = { ...repos, defaults: { ...repos.defaults, clone: { filter: 'blob:none' } } };
+  const packs = (repo: string) => readdirSync(join(repo, '.git', 'objects', 'pack')).filter((f) => f.endsWith('.pack')).length;
+
+  it('finds the pinned commit in a blobless clone without fetching each version by itself', async () => {
+    const { w, shas, target } = bloblessCaitWorld(40);
+    const paths = workPaths(join(w.root, 'work'));
+    mkdirSync(paths.ref, { recursive: true });
+    const t = fakeTarget(target, { cait: { pinned: true, sibling: 'never' } });
+    await prepareCait(t, `file://${w.root}/Svc.git`, blobless, runnerEnv({ githubToken: undefined }), paths);
+    const cait = join(paths.repos, 'Cait');
+    expect(t.notes).toEqual([]);
+    expect(git(cait, 'rev-parse', 'HEAD')).toBe(shas[7]);
+    // the clone really was blobless, or this test would pass on any code
+    expect(git(cait, 'config', 'remote.origin.partialclonefilter')).toBe('blob:none');
+    // the clone, the checkout the clone makes, the versions together, and at most the checkout of
+    // the pinned commit: four. Fetched one by one, forty versions are forty packs.
+    expect(packs(cait)).toBeLessThanOrEqual(4);
+  });
+
+  it('fetches every version of a path in one request', async () => {
+    const { w, bare } = bloblessCaitWorld(25);
+    const dir = join(w.root, 'clone');
+    git(w.root, 'clone', '-q', '--filter=blob:none', '--no-checkout', `file://${bare}`, dir);
+    const before = packs(dir);
+    const g = new Git(dir, gitEnv({ home: w.root, base: process.env }));
+    expect(await prefetchPathHistory(g, 'Cait/Cait.csproj')).toBe(25);
+    expect(packs(dir)).toBe(before + 1);
+    // and now nothing is missing: the search runs with the remote gone
+    git(dir, 'remote', 'set-url', 'origin', `file://${w.root}/gone.git`);
+    expect(git(dir, 'log', '--format=%s', '-G<Version>51\\.7\\.0</Version>', '--', 'Cait/Cait.csproj').split('\n')).toEqual(['bump 51.8.0', 'bump 51.7.0']);
+  });
+
+  it('continues with a note when the pinned commit cannot be looked up', async () => {
+    const { w, target } = caitWorld();
+    const paths = workPaths(join(w.root, 'work'));
+    mkdirSync(paths.ref, { recursive: true });
+    // a git that clones and refuses the search, which is how a search that ran out of time ends
+    const shim = join(w.root, 'shim');
+    mkdirSync(shim);
+    const real = execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    writeFileSync(
+      join(shim, 'git'),
+      `#!/bin/sh\nfor a in "$@"; do case "$a" in -G*) echo "fatal: the search was killed" >&2; exit 137;; esac; done\nexec "${real}" "$@"\n`,
+      { mode: 0o755 },
+    );
+    const t = fakeTarget(target, { cait: { pinned: true } });
+    const env = runnerEnv({ githubToken: undefined, base: { ...process.env, PATH: `${shim}:${process.env.PATH}` } });
+    await prepareCait(t, `file://${w.root}/Svc.git`, repos, env, paths);
+    expect(t.caitDir).toBeNull();
+    expect(t.notes.join(' ')).toMatch(/could not be looked up.*continuing without the reference copy/);
     expect(existsSync(join(paths.repos, 'Cait'))).toBe(false);
   });
 

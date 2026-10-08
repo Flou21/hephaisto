@@ -220,14 +220,31 @@ export async function prepareCait(target: Target, targetUrl: string, repos: Repo
   }
   const needle = `<Version>${version}</Version>`;
   const escaped = needle.replace(/[.[\]*^$\\]/g, '\\$&');
-  const shas = (await git.ok(['log', '--format=%H', `-G${escaped}`, '--', csproj])).split('\n').filter(Boolean);
   let pinned: string | null = null;
-  for (const sha of shas) {
-    const content = await git.try(['show', `${sha}:${csproj}`]);
-    if (content.code === 0 && content.stdout.includes(needle)) {
-      pinned = sha;
-      break;
+  try {
+    if (repos.defaults.clone.filter === 'blob:none') {
+      try {
+        const fetched = await prefetchPathHistory(git, csproj);
+        log.info(`Cait: fetched ${fetched} versions of ${csproj} in one request`);
+      } catch (e) {
+        // Not fatal: the search below still works, one request per version.
+        log.warn(`Cait: the versions of ${csproj} could not be fetched together (${firstLine(e)}); the search fetches them one by one`);
+      }
     }
+    const shas = (await git.ok(['log', '--format=%H', `-G${escaped}`, '--', csproj])).split('\n').filter(Boolean);
+    for (const sha of shas) {
+      const content = await git.try(['show', `${sha}:${csproj}`]);
+      if (content.code === 0 && content.stdout.includes(needle)) {
+        pinned = sha;
+        break;
+      }
+    }
+  } catch (e) {
+    // The same belt and braces as a clone that failed: the sibling is a convenience, and a plan
+    // that dies looking for it is worse than a plan without it.
+    rmSync(dir, { recursive: true, force: true });
+    target.notes.push(`The Cait commit that sets ${needle} could not be looked up (${firstLine(e)}); continuing without the reference copy.`);
+    return;
   }
   if (!pinned) {
     target.notes.push(`No Cait commit sets ${needle} in ${csproj}; Cait was not provided.`);
@@ -240,6 +257,42 @@ export async function prepareCait(target: Target, targetUrl: string, repos: Repo
   symlinkSync(dir, ref);
   target.caitDir = dir;
   log.info(`Cait ${version} = ${pinned} at ${dir} (linked from ${ref})`);
+}
+
+function firstLine(e: unknown): string {
+  return ((e as Error).message ?? String(e)).split('\n')[0]!.slice(0, 200);
+}
+
+/**
+ * Every version of one file, in one request.
+ *
+ * A blobless clone holds the history without the file contents, and git fetches a missing one the
+ * moment something reads it - one request each. `git log -G` reads every version of the file it
+ * is given, so on Cait, whose project file changes with every release, that was 974 requests: the
+ * search ran into its ten-minute limit and the plan failed with it, on every code fix production
+ * ever started (2026-10-02, -05 and -06).
+ *
+ * The ids of those versions are in the trees, which the clone has. So they are listed without
+ * reading a file and asked for together, the way git itself asks for a missing object: measured
+ * against github.com, 126 versions in 2 s, and no request during the search that followed.
+ */
+export async function prefetchPathHistory(git: Git, path: string): Promise<number> {
+  const raw = await git.ok(['log', '--no-renames', '--format=', '--raw', '--no-abbrev', '--', path]);
+  const oids = new Set<string>();
+  for (const line of raw.split('\n')) {
+    // :100644 100644 <before> <after> M\t<path>
+    if (!line.startsWith(':')) continue;
+    const [, , before, after] = line.split(/\s+/);
+    for (const oid of [before, after]) {
+      if (oid && /^[0-9a-f]{40,64}$/.test(oid) && !/^0+$/.test(oid)) oids.add(oid);
+    }
+  }
+  if (oids.size === 0) return 0;
+  await git.ok(
+    ['-c', 'fetch.negotiationAlgorithm=noop', 'fetch', '--quiet', '--no-tags', '--no-write-fetch-head', '--recurse-submodules=no', '--filter=blob:none', '--stdin', 'origin'],
+    { input: [...oids].join('\n') + '\n' },
+  );
+  return oids.size;
 }
 
 // --- NuGet -----------------------------------------------------------------------------------
