@@ -1,8 +1,8 @@
 # grafana-mcp values for Hephaisto
 # ---------------------------------------------------------------------------------------
 #   chart:     grafana-community/grafana-mcp
-#   version:   0.19.0
-#   image:     grafana/mcp-grafana:1.1.0   (pinned below, see note)
+#   version:   0.27.1
+#   image:     grafana/mcp-grafana:2.0.1   (the chart's appVersion; not pinned here)
 #   release:   grafana-mcp
 #   namespace: hephaisto-obs
 #
@@ -10,14 +10,18 @@
 #   0.3.1. It lives in the community repo:
 #     helm repo add grafana-community https://grafana-community.github.io/helm-charts
 #
-#   helm upgrade --install grafana-mcp grafana-community/grafana-mcp --version 0.19.0 \
+#   helm upgrade --install grafana-mcp grafana-community/grafana-mcp --version 0.27.1 \
 #     -n hephaisto-obs -f infra/observability/grafana-mcp.values.yaml
 #
-# VERSION NOTE: chart 0.19.0's appVersion is 1.0.0, but the image is pinned to 1.1.0 below
-# (which is chart 0.20.0's appVersion). Chart 0.19.0 is used because that is the version
-# already proven on this machine by the neighbouring stack's release; the image is bumped because
-# 1.1.0 is the current server. If the chart's templates ever stop matching the 1.1.0 flag
-# set, move the chart to 0.20.0 rather than downgrading the image.
+# VERSION NOTE: the chart version is the one production runs, and the image is whatever that
+# chart ships -- no tag is set below, exactly as in production. Until 2026-10-08 this file
+# pinned chart 0.19.0 with image 1.1.0 while production had moved to 0.27.1 on 2026-09-30.
+# The two servers do not offer the same tools. 1.1.0 lists none for Tempo here (it only
+# proxied Tempo's own MCP server, which this Tempo does not have); 2.0.1 has them built in
+# -- search_tempo_traces, get_tempo_trace, list_tempo_attribute_names,
+# list_tempo_attribute_values -- and has no list_alert_rules any more, alerting_rules_read
+# instead. The agent's allowlist named five tools production's server does not offer, and
+# this stack could not show it. Move this pin when production's moves.
 #
 # ---------------------------------------------------------------------------------------
 # What this is for
@@ -40,7 +44,7 @@ replicas: 1
 image:
   registry: docker.io
   repository: grafana/mcp-grafana
-  tag: "1.1.0"
+  # No tag: the chart's appVersion (2.0.1 for chart 0.27.1). See the version note above.
   pullPolicy: IfNotPresent
 
 grafana:
@@ -63,6 +67,12 @@ grafana:
 # ---------------------------------------------------------------------------------------
 # Transport and inbound auth
 # ---------------------------------------------------------------------------------------
+# The image's ENTRYPOINT carries `--transport sse --address 0.0.0.0:8000` and the chart has no
+# value for the transport, so the entrypoint is replaced and extraArgs below is the whole
+# argument list. Production does the same. Without it the flags below are appended to the
+# image's own and the result depends on which occurrence the binary honours.
+command: ["/app/mcp-grafana"]
+
 extraArgs:
   # streamable-http, not stdio and not the deprecated SSE transport. stdio would require
   # the agent to fork this binary as a child process; streamable-http lets it be an
@@ -104,18 +114,34 @@ envValueFrom:
 disableWrite: false
 
 # Categories turned off. Each becomes `--disable-<category>`.
+#
+# THIS LIST IS PRODUCTION'S, entry for entry, and that is its whole purpose: the agent's
+# allowlist (GrafanaOptions.AllowedTools) can only name tools the server it will meet offers,
+# and a category disabled there and enabled here makes this stack report Healthy for a list
+# production reports Degraded. Change it when production's changes.
 disabledCategories:
-  # All four of these are Grafana Cloud products. Against a local OSS Grafana their tools
-  # exist in the MCP tool list but every call returns a 404 from an endpoint that is not
-  # there. That matters more for an LLM than for a human: a tool that is offered and always
-  # fails teaches the model to retry it, burning tokens and investigation steps on a dead
-  # end. Removing them from the list removes the temptation.
+  # Grafana Cloud products, or backends this stack does not run. Against a local OSS Grafana
+  # their tools exist in the MCP tool list but every call returns a 404 from an endpoint that
+  # is not there. That matters more for an LLM than for a human: a tool that is offered and
+  # always fails teaches the model to retry it, burning tokens and investigation steps on a
+  # dead end. Removing them from the list removes the temptation.
   - oncall
   - incident
   - asserts
-  - sift
   # Pyroscope is not deployed in this stack either.
   - pyroscope
+  # Do NOT list `sift`. mcp-grafana 2.0.0 removed the category together with its
+  # --disable-sift flag, and an unknown flag makes the binary exit 2 at startup: a
+  # CrashLoopBackOff whose log is the usage text.
+  #
+  # `api` is grafana_api_request: raw GET/POST/PUT/PATCH/DELETE against any Grafana endpoint,
+  # which would undo every other restriction on this server. Production turns it off, so the
+  # agent must not depend on it - until 2026-10-08 it did, as its only way to read the
+  # PrometheusRule alert rules, and this stack left it on and hid that.
+  - api
+  # `snapshot` is create_snapshot, which publishes dashboard data at an address that needs no
+  # login; list/get/delete_snapshot go with it, the category has no finer switch.
+  - snapshot
 
 # ---------------------------------------------------------------------------------------
 # DELIBERATELY *NOT* DISABLED -- and this differs from the LiteLLM-facing copy
@@ -150,6 +176,22 @@ disabledCategories:
 # the bug this comment exists to prevent.
 
 debug: false
+
+# The chart ships no probes. /healthz answers without the bearer token, so the kubelet can
+# ask; production has the same two.
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: 8000
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8000
+  initialDelaySeconds: 15
+  periodSeconds: 30
 
 metrics:
   enabled: false

@@ -101,14 +101,14 @@ deps_install() {
     # investigates, but it cannot run a PromQL or LogQL query, which is most of what a
     # grounded diagnosis is made of. Installed before its token exists; bootstrap-secrets.sh
     # mints that and restarts it.
-    say "installing grafana-mcp 0.19.0"
+    say "installing grafana-mcp 0.27.1"
     helm_e2e upgrade --install grafana-mcp grafana-community/grafana-mcp \
-        --version 0.19.0 \
+        --version 0.27.1 \
         --namespace "$OBS_NS" \
         --values "$obs/grafana-mcp.values.yaml" \
         --timeout 5m \
         || warn "grafana-mcp install failed; the agent will run without query tools"
-    pass "grafana-mcp 0.19.0"
+    pass "grafana-mcp 0.27.1"
 }
 
 # ---------------------------------------------------------------------------------------

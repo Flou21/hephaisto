@@ -229,7 +229,7 @@ if observability:
         'grafana-community/grafana-mcp',
         namespace = 'hephaisto-obs',
         flags = [
-            '--version', '0.19.0',
+            '--version', '0.27.1',
             '--values', 'infra/observability/grafana-mcp.values.yaml',
         ],
         resource_deps = ['grafana-community', 'kube-prometheus-stack'],
