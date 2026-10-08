@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Hephaisto.Agent.CodeFix.Contract;
@@ -265,8 +266,35 @@ public sealed class CodeFixQueries(
     /// to be quoted in <c>notes</c>, so such a note is where a model repeats what a stranger
     /// planted: the console marks it, and a comment on an issue does not repeat it.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The word, wherever it stands - except in a short note that says there was none.</b>
+    /// A planner that looked for planted text and found nothing tends to say so: the second
+    /// plan in production (2026-10-08) carried "No suspected prompt injection in the issue.",
+    /// and the issue was then told that one note was about text of its author's that read like
+    /// an instruction, while the console marked the same note "suspected injection" (#291).
+    /// </para>
+    /// <para>
+    /// The exception is kept narrow, because the wide reading is the safe one: the note starts
+    /// with a denial, is at most <see cref="MaxDenialChars"/> characters, and holds nothing a
+    /// quotation is made of - no quotation mark, no backtick, no colon, no line break. A note
+    /// that denies AND quotes is treated as one that quotes.
+    /// </para>
+    /// </remarks>
     public static bool IsInjectionNote(string? note) =>
-        note is not null && note.Contains("injection", StringComparison.OrdinalIgnoreCase);
+        note is not null && note.Contains("injection", StringComparison.OrdinalIgnoreCase) && !DeniesInjection(note);
+
+    /// <summary>How long a note may be and still be read as "there was none".</summary>
+    public const int MaxDenialChars = 160;
+
+    private static bool DeniesInjection(string note) =>
+        note.Length <= MaxDenialChars
+        && note.AsSpan().IndexOfAny("\"'`:\n\r\u201C\u201D\u2018\u2019\u00AB\u00BB") < 0
+        && Denial.IsMatch(note);
+
+    private static readonly Regex Denial = new(
+        @"^\s*(?:no|none|nothing|there (?:is|was|are|were) no|i (?:found|saw|see|suspect) no(?:thing)?|(?:did|does|do) not)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     public static CodeFixAttemptView View(CodeFixAttempt a)
     {

@@ -452,7 +452,10 @@ And six about an attempt that is for a work item (`GitHubIssuePoller.Work.cs`,
   holds `<!--`: no model may write one of the markers. A plan's `questions` are a numbered list
   and its `notes` a `<details>` fold (`AskedAndNoted`), but a note that speaks of injection
   (`CodeFixQueries.IsInjectionNote`) is counted and NOT quoted: that is where a model quotes
-  what it was told to ignore.
+  what it was told to ignore. The one exception is a short note that only says there was none
+  (it starts with a denial and holds no quotation mark, backtick, colon or line break) - widen
+  it and a note that quotes gets through. A plan's summary and root cause keep their paragraphs
+  and list items (`NeutraliseBlock`); everything else of a model's is one line.
 - **The request is contract version 2** (`codefix-request-v2.schema.json`, a file of its own;
   version 1 is byte for byte what it was, and a test holds it). The body is `WorkItem.Body`, the
   snapshot. It is written with the attempt's ROW (`RequestJson`), not when the Job is created:
