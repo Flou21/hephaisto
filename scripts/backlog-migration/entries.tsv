@@ -1,0 +1,169 @@
+# One row per entry of docs/backlog.md: what its issue is. Read by migrate.py; the prose is not.
+# state: open | completed | not_planned. milestone: only where the entry or CHANGELOG names the version.
+# labels: decision, limitation, and an area for entries filed under 'Opened by vX' (the others take it from their section).
+id	state	milestone	labels	note
+1	completed			'Status: fixed 2026-08-29' (status line); 'Fixed 2026-08-29' at the end: ui/run.sh fails on expected == 0 or skipped != 0
+2	completed	v0.5.0		'Status: fixed 2026-09-01'; --full on tag 0.5.0-rc5 exited 0 with the bar met; CHANGELOG v0.5.0 states the bar was met (unlinked)
+3	completed			'Status: fixed 2026-08-29'; SubmitFeedbackAsync records the metric after the row commits
+4	completed			'Status: fixed 2026-08-29'; both instruments fire from RecordOutcome on every terminal transition
+5	completed			'Status: fixed 2026-08-29'; both instruments exist, guard test IncidentMetricsTests asserts they are recorded
+6	completed			'Status: fixed 2026-08-29'; the agent serves on a separate non-owner role, grants re-applied on every boot
+7	completed			'Status: fixed 2026-08-30', in two halves: the prompt text corrected, then VerificationScheduler built
+8	completed			'Resolved 2026-08-30 by reclassification' with changes made: SetModeAsync deleted, mode column dropped, POST /api/mode/re-arm built
+9	completed			'Status: fixed 2026-08-29'; all four parts: query embedding, pg_trgm arm, arms reported, Search.razor reads them
+10	completed			'Status: fixed 2026-08-30'; the label is read as ClusterFacts.NamespaceLabels and ClusterFactsGatherer fills the facts
+11	completed			'Status: fixed 2026-08-30'; a passing verification grants Resolved; confirmed on a cluster later (#72)
+12	completed			'Status: fixed 2026-08-30'; label is rejection.Reason; the lost per-gate breakdown was filed as #40 (fixed)
+13	completed			'Status: answered 2026-08-31': the retry path fired in production as designed; the defect it exposed is #54 (fixed)
+14	completed			'Status: fixed 2026-08-30'; delegates to IncidentTriage.EscalateAsync with InvestigationFailed
+15	completed	v0.13.0		'Fixed in v0.13.0' (entry); CHANGELOG v0.13.0 Fixed 'One metric name is one instrument' links it
+16	completed			'Status: fixed 2026-08-30'; three spans started, Spans.Incident left unstarted deliberately
+17	completed			'Status: fixed 2026-08-30'; the name is HephaistoTelemetry.Metrics.KubernetesWatchReconnects
+18	open			Header says fixed, end says 'Half fixed 2026-08-30': mode.changed is written; policy.decided 'remains open' and is still written nowhere in src/
+19	completed			'Status: fixed 2026-08-30'; 'Resolved 2026-08-30 by deletion' of both knobs
+20	completed			'Status: fixed 2026-08-29'; GrafanaAnnotator built and asserted by chaos_assert_annotations
+21	completed			no marker; entry says the stale line was 'removed in this restructure'; grep finds it in no doc; v0.6.0 carry: 'arguably closeable'
+22	open			no marker; the three policy values of the addendum shipped in v0.7.0, the four Llm:Budget caps are still extraEnv-only in values.yaml
+23	open			no marker; no --enforce-netpol tier exists in scripts/e2e; roadmap v0.7.0 'What did not ship'; needs a kind cluster with an enforcing CNI
+24	not_planned		limitation	no marker; 'Size n/a - a documented trade-off, listed so it stays visible'; values-dev.yaml still sets 0.0.0.0/0
+25	not_planned		limitation	no marker; 'Deliberately left; the data was dumped and restored first'; both carry reviews: correct as designed. Cluster not checked
+26	open			no marker; otel-collector.values.yaml still runs k8s_events in the DaemonSet with the same caveat; moving it to one replica remains
+27	completed			'Resolved 2026-08-29 by adoption'; code: Hephaisto.Eval/Cli/EvalHost.cs calls AddHephaistoLlmWithoutPersistence
+28	open			no marker; AlertRulesCaveat is still injected by PromptComposer; dropping or fixing the tool that always returns empty remains
+29	not_planned		limitation	no marker; 'Suppressed deliberately... Size n/a until upstream moves'; the pragma is still there, KubernetesClient 19.0.2
+30	open			no marker; two ~/hephaisto-prepurge-20260828-*.tar.gz still exist on this machine; closes by deleting them or moving them to secret storage
+31	open			no marker; the loud warning (v0.7.0) and a degraded status row (v0.8.0) shipped; grafana-mcp still has no Tempo tools, c10's hops unreachable
+32	completed			'Status: fixed 2026-08-29'; fixture_kind returns HighErrorRate, chaos_build_images builds the c10 image
+33	completed			'Status: fixed 2026-08-30', both halves: k8s_namespace_name fallback and ShippedAlertRulesTests
+34	open			no marker; c1-oomkill.yaml still balloons a tmpfs, so no OomKilled; entry: 'Worth doing' (carry reviews call it correct as designed)
+35	completed			'Status: fixed 2026-08-30'; the projection is driven from AllowedTools, so the option's order is the order
+36	completed			'Status: fixed 2026-08-30'; grafanaMcp.datasourceUids is a chart value
+37	completed			'Status: fixed 2026-08-31'; fixture-to-incident resolution happens once, in chaos_assert_detection
+38	completed			'Status: fixed 2026-08-30'; ApprovalSource.NotApplicable = 0 plus the ActingSchema migration
+39	open		area:correctness	no marker; SilenceAlert (v0.3.0) and RollbackDeployment (v0.7.0) shipped; PatchResources is still not in ActionCapability.IsImplemented
+40	completed		area:telemetry	'Status: fixed 2026-08-30'; PolicyReasonCode carried beside the text at every gate
+41	completed		area:measurement	'Status: answered 2026-08-31', and split: the fixture question is settled, the action rate left as #66 (closed 2026-09-03)
+42	open		area:correctness	no marker; the rollback predicate shipped in v0.7.0; ScaleWorkload still falls through to WorkloadIsHealthy, no replica-count check
+43	completed			'Status: fixed 2026-08-30'; OutboundStartupReport is the caller
+44	completed	v0.8.0	area:pager	no marker; CHANGELOG v0.8.0: IncidentSweeper 'also closes #44'; code: IncidentSweeper.cs escalates with ApprovalTimedOut
+45	completed		area:pager	'Status: answered 2026-08-30'; delivery and restart survival passed on a kind cluster; Teams and signing unit-tested, 'not on the critical path'
+46	completed		area:measurement	'Status: fixed 2026-08-30'; the spec asserts both directions, no test.skip left in the suite
+47	completed		area:measurement	'Status: fixed 2026-08-31'; the act phase skips the two dependent assertions when nothing executed
+48	completed		area:measurement	'Status: fixed 2026-08-30'; open() waits for the circuit before asserting
+49	completed	v0.8.0	area:measurement	'Status: fixed 2026-09-12'; CHANGELOG v0.8.0 Fixed links it
+50	completed		area:hygiene	'Status: fixed 2026-08-31'; data-theme with three states, persisted
+51	completed		area:measurement	'Status: fixed 2026-08-30'; run.sh passed on kind in Observe: 71 assertions, 0 failures
+52	completed		area:hygiene	'Status: fixed 2026-08-31'; implementation consolidated with no visual change
+53	completed		area:chart	'Status: fixed 2026-08-30'; --no-restore removed from the publish step, console suite 9 passed on the fixed image
+54	completed	v0.5.0	area:correctness	'Fixed 2026-08-31, in the release that opened it' (section 'Opened by v0.5.0'); roadmap v0.5.0: 'opened and fixed here'
+55	open		area:measurement	no marker; none of the three options taken: the corpus is still recorded by one model, and nothing refuses a cross-model ranking
+56	completed		area:correctness	'Status: fixed 2026-08-31'; Llm:PlanningStructuredOutput=JsonObject
+57	open		area:chart	'Split 2026-09-01, and half of it shipped' (the embedding seam); the default is still gemini, blocked on a search-quality measurement
+58	completed		area:measurement	'Status: fixed 2026-08-31'; both judges are provider-selectable
+59	open		area:config	'The entry stays open'; terminationReason is reported since #88; MaxSteps is still one default (12), no per-model value beside the price
+60	open		area:config	no marker; no provider passthrough exists in src/Hephaisto.Agent/Llm (no RawRepresentationFactory, no extra request properties)
+61	completed		area:measurement	'Status: fixed 2026-08-31'; a keyless endpoint is probed without an Authorization header
+62	completed		area:measurement	'Status: fixed 2026-08-31'; deps_verify_llm_reachable probes from a pod
+63	completed		area:measurement	'Status: fixed 2026-08-31'; ACT_FIXTURE is always in the fixture list in DryRun and Auto
+64	completed		area:measurement	'Status: fixed 2026-08-31'; chaos_expected_dryrun derives the expected shape from the mode
+65	completed		area:measurement	'Status: fixed 2026-08-31'; resuming past deps needs HEPHAISTO_E2E_ASSUME_LLM
+66	completed		area:measurement	'Status: closed 2026-09-03' on c13; the single-instrument limit it names became #101 (fixed 2026-09-12)
+67	completed		area:measurement	'Status: fixed 2026-08-31'; '|| true' on both secret-file pipelines
+68	completed		area:measurement	'Status: fixed 2026-08-31'; the check queries kube_pod_status_phase
+69	completed		area:measurement	'Status: fixed 2026-08-31'; the probe keeps the last three digits of the status
+70	open		area:correctness	'Narrowed in v0.7.0, not closed... Stays open, and gates Auto'; CHANGELOG v0.8.0 Known repeats it: a race still decides the kind
+71	completed		area:correctness	'Fixed 2026-09-02, marked 2026-09-03'; confirmed on a cluster by #72's run
+72	completed	v0.6.0	area:correctness	'Status: fixed and confirmed 2026-09-02. Closed.'; CHANGELOG v0.6.0 Fixed describes it under its title (unlinked)
+73	completed		area:measurement	'Fixed 2026-08-31, corrected 2026-09-01'; ABORTED depends on RUN_COMPLETED alone
+74	completed	v0.7.0	area:config	'Fixed 2026-09-11'; CHANGELOG v0.7.0: MaxTokensPerHour default 50M, harness workaround deleted (unlinked; docs/v0.7.0.md links it)
+75	completed		area:measurement	'Status: fixed 2026-09-01'; the outbox test skips when no refusal was observed
+76	completed		area:measurement	'Status: fixed 2026-09-01'; the wait matches on fixture target
+77	open		area:correctness	Bug fixed 2026-09-01 (CHANGELOG v0.5.0); kept open for the regression guard the entry calls outstanding, which no integration test holds
+78	completed		area:correctness	'Status: fixed 2026-09-01'; ConcludingCallAllowance = 2
+79	completed		area:measurement	'Status: fixed 2026-09-01'; the acting assertion splits on whether an action was proposed
+80	open		area:measurement	no marker; cassettes c1-c12 on disk still date from 2026-08-29..31; re-recording against the shipped prompts remains
+81	not_planned		limitation,area:measurement	'Status: mitigated on 2026-09-01' (TranscriptRedactor); 'Size n/a - a standing constraint on the corpus rather than a defect'
+82	completed		area:correctness	'Fixed 2026-09-02'; MaxInputTokens derived from MaxSteps, held by LlmBudgetRelationshipTests
+83	completed		area:measurement	'Fixed 2026-09-02'; the probe reads 401 and 403 as reachable
+84	completed	v0.6.0	area:measurement	'Fixed 2026-09-02'; CHANGELOG v0.6.0 Fixed: 'The redactor's \b missed an address' (unlinked)
+85	completed	v0.6.0	area:measurement	'Fixed 2026-09-02'; CHANGELOG v0.6.0 Fixed describes the --nightly branch fix (unlinked)
+86	completed	v0.6.0	area:correctness	'Fixed 2026-09-02'; CHANGELOG v0.6.0 Fixed: 'The conclude tool asked for a wrapper gpt-oss never sends' (unlinked)
+87	completed	v0.6.0	area:correctness	'Fixed 2026-09-02'; CHANGELOG v0.6.0 Fixed: 'Confidence was offered in two places and read from one' (unlinked)
+88	completed	v0.6.0	area:measurement	'Status: fixed 2026-09-03'; CHANGELOG v0.6.0 Changed: 'PlanVerdict gained PlannerNeverRan' (unlinked)
+89	completed		area:measurement	'Closed as a measured null 2026-09-02'; the prompt arm was reverted, results kept in results/c12-handoff-*.json
+90	completed	v0.6.0	area:measurement	'Fixed 2026-09-02'; CHANGELOG v0.6.0 Added c13-wedged-lock 'because the acting path had no fixture' (unlinked)
+91	open		area:measurement	'Size S. Open.'; did not reproduce on 2026-09-03; the check still rests on docker manifest inspect alone
+92	completed	v0.6.0	area:correctness	'Fixed 2026-09-02'; CHANGELOG v0.6.0 Fixed names 'an instance label read as a node name' (unlinked)
+93	completed	v0.6.0	area:measurement	'Fixed 2026-09-02'; CHANGELOG v0.6.0 Fixed names the assertion reading .target.name from the list endpoint (unlinked)
+94	completed	v0.6.0	area:docs	'Fixed 2026-09-03'; CHANGELOG v0.6.0 Fixed: 'The demo site shipped another state's glyph' (unlinked)
+95	completed	v0.6.0	area:docs	'Fixed 2026-09-03'; CHANGELOG v0.6.0 Fixed: 'A seeded replay was reported as PolicyDenied' (unlinked)
+96	completed	v0.7.0	area:correctness	'Fixed 2026-09-11'; CHANGELOG v0.7.0 Added: 'The console shows whether an action worked' (unlinked; docs/v0.7.0.md F4 links it)
+97	completed	v0.8.0	area:measurement	'Status: fixed 2026-09-12'; CHANGELOG v0.8.0 Fixed 'The release gate is one run again' links it
+98	completed	v0.6.0	area:measurement	'Fixed 2026-09-03'; CHANGELOG v0.6.0 Fixed: the redactor's replacement 'lost to \u0022' (unlinked)
+99	open		area:measurement	Entry ends 'Open, until a --full run passes both'; six --full logs of 2026-09-06..13 outside the repo pass both lines - close on the owner's word
+100	open		area:correctness	Entry never closed; the carried fault class looks fixed by MalformedRoleRepairHandler in v0.8.0 (#101, CHANGELOG) - close on the owner's word
+101	completed	v0.8.0	area:measurement	'Fixed 2026-09-12'; cassettes/c13.json exists; CHANGELOG v0.8.0 Fixed links it
+102	completed	v0.6.0	area:correctness	'Fixed 2026-09-03'; 'Found in v0.6.0-rc1 and fixed before v0.6.0'
+103	completed	v0.7.0		'Fixed 2026-09-11'; CHANGELOG v0.7.0 Fixed: the rule moved behind alerts.noTraffic, off by default (unlinked; docs/v0.7.0.md links it)
+104	completed	v0.7.0		'Fixed 2026-09-11'; CHANGELOG v0.7.0 Fixed: 'Every latency incident was un-actionable' (unlinked; docs/v0.7.0.md links it)
+105	completed	v0.7.0		'Fixed 2026-09-11'; CHANGELOG v0.7.0 Added 'Five runbooks' naming the four kinds (unlinked; docs/v0.7.0.md links it)
+106	completed	v0.7.0		'Fixed 2026-09-11'; CHANGELOG v0.7.0 Fixed: 'c13 was absent from infra/chaos/README.md' (unlinked; docs/v0.7.0.md links it)
+107	completed	v0.7.0		'Fixed 2026-09-11'; CHANGELOG v0.7.0 Fixed: 'Four documentation surfaces...' (unlinked; docs/v0.7.0.md links it)
+108	not_planned			'Open, and not planned for now' (owner, 2026-10-06); three of four parts shipped in v0.8.0, the getting-started guide is unwritten
+109	completed	v0.8.0		no marker; CHANGELOG v0.8.0 Added 'Close, acknowledge and reopen' links it; code: /close, /acknowledge, Closed = 10, IncidentSweeper
+110	completed	v0.8.0		no marker; CHANGELOG v0.8.0 Added 'OIDC on the console and API' links it; code: Web/AuthenticationExtensions.cs
+111	completed	v0.8.0		no marker; CHANGELOG v0.8.0 Added 'A connections panel' links it; code: Observability/ConnectionProbes.cs, Status.razor
+112	completed	v0.8.0		no marker; CHANGELOG v0.8.0 Added 'Assignment' links it; code: POST /{id}/assign, assignedTo=me, IncidentAssignmentTests
+113	open			no marker; CHANGELOG v0.8.0 Known; cassettes/ still has no c14.json, so a rollback cannot be replayed
+114	open			no marker; CHANGELOG v0.8.0 Known; no test calls DecideActionAsync and tests/ has no host fixture (no WebApplicationFactory)
+115	completed	v0.9.0		'Fixed in v0.9.0'; CHANGELOG v0.9.0 Changed links it
+116	completed	v0.13.0		'Fixed in v0.13.0, as three containers and not two'; CHANGELOG v0.13.0 Changed links it; entry: not yet run in a cluster
+117	open			'Fixed in v0.13.0, the failure and not the entry... The gate still runs one fixture repository. Open.'
+118	open		decision	'Open, a decision': subscription token or ANTHROPIC_API_KEY; lifetime answered (one year), the terms are the owner's to settle
+119	completed	v0.9.0		'Fixed in v0.9.0'; the ranges anchor on the real names
+120	completed	v0.9.0		'Fixed in v0.9.0': both lists are gone from appsettings.json
+121	completed	v0.9.0		'Fixed in v0.9.0-rc4, before it was tagged'
+122	not_planned		limitation	'What would close it. Nothing clean... Size S. Open, and accepted.'
+123	completed	v0.10.0		'Fixed in v0.10.0 with #141': recipients on a route; CHANGELOG v0.10.0 links it
+124	open			'Still open: all of it against a real tenant (#125), and the click above. Open.'; the buttons themselves are built (v0.10.0, v0.13.0)
+125	open			'Size S. Open.'; closes with teams-bot real on the dev cluster or the first production delivery; CHANGELOG v0.10.0 Known
+126	completed	v0.10.0		'Fixed in v0.10.0'; pager scenario P04
+127	completed	v0.9.0		'Fixed in v0.9.0-rc5'; CHANGELOG v0.9.0 'Fixed in rc5' links it
+128	open		decision	'Size S. Open.', 'a decision to take' (roadmap v0.12.0); code: POST /api/mode/re-arm still carries no approver policy
+129	completed	v0.10.0		'Fixed in v0.10.0': a signal carries its status, a resolve closes; pager scenarios P05, P07-P09
+130	completed	v0.10.0		'Fixed in v0.10.0': an open incident absorbs its alert however old; pager scenarios P06, P11
+131	completed	v0.10.0		'The first half fixed in v0.10.0... The second half fixed in v0.10.0 as well'; pager scenario P12
+132	completed	v0.10.0		'Fixed in v0.10.0': Core/Fingerprinting/AlertIdentity.cs
+133	completed	v0.10.0		'Fixed in v0.10.0': NotificationEvent.IncidentOpened; pager scenarios P17, P18, P21
+134	completed	v0.10.0		'Half fixed in v0.10.0: the kind and runbook... The opt-out label is fixed too'; CHANGELOG v0.10.0 lists both, P19
+135	completed	v0.10.0		'Fixed in v0.10.0': labels, annotations and the expression on the signal line; P20
+136	completed	v0.10.0		'Fixed in v0.10.0': the webhook answers after the commit, 503 otherwise; P13, P15
+137	completed	v0.10.0		'Fixed in v0.10.0': files/alerts/agent-presence.yaml; P16
+138	completed	v0.10.0		'Fixed in v0.10.0': secrets.webhookToken and WebhookTokenFilter
+139	completed	v0.10.0		'Fixed in v0.10.0': cluster.name is a required chart value
+140	completed	v0.10.0		'Fixed in v0.10.0': llm.pricing and LlmPricingValidator
+141	completed	v0.10.0		'Fixed in v0.10.0': matchers, clusters, kinds, recipients and fallback on a route; P22
+142	completed	v0.10.0		'Fixed in v0.10.0': steps on a route and UnansweredNotifier; P23, P24
+143	not_planned			'Open, and not planned for now' (owner, 2026-10-06, roadmap 'Not planned for now'); SMS and voice set aside, the symptom stands
+144	not_planned		limitation	'Reclassified in v0.10.0 as a deliberate limitation'; one replica with Recreate stays, the deployment.yaml comment was corrected
+145	completed	v0.10.0		'Fixed in v0.10.0': alert_notes and alert_note_entries
+146	completed	v0.10.0		'Fixed 2026-09-28': scripts/e2e/pager.sh; CHANGELOG v0.10.0 Added 'The pager suite' links it
+147	completed	v0.10.0		'Fixed in v0.10.0': flap detection per cluster, an alert that flaps is escalated; P10
+148	completed	v0.10.0		'Fixed in v0.10.0': SeverityRaised; P25
+149	completed	v0.10.0		'Fixed in v0.10.0, exactly that': Reopen clears the acknowledgement and keeps the assignee
+150	completed	v0.10.0		'Fixed in v0.10.0': notifications.maxPerChannelPerHour, held-back messages logged at Error
+151	completed	v0.10.0		'Fixed in v0.10.0, exactly that'; P28
+152	completed	v0.10.0		'Fixed in v0.10.0': the coordinator re-reads the state before it transitions
+153	completed	v0.10.0		'Decided in v0.10.0, as written above': IncidentOpened is enqueued regardless of the kill switch, so with Off a person is still told
+154	completed	v0.10.0		'Fixed in v0.10.0': the console's close records IncidentClosed
+155	not_planned		limitation	'Accepted for v0.10.0, as written above': a rule deleted while firing is a person's to close
+156	completed	v0.10.0		'Fixed in v0.10.0-rc2'; CHANGELOG v0.10.0 'Fixed in rc2' links it
+157	completed	v0.11.0		'Done in v0.11.0-rc1: every Done-when sentence is a green scenario'; CHANGELOG v0.11.0 links it
+158	completed	v0.13.0		'Fixed in v0.13.0': ReportHealedAsync, P49; CHANGELOG v0.13.0 New links it
+159	completed	v0.12.0		'Fixed in v0.12.0 by removal' of the readiness detectors; CHANGELOG v0.12.0 Changed links it
+160	completed	v0.13.0		'Fixed in v0.13.0': Loki first and default-container pick; CHANGELOG v0.13.0 New links it
+161	completed	v0.13.0		'Fixed in v0.13.0': CloseIncidentsAsync, close_incidents, P50; CHANGELOG v0.13.0 New links it
+162	open		decision	'Size M. Open, a decision': forwarded gateway identity or a person token per operator
+163	open		decision	'Size M. Open, a decision': which fields a person may correct, who may, and how it shows
+164	open			'Built in v0.12.0-rc1... Open until a production install has run it on #118's answer'
+165	completed	v0.13.0		'Fixed, exactly that'; CHANGELOG v0.13.0 Fixed 'The incident list says who acknowledged a row' links it

@@ -30,10 +30,14 @@ public sealed class CodeFixMetrics
     }
 
     public void Evaluated(CodeFixVerdict verdict, bool requestedByHuman) =>
+        Evaluated(verdict, requestedByHuman ? "human" : "escalation");
+
+    /// <param name="source"><c>human</c>, <c>escalation</c> or <c>work_item</c>. A fixed string, never a value somebody typed.</param>
+    public void Evaluated(CodeFixVerdict verdict, string source) =>
         evaluations.Add(1,
             new("result", verdict.Eligible ? "eligible" : verdict.WouldHaveStarted ? "would_have_started" : "declined"),
             new("reason", verdict.PrimaryCode?.ToString() ?? "none"),
-            new("source", requestedByHuman ? "human" : "escalation"));
+            new("source", source));
 
     public void PhaseFinished(CodeFixPhase phase, string outcome, TimeSpan elapsed, decimal costUsd)
     {

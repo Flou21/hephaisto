@@ -25,6 +25,11 @@ namespace NotificationReceiver;
 // POST /teams/click signs an invoke activity the way Microsoft would and delivers it to the
 // agent's actions port. What can be varied is exactly what the agent must refuse: another app id,
 // another tenant, somebody outside the team, a key not endorsed for Teams, another serviceUrl.
+//
+// Who clicks is an address, and an address has one Entra object id here for ever (ObjectId): so
+// "an approver" is whoever the agent's notifications.teamsBot.actions.approvers names by that id,
+// and every other member of the team is one who is not. A click can carry what a card's inputs
+// and buttons would: the reason typed into the Close card, the id of the action being decided.
 public static class TeamsStandIn
 {
     private const string Token = "stand-in-token";
@@ -247,9 +252,20 @@ public static class TeamsStandIn
             }.ToJsonString(),
             "application/json"));
 
-        // {incidentId, verb, user, tenant?, appId?, endorse?, serviceUrl?, claimedServiceUrl?}
-        // user is an email: a member of the team, or anybody else. endorse=false signs with the
-        // key endorsed for another channel. Answers {status, body} - what the agent said.
+        // Who is in the team, and the Entra object id a click as each of them carries - the id an
+        // install has to list under notifications.teamsBot.actions.approvers to make that person
+        // an approver. Not authenticated, like /teams/messages: it is the harness's window. It is
+        // also how pager-local.sh tells a stand-in that knows the click's reason and actionId
+        // from an older pod that would silently drop them.
+        app.MapGet("/teams/members", () => Results.Json(members.Select(m => new { email = m, objectId = ObjectId(m) })));
+
+        // {incidentId, verb, user, reason?, actionId?, tenant?, appId?, endorse?, serviceUrl?,
+        //  claimedServiceUrl?}
+        // user is an email: a member of the team, or anybody else. reason is what the person typed
+        // into the Close card's Input.Text, which Teams merges into the button's data under the
+        // input's id; actionId is what an Approve or Deny button carries. endorse=false signs with
+        // the key endorsed for another channel. Answers {status, body, objectId} - what the agent
+        // said, and the Entra object id the click was sent as.
         app.MapPost("/teams/click", async (HttpContext ctx) =>
         {
             var request = await ReadAsync(ctx);
@@ -293,7 +309,7 @@ public static class TeamsStandIn
                     {
                         ["type"] = "Action.Execute",
                         ["verb"] = Field("verb") ?? "acknowledge",
-                        ["data"] = new JsonObject { ["incidentId"] = Field("incidentId") },
+                        ["data"] = Data(Field("incidentId"), Field("reason"), Field("actionId")),
                     },
                 },
             };
@@ -315,6 +331,7 @@ public static class TeamsStandIn
                 {
                     status = (int)answer.StatusCode,
                     body = string.IsNullOrWhiteSpace(body) ? null : SafeParse(body),
+                    objectId = ObjectId(user),
                 });
             }
             catch (HttpRequestException ex)
@@ -322,6 +339,27 @@ public static class TeamsStandIn
                 return Results.Json(new { status = 0, body = (JsonNode?)JsonValue.Create(ex.Message) }, statusCode: 502);
             }
         });
+    }
+
+    /// <summary>
+    /// What Teams sends as <c>action.data</c>: the button's own data, with the card's inputs merged
+    /// in under their ids. A field nobody gave is absent, as it would be from a real card.
+    /// </summary>
+    private static JsonObject Data(string? incidentId, string? reason, string? actionId)
+    {
+        var data = new JsonObject { ["incidentId"] = incidentId };
+
+        if (reason is not null)
+        {
+            data["reason"] = reason;
+        }
+
+        if (actionId is not null)
+        {
+            data["actionId"] = actionId;
+        }
+
+        return data;
     }
 
     /// <summary>A member's Entra object id: stable per address, and different for everybody else.</summary>

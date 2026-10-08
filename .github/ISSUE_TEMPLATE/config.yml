@@ -3,6 +3,6 @@ contact_links:
   - name: Security vulnerability
     url: https://github.com/Flou21/hephaisto/security/advisories/new
     about: Report privately. Please do not open a public issue for anything that could be used against a running install.
-  - name: Everything known to be broken
-    url: https://github.com/Flou21/hephaisto/blob/main/docs/backlog.md
-    about: Check first. The entry probably exists, and probably explains why it is still there.
+  - name: Known, and deliberate
+    url: https://github.com/Flou21/hephaisto/issues?q=is%3Aissue+label%3Alimitation
+    about: Check first. A limitation that was decided on is a closed issue with the reasoning on it.

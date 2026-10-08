@@ -27,6 +27,11 @@ public sealed class CodeFixRequestBuilder(IOptionsMonitor<CodeFixOptions> option
     public const int MaxHypothesisChars = 4000;
     public const int MaxSummaryChars = 8000;
 
+    /// <summary>GitHub's own limit for an issue's text, so an issue passes as it was written.</summary>
+    public const int MaxIssueBodyChars = 65_536;
+
+    public const int MaxIssueTitleChars = 512;
+
     public CodeFixRequest Build(
         CodeFixAttempt attempt,
         CodeFixPhase phase,
@@ -74,7 +79,7 @@ public sealed class CodeFixRequestBuilder(IOptionsMonitor<CodeFixOptions> option
             Budget = new CodeFixBudget(
                 phase == CodeFixPhase.Plan ? o.MaxCostUsdPerPlan : o.MaxCostUsdPerImplement,
                 (int)(phase == CodeFixPhase.Plan ? o.PlanDeadline : o.ImplementDeadline).TotalSeconds),
-            Repository = new CodeFixRepository(attempt.RepositoryUrl, attempt.DefaultBranch, BindingPath(o, attempt), attempt.Branch),
+            Repository = new CodeFixRepository(attempt.RepositoryUrl, attempt.DefaultBranch, o.PathFor(attempt.Workload, attempt.RepositoryUrl), attempt.Branch),
             Context = new CodeFixContextRef(o.ContextRepositoryUrl, o.ContextRepositoryRef),
             Incident = new CodeFixIncident
             {
@@ -97,6 +102,50 @@ public sealed class CodeFixRequestBuilder(IOptionsMonitor<CodeFixOptions> option
     }
 
     /// <summary>
+    /// The request for a work item (contract version 2). The issue travels as it was when it was
+    /// taken - <see cref="WorkItem.Body"/> is a snapshot, and nothing here asks GitHub - capped,
+    /// and scrubbed of the credential shapes people paste into issues with their logs.
+    /// </summary>
+    /// <remarks>
+    /// There is no image and no analysed commit: an issue names no running thing, so the runner
+    /// plans on the default branch's HEAD. Comments are not passed on yet.
+    /// </remarks>
+    public CodeFixWorkItemRequest BuildForWorkItem(CodeFixAttempt attempt, CodeFixPhase phase, WorkItem item, CodeFixPlanResult? plan)
+    {
+        ArgumentNullException.ThrowIfNull(attempt);
+        ArgumentNullException.ThrowIfNull(item);
+
+        var o = options.CurrentValue;
+
+        if (phase == CodeFixPhase.Implement && plan is null)
+            throw new InvalidOperationException("an implement request needs the approved plan");
+
+        return new CodeFixWorkItemRequest
+        {
+            AttemptId = attempt.Id,
+            Phase = phase == CodeFixPhase.Plan ? "plan" : "implement",
+            Budget = new CodeFixBudget(
+                phase == CodeFixPhase.Plan ? o.MaxCostUsdPerPlan : o.MaxCostUsdPerImplement,
+                (int)(phase == CodeFixPhase.Plan ? o.PlanDeadline : o.ImplementDeadline).TotalSeconds),
+            Repository = new CodeFixRepository(attempt.RepositoryUrl, attempt.DefaultBranch, o.PathFor(attempt.Workload, attempt.RepositoryUrl), attempt.Branch),
+            Context = new CodeFixContextRef(o.ContextRepositoryUrl, o.ContextRepositoryRef),
+            WorkItem = new CodeFixWorkItem
+            {
+                Source = item.Source,
+                Repository = item.Repository,
+                Number = item.Number,
+                Url = Cap(item.Url, 512),
+                Title = Cap(Redact(item.Title), MaxIssueTitleChars),
+                Type = string.IsNullOrWhiteSpace(item.Type) ? null : Cap(item.Type, 64),
+                Author = Cap(item.AuthorLogin, 64),
+                Body = Cap(Redact(item.Body), MaxIssueBodyChars),
+                Comments = [],
+            },
+            Plan = plan,
+        };
+    }
+
+    /// <summary>
     /// The hypothesis, followed by where an investigator with source access said it points (v0.12.0
     /// F5), so the plan starts from the file and line. Inside the hypothesis rather than a new field:
     /// it is model-written text like the rest of it, and the contract stays as it is.
@@ -113,9 +162,6 @@ public sealed class CodeFixRequestBuilder(IOptionsMonitor<CodeFixOptions> option
 
         return $"{f.Hypothesis}\n\nWhere the investigator, reading the running revision, says it points:\n{string.Join("\n", lines)}";
     }
-
-    private static string BindingPath(CodeFixOptions o, CodeFixAttempt attempt) =>
-        o.BindingFor(attempt.Workload)?.Path ?? string.Empty;
 
     private static string Cap(string? value, int max)
     {

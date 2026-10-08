@@ -293,6 +293,23 @@ public enum ApprovalSource
 
     /// <summary>Reserved for the OIDC upgrade; populated from a verified claim.</summary>
     Oidc = 4,
+
+    /// <summary>
+    /// A click on a Teams card (#124). ApprovedBy is the team roster's name for the Microsoft Entra
+    /// object id the click carried, and that id is mapped to the approver role in
+    /// <c>Notifications:TeamsBot:Actions:Approvers</c>. Stored by name, like every enum here, so a
+    /// new member needs no migration.
+    /// </summary>
+    Teams = 5,
+
+    /// <summary>
+    /// A comment on the GitHub issue a plan was posted on (v0.14.0): <c>/approve</c> or
+    /// <c>/reject</c> as its first line. ApprovedBy is <c>github:&lt;login&gt;</c>; what let it count is
+    /// the account's NUMBER being listed in <c>GitHub:Approvers</c> - a login can be renamed and
+    /// taken by somebody else, a number cannot. Appended, like <see cref="Teams"/>: the members
+    /// above keep their values.
+    /// </summary>
+    GitHub = 6,
 }
 
 /// <summary>

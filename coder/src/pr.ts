@@ -3,12 +3,14 @@ import type { RunnerEnv } from './config.js';
 import { type ExecResult, run } from './exec.js';
 import type { Git } from './git.js';
 import { log } from './log.js';
-import { evidenceMarkdown, loadTemplate, render } from './prompts.js';
+import { evidenceMarkdown, fence, inert, render } from './prompts.js';
 import type { CodeFixRequest, PlanResult } from './schemas.js';
+import { isWorkItem, prType, subjectOf } from './subject.js';
 import { type VerificationReport, verificationTable } from './verify.js';
 
 // Everything that talks to GitHub. The agent never reaches any of it: `gh` is denied by the
-// guard, and GITHUB_TOKEN is only ever in the environment of the children spawned here.
+// guard, and since #116 GITHUB_TOKEN is not in its container at all - the open-PR and
+// remote-branch checks run in the prepare role, the push and the PR in the publish role.
 
 export const BRANCH_RE = /^hephaisto\/codefix-[0-9a-f]{12}$/;
 
@@ -77,14 +79,23 @@ export async function inspectRemoteBranch(git: Git, branch: string, defaultBranc
   return { kind: 'reset', lease: remoteSha };
 }
 
-/** Pushes the assigned branch and nothing else. A lease is only used to replace this attempt's own earlier push. */
-export async function pushBranch(git: Git, branch: string, assigned: string, lease?: string): Promise<void> {
+export const REMOTE_URL_RE = /^(https?|file):\/\//;
+
+/**
+ * Pushes ONE commit to the assigned branch and nothing else: the URL is the request's, never a
+ * remote name somebody could have re-pointed, and the source is a commit id the caller has just
+ * checked, never a ref that could have moved since. A lease is only used to replace this
+ * attempt's own earlier push.
+ */
+export async function pushBranch(git: Git, url: string, sha: string, branch: string, assigned: string, lease?: string): Promise<void> {
   if (branch !== assigned || !BRANCH_RE.test(branch)) throw new Error(`refusing to push ${branch}: only ${assigned} may be pushed`);
-  const args = ['push', '--porcelain', '--no-verify'];
+  if (!REMOTE_URL_RE.test(url)) throw new Error('refusing to push: the repository URL is not http(s) or file');
+  if (!/^[0-9a-f]{40,64}$/.test(sha)) throw new Error('refusing to push: the source is not a commit id');
+  const args = ['push', '--porcelain', '--no-verify', '--no-recurse-submodules'];
   if (lease) args.push(`--force-with-lease=refs/heads/${branch}:${lease}`);
-  args.push('origin', `refs/heads/${branch}:refs/heads/${branch}`);
+  args.push(url, `${sha}:refs/heads/${branch}`);
   await git.ok(args, { timeoutMs: 5 * 60_000 });
-  log.info(`pushed ${branch}${lease ? ' (replacing this attempt\'s earlier push)' : ''}`);
+  log.info(`pushed ${sha} to ${branch}${lease ? ' (replacing this attempt\'s earlier push)' : ''}`);
 }
 
 export interface CreatedPr {
@@ -126,7 +137,8 @@ export interface PrBodyInput {
   report: VerificationReport;
   costUsd: number;
   versions: string;
-  contextDir: string | null;
+  /** The pr-body template's text. The caller loads it; publish gets it sealed by prepare and never reads dev-context. */
+  template: string;
 }
 
 export function renderPrBody(i: PrBodyInput): string {
@@ -145,34 +157,81 @@ export function renderPrBody(i: PrBodyInput): string {
           ),
         ].join('\n')
       : '';
-  const { text } = loadTemplate('pr-body', i.contextDir);
-  return render(text, {
-    incident_link: `Hephaisto incident \`${req.incident_id}\``,
-    incident_title: req.incident.title,
-    summary: plan.summary,
-    root_cause: plan.root_cause,
-    evidence_md: evidenceMarkdown(req),
-    change_summary: i.changeSummary || plan.summary,
+  const common = {
     files: bullets(i.files.map((f) => `\`${f}\``), '- (none)'),
-    deviations: bullets(i.deviations, '- none'),
     verification_table: verificationTable(i.report),
-    verification_weak: weak,
-    notes: bullets([...plan.notes, ...i.notes], '- none'),
     cost: `$${i.costUsd.toFixed(2)} (implement phase, API-equivalent estimate)`,
     versions: i.versions,
     attempt_id: req.attempt_id,
-    incident_id: req.incident_id,
-    workload: req.incident.target.workload,
-    image: req.incident.image ?? '(unknown)',
     analysed_ref: plan.analysed_ref ?? '(unknown)',
     branch: req.repository.branch,
     repo_url: req.repository.url,
+  };
+  // What a model wrote is made inert (prompts.ts) for BOTH kinds of request. GitHub reads a
+  // pull request's body for closing keywords, references and mentions whoever it was opened
+  // for: until v0.14.0 only an issue's description was treated, and an incident's carried the
+  // model's summary and root cause as written - so a model repeating "fixes #<n>" from a log
+  // line would have closed that issue on merge, in a repository whose issues are real.
+  const model = {
+    summary: inert(plan.summary),
+    root_cause: inert(plan.root_cause),
+    change_summary: inert(i.changeSummary || plan.summary),
+    deviations: bullets(i.deviations.map(inert), '- none'),
+    verification_weak: weak ? inert(weak) : '',
+    notes: bullets([...plan.notes, ...i.notes].map(inert), '- none'),
+  };
+  if (isWorkItem(req)) {
+    // This one is for an issue anybody may have opened. So: the one `Closes` is the template's
+    // line, built from issue_ref - the runner's own, and not made inert; the issue's title is
+    // in a fence, where nothing is linked; and its body is not here at all.
+    return render(i.template, {
+      ...common,
+      ...model,
+      issue_ref: subjectOf(req).ref,
+      issue_url: req.work_item.url,
+      issue_md: fence(req.work_item.title),
+      default_branch: req.repository.default_branch,
+    });
+  }
+  return render(i.template, {
+    ...common,
+    ...model,
+    // Hephaisto's own words, and an id in a code span: as written.
+    incident_link: `Hephaisto incident \`${req.incident_id}\``,
+    // An alert's words - an annotation, a label - outside any fence: inert like the model's.
+    incident_title: inert(req.incident.title),
+    // Verbatim evidence is fenced (evidenceMarkdown), and GitHub links nothing inside a fence.
+    evidence_md: evidenceMarkdown(req),
+    incident_id: req.incident_id,
+    workload: req.incident.target.workload,
+    image: req.incident.image ?? '(unknown)',
   });
 }
 
+/**
+ * `fix(<workload>): <first sentence of the plan's summary>` for an incident, and for an issue
+ * `<type>: <the same>`, where the type is the issue's kind (subject.ts prType) - an issue names
+ * no workload to scope by. Capped at 120 characters either way.
+ */
 export function prTitle(req: CodeFixRequest, plan: PlanResult): string {
   const first = (plan.summary.split(/(?<=[.!?])\s/)[0] ?? plan.summary).trim().replace(/\s+/g, ' ');
-  const name = req.incident.target.workload.split('/').pop() || 'service';
-  const t = `fix(${name}): ${first.charAt(0).toLowerCase()}${first.slice(1)}`.replace(/\.$/, '');
+  const prefix = isWorkItem(req) ? prType(req.work_item.type) : `fix(${req.incident.target.workload.split('/').pop() || 'service'})`;
+  // a title notifies and links like any other text: it is made inert as the body is, for an
+  // incident as for an issue (the prefix is the runner's: a type, and a workload's name)
+  const sentence = inert(first);
+  const t = `${prefix}: ${lowerFirstWord(sentence)}`.replace(/\.$/, '');
   return t.length > 120 ? `${t.slice(0, 117)}...` : t;
+}
+
+/**
+ * A conventional title goes on in lower case after its type - but only a word that is
+ * capitalised because it starts the sentence is lowered: one upper-case letter, then lower-case
+ * ones ("The loop ..." -> "the loop ..."). An acronym (HTTP), an identifier
+ * (Endpoints.Primary, NullReferenceException) and a word with a digit or a capital inside it
+ * are names, and "hTTP client" is not one. The first real pull requests on github.com were
+ * titled "fix: fAKE SDK plan: ...".
+ */
+export function lowerFirstWord(sentence: string): string {
+  const word = /^\S+/.exec(sentence)?.[0] ?? '';
+  return /^\p{Lu}[\p{Ll}'\u2019-]*[,;:]?$/u.test(word) ? `${sentence.charAt(0).toLowerCase()}${sentence.slice(1)}` : sentence;
 }

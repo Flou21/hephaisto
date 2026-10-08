@@ -157,17 +157,21 @@ public sealed class TeamsNotificationChannel(
                 },
                 ["wrap"] = true,
             },
-            new JsonObject
-            {
-                ["type"] = "TextBlock",
-                ["text"] = string.IsNullOrWhiteSpace(s.Title) ? "(no title)" : s.Title,
-                ["wrap"] = true,
-            },
+            Words(string.IsNullOrWhiteSpace(s.Title) ? "(no title)" : s.Title, plain: s.WorkItemId is not null),
         };
 
         var facts = new JsonArray();
 
-        AddFact(facts, "Severity", s.Severity.ToString());
+        if (s.WorkItemId is not null)
+        {
+            // An issue has no severity, kind or target; it has a reference and a repository.
+            AddFact(facts, "Issue", s.Issue);
+            AddFact(facts, "Repository", s.Repository);
+        }
+        else
+        {
+            AddFact(facts, "Severity", s.Severity.ToString());
+        }
 
         if (s.IncidentId is not null)
         {
@@ -191,24 +195,12 @@ public sealed class TeamsNotificationChannel(
 
         if (!string.IsNullOrWhiteSpace(s.Summary))
         {
-            body.Add(new JsonObject
-            {
-                ["type"] = "TextBlock",
-                ["text"] = s.Summary,
-                ["wrap"] = true,
-                ["isSubtle"] = true,
-            });
+            body.Add(Words(s.Summary, plain: s.WorkItemId is not null, subtle: true));
         }
 
         if (!string.IsNullOrWhiteSpace(s.Reason))
         {
-            body.Add(new JsonObject
-            {
-                ["type"] = "TextBlock",
-                ["text"] = s.Reason,
-                ["wrap"] = true,
-                ["isSubtle"] = true,
-            });
+            body.Add(Words(s.Reason, plain: s.WorkItemId is not null, subtle: true));
         }
 
         if (message.AlsoSuppressed > 0)
@@ -240,7 +232,10 @@ public sealed class TeamsNotificationChannel(
             });
         }
 
-        if (!string.IsNullOrWhiteSpace(message.IncidentUrl))
+        // An incident's page, or - for a work item's attempt, which has none - the attempt's own.
+        var console = message.IncidentUrl ?? message.CodeFixUrl;
+
+        if (!string.IsNullOrWhiteSpace(console))
         {
             // Deliberately "Open" rather than "Approve". See the class remarks.
             actions.Add(new JsonObject
@@ -252,7 +247,17 @@ public sealed class TeamsNotificationChannel(
                     NotificationEvent.CodeFixPlanReady => "Review the plan in Hephaisto",
                     _ => "Open in Hephaisto",
                 },
-                ["url"] = message.IncidentUrl,
+                ["url"] = console,
+            });
+        }
+
+        if (s.WorkItemId is not null && !string.IsNullOrWhiteSpace(s.IssueUrl))
+        {
+            actions.Add(new JsonObject
+            {
+                ["type"] = "Action.OpenUrl",
+                ["title"] = "Open the issue",
+                ["url"] = s.IssueUrl,
             });
         }
 
@@ -299,6 +304,37 @@ public sealed class TeamsNotificationChannel(
         NotificationEvent.CodeFixFailed => "Code fix ended without a PR",
         _ => "Hephaisto",
     };
+
+    /// <summary>
+    /// One paragraph of a card. <paramref name="plain"/> for a work item's (v0.14.0): the title
+    /// is whatever somebody typed into an issue and the summary a model's, and a
+    /// <c>TextBlock</c> renders a markdown subset - <c>[x](address)</c> becomes a link on a card
+    /// people trust. A <c>RichTextBlock</c> of one <c>TextRun</c> is shown as it is. An
+    /// incident's paragraphs stay the TextBlocks they have been since v0.2.0.
+    /// </summary>
+    private static JsonObject Words(string text, bool plain, bool subtle = false)
+    {
+        if (!plain)
+        {
+            var block = new JsonObject { ["type"] = "TextBlock", ["text"] = text, ["wrap"] = true };
+
+            if (subtle)
+            {
+                block["isSubtle"] = true;
+            }
+
+            return block;
+        }
+
+        var run = new JsonObject { ["type"] = "TextRun", ["text"] = text };
+
+        if (subtle)
+        {
+            run["isSubtle"] = true;
+        }
+
+        return new JsonObject { ["type"] = "RichTextBlock", ["inlines"] = new JsonArray(run) };
+    }
 
     private static void AddFact(JsonArray facts, string title, string? value)
     {

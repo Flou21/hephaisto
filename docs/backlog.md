@@ -1,23 +1,22 @@
-# Hephaisto backlog
+# Hephaisto backlog — frozen on 2026-10-06
 
-Written against what is **actually in the repo**, not against what was planned. Where the two
-disagree, this file follows the code.
+**This file is a record, not the backlog.** On 2026-10-06 every entry below became a GitHub
+issue, the fixed ones closed, and what is known to be broken lives in the
+[issues](https://github.com/Flou21/hephaisto/issues) from then on. Nothing here is updated any more: an entry reads as it stood that day,
+and its issue says what happened since.
 
-Everything known to be broken, half-built, or lying — found during development and not fixed at
-the time. Each entry carries the **symptom**, the **evidence** that it is real, **why it is still
-open**, and a rough **size**.
+It is kept because its numbers are cited across the code, the tests, the chart and the changelog
+as "backlog #N". **From 77 up, an entry's number is its issue's number.** The numbers below that
+already belonged to pull requests, so those entries have other issue numbers:
+[the table at the end](#the-issue-of-each-entry) names every one.
 
-Grouped by area rather than by priority. Priority lives in [`roadmap.md`](roadmap.md), and keeping
-a second ordering here would guarantee the two drift apart. Milestones link in by anchor.
-
-Sizes are honest guesses: **S** ≈ under an hour, **M** ≈ a day, **L** ≈ several days.
-
-Item numbers are **stable ids, not an ordering**. New items take the next free number and are
-filed under the area they belong to, so a number can appear out of sequence. Renumbering would
-break every anchor `roadmap.md` links by, which is a worse problem than a non-monotonic list.
-
-An item leaves this file by being fixed, or by being reclassified as a deliberate limitation and
-written down somewhere permanent. It does not leave by being ignored.
+What the entries were: everything known to be broken, half-built, or lying, found during
+development and not fixed at the time. Each carries the **symptom**, the **evidence** that it is
+real, **why it was still open**, and a rough **size**: **S** ≈ under an hour, **M** ≈ a day,
+**L** ≈ several days. They are grouped by area, not by priority, and the numbers are ids, not an
+ordering: an item took the next free number and was filed under its area. An item left by being
+fixed, or by being reclassified as a deliberate limitation; as issues, the second kind is closed
+as not planned and labelled `limitation`.
 
 ---
 
@@ -817,7 +816,28 @@ has a runbook file, which is the same shape as `ShippedAlertRulesTests` and woul
 **Why it is still open.** Both registrations look correct in isolation; the conflict is only
 visible in the exported series.
 
-**Size.** M.
+**Size.** M. **Fixed in v0.13.0.** Each of the four is registered once, in `HephaistoMetrics`,
+which is the shape every panel and rule already queried: steps as a histogram, duration in
+seconds, one count per termination and per rejection. The registrations in `LlmInstrumentation`
+are gone, with the three places that recorded through them (`BudgetGuardChatClient`, and twice
+in `InvestigationRunner`). What went with them is a per-turn counter under the histogram's name
+and a duration in milliseconds; no panel, rule or script read either.
+
+The "harmless" pair was not: the watcher counted a signal as received when it queued it, and
+the pipeline counted the same signal again when it ingested it, so
+`hephaisto_signals_received_total{source="Kubernetes"}` read double. The watcher registers
+neither counter now. A signal is counted where it is ingested, and the watcher's two drop
+reasons (`queue_full`, `writer_closed`) go through `HephaistoMetrics.SignalDropped`, which
+gives them the `source` label the other reasons have and takes the `kind` label only they had.
+
+One thing the dashboard asked for and never got: the duration, steps and termination panels
+all filter by `kind`, and the only series that carried one was the milliseconds duplicate,
+under `signal_kind`. `InvestigationCompleted` records `kind` on all three, and
+`termination_reason` on the two histograms, as the dashboard's metric-spec table says.
+
+Held by `OneRegistrationPerMetricTests`: a scan of `src/` for a metric name registered in two
+places, which finds six on the old code and none now, and one that drives
+`InvestigationCompleted` and reads the meter. Not measured: the exported series on a cluster.
 
 ### 16. Four declared spans are never started
 
@@ -1433,7 +1453,10 @@ install-ergonomics work.** It was renumbered from v0.9.0 through v0.12.0. **High
 theme became operating the agent rather than installing it, on the grounds that installing is
 something you do once and had just been done.
 
-**Size of what is left.** M, and it is a writing job.
+**Not planned for now, 2026-10-06.** The owner's decision: it comes later, other things come
+first ([roadmap](roadmap.md#not-planned-for-now)). The guide is still unwritten.
+
+**Size of what is left.** M, and it is a writing job. Open, and not planned for now.
 
 ### 109. An escalated incident is terminal, so the open list only grows
 
@@ -1693,7 +1716,68 @@ prerequisite; egress goes only through the allowlist proxy, whose log is the per
 Hephaisto re-checks branch, repository and host before believing a PR exists.
 
 **Fix (v2).** Two containers sharing `/work`: the driver with the tokens, the agent without, so the
-separation is the kernel's rather than the guard's. **Size.** M. Open.
+separation is the kernel's rather than the guard's. **Size.** M.
+
+**Fixed in v0.13.0, as three containers and not two.** Two would have left the driver's own
+verification - the build, and a test suite the model had just written - running beside the token,
+which is the same read of `/proc/<driver>/environ` one step later. So the driver is cut where
+the model starts and again where it ends, and each piece is the same image in a container of its
+own, with no shared process namespace:
+
+| | when | holds | does |
+|---|---|---|---|
+| `prepare` | init | `GITHUB_TOKEN`, `NUGET_GITHUB_TOKEN` | clones, the open-PR and remote-branch checks, the assigned branch, the pre-restore |
+| `coder` | plan, investigate: the regular container. implement: the second init container | the model credential | the agent, then build and tests |
+| `publish` | implement only, the regular container | `GITHUB_TOKEN` | push, Draft PR, prints the result |
+
+`coder` is an init container when there is a `publish` because an init container has ended -
+every process of it - before the next one starts. Nothing waits on a file, and the token is in no
+live process while the model runs. The runner refuses the `coder` role beside any git or NuGet
+variable, so a Job rendered wrongly does not run the model next to a token; it fails.
+
+`publish` is the part that could have undone it: `/work` is where the model worked, and a
+`git push` in that repository honours its hooks, `core.fsmonitor`, `credential.helper`,
+`url.*.insteadOf` and a dozen more. It never opens that repository. It takes two files from
+`/work` as bytes - no symbolic links, size-capped, never quoted - builds a bare repository in a
+`/tmp` of its own, fetches the default branch from the request's URL, imports the branch as a
+bundle, and derives everything a push depends on from that copy: the tip is the commit the driver
+verified, it descends from the base, every commit carries the attempt's trailer, the publishing
+policy holds, the remote branch is absent or this attempt's own. What `prepare` decided reaches
+it on a volume `coder` does not mount. The list of what that closes, and of what remains, is the
+header of `coder/src/publish.ts`.
+
+Hephaisto reads an implementation's result from `publish` and a plan's or an investigation's
+from `coder`, as the Job's `hephaisto.dev/result-container` annotation says; a frame in the
+coder container's log of an implement Job is not read at all. The investigator Job got the same
+`prepare`, in every run: its context clone needs the token whether or not source access is on.
+
+**Verified.** `coder/scripts/test.sh`: 488 tests (433 before). Each role is run as its own
+`main()` with only its container's environment. One test plants hooks, `core.fsmonitor`,
+`core.hooksPath`, `credential.helper`, `url.insteadOf`, a `pushurl`, an `include` and a poisoned
+`HOME` in the shared repository, shows that the old `git push origin` there runs the hook with
+the token in its environment and sends the branch to a fork, and then that `publish` runs none of
+it and pushes only to the request's remote. Eighteen more tamper with the handoff or the bundle -
+a later commit, a workflow file, a link to a file of credentials, a claimed PR - and each ends in
+a refusal and an untouched remote. `./scripts/test.sh`: 2200 (2179 before); the golden tests pin
+each container's Secret keys by exact list, that `coder` has no git or NuGet variable under any
+name, that `prepare` and `publish` have no model credential, and that `shareProcessNamespace` is
+absent from the object and from its JSON.
+
+**Not verified, and what would.** Nothing here ran in a cluster when it was written.
+`scripts/e2e/codefix-local.sh` (c15) and `scripts/e2e/investigate-local.sh` (I12) assert the pod
+spec and, from inside the running `coder` container, that no process there holds a git or NuGet
+variable or belongs to another container - and then expect the push and the PR. Until they have
+been run: whether the kubelet starts the pod as rendered, and whether a .NET build is content with
+a read-only package cache. Never run by anything: `gh pr create` from outside a git repository
+against github.com (the tests use the shim), and a restore without feed credentials on a service
+with a private feed (the fixture has none, which is #117).
+
+**What remains, on purpose.** The model credential is in the container the model runs in; the CLI
+needs it there, and the guard and the egress allowlist are what bound it - but it calls a model,
+it does not push. The verification verdict in a PR is that container's word: code that defeated
+the guard there could report green for a tree it did not test. It could not push anywhere but the
+assigned branch, nor a diff the policy refuses. And `CODEFIX_ROLE` unset - `docker run`, the
+tests - is every role in one process, with none of this.
 
 ### 117. The code-fix gate exercises one fixture repository, never a True Relevance service
 
@@ -1706,6 +1790,25 @@ on the gate.
 pinned commit of one service, graded on plan location only (no push). Needs `codefix run`, which is
 deferred to v0.9.x. **Size.** M. Open.
 
+**What production found, 2026-10-06: every code fix it started failed, and the same way.** Three
+plans for one incident on a service that pins Cait, on 2026-10-02, -05 and -06, each ended after
+ten minutes with `git log --format=%H -G<Version>51\.30\.0</Version> -- Cait.csproj exited 137`.
+The coder clones Cait without file contents and then searches every version of its project file
+for the pinned one. A blobless clone fetches a missing file the moment it is read, one request
+each, and Cait's project file has 974 versions: the search ran into its limit, was killed, and
+took the plan with it. The fixture repository has a history of a handful of commits and no
+sibling to look up, so the gate could not have shown this - which is this entry.
+
+**Fixed in v0.13.0, the failure and not the entry.** `prefetchPathHistory` lists the ids of a
+path's versions from the trees, which the clone has, and asks for them in one request, as git
+itself asks for a missing object. Measured against github.com on a public repository: 126
+versions in 2 s, and no request during the search that followed. And a lookup that fails is a
+note on the plan, like a clone that fails already was: the sibling is a convenience, and Release
+builds from the pinned package without it. Three tests in `coder/test/workspace.test.ts`, on a
+blobless clone of a local remote, all red on the old code. **Not measured: Cait itself, from a
+coder pod, through the egress proxy.** The next plan production starts is that measurement. The
+gate still runs one fixture repository. Open.
+
 ### 118. The subscription OAuth token's headless terms and lifetime are unverified
 
 **Symptom.** The coder authenticates with `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`: a
@@ -1715,6 +1818,32 @@ unconfirmed lifetime. `cost_usd` under it is nominal — the caps bound behaviou
 **What to do.** Confirm the lifetime and headless-use terms before `Pr` goes to production; keep an
 API key as the documented fallback (`ANTHROPIC_API_KEY` is an optional key of the same Secret); treat
 the first `RateLimited` failure as a data point. **Size.** S. Open.
+
+**What the documentation says, read on 2026-10-06.** The lifetime is answered and the terms are
+not ours to answer.
+
+- **Lifetime: one year.** "For CI pipelines, scripts, or other environments where interactive
+  browser login isn't available, generate a one-year OAuth token with `claude setup-token`", and
+  of `CLAUDE_CODE_OAUTH_TOKEN`: "Use this for CI pipelines and scripts where browser login isn't
+  available" ([Authentication](https://code.claude.com/docs/en/authentication)). The page names
+  no way to list or revoke such a token. So the Secret needs a date beside it: the token
+  production holds stops working a year after it was made, and nothing here warns before it does.
+- **Headless use is documented; a service for a team is a different sentence.** "Advertised
+  usage limits for Pro and Max plans assume ordinary, individual usage of Claude Code and the
+  Agent SDK", and "Developers building products or services that interact with Claude's
+  capabilities, including those using the Agent SDK, should use API key authentication through
+  Claude Console or a supported cloud provider"
+  ([Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)). The same page
+  sends questions about a use case to Anthropic's sales contact. Whether an incident agent that
+  one team runs for itself is "ordinary, individual usage" is the owner's to settle with
+  Anthropic, not something this file can decide.
+- **The limits are the person's.** The token shares its usage window with the same person's
+  interactive sessions, as the symptom says; nothing found says otherwise.
+
+**What that leaves.** A decision, the owner's: stay on the subscription token, or move the
+investigation Job and the coder to `ANTHROPIC_API_KEY`, which the Secret and the runner already
+take and which makes `cost_usd` real money that the caps bound. The investigation Job has run on
+the subscription token in production since v0.12.0. Open, a decision.
 
 ### 119. Three chart assertions matched a name no render produces, and passed for that reason
 
@@ -1830,8 +1959,64 @@ and every verb drawn has a handler. The Teams stand-in publishes a key document 
 endorsed for Teams and one that is not, and `POST /teams/click` signs and delivers a click - for
 this bot or another, this tenant or another, a member or an outsider.
 
-**Still open:** close and reinvestigate; approve and deny, which need the Entra-to-approver map;
-and all of it against a real tenant ([#125](#125)). Open.
+**The rest, scenarios first, 2026-10-06.** Pager scenarios P51-P54 say what the remaining verbs
+have to do before any of them exists: a member's click re-investigates an incident nobody
+diagnosed, and the model is asked again (P51); an approver's click closes with the reason typed
+into the card, closed by the roster's name, with one audit row (P52); a member who is not an
+approver is told so and nothing changes (P53); approve and deny answer only an approver, and say
+so for an action that is not waiting (P54). All four are on `KNOWN_RED`, each for a reason only
+its verb removes - P53 asserts the sentence about the approver role, because "nothing changed" is
+also what an unknown verb does. The stand-in's `POST /teams/click` now carries what a card's
+input and buttons would, `reason` and `actionId`, and answers the object id it clicked as.
+**P54 is the wire, not an approval:** the model stand-in answers a planning call with `{}`, so no
+incident of the suite ever waits for approval, and the approval itself has to be a unit test.
+
+**Close and reinvestigate, 2026-10-06.** Reinvestigate is read-level, as in the console: any
+member, drawn where the console's retry banner is and the card is still kept in step - an
+Escalated incident none of whose investigations has a primary finding. Expired and Closed, where
+the console also offers the retry or a reopen, get no button: a card for an incident that is over
+is edited once and then left, so a button on it would outlive the state it was drawn for. Each
+way the request does not start is its own sentence, and a saturated queue is not reported as
+"nothing changed", because the incident is then marked Investigating. Close is an
+`Action.ShowCard` whose card requires a reason, and it takes **the approver map**:
+`notifications.teamsBot.actions.approvers`, Microsoft Entra object ids, empty by default. Empty
+draws no Close and refuses the verb; an entry that is not a GUID is refused by the schema and by
+the agent at startup, because an address there would map nobody and look like it worked. A
+member who is not on the list gets a sentence, one Warning line and no change - a card is the
+same for everybody, so the check is at the click and nothing is hidden per person. Both verbs
+call the console's own `RequestReinvestigationAsync` and `CloseIncidentAsync`. P51-P53 leave
+`KNOWN_RED` with this; none of them had run when it was written.
+
+**Approve and deny, 2026-10-06.** Behind `notifications.teamsBot.actions.approvals.enabled`, off
+by default; the chart and the agent both refuse it without the actions route and without an
+approver. An alert whose incident is awaiting approval names each waiting action - type, target,
+arguments, risk, the model-written parts as text Teams never parses - directly above its own
+Approve and Deny, which carry the action's id. Two verbs and two methods behind them, so nothing
+in a payload can turn a denial into an approval. The click calls the console's
+`DecideActionAsync` with a new `ApprovalSource.Teams` (stored by name: no migration), so the
+approval is committed in the roster's name before anything runs. With the switch off the two
+verbs are refused before who is asking is considered. A stale click is answered "already
+decided" in a message, never a refreshed card. **Found on the way:** an action can still say it
+is waiting on an incident somebody closed, and deciding it then left the console's API as a 500
+from the state machine; `DecideActionAsync` answers it as not-awaiting-approval now, for both
+doors. **No new trigger was needed** to put the buttons on a card already sent: the waiting
+actions are part of the card's content, the reconciler compares every live alert each
+`RefreshInterval`, and `ApprovalRequired` posts a new alert rendered from the present. The
+waiting actions are read only when approvals are on, so an install that leaves them off asks
+its database nothing it did not ask before. P54 leaves `KNOWN_RED`.
+
+**What is not proven, beyond the tenant:** an approval that runs, end to end. The pager suite
+cannot make an action wait - its model stand-in plans nothing - so P54 proves the wire (flag,
+verbs, approver map, the stale answer) and the approval itself is unit-tested against a
+substitute for `IncidentQueries`. The integration suite got the card's read of the waiting
+actions (`TeamsBotDiagnosisTests`), not an approval through this door. Before
+`approvals.enabled` is set anywhere that matters it wants one click on the dev cluster against a
+real waiting action. Also still as it was: a plan with two actions awaiting approval can only
+have its first decided, from Teams or the console - the incident leaves `AwaitingApproval` with
+the first decision and the state machine refuses the second, now with a sentence instead of a
+500.
+
+**Still open:** all of it against a real tenant ([#125](#125)), and the click above. Open.
 
 ### 125. The agent has never talked to Teams itself
 
@@ -1854,6 +2039,18 @@ document); that a real click's token carries `serviceurl` and its activity `from
 matching the roster's `aadObjectId`; that Teams renders the refreshed card the invoke answers
 with; and that the messaging endpoint, routed to the actions port through an ingress, is
 reachable from the Bot Connector at all.
+
+**Added by #124's close and reinvestigate.** That Teams sends what was typed into the Close
+card's `Input.Text` as `action.data.reason` - the input's id merged into the button's data, as
+Microsoft documents it and as the stand-in imitates it; that a required input stops the click in
+the client; and that Teams shows every action of an alert that now carries up to four acting
+buttons beside its links, rather than dropping the ones past the sixth.
+
+**Added by #124's approve and deny.** That Teams renders an `ActionSet` with two `Action.Execute`
+inside a card's body and delivers its click like one in the card's own row; that `style`
+`positive` and `destructive` render as intended; and that a card whose buttons were removed by an
+edit cannot still be clicked from a client that has not refreshed - the route answers that click
+"already decided" either way.
 
 ### 126. An incident from a kube-state-metrics alert names the exporter's pod as its target
 
@@ -2259,8 +2456,10 @@ queue", which was the right place for them while something else did the paging.
 v0.10.0 is Teams only. **Moved 2026-09-29** from v0.11.0 to v0.12.0 when the MCP endpoint
 ([#157](#157)) took v0.11.0. **Moved again later that day**: it is out of the numbered
 milestones, **high priority, after [roadmap v0.12.0](roadmap.md)**, when production problems
-took precedence.
-**Size.** L. Open.
+took precedence. **Not planned for now, 2026-10-06**: the owner chose a more direct
+way to communicate with Hephaisto as the next thing instead
+([roadmap](roadmap.md#next--a-more-direct-way-to-talk-to-hephaisto)). The symptom stands.
+**Size.** L. Open, and not planned for now.
 
 ### 144. A rollout is an outage of the pager, and the chart calls that cheap
 
@@ -6456,3 +6655,174 @@ offered when a diagnosis exists, never offered on a resolved or in-flight incide
 
 **Size.** S. **Fixed 2026-09-03.**
 
+---
+
+## The issue of each entry
+
+| Backlog | Issue | Title |
+|---|---|---|
+| 1 | [#166](https://github.com/Flou21/hephaisto/issues/166) | The e2e Playwright phase reports `pass` on a zero-assertion run |
+| 2 | [#167](https://github.com/Flou21/hephaisto/issues/167) | Six of ten chaos fixtures never run in an automated gate |
+| 3 | [#168](https://github.com/Flou21/hephaisto/issues/168) | `hephaisto.human.feedback` is never recorded |
+| 4 | [#169](https://github.com/Flou21/hephaisto/issues/169) | `hephaisto.incidents.closed` and `hephaisto.incident.duration` are never recorded |
+| 5 | [#170](https://github.com/Flou21/hephaisto/issues/170) | `hephaisto.incidents.open` and `hephaisto.budget.remaining` have no instrument at all |
+| 6 | [#171](https://github.com/Flou21/hephaisto/issues/171) | Audit immutability is not enforced in the deployed database |
+| 7 | [#172](https://github.com/Flou21/hephaisto/issues/172) | The planning prompt claims a verification-and-rollback mechanism that does not exist |
+| 8 | [#173](https://github.com/Flou21/hephaisto/issues/173) | Nothing writes the database mode arm |
+| 9 | [#174](https://github.com/Flou21/hephaisto/issues/174) | Semantic search returns nothing, and the recorded cause was wrong |
+| 10 | [#175](https://github.com/Flou21/hephaisto/issues/175) | `hephaisto.io/destructive-actions-allowed` is read by no code |
+| 11 | [#176](https://github.com/Flou21/hephaisto/issues/176) | There is no production path to `Resolved` |
+| 12 | [#177](https://github.com/Flou21/hephaisto/issues/177) | Unbounded label cardinality on `hephaisto.grounding.rejected` |
+| 13 | [#178](https://github.com/Flou21/hephaisto/issues/178) | The retry path has never been observed firing in production |
+| 14 | [#179](https://github.com/Flou21/hephaisto/issues/179) | `EscalateOnlyInvestigator` does not escalate |
+| 15 | [#180](https://github.com/Flou21/hephaisto/issues/180) | Duplicate instrument registrations with conflicting types and units |
+| 16 | [#181](https://github.com/Flou21/hephaisto/issues/181) | Four declared spans are never started |
+| 17 | [#182](https://github.com/Flou21/hephaisto/issues/182) | `hephaisto.kubernetes.watch_reconnects` bypasses the constants file |
+| 18 | [#183](https://github.com/Flou21/hephaisto/issues/183) | Two audit event types are named and never written |
+| 19 | [#184](https://github.com/Flou21/hephaisto/issues/184) | `MaxAutoScaleReplicas` and `MaxAutoScaleStep` have no readers |
+| 20 | [#185](https://github.com/Flou21/hephaisto/issues/185) | The MVP acceptance test requires Grafana annotations, which are unbuilt |
+| 21 | [#186](https://github.com/Flou21/hephaisto/issues/186) | "The workflows have never run — there is no remote yet" is stale |
+| 22 | [#187](https://github.com/Flou21/hephaisto/issues/187) | The chart's budget values are write-only |
+| 23 | [#188](https://github.com/Flou21/hephaisto/issues/188) | NetworkPolicy enforcement is unproven |
+| 24 | [#189](https://github.com/Flou21/hephaisto/issues/189) | `values-dev.yaml` disables the webhook's only authentication |
+| 25 | [#190](https://github.com/Flou21/hephaisto/issues/190) | Orphaned `data-postgres-0` PVC on the dev cluster |
+| 26 | [#191](https://github.com/Flou21/hephaisto/issues/191) | The `k8s_events` receiver breaks the moment a second node is added |
+| 27 | [#192](https://github.com/Flou21/hephaisto/issues/192) | `AddHephaistoLlmWithoutPersistence` has no call sites |
+| 28 | [#193](https://github.com/Flou21/hephaisto/issues/193) | `list_alert_rules` returns empty here, and is worked around in the prompt |
+| 29 | [#194](https://github.com/Flou21/hephaisto/issues/194) | `CS0618` suppression on `WatcherExt.WatchAsync` |
+| 30 | [#195](https://github.com/Flou21/hephaisto/issues/195) | A pre-purge `grafana.db` tarball is still on the development machine |
+| 31 | [#196](https://github.com/Flou21/hephaisto/issues/196) | grafana-mcp exposes no Tempo tools, so c10's whole reason for existing is untestable |
+| 32 | [#197](https://github.com/Flou21/hephaisto/issues/197) | `chaos.sh` maps c10 to `SloBurn`, which is not a `SignalKind` |
+| 33 | [#198](https://github.com/Flou21/hephaisto/issues/198) | Alertmanager signals lose their namespace when the alert labels it `k8s_namespace_name` |
+| 34 | [#199](https://github.com/Flou21/hephaisto/issues/199) | `c1-oomkill` never produces an OOMKill on this node |
+| 35 | [#200](https://github.com/Flou21/hephaisto/issues/200) | `AllowedTools` is documented "in order", and the order is the server's |
+| 36 | [#201](https://github.com/Flou21/hephaisto/issues/201) | The environment card never names a datasource uid, because nothing sets them |
+| 37 | [#202](https://github.com/Flou21/hephaisto/issues/202) | The judge grades a different incident than the one the run asserted on |
+| 38 | [#203](https://github.com/Flou21/hephaisto/issues/203) | `approval_source` reads `Ui` on actions nobody approved |
+| 39 | [#204](https://github.com/Flou21/hephaisto/issues/204) | The executor covers five action types; three are refused |
+| 40 | [#205](https://github.com/Flou21/hephaisto/issues/205) | `PolicyResult` has no closed reason code, so the metric cannot say why |
+| 41 | [#206](https://github.com/Flou21/hephaisto/issues/206) | c11 has never been run against a cluster |
+| 42 | [#207](https://github.com/Flou21/hephaisto/issues/207) | Verification predicates are workload-shaped, and two action types are not |
+| 43 | [#208](https://github.com/Flou21/hephaisto/issues/208) | `GrafanaAnnotator.Describe` is documented as a startup line and has no caller |
+| 44 | [#209](https://github.com/Flou21/hephaisto/issues/209) | Nothing sweeps `AwaitingApproval`, so `ApprovalTimedOut` has no producer |
+| 45 | [#210](https://github.com/Flou21/hephaisto/issues/210) | Nothing has been delivered from a cluster |
+| 46 | [#211](https://github.com/Flou21/hephaisto/issues/211) | The console suite cannot pass in Observe, so a green run needs `--mode Auto` |
+| 47 | [#212](https://github.com/Flou21/hephaisto/issues/212) | The act phase reports two failures that are consequences of the first |
+| 48 | [#213](https://github.com/Flou21/hephaisto/issues/213) | The console suite interacts with a page the circuit has not taken over yet |
+| 49 | [#214](https://github.com/Flou21/hephaisto/issues/214) | The console spec compares a capped API call against an uncapped page |
+| 50 | [#215](https://github.com/Flou21/hephaisto/issues/215) | Both themes are first-class, and neither can be chosen |
+| 51 | [#216](https://github.com/Flou21/hephaisto/issues/216) | `run.sh` has not been re-run on a kind cluster since the suite was fixed |
+| 52 | [#217](https://github.com/Flou21/hephaisto/issues/217) | Two components are implemented twice |
+| 53 | [#218](https://github.com/Flou21/hephaisto/issues/218) | The console was never interactive in any released image |
+| 54 | [#219](https://github.com/Flou21/hephaisto/issues/219) | A depleted API budget is retried five times as a transport failure |
+| 55 | [#220](https://github.com/Flou21/hephaisto/issues/220) | The cassette corpus grades the model that recorded it |
+| 56 | [#221](https://github.com/Flou21/hephaisto/issues/221) | The planner assumed every provider can enforce a JSON schema |
+| 57 | [#222](https://github.com/Flou21/hephaisto/issues/222) | Production needs a Google API key so the search box has a semantic arm |
+| 58 | [#223](https://github.com/Flou21/hephaisto/issues/223) | The eval judge bypasses the provider seam |
+| 59 | [#224](https://github.com/Flou21/hephaisto/issues/224) | The step budget is tuned to one model and silently caps another's accuracy |
+| 60 | [#225](https://github.com/Flou21/hephaisto/issues/225) | A provider's own options cannot be reached through the OpenAI-compatible seam |
+| 61 | [#226](https://github.com/Flou21/hephaisto/issues/226) | A keyless endpoint read as an absent model, and the run still exited 0 |
+| 62 | [#227](https://github.com/Flou21/hephaisto/issues/227) | The harness proved the model was reachable from the wrong machine |
+| 63 | [#228](https://github.com/Flou21/hephaisto/issues/228) | An acting run could be told to skip the fixture it asserts about |
+| 64 | [#229](https://github.com/Flou21/hephaisto/issues/229) | DryRun asserted a condition DryRun cannot produce |
+| 65 | [#230](https://github.com/Flou21/hephaisto/issues/230) | A resumed run skipped every model assertion and still exited 0 |
+| 66 | [#231](https://github.com/Flou21/hephaisto/issues/231) | The planner acts on half of a fair fixture |
+| 67 | [#232](https://github.com/Flou21/hephaisto/issues/232) | A missing line in a secrets file aborted the run before it probed anything |
+| 68 | [#233](https://github.com/Flou21/hephaisto/issues/233) | A stack check that passed only while the cluster was unhealthy |
+| 69 | [#234](https://github.com/Flou21/hephaisto/issues/234) | The in-cluster model probe read a healthy endpoint as unreachable |
+| 70 | [#235](https://github.com/Flou21/hephaisto/issues/235) | A generic rule with a shorter `for:` permanently mislabels two fixtures |
+| 71 | [#236](https://github.com/Flou21/hephaisto/issues/236) | An auto-executed action leaves `ApprovedBy` null, against its own documented invariant |
+| 72 | [#237](https://github.com/Flou21/hephaisto/issues/237) | An incident that was successfully acted on sits in `Verifying` forever |
+| 73 | [#238](https://github.com/Flou21/hephaisto/issues/238) | Every red run was reported as ABORTED, including the ones that finished |
+| 74 | [#239](https://github.com/Flou21/hephaisto/issues/239) | The token ceiling and the cost ceiling are calibrated for price points 45x apart |
+| 75 | [#240](https://github.com/Flou21/hephaisto/issues/240) | The outbox test reported a durability failure when its own precondition had failed |
+| 76 | [#241](https://github.com/Flou21/hephaisto/issues/241) | The investigation wait counted incidents the fixtures did not cause |
+| 77 | [#77](https://github.com/Flou21/hephaisto/issues/77) | Attributing an auto action woke a dormant cooldown, which refused the action that woke it |
+| 78 | [#78](https://github.com/Flou21/hephaisto/issues/78) | The reserved concluding step was half of what the protocol needs |
+| 79 | [#79](https://github.com/Flou21/hephaisto/issues/79) | The acting assertion gated on a model's judgement, so it failed half the time |
+| 80 | [#80](https://github.com/Flou21/hephaisto/issues/80) | Every cassette in the corpus is stale against the shipped prompts |
+| 81 | [#81](https://github.com/Flou21/hephaisto/issues/81) | A demo transcript is published evidence, and only its addresses are redacted |
+| 82 | [#82](https://github.com/Flou21/hephaisto/issues/82) | The concluding-step rescue cannot land when the ceiling that broke was tokens |
+| 83 | [#83](https://github.com/Flou21/hephaisto/issues/83) | The in-cluster reachability probe reads 401 as unroutable |
+| 84 | [#84](https://github.com/Flou21/hephaisto/issues/84) | The redactor's word boundary missed an address, and mangled a version string |
+| 85 | [#85](https://github.com/Flou21/hephaisto/issues/85) | `--nightly` never published the branch, and the README said it did |
+| 86 | [#86](https://github.com/Flou21/hephaisto/issues/86) | Every gpt-oss run failed its first `conclude` call, on a wrapper we asked for |
+| 87 | [#87](https://github.com/Flou21/hephaisto/issues/87) | Confidence is offered in two places and only one of them was read |
+| 88 | [#88](https://github.com/Flou21/hephaisto/issues/88) | `NoPlan` pools four outcomes, and the action rate counted all four as declines |
+| 89 | [#89](https://github.com/Flou21/hephaisto/issues/89) | gpt-oss declines c12 because it gets the decisive question wrong, not because nobody asked it |
+| 90 | [#90](https://github.com/Flou21/hephaisto/issues/90) | The acting path had no fixture that could measure it |
+| 91 | [#91](https://github.com/Flou21/hephaisto/issues/91) | `docker manifest inspect` cannot reach ghcr from here, so the build phase aborts on a published artifact |
+| 92 | [#92](https://github.com/Flou21/hephaisto/issues/92) | An `instance` label became a node name, and default-deny did the rest |
+| 93 | [#93](https://github.com/Flou21/hephaisto/issues/93) | The Resolved assertion read a field the list endpoint does not have |
+| 94 | [#94](https://github.com/Flou21/hephaisto/issues/94) | The demo site rendered another state's glyph for three of the five it knew |
+| 95 | [#95](https://github.com/Flou21/hephaisto/issues/95) | The seeded demo reported ten incidents as policy-denied by a policy engine that never ran |
+| 96 | [#96](https://github.com/Flou21/hephaisto/issues/96) | The console does not render an action's verifications |
+| 97 | [#97](https://github.com/Flou21/hephaisto/issues/97) | `--full` and `--mode Auto` defeat each other, and the release gate cannot confirm acting |
+| 98 | [#98](https://github.com/Flou21/hephaisto/issues/98) | The redactor's lookbehind lost to `\u0022`, which is #84 for the second time |
+| 99 | [#99](https://github.com/Flou21/hephaisto/issues/99) | `hourlyCostUtilization` disagreed with the ledger by 40x, on the wide run only |
+| 100 | [#100](https://github.com/Flou21/hephaisto/issues/100) | One fixture in eleven opened an incident and never got investigated |
+| 101 | [#101](https://github.com/Flou21/hephaisto/issues/101) | c13 is measured by one instrument and one model |
+| 102 | [#102](https://github.com/Flou21/hephaisto/issues/102) | The console told every escalated incident that no diagnosis was produced |
+| 103 | [#103](https://github.com/Flou21/hephaisto/issues/103) | `ServiceNoTraffic` names a chaos fixture, so every install fires it forever |
+| 104 | [#104](https://github.com/Flou21/hephaisto/issues/104) | The three latency rules drop the namespace, so every latency incident is un-actionable |
+| 105 | [#105](https://github.com/Flou21/hephaisto/issues/105) | Four `SignalKind`s ship alert rules and no runbook |
+| 106 | [#106](https://github.com/Flou21/hephaisto/issues/106) | c13 is absent from `infra/chaos/README.md`, the table that is meant to be the contract |
+| 107 | [#107](https://github.com/Flou21/hephaisto/issues/107) | Four documentation surfaces describe a harness and limitations that no longer exist |
+| 108 | [#108](https://github.com/Flou21/hephaisto/issues/108) | Installing the chart is a research project, and a wrong values file renders a plausible install |
+| 109 | [#109](https://github.com/Flou21/hephaisto/issues/109) | An escalated incident is terminal, so the open list only grows |
+| 110 | [#110](https://github.com/Flou21/hephaisto/issues/110) | There is no authentication, so every actor in the audit trail is a typed-in string |
+| 111 | [#111](https://github.com/Flou21/hephaisto/issues/111) | Every dependency is probed once at startup and the result is thrown into a log line |
+| 112 | [#112](https://github.com/Flou21/hephaisto/issues/112) | An incident cannot be assigned to anyone |
+| 113 | [#113](https://github.com/Flou21/hephaisto/issues/113) | c14 has no cassette, so the corpus cannot replay a rollback |
+| 114 | [#114](https://github.com/Flou21/hephaisto/issues/114) | `DecideActionAsync` has no deterministic coverage, and the e2e spec that touches it cannot fail |
+| 115 | [#115](https://github.com/Flou21/hephaisto/issues/115) | The chart never set `Ingest:SelfNamespaces`, so the agent's own namespaces were a code default |
+| 116 | [#116](https://github.com/Flou21/hephaisto/issues/116) | The coder's agent and its driver run as the same uid, so the model can read the driver's tokens |
+| 117 | [#117](https://github.com/Flou21/hephaisto/issues/117) | The code-fix gate exercises one fixture repository, never a True Relevance service |
+| 118 | [#118](https://github.com/Flou21/hephaisto/issues/118) | The subscription OAuth token's headless terms and lifetime are unverified |
+| 119 | [#119](https://github.com/Flou21/hephaisto/issues/119) | Three chart assertions matched a name no render produces, and passed for that reason |
+| 120 | [#120](https://github.com/Flou21/hephaisto/issues/120) | The chart can widen `codeFix.eligibleCategories` and `allowedRepositoryHosts`, never narrow them |
+| 121 | [#121](https://github.com/Flou21/hephaisto/issues/121) | The agent would not start with the Teams bot on, and every test was green |
+| 122 | [#122](https://github.com/Flou21/hephaisto/issues/122) | A board that was posted and not recorded can never be edited |
+| 123 | [#123](https://github.com/Flou21/hephaisto/issues/123) | Everybody on the Teams recipient list is told about everything |
+| 124 | [#124](https://github.com/Flou21/hephaisto/issues/124) | Every button on a Teams card is a link |
+| 125 | [#125](https://github.com/Flou21/hephaisto/issues/125) | The agent has never talked to Teams itself |
+| 126 | [#126](https://github.com/Flou21/hephaisto/issues/126) | An incident from a kube-state-metrics alert names the exporter's pod as its target |
+| 127 | [#127](https://github.com/Flou21/hephaisto/issues/127) | Signed in, the console still asked for a name, and recorded whatever was typed |
+| 128 | [#128](https://github.com/Flou21/hephaisto/issues/128) | Anybody who can read the console can re-arm the agent |
+| 129 | [#129](https://github.com/Flou21/hephaisto/issues/129) | A resolved alert is ingested as a firing one |
+| 130 | [#130](https://github.com/Flou21/hephaisto/issues/130) | A repeat notification opens a new incident |
+| 131 | [#131](https://github.com/Flou21/hephaisto/issues/131) | The alert's `cluster` label is never read |
+| 132 | [#132](https://github.com/Flou21/hephaisto/issues/132) | Every series of one alert name is one incident |
+| 133 | [#133](https://github.com/Flou21/hephaisto/issues/133) | Nobody is told that an incident opened |
+| 134 | [#134](https://github.com/Flou21/hephaisto/issues/134) | Every incident is investigated, and there is no kind for a pipeline |
+| 135 | [#135](https://github.com/Flou21/hephaisto/issues/135) | The model is never shown the alert's labels |
+| 136 | [#136](https://github.com/Flou21/hephaisto/issues/136) | The webhook answers 200 before anything is written |
+| 137 | [#137](https://github.com/Flou21/hephaisto/issues/137) | Nothing tells a person that Hephaisto is down |
+| 138 | [#138](https://github.com/Flou21/hephaisto/issues/138) | The webhook cannot check a credential |
+| 139 | [#139](https://github.com/Flou21/hephaisto/issues/139) | The chart never names the cluster |
+| 140 | [#140](https://github.com/Flou21/hephaisto/issues/140) | A model without a price entry has no cost cap |
+| 141 | [#141](https://github.com/Flou21/hephaisto/issues/141) | A route cannot match a label |
+| 142 | [#142](https://github.com/Flou21/hephaisto/issues/142) | Nothing happens when nobody answers |
+| 143 | [#143](https://github.com/Flou21/hephaisto/issues/143) | Teams is the only way to reach a person |
+| 144 | [#144](https://github.com/Flou21/hephaisto/issues/144) | A rollout is an outage of the pager, and the chart calls that cheap |
+| 145 | [#145](https://github.com/Flou21/hephaisto/issues/145) | An alert name has nowhere to keep what people learned about it |
+| 146 | [#146](https://github.com/Flou21/hephaisto/issues/146) | Nothing tests paging end to end |
+| 147 | [#147](https://github.com/Flou21/hephaisto/issues/147) | Flap suppression silences a page across clusters and label sets |
+| 148 | [#148](https://github.com/Flou21/hephaisto/issues/148) | A warning that turns critical tells nobody |
+| 149 | [#149](https://github.com/Flou21/hephaisto/issues/149) | An acknowledgement survives a reopen |
+| 150 | [#150](https://github.com/Flou21/hephaisto/issues/150) | The hourly channel cap drops an opening silently |
+| 151 | [#151](https://github.com/Flou21/hephaisto/issues/151) | Any alert name containing "watchdog" is swallowed |
+| 152 | [#152](https://github.com/Flou21/hephaisto/issues/152) | An investigation that ends after its incident closed still moves it |
+| 153 | [#153](https://github.com/Flou21/hephaisto/issues/153) | With the agent `Off`, the webhook answers 200 and drops the alert |
+| 154 | [#154](https://github.com/Flou21/hephaisto/issues/154) | The open-incidents gauge is never decremented by a human close |
+| 155 | [#155](https://github.com/Flou21/hephaisto/issues/155) | A lost resolve leaves an incident open |
+| 156 | [#156](https://github.com/Flou21/hephaisto/issues/156) | A null in the model's conclusion failed the whole investigation |
+| 157 | [#157](https://github.com/Flou21/hephaisto/issues/157) | An agent has no way to ask Hephaisto about an incident |
+| 158 | [#158](https://github.com/Flou21/hephaisto/issues/158) | An incident the Kubernetes watcher opens never closes |
+| 159 | [#159](https://github.com/Flou21/hephaisto/issues/159) | Readiness flapping is a lifetime count, not a rate |
+| 160 | [#160](https://github.com/Flou21/hephaisto/issues/160) | `get_pod_logs` cannot read a pod with a sidecar |
+| 161 | [#161](https://github.com/Flou21/hephaisto/issues/161) | A backlog can only be closed one incident at a time |
+| 162 | [#162](https://github.com/Flou21/hephaisto/issues/162) | Through a gateway nobody is anybody |
+| 163 | [#163](https://github.com/Flou21/hephaisto/issues/163) | An incident's fields cannot be corrected |
+| 164 | [#164](https://github.com/Flou21/hephaisto/issues/164) | An investigation cannot use the model the subscription pays for |
+| 165 | [#165](https://github.com/Flou21/hephaisto/issues/165) | The incident list did not say who acknowledged what |

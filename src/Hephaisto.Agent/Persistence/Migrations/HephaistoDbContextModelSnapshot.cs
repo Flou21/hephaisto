@@ -122,7 +122,7 @@ namespace Hephaisto.Agent.Persistence.Migrations
                         .HasColumnType("numeric(14,6)")
                         .HasColumnName("cost_usd");
 
-                    b.Property<Guid>("IncidentId")
+                    b.Property<Guid?>("IncidentId")
                         .HasColumnType("uuid")
                         .HasColumnName("incident_id");
 
@@ -684,6 +684,15 @@ namespace Hephaisto.Agent.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("branch");
 
+                    b.Property<string>("CommandAnswers")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("command_answers");
+
+                    b.Property<long?>("CommandCommentId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("command_comment_id");
+
                     b.Property<double?>("Confidence")
                         .HasColumnType("double precision")
                         .HasColumnName("confidence");
@@ -733,7 +742,7 @@ namespace Hephaisto.Agent.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("implement_started_at");
 
-                    b.Property<Guid>("IncidentId")
+                    b.Property<Guid?>("IncidentId")
                         .HasColumnType("uuid")
                         .HasColumnName("incident_id");
 
@@ -744,6 +753,10 @@ namespace Hephaisto.Agent.Persistence.Migrations
                     b.Property<bool>("NeedsCait")
                         .HasColumnType("boolean")
                         .HasColumnName("needs_cait");
+
+                    b.Property<long?>("PlanCommentId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("plan_comment_id");
 
                     b.Property<decimal>("PlanCostUsd")
                         .HasColumnType("numeric(14,6)")
@@ -768,6 +781,10 @@ namespace Hephaisto.Agent.Persistence.Migrations
                     b.Property<DateTimeOffset?>("PlanStartedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("plan_started_at");
+
+                    b.Property<string>("PrBody")
+                        .HasColumnType("text")
+                        .HasColumnName("pr_body");
 
                     b.Property<int?>("PrNumber")
                         .HasColumnType("integer")
@@ -812,6 +829,10 @@ namespace Hephaisto.Agent.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("verification_level");
 
+                    b.Property<Guid?>("WorkItemId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("work_item_id");
+
                     b.Property<string>("Workload")
                         .IsRequired()
                         .HasColumnType("text")
@@ -829,12 +850,23 @@ namespace Hephaisto.Agent.Persistence.Migrations
                     b.HasIndex(new[] { "IncidentId" }, "ix_code_fix_attempts_incident_id")
                         .HasDatabaseName("ix_code_fix_attempts_incident_id");
 
+                    b.HasIndex(new[] { "WorkItemId" }, "ix_code_fix_attempts_work_item_id")
+                        .HasDatabaseName("ix_code_fix_attempts_work_item_id");
+
                     b.HasIndex(new[] { "IncidentId" }, "ux_code_fix_attempts_one_open_per_incident")
                         .IsUnique()
                         .HasDatabaseName("ux_code_fix_attempts_one_open_per_incident")
                         .HasFilter("state IN ('Eligible', 'Planning', 'PlanReady', 'Implementing')");
 
-                    b.ToTable("code_fix_attempts", (string)null);
+                    b.HasIndex(new[] { "WorkItemId" }, "ux_code_fix_attempts_one_open_per_work_item")
+                        .IsUnique()
+                        .HasDatabaseName("ux_code_fix_attempts_one_open_per_work_item")
+                        .HasFilter("state IN ('Eligible', 'Planning', 'PlanReady', 'Implementing')");
+
+                    b.ToTable("code_fix_attempts", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_code_fix_attempts_one_subject", "(incident_id IS NULL) <> (work_item_id IS NULL)");
+                        });
                 });
 
             modelBuilder.Entity("Hephaisto.Core.Domain.Evidence", b =>
@@ -1569,6 +1601,135 @@ namespace Hephaisto.Agent.Persistence.Migrations
                     b.ToTable("verifications", (string)null);
                 });
 
+            modelBuilder.Entity("Hephaisto.Core.Domain.WorkItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<long>("AuthorId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("author_id");
+
+                    b.Property<string>("AuthorLogin")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("author_login");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("body");
+
+                    b.Property<DateTimeOffset?>("ClosedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("closed_at");
+
+                    b.Property<string>("DeclineCodes")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("decline_codes");
+
+                    b.Property<string>("DeclineReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("decline_reason");
+
+                    b.Property<string>("Labels")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("labels")
+                        .HasDefaultValueSql("'[]'::jsonb");
+
+                    b.Property<string>("NodeId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("node_id");
+
+                    b.Property<int>("Number")
+                        .HasColumnType("integer")
+                        .HasColumnName("number");
+
+                    b.Property<string>("Repository")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("repository");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("source");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("state");
+
+                    b.Property<string>("StateReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("state_reason");
+
+                    b.Property<string>("StatusCommentDigest")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("status_comment_digest");
+
+                    b.Property<long?>("StatusCommentId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("status_comment_id");
+
+                    b.Property<bool>("StillAssigned")
+                        .HasColumnType("boolean")
+                        .HasColumnName("still_assigned");
+
+                    b.Property<DateTimeOffset>("TakenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("taken_at");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("title");
+
+                    b.Property<string>("Type")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("type");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("Url")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("url");
+
+                    b.HasKey("Id")
+                        .HasName("pk_work_items");
+
+                    b.HasIndex("State", "TakenAt")
+                        .HasDatabaseName("ix_work_items_state_taken_at");
+
+                    b.HasIndex("Source", "Repository", "State")
+                        .HasDatabaseName("ix_work_items_source_repository_state");
+
+                    b.HasIndex(new[] { "Source", "Repository", "Number" }, "ux_work_items_one_taken_per_issue")
+                        .IsUnique()
+                        .HasDatabaseName("ux_work_items_one_taken_per_issue")
+                        .HasFilter("state = 'Taken'");
+
+                    b.ToTable("work_items", (string)null);
+                });
+
             modelBuilder.Entity("Hephaisto.Core.Domain.ActionPlan", b =>
                 {
                     b.HasOne("Hephaisto.Core.Domain.Investigation", "Investigation")
@@ -1673,10 +1834,17 @@ namespace Hephaisto.Agent.Persistence.Migrations
                         .WithMany("CodeFixAttempts")
                         .HasForeignKey("IncidentId")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
                         .HasConstraintName("fk_code_fix_attempts_incidents_incident_id");
 
+                    b.HasOne("Hephaisto.Core.Domain.WorkItem", "WorkItem")
+                        .WithMany()
+                        .HasForeignKey("WorkItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .HasConstraintName("fk_code_fix_attempts_work_items_work_item_id");
+
                     b.Navigation("Incident");
+
+                    b.Navigation("WorkItem");
                 });
 
             modelBuilder.Entity("Hephaisto.Core.Domain.Evidence", b =>

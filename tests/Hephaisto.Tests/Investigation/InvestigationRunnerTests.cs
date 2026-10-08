@@ -618,7 +618,7 @@ public class InvestigationRunnerTests
 
     private sealed class RefusingGlobalBudget : IGlobalLlmBudget
     {
-        public Task<GlobalBudgetVerdict> CheckAsync(Guid incidentId, CancellationToken ct) =>
+        public Task<GlobalBudgetVerdict> CheckAsync(Guid? incidentId, CancellationToken ct) =>
             Task.FromResult(new GlobalBudgetVerdict(false, "$3.0012 this hour (max $3.00)"));
 
         public Task RecordAsync(

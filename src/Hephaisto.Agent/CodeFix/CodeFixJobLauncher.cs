@@ -43,7 +43,12 @@ public interface ICodeFixJobLauncher
 
     Task<CodeFixJobObservation> ObserveAsync(string jobName, CancellationToken ct);
 
-    /// <summary>The tail of the coder container's log, or null when there is no pod to read.</summary>
+    /// <summary>
+    /// The tail of the log of the ONE container that prints the Job's result - <c>coder</c> for a
+    /// plan or an investigation, <c>publish</c> for an implementation - or null when there is no
+    /// pod to read. Never two logs joined: exactly one framed block is believed, and it is the last
+    /// one in that one container's log.
+    /// </summary>
     Task<string?> ReadResultLogAsync(string jobName, CancellationToken ct);
 
     Task DeleteAsync(string jobName, CancellationToken ct);
@@ -197,12 +202,19 @@ public sealed class KubernetesCodeFixJobLauncher(
         if (pod is null)
             return null;
 
+        // Since #116 the pod has up to three containers, and one of them ran the model. The result
+        // is read from the one the Job itself names - for an implementation `publish`, which the
+        // model never ran in - and from no other: a frame the model got into the coder container's
+        // log is not read at all. When that container never started (an init container before it
+        // failed), the API answers 400 and there is no result, which is the truth.
+        var container = CodeFixJobSpec.ResultContainer(job);
+
         try
         {
             await using var stream = await api.Core.ReadNamespacedPodLogAsync(
                     pod.Metadata.Name,
                     o.Namespace,
-                    container: CodeFixJobSpec.ContainerName,
+                    container: container,
                     tailLines: TailLines,
                     limitBytes: LimitBytes,
                     cancellationToken: ct)
@@ -213,7 +225,9 @@ public sealed class KubernetesCodeFixJobLauncher(
         }
         catch (HttpOperationException ex) when (ex.Response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.BadRequest)
         {
-            logger.LogWarning("Could not read the log of coder pod {Pod}: {Status}", pod.Metadata.Name, ex.Response.StatusCode);
+            logger.LogWarning(
+                "Could not read the log of container {Container} of pod {Pod}: {Status}",
+                container, pod.Metadata.Name, ex.Response.StatusCode);
             return null;
         }
     }

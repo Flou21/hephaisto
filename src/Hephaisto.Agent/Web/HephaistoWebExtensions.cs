@@ -62,6 +62,14 @@ public static class HephaistoWebExtensions
         // credential would report Unreachable for a reason that is not about the IdP.
         services.AddHttpClient<IConnectionProbe, OidcProbe>();
 
+        // GitHub (v0.14.0), from what the issue poller last saw. Here and not in
+        // AddHephaistoGitHub, because the first probe above is a TryAdd on the SERVICE type: a
+        // probe registered before this method runs would make that one a no-op, and the
+        // Postgres row would be the one that went missing.
+        services.TryAddSingleton<GitHub.GitHubHealth>();
+        services.AddOptions<GitHub.GitHubOptions>();
+        services.AddSingleton<IConnectionProbe, GitHub.GitHubProbe>();
+
         services.TryAddSingleton<ConnectionHealthCache>();
         services.AddHostedService(sp => sp.GetRequiredService<ConnectionHealthCache>());
 
@@ -136,6 +144,7 @@ public static class HephaistoWebExtensions
         console.MapVersionEndpoints();
         console.MapAlertNoteEndpoints();
         CodeFix.CodeFixEndpoints.MapCodeFixEndpoints(console);
+        WorkItems.WorkItemEndpoints.MapWorkItemEndpoints(console);
         Investigations.Jobs.InvestigationJobEndpoints.MapInvestigationJobEndpoints(console);
 
         // Authentication (#110). The webhook group is the ONE surface outside OIDC: Alertmanager

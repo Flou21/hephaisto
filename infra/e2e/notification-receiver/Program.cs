@@ -118,6 +118,10 @@ else
     // An identity provider, for the one install with sign-in on (P48).
     NotificationReceiver.OidcStandIn.Map(app, builder.Configuration);
 
+    // GitHub as the issue poller sees it, and the person at github.com as the issues suite needs
+    // one (scripts/e2e/issues): /github/api is the REST subset, /github/control the harness.
+    NotificationReceiver.GitHubStandIn.Map(app, builder.Configuration);
+
     app.MapDelete("/received", () =>
     {
         received.Clear();

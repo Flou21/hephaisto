@@ -106,6 +106,7 @@ export default defineConfig({
                     { text: 'Troubleshooting', link: '/operate/troubleshooting' },
                     { text: 'Alerting and hephaisto_kind', link: '/operate/alerting' },
                     { text: 'Notifications', link: '/operate/notifications' },
+                    { text: 'GitHub issues as work', link: '/operate/github-issues' },
                 ],
             },
             {

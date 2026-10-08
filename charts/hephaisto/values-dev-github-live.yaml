@@ -1,0 +1,64 @@
+# GitHub issues as work against the REAL github.com, layered over values-dev.yaml and
+# values-dev-coder.yaml when tilt_config.json says "github": "live" (which needs "coder": true).
+#
+# This is what scripts/e2e/github-live.sh runs against - the one tier that talks to GitHub
+# itself: a real account, two real tokens, the real `gh`. The model stays scripted. Everything
+# here names ONE repository, a sandbox made for it; the suite refuses an agent that lists any
+# other, because the bot's tokens can see more than that.
+#
+# What has to exist, made by hand (docs/verification.md, "The live tier"):
+#   - the Secret hephaisto-github in the agent's namespace, key GITHUB_TOKEN: the bot account's
+#     fine-grained token with Issues read and write and Pull requests read. It cannot push;
+#   - the key GITHUB_TOKEN in the coder's Secret (hephaisto-codefix, namespace hephaisto-coder):
+#     the bot's token with Contents read and write and Pull requests read and write;
+#   - an entry for the sandbox, coderEnabled, in dev-context's repos.yaml - on the branch named
+#     below until it is merged there.
+github:
+  enabled: true
+  # apiBaseUrl is left at the chart's default, https://api.github.com. The suite reads
+  # GitHub__ApiBaseUrl off the Deployment and runs against nothing else.
+  #
+  # botLogin is left empty: the account is whoever the token belongs to (GET /user), which is
+  # one of the things only the real API can answer.
+  #
+  # Three times GitHub's advice for a poller would be a minute. Twenty seconds keeps a run at a
+  # quarter of an hour; an unchanged repository is answered 304, which costs nothing against the
+  # rate limit, and the suite asserts that it is.
+  pollInterval: "00:00:20"
+  issues:
+    repositories:
+      - TrueRelevance/hephaisto-sandbox
+  # Flou21, by number (gh api users/Flou21 --jq .id). The suite plays the person with the `gh`
+  # of whoever runs it, and refuses unless that account's number is here.
+  approvers:
+    - 40125985
+  # Through the coder's egress proxy, as in production - "the agent's client through the proxy
+  # with a token" is exactly what no stand-in run could show (values-dev-github.yaml turns it
+  # off, because the stand-in is plain http inside the cluster).
+  useEgressProxy: true
+
+codeFix:
+  contextRepository:
+    # Still the in-cluster copy (coder-git, seeded from the local dev-context checkout by
+    # scripts/coder-git-seed.sh - every local branch). This branch adds the sandbox to
+    # repos.yaml; once it is merged in TrueRelevance/dev-context this goes back to main.
+    ref: feat/hephaisto-sandbox-repo
+
+  # No workload is mapped here, on purpose. values-dev-coder.yaml maps the two chaos fixtures to
+  # coder-git, and in this mode the Job runs the REAL gh (the Tiltfile does not set
+  # codeFix.gh=shim), which refuses a repository that is not on a GitHub: an incident's code fix
+  # would take the one Job slot for the minutes it needs to fail at `gh pr list`, under the
+  # suite. The sandbox needs no entry - a listed repository that no entry names is
+  # https://github.com/<owner>/<repo> on the default branch GitHub reports
+  # (CodeFixOptions.GitHubRepository), and github.com is in allowedRepositoryHosts already.
+  repositories: []
+
+  budgets:
+    # A run of the suite is four attempts on the one repository, and a day of working on it is
+    # more than five runs.
+    attemptsPerRepositoryPerDay: 100
+
+secrets:
+  # Made by hand, never by the chart or by Tilt, and never the stand-in's
+  # (hephaisto-github-stand-in), which opens nothing on github.com.
+  github: hephaisto-github

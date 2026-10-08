@@ -125,6 +125,57 @@ public sealed class TeamsNotificationChannelTests
     }
 
     [Fact]
+    public void A_work_items_plan_names_the_issue_and_links_its_own_page_and_the_issue()
+    {
+        var message = new NotificationMessage
+        {
+            DeliveryId = Guid.CreateVersion7(),
+            Snapshot = GivenNotifications.WorkItemPlan(),
+            CodeFixUrl = "https://hephaisto.example/codefixes/0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c",
+        };
+
+        var card = Card(message);
+        var text = card.ToString();
+
+        // What an issue has, and nothing an incident has: no severity, kind or target made up.
+        text.Should().Contain("octo/shop#12").And.Contain("The order total is null for an empty cart");
+        text.Should().NotContain("Severity").And.NotContain("Kind").And.NotContain("Target");
+
+        var actions = card.GetProperty("actions").EnumerateArray()
+            .Select(a => (Title: a.GetProperty("title").GetString(), Url: a.GetProperty("url").GetString()))
+            .ToList();
+
+        actions.Should().Equal(
+            ("Review the plan in Hephaisto", "https://hephaisto.example/codefixes/0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c"),
+            ("Open the issue", "https://github.com/octo/shop/issues/12"));
+        text.Should().NotContain("Action.Submit").And.NotContain("Action.Execute");
+
+        // The issue's title and the model's summary are TextRuns, shown as they are: a TextBlock
+        // would render "[the docs](https://evil.example)" in the summary as a link.
+        var blocks = card.GetProperty("body").EnumerateArray().ToList();
+        var runs = blocks.Where(b => b.GetProperty("type").GetString() == "RichTextBlock")
+            .Select(b => b.GetProperty("inlines")[0].GetProperty("text").GetString())
+            .ToList();
+
+        runs.Should().Contain("The order total is null for an empty cart");
+        runs.Should().Contain(r => r!.Contains("[the docs](https://evil.example)"));
+        blocks.Where(b => b.GetProperty("type").GetString() == "TextBlock")
+            .Select(b => b.GetProperty("text").GetString())
+            .Should().NotContain(t => t!.Contains("evil.example") || t.Contains("The order total"));
+    }
+
+    [Fact]
+    public void An_incidents_card_is_built_of_the_blocks_it_always_was()
+    {
+        // The work item's plain runs are for a work item: an incident's card is unchanged.
+        var blocks = Card(Message()).GetProperty("body").EnumerateArray().ToList();
+
+        blocks.Should().NotContain(b => b.GetProperty("type").GetString() == "RichTextBlock");
+        blocks.Should().Contain(b => b.GetProperty("type").GetString() == "TextBlock"
+            && b.GetProperty("text").GetString() == "api is crash looping");
+    }
+
+    [Fact]
     public void A_suppressed_burst_is_stated_on_the_card_that_does_go_out()
     {
         var card = Card(Message() with { AlsoSuppressed = 7 });

@@ -64,14 +64,17 @@ export const IMPLEMENT_TOOLS = {
 
 /**
  * The agent's environment: the runner's, minus every credential except the one Anthropic auth
- * variable the CLI needs. GITHUB_TOKEN and NUGET_GITHUB_TOKEN never reach the agent - the driver
- * holds them for its own children.
+ * variable the CLI needs. GITHUB_TOKEN and NUGET_GITHUB_TOKEN are not there to be removed: since
+ * #116 the coder role runs in a container that was never handed them (and refuses to start in
+ * one that was - config.ts roleViolation). The filters below still drop them by name, for the
+ * one-process `all` mode of tests and `docker run`, where they share a process with the agent.
  *
  * CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is deliberately NOT set: measured with CLI 2.1.283, it makes
  * the CLI refuse to start without bubblewrap ("bubblewrap is required for subprocess env
  * scrubbing"), and bwrap needs user namespaces a non-privileged pod does not get. So the
  * Anthropic credential IS visible to the Bash tool's children; the guard denies every reference
- * to it, /proc and env dumps, and egress is the proxy allowlist - the same-uid caveat.
+ * to it, /proc and env dumps, and egress is the proxy allowlist. That is what is left of the
+ * same-uid caveat: one credential, the model's own, which can call the model and nothing else.
  */
 export function buildAgentEnv(env: RunnerEnv, paths: WorkPaths, guardEnv: Record<string, string>): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};

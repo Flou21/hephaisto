@@ -1,0 +1,21 @@
+{
+  "id": 1408754120,
+  "node_id": "R_kgDOU_fhyA",
+  "name": "hephaisto-sandbox",
+  "full_name": "TrueRelevance/hephaisto-sandbox",
+  "private": true,
+  "owner": {
+    "login": "TrueRelevance",
+    "id": 176241362,
+    "type": "Organization"
+  },
+  "html_url": "https://github.com/TrueRelevance/hephaisto-sandbox",
+  "description": "Sandbox for Hephaisto's live test against GitHub: issues assigned to tr-agent-dev are planned and fixed here. A copy of the hephaisto-fixture-dotnet test fixture; nothing here is a product.",
+  "fork": false,
+  "default_branch": "main",
+  "archived": false,
+  "disabled": false,
+  "has_issues": true,
+  "visibility": "private",
+  "open_issues_count": 2
+}

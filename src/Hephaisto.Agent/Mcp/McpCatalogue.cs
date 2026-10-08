@@ -47,6 +47,8 @@ public static class McpCatalogue
         ("get_alert_note", Reader),
         ("list_code_fixes", Reader),
         ("get_code_fix", Reader),
+        ("list_work_items", Reader),
+        ("get_work_item", Reader),
         ("get_status", Reader),
         ("lookup_incident_filters", Reader),
         ("get_caller_identity", Reader),

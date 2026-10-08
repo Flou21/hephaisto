@@ -122,7 +122,7 @@ non-deterministic system is an anecdote.
 
 ## Where the rest is written down
 
-`docs/backlog.md` in the repository is everything known to be broken, numbered and evidenced,
+The repository's [issues](https://github.com/Flou21/hephaisto/issues) are everything known to be broken, numbered and evidenced,
 including the entries that block claims this project would like to make.
 `docs/verification.md` is the hand-run acceptance checklist. Both are linked from
 [the project record](/project/).

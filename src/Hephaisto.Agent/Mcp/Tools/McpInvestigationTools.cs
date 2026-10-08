@@ -90,12 +90,12 @@ public sealed class McpInvestigationTools(McpIncidentReader reader, IClock clock
         McpAnswer.Of(await reader.AlertNoteAsync(alertName, McpQuery.Limit(limit, 20, 100), cursor, cancellationToken).ConfigureAwait(false));
 
     [McpServerTool(Name = "list_code_fixes", Title = "Code fixes", ReadOnly = true, Idempotent = true, OpenWorld = false)]
-    [Description("List code fixes across incidents, newest first: the attempts of the coder to plan and implement a fix in a repository, filtered by state (planning, plan ready, implementing, pull request opened, failed, denied), repository, workload, incident and time range. Returns state, repository, branch, summary, pull request URL and cost. Paged. Answers which pull requests (PR) were opened and which plans wait for a person.")]
+    [Description("List code fixes across incidents and GitHub issues, newest first: the attempts of the coder to plan and implement a fix in a repository, filtered by state (planning, plan ready, implementing, pull request opened, failed, denied), repository, workload, incident and time range. Returns state, repository, branch, summary, the incident or the issue it is for, pull request URL and cost. Paged. Answers which pull requests (PR) were opened and which plans wait for a person.")]
     public async Task<string> ListCodeFixesAsync(
         [Description("Eligible, Planning, PlanReady, Implementing, PrOpened, Failed, Denied, Expired or Cancelled; several separated by commas.")] string? state = null,
         [Description("Part of the repository URL.")] string? repository = null,
         [Description("The workload, exactly.")] string? workload = null,
-        [Description(IdHelp)] string? incidentId = null,
+        [Description(IdHelp + " Leaves out the attempts that are for an issue.")] string? incidentId = null,
         [Description("Created at or after. An ISO 8601 time, or a duration back from now: 24h, 7d.")] string? since = null,
         [Description("At most this many, 1 to 100. Default 20.")] int? limit = null,
         [Description("The nextCursor of the previous page.")] string? cursor = null,
@@ -108,9 +108,9 @@ public sealed class McpInvestigationTools(McpIncidentReader reader, IClock clock
     }
 
     [McpServerTool(Name = "get_code_fix", Title = "One code fix", ReadOnly = true, Idempotent = true, OpenWorld = false)]
-    [Description("Get one code fix attempt in full by attempt id or incident id: plan summary, root cause, files to change, steps, notes, what could not be verified, pull request URL and number, whether build and tests passed, deviations from the plan, costs, timestamps, who decided on it and why it failed. Read only: a plan is approved in the console by a person.")]
+    [Description("Get one code fix attempt in full by attempt id or incident id, for an incident or for a GitHub issue: plan summary, root cause, files to change, steps, notes, what could not be verified, pull request URL, number and description, whether build and tests passed, deviations from the plan, costs, timestamps, who decided on it, through what, and why it failed. Read only: a plan is answered by a person, in the console or on the issue.")]
     public async Task<string> GetCodeFixAsync(
-        [Description("One attempt's id, from list_code_fixes.")] string? attemptId = null,
+        [Description("One attempt's id, from list_code_fixes or get_work_item. The only way to an attempt that is for an issue.")] string? attemptId = null,
         [Description(IdHelp + " Returns its attempts, the latest in full, or why none was started.")] string? incidentId = null,
         CancellationToken cancellationToken = default)
     {

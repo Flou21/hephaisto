@@ -80,6 +80,95 @@ cf_incident_for() {
 
 cf_incident_state() { cf_get "/api/incidents/$1" | jq -r '.state // .incident.state // empty'; }
 
+# An incident whose last investigation proposed an action waits for a person's answer, and
+# cannot be investigated again until it has one (409, "AwaitingApproval -> Investigating").
+# Whether an investigation proposes one is the in-process model's to decide - I1 runs a real
+# model, and on 2026-10-07 it proposed RollbackDeployment for shop-api where the run before had
+# proposed nothing, and I9 was red on the refusal; the same day c19 waited twenty-five minutes
+# for an incident to be Escalated that was waiting for an approval instead. The harness gives
+# the answer a person would give a fixture: no. Everything it prints goes to stderr; callers
+# capture stdout.
+cf_release() {
+    local incident="$1" doc action
+    doc=$(cf_get "/api/incidents/$incident")
+    [ "$(jq -r '.state // empty' <<<"$doc")" = AwaitingApproval ] || return 0
+
+    for action in $(jq -r '.actions[]? | select(.state == "AwaitingApproval") | .id' <<<"$doc"); do
+        cf_post "/api/incidents/$incident/actions/$action/deny" "$(jq -cn --arg a "$CF_ACTOR" '{decidedBy:$a}')" >/dev/null
+        say "denied the action an earlier investigation proposed for $incident ($action)" >&2
+    done
+
+    _cf_released() { [ "$(cf_get "/api/incidents/$incident" | jq -r '.state // empty')" != AwaitingApproval ]; }
+    wait_for "incident $incident to stop waiting for an approval" 60 _cf_released >&2 || true
+}
+
+
+# Whether anything in the chaos namespace is being investigated, or an investigator Job runs.
+cf_busy() {
+    [ "$(kc -n "$CF_CODER_NS" get jobs -l "app.kubernetes.io/name=${IV_LABEL:-hephaisto-investigator}" -o json 2>/dev/null \
+        | jq '[.items[] | select((.status.active // 0) > 0)] | length')" != 0 ] && return 0
+    cf_get "/api/incidents?state=open&limit=200" | jq -e --arg ns "$CF_CHAOS_NS" '
+        [ .[] | select(.namespace == $ns and (.state == "Detected" or .state == "Triaging" or .state == "Investigating")) ]
+        | length > 0' >/dev/null
+}
+
+# Waits until nothing is being investigated and has not been for IV_QUIET seconds.
+#
+# There is ONE investigator Job slot, and a scenario that needs it - to see its own Job run, or
+# to hold it on purpose - cannot share it with an investigation nobody asked for. A fixture that
+# was just brought up gets several of those, minutes apart, and iv_wait_idle on the scenario's
+# own incident sees none of them (iv_wait_idle, in lib/investigate.sh):
+#
+#   - the watcher's incident, under the Deployment, investigated at once;
+#   - the incident of the alert that names the pod (KubePodCrashLooping), filed under that pod
+#     by design, about two minutes later;
+#   - and, when an incident of the same workload was CLOSED BY A PERSON in the last 24 hours -
+#     which is what cleaning up after a run does - a third: the Deployment-level alert
+#     (KubeDeploymentReplicasMismatch) reopens that closed one (Ingest:ReopenWindow) although
+#     an incident for the workload is already open, and it is investigated again.
+#
+# On 2026-10-07 the third one's three-minute Job took the slot nineteen seconds before I8
+# asked for it, and was three seconds from done when I9 did; both then ran in-process and both
+# scenarios were red. Run 1 of four on 2026-10-06 failed the same two the same way. The window
+# is for the next of these arriving just after the last one ended.
+#   cf_wait_quiet [timeout]
+cf_wait_quiet() {
+    local timeout="${1:-1800}" need="${CF_QUIET:-${IV_QUIET:-45}}" quiet=0 waited=0
+    printf '  waiting for nothing else to be investigating ' >&2
+    while [ "$waited" -lt "$timeout" ]; do
+        if cf_busy; then quiet=0; printf '.' >&2; else quiet=$((quiet + 5)); fi
+        if [ "$quiet" -ge "$need" ]; then printf ' ok (%ss)\n' "$waited" >&2; return 0; fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+    printf ' timeout after %ss\n' "$timeout" >&2
+    return 1
+}
+
+# A plan that waits on a workload holds the workload's one open attempt, whichever incident it
+# is for - and a fixture is more than one incident (cf_wait_quiet says which). When one of the
+# others is judged eligible too, its plan is in the way of the attempt a scenario is about to
+# ask for: "a code fix is already open for this workload", and on 2026-10-07 forged-result and
+# the switch-off test behind it were skipped on exactly that. Waits for plans of the workload
+# that are still being made, then denies the ones that wait.
+#   cf_clear_workload_plans <workload name>
+cf_clear_workload_plans() {
+    local workload="$1" stale inc att
+    _cf_none_planning() {
+        [ "$(cf_get '/api/codefixes?limit=200' | jq --arg w "/Deployment/$workload" \
+            '[.[] | select((.workload | endswith($w)) and (.state == "Eligible" or .state == "Planning"))] | length')" = 0 ]
+    }
+    wait_for "no plan being made for $workload" 300 _cf_none_planning >&2 || true
+
+    stale=$(cf_get '/api/codefixes?state=PlanReady&limit=200' | jq -r --arg w "/Deployment/$workload" \
+        '.[] | select(.workload | endswith($w)) | "\(.incidentId) \(.id)"')
+    while read -r inc att; do
+        [ -n "$att" ] || continue
+        cf_decide "$inc" "$att" deny "e2e: a plan for another incident of the same workload" >/dev/null \
+            && say "denied a waiting plan on $workload ($att, incident $inc)" >&2
+    done <<<"$stale"
+}
+
 cf_is_escalated() { [ "$(cf_incident_state "$1")" = "Escalated" ]; }
 
 # --- attempts -------------------------------------------------------------------------------
@@ -116,11 +205,17 @@ cf_assert_job_spec() {
         && pass "$job: no ServiceAccount token mounted" || fail "$job: no ServiceAccount token mounted"
     jq -e '.spec.template.spec.securityContext.runAsNonRoot == true and .spec.template.spec.securityContext.runAsUser == 64198' <<<"$spec" >/dev/null \
         && pass "$job: non-root, uid 64198" || fail "$job: non-root, uid 64198"
-    jq -e '.spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem == true' <<<"$spec" >/dev/null \
-        && pass "$job: read-only root filesystem" || fail "$job: read-only root filesystem"
+    # Every container, init or not: a hardened main container beside a soft init container is a
+    # soft pod.
+    local all='[(.spec.template.spec.initContainers // [])[], .spec.template.spec.containers[]]'
+    jq -e "$all"' | all(.securityContext.readOnlyRootFilesystem == true
+                        and .securityContext.allowPrivilegeEscalation == false
+                        and (.securityContext.capabilities.drop // []) == ["ALL"])' <<<"$spec" >/dev/null \
+        && pass "$job: read-only root filesystem, no escalation, no capabilities, in every container" \
+        || fail "$job: read-only root filesystem, no escalation, no capabilities, in every container"
     jq -e '.spec.backoffLimit == 0 and (.spec.activeDeadlineSeconds // 0) > 0' <<<"$spec" >/dev/null \
         && pass "$job: no retries, a deadline" || fail "$job: no retries, a deadline"
-    jq -e '[.spec.template.spec.containers[0].env[] | select(.name | test("TOKEN|KEY")) | select(.value != null)] | length == 0' <<<"$spec" >/dev/null \
+    jq -e "$all"' | [.[].env[]? | select(.name | test("TOKEN|KEY")) | select(.value != null)] | length == 0' <<<"$spec" >/dev/null \
         && pass "$job: no credential value in the spec" || fail "$job: no credential value in the spec"
 
     # And the pod itself, if it is still there: no projected token volume.
@@ -130,6 +225,151 @@ cf_assert_job_spec() {
         jq -e '[.spec.volumes[]? | select(.projected != null)] | length == 0' <<<"$pod" >/dev/null \
             && pass "$job: pod has no projected token volume" || fail "$job: pod has no projected token volume"
     fi
+}
+
+# --- #116: the container the model runs in holds no GitHub or NuGet token ----------------------
+#
+# One pod, one image, three roles (CODEFIX_ROLE), and no shared process namespace:
+#
+#   prepare   init       clones, the PR and branch checks, the pre-restore   GITHUB_TOKEN, NUGET_GITHUB_TOKEN
+#   coder     plan, investigate: the one regular container; implement: the second init container
+#                        the agent and everything that runs what it wrote     the model credential only
+#   publish   implement only, the one regular container, started after coder has ended
+#                        push and Draft PR, prints the result                 GITHUB_TOKEN
+#
+# Two kinds of assertion, and neither replaces the other: what the Job's spec hands each
+# container, and what a process inside the coder container can actually read.
+
+# [{name, init, secrets: [the Secret keys it is handed], env: [every variable's name]}]
+cf_job_containers() {
+    jq -c '[ ((.spec.template.spec.initContainers // [])[] | . + {init: true}),
+             (.spec.template.spec.containers[] | . + {init: false}) ]
+           | map({name, init,
+                  secrets: [.env[]? | select(.valueFrom.secretKeyRef != null) | .name],
+                  env: [.env[]?.name]})' <<<"$1"
+}
+
+# cf_assert_token_separation <job> <plan|implement|investigate>
+cf_assert_token_separation() {
+    local job="$1" kind="$2" spec cs
+    spec=$(kc -n "$CF_CODER_NS" get job "$job" -o json 2>/dev/null) || { fail "$job: the Job is there to inspect"; return 0; }
+    cs=$(cf_job_containers "$spec")
+
+    jq -e '(.spec.template.spec.shareProcessNamespace // false) == false' <<<"$spec" >/dev/null \
+        && pass "$job: the containers share no process namespace" \
+        || fail "$job: the containers share no process namespace"
+
+    jq -e '[.[] | select(.name == "coder")] | length == 1
+           and all(.[] | select(.name == "coder");
+                   ((.secrets - ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]) | length == 0)
+                   and ((.env | map(select(test("^(GITHUB_TOKEN|GH_TOKEN|GH_ENTERPRISE_TOKEN|NUGET_GITHUB_TOKEN|CODEFIX_GIT_PASSWORD)$"))) | length) == 0))' <<<"$cs" >/dev/null \
+        && pass "$job: the coder container is handed no git or NuGet key" \
+        || fail "$job: the coder container is handed no git or NuGet key" "$(jq -c '[.[] | {name, secrets}]' <<<"$cs")"
+
+    jq -e '[.[] | select(.name == "prepare" and .init)] | length == 1
+           and all(.[] | select(.name == "prepare");
+                   (.secrets | index("GITHUB_TOKEN")) != null
+                   and (.secrets | index("CLAUDE_CODE_OAUTH_TOKEN")) == null
+                   and (.secrets | index("ANTHROPIC_API_KEY")) == null)' <<<"$cs" >/dev/null \
+        && pass "$job: prepare is an init container with the git token and no model credential" \
+        || fail "$job: prepare is an init container with the git token and no model credential" "$(jq -c '[.[] | {name, init, secrets}]' <<<"$cs")"
+
+    if [ "$kind" = investigate ]; then
+        jq -e 'all(.[]; (.secrets | index("NUGET_GITHUB_TOKEN")) == null)' <<<"$cs" >/dev/null \
+            && pass "$job: no container of an investigator is handed the NuGet token" \
+            || fail "$job: no container of an investigator is handed the NuGet token"
+    fi
+
+    if [ "$kind" = implement ]; then
+        jq -e '[.[] | select(.init | not) | .name] == ["publish"]
+               and all(.[] | select(.name == "publish"); .secrets == ["GITHUB_TOKEN"])' <<<"$cs" >/dev/null \
+            && pass "$job: publish is the one regular container, with the git token and nothing else" \
+            || fail "$job: publish is the one regular container, with the git token and nothing else" "$(jq -c '[.[] | {name, init, secrets}]' <<<"$cs")"
+        # An init container has ended before the next container starts: the kernel, not a
+        # protocol, keeps the model's processes away from the one that pushes.
+        jq -e '[.[] | select(.init) | .name] == ["prepare", "coder"]' <<<"$cs" >/dev/null \
+            && pass "$job: coder has ended before publish starts (init containers, in order)" \
+            || fail "$job: coder has ended before publish starts (init containers, in order)" "$(jq -c '[.[] | {name, init}]' <<<"$cs")"
+    else
+        jq -e '[.[] | select(.init | not) | .name] == ["coder"]' <<<"$cs" >/dev/null \
+            && pass "$job: coder is the one regular container" \
+            || fail "$job: coder is the one regular container" "$(jq -c '[.[] | {name, init}]' <<<"$cs")"
+    fi
+
+    jq -e '[.[] | select((.secrets | index("GITHUB_TOKEN")) != null or (.secrets | index("NUGET_GITHUB_TOKEN")) != null) | .name]
+           | all(. == "prepare" or . == "publish")' <<<"$cs" >/dev/null \
+        && pass "$job: only prepare and publish hold a git or NuGet key" \
+        || fail "$job: only prepare and publish hold a git or NuGet key"
+}
+
+cf_container_running() {
+    kc -n "$CF_CODER_NS" get pods -l "job-name=$1" -o json 2>/dev/null \
+        | jq -e --arg c "$2" '.items[0].status
+              | [(.initContainerStatuses // [])[], (.containerStatuses // [])[]]
+              | any(.name == $c and .state.running != null)' >/dev/null
+}
+
+# Key names only. The values never leave kubectl.
+cf_secret_has_key() {
+    kc -n "$CF_CODER_NS" get secret "$1" -o go-template='{{range $k, $v := .data}}{{$k}}{{"\n"}}{{end}}' 2>/dev/null | grep -qx "$2"
+}
+
+# Run inside the coder container: the environment of every process it can see, reduced to the
+# NAMES of the variables that would be a leak, and the role each process was started in. A
+# value is never printed. `kubectl exec` starts its process with the container's own
+# environment, so a key handed to the container shows up here even if the driver dropped it.
+CF_ENV_PROBE='out=""; n=0
+for f in /proc/[0-9]*/environ; do
+  e=$(tr "\0" "\n" < "$f" 2>/dev/null) || continue
+  [ -n "$e" ] || continue
+  n=$((n + 1))
+  out="$out
+$(printf "%s\n" "$e" | sed -n -E "s/^(GITHUB_TOKEN|GH_TOKEN|GH_ENTERPRISE_TOKEN|NUGET_GITHUB_TOKEN|CODEFIX_GIT_PASSWORD|token)=..*/held \1/p; s/^CODEFIX_ROLE=(.*)/role \1/p")"
+done
+printf "%s\n" "$out" | sort -u | grep . || true
+echo "read $n"'
+
+# cf_probe_coder_env <job>: while the coder container runs, nothing in it holds a git or NuGet
+# token, and it sees no process of another container.
+cf_probe_coder_env() {
+    local job="$1" pod out secret
+
+    wait_for "the coder container of $job to run" 600 cf_container_running "$job" coder \
+        || { fail "$job: the coder container was probed while it ran" "it was never seen running"; return 0; }
+    pod=$(kc -n "$CF_CODER_NS" get pods -l "job-name=$job" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    out=$(kc -n "$CF_CODER_NS" exec "$pod" -c coder -- sh -c "$CF_ENV_PROBE" 2>/dev/null) \
+        || { fail "$job: the coder container was probed while it ran" "kubectl exec failed (it may have just ended)"; return 0; }
+    printf '%s\n' "$out" > "$RUN_DIR/$job-coder-env-probe.txt"
+
+    # The control: the probe can read environments at all, the driver's included.
+    local seen
+    seen=$(sed -n 's/^read //p' <<<"$out")
+    [ "${seen:-0}" -ge 2 ] && grep -qx 'role coder' <<<"$out" \
+        && pass "$job: the probe read the environment of ${seen} processes in the coder container" \
+        || { fail "$job: the probe read the environment of the coder container's processes" "$(tr '\n' ' ' <<<"$out")"; return 0; }
+
+    grep -q '^held ' <<<"$out" \
+        && fail "$job: no process in the coder container holds a git or NuGet token" "$(grep '^held ' <<<"$out" | tr '\n' ' ')" \
+        || pass "$job: no process in the coder container holds a git or NuGet token"
+    grep '^role ' <<<"$out" | grep -qvx 'role coder' \
+        && fail "$job: the coder container sees no process of another container" "$(grep '^role ' <<<"$out" | tr '\n' ' ')" \
+        || pass "$job: the coder container sees no process of another container"
+
+    # Whether the probe had anything to find. Without the key in the Secret the two lines above
+    # are true of any pod, and a run should say so rather than read as proof.
+    secret=$(kc -n "$CF_CODER_NS" get job "$job" -o json \
+        | jq -r '[(.spec.template.spec.initContainers // [])[], .spec.template.spec.containers[]]
+                 | [.[].env[]? | .valueFrom.secretKeyRef.name // empty] | first // empty')
+    if [ -n "$secret" ] && cf_secret_has_key "$secret" GITHUB_TOKEN; then
+        pass "$job: the Secret $secret holds GITHUB_TOKEN, so the probe had a token to find"
+    else
+        skip "$job: the probe had a token to find" "the Secret ${secret:-<none>} has no GITHUB_TOKEN key; add a dummy one and the probe bites"
+    fi
+}
+
+# How many framed results a container of the Job's pod printed.
+cf_frames_in() {
+    kc -n "$CF_CODER_NS" logs "job/$1" -c "$2" 2>/dev/null | grep -c '^---HEPHAISTO-RESULT-BEGIN ' || true
 }
 
 cf_decide() {
@@ -143,12 +383,14 @@ cf_request() {
     cf_post "/api/incidents/$incident/codefix" "$(jq -cn --arg a "$CF_ACTOR" '{requestedBy:$a}')"
 }
 
-# The number of attempts and Jobs that exist for an incident.
+# The number of attempts and code-fix Jobs that exist for an incident. An investigator Job
+# carries the incident's label too (phase investigate) and is not one: with investigation.job on,
+# counting it made "exactly one Job ran for the plan" a statement about who investigated.
 cf_attempt_count() { cf_codefix "$1" | jq '.attempts | length'; }
 
 cf_job_count() {
     local incident="$1"
-    kc -n "$CF_CODER_NS" get jobs -l "hephaisto.dev/incident=$incident" -o json 2>/dev/null | jq '.items | length'
+    kc -n "$CF_CODER_NS" get jobs -l "hephaisto.dev/incident=$incident,hephaisto.dev/phase in (plan,implement)" -o json 2>/dev/null | jq '.items | length'
 }
 
 # --- the switch -----------------------------------------------------------------------------
@@ -235,6 +477,10 @@ run_c15() {
     id=$(jq -r .id <<<"$attempt")
     plan_job=$(jq -r .planJobName <<<"$attempt")
     cf_assert_job_spec "$plan_job"
+    cf_assert_token_separation "$plan_job" plan
+    [ "$(cf_frames_in "$plan_job" coder)" = 1 ] && [ "$(cf_frames_in "$plan_job" prepare)" = 0 ] \
+        && pass "the plan's one framed result is in the coder container's log" \
+        || fail "the plan's one framed result is in the coder container's log" "coder $(cf_frames_in "$plan_job" coder), prepare $(cf_frames_in "$plan_job" prepare)"
 
     [ "$(cf_job_count "$incident")" = 1 ] && pass "exactly one Job ran for the plan" || fail "exactly one Job ran for the plan" "$(cf_job_count "$incident")"
 
@@ -255,6 +501,18 @@ run_c15() {
     code=$(tail -1 <<<"$out")
     [ "$code" = 200 ] && pass "approved through the API as $CF_ACTOR" || { fail "approved through the API" "$code $(head -1 <<<"$out")"; return 0; }
 
+    # While the agent works (the scripted fixture run waits two minutes after its commit): what a
+    # process in its container can read. Then the run goes on to push and open the PR, which is
+    # the other half - the tokens are gone from here and the work still succeeds.
+    cf_wait_attempt "$incident" 120 Implementing PrOpened Failed Cancelled || true
+    local impl_job
+    impl_job=$(cf_attempt_json "$incident" | jq -r '.implementJobName // empty')
+    if [ -n "$impl_job" ] && cf_attempt_in "$incident" Implementing; then
+        cf_probe_coder_env "$impl_job"
+    else
+        fail "the coder container was probed while it ran" "the implement phase was already over ($(cf_attempt_state "$incident"))"
+    fi
+
     cf_wait_attempt "$incident" 1800 PrOpened Failed Cancelled || true
     attempt=$(cf_attempt_json "$incident")
     record_json c15-implement "$attempt"
@@ -267,7 +525,12 @@ run_c15() {
     jq -e '.buildPassed == true and .testsPassed == true' <<<"$attempt" >/dev/null \
         && pass "the driver's own build and tests were green" || fail "the driver's own build and tests were green"
 
-    cf_assert_job_spec "$(jq -r .implementJobName <<<"$attempt")"
+    impl_job=$(jq -r .implementJobName <<<"$attempt")
+    cf_assert_job_spec "$impl_job"
+    cf_assert_token_separation "$impl_job" implement
+    [ "$(cf_frames_in "$impl_job" publish)" = 1 ] && [ "$(cf_frames_in "$impl_job" coder)" = 0 ] \
+        && pass "the implement result is printed by publish, and the coder container prints none" \
+        || fail "the implement result is printed by publish, and the coder container prints none" "publish $(cf_frames_in "$impl_job" publish), coder $(cf_frames_in "$impl_job" coder)"
     [ "$(cf_job_count "$incident")" = 2 ] && pass "exactly one implement Job" || fail "exactly one implement Job" "$(cf_job_count "$incident") jobs"
 
     local branch base_after
@@ -325,6 +588,17 @@ run_c13() {
     phase_start "c13-declined"
 
     cf_trigger c13-wedged-lock
+
+    # c13 comes up healthy and breaks only when told to (see the fixture: an abnormal exit that
+    # leaves its lock held). Without this the scenario waited ten minutes for an incident that
+    # could not exist, and passed only when an earlier run had left one open.
+    if kc -n "$CF_CHAOS_NS" rollout status deploy/c13-wedged-lock --timeout=120s >/dev/null 2>&1 \
+        && kc -n "$CF_CHAOS_NS" exec deploy/c13-wedged-lock -- touch /scratch/crash >/dev/null 2>&1; then
+        say "armed c13: abnormal exit simulated, lock left held"
+    else
+        fail "c13 was armed"
+        return 0
+    fi
 
     local incident=""
     find_c13() { incident=$(cf_get "/api/incidents?state=open&limit=200" | jq -r --arg ns "$CF_CHAOS_NS" '[.[] | select(.namespace == $ns and ((.ownerName // .targetName) | test("wedged")))] | sort_by(.openedAt) | last | .id // empty'); [ -n "$incident" ]; }
@@ -384,9 +658,18 @@ run_c19() {
         [ "$(cf_job_count "$incident")" = 0 ] && pass "no coder Job for the un-grounded c19 escalation" || fail "no coder Job for the un-grounded c19 escalation"
 
         [ "$tries" -ge 2 ] && break
+        # With a scripted investigator the second investigation is a script too - if it gets the
+        # one Job slot. Without the wait it shared the slot with the fixture's other incidents,
+        # ran in-process, and a real model proposed an action: the incident then waited for an
+        # approval, never "escalated again", and this stood here for twenty-five minutes.
+        cf_wait_quiet || true
         cf_post "/api/incidents/$incident/reinvestigate" "$(jq -cn --arg a "$CF_ACTOR" '{requestedBy:$a}')" >/dev/null || true
-        wait_for "c19 to escalate again" 1500 bash -c "[ \"\$(curl -s --max-time 10 '$CF_API/api/incidents/$incident' | jq '.investigations | length')\" -ge 2 ] && [ \"\$(curl -s --max-time 10 '$CF_API/api/incidents/$incident' | jq -r .state)\" = Escalated ]" || true
-        cf_attempt_in "$incident" Eligible Planning PlanReady || cf_request "$incident" >/dev/null || true
+        wait_for "c19 to be investigated again" 1500 bash -c "[ \"\$(curl -s --max-time 10 '$CF_API/api/incidents/$incident' | jq '.investigations | length')\" -ge 2 ] && curl -s --max-time 10 '$CF_API/api/incidents/$incident' | jq -e '.state == \"Escalated\" or .state == \"AwaitingApproval\"' >/dev/null" || true
+        cf_release "$incident"
+        if ! cf_attempt_in "$incident" Eligible Planning PlanReady; then
+            cf_clear_workload_plans catalog-api
+            cf_request "$incident" >/dev/null || true
+        fi
     done
 
     if [ "$have_attempt" = 0 ]; then
@@ -454,13 +737,17 @@ run_forged() {
     local incident="${C15_INCIDENT:-$(cf_get '/api/codefixes?limit=200' | jq -r '[.[] | select(.workload | endswith("/Deployment/shop-api"))] | sort_by(.createdAt) | last | .incidentId // empty')}"
     [ -n "$incident" ] || { skip "forged result" "needs the c15 incident"; return 0; }
 
-    # A plan left waiting by an earlier, interrupted run holds the incident's one open slot.
-    local stale
-    stale=$(cf_codefix "$incident" | jq -r '.attempts[] | select(.state == "PlanReady") | .id')
-    for s in $stale; do cf_decide "$incident" "$s" deny "e2e: clearing a plan left by an earlier run" >/dev/null; done
-
-    local out id
-    out=$(cf_request "$incident")
+    # A plan left waiting holds the workload's one open slot: by an earlier, interrupted run on
+    # this incident, or by this run for ANOTHER incident of shop-api - the alert's, or one a
+    # person closed yesterday that the Deployment's alert reopened. Asked for up to three
+    # times, because such a plan may be judged eligible just after this looked.
+    local out id try
+    for try in 1 2 3; do
+        cf_clear_workload_plans shop-api
+        out=$(cf_request "$incident")
+        [ "$(tail -1 <<<"$out")" = 200 ] && break
+        head -1 <<<"$out" | grep -q "already open" || break
+    done
     if [ "$(tail -1 <<<"$out")" != 200 ]; then
         skip "a forged result changes nothing" "no new attempt could be started: $(head -1 <<<"$out" | jq -r '.message // .')"
         return 0
@@ -547,6 +834,12 @@ codefix_kind_prepare() {
 
     kc create namespace "$CF_CODER_NS" --dry-run=client -o yaml | kc apply -f - >/dev/null
     kc label namespace "$CF_CODER_NS" pod-security.kubernetes.io/enforce=restricted --overwrite >/dev/null
+    # No GitHub and no feed is reached here, so the git keys can be anything - and with something
+    # in them, "no process in the coder container holds a git or NuGet token" is a finding
+    # rather than a tautology. No model key: a scripted coder refuses to start beside one.
+    kc -n "$CF_CODER_NS" create secret generic hephaisto-codefix \
+        --from-literal=GITHUB_TOKEN=e2e-not-a-token --from-literal=NUGET_GITHUB_TOKEN=e2e-not-a-token \
+        --dry-run=client -o yaml | kc apply -f - >/dev/null
     sed 's#image: hephaisto/coder-git.*#image: hephaisto/coder-git:e2e#' "$REPO/infra/coder/git-server/git-server.yaml" \
         | kc -n "$CF_CODER_NS" apply -f - >/dev/null
     kc -n "$CF_CODER_NS" rollout status deploy/coder-git --timeout=180s >/dev/null \

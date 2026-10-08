@@ -104,6 +104,164 @@ public sealed class TeamsBotDiagnosisTests(PostgresFixture pg)
         diagnosis.Summary.Should().Be("A code fix is needed; nothing in the cluster to do.");
         diagnosis.Evidence.Should().Equal("at OidcProbe.ProbeAsync");
         diagnosis.CodeRefs.Should().ContainSingle().Which.Line.Should().Be(84);
+
+        // Something was found, so the card offers no second attempt (#124).
+        incidents[incidentId].Diagnosed.Should().BeTrue();
+        incidents[incidentId].CanReinvestigate.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task An_older_finding_still_counts_as_diagnosed_when_the_newest_run_found_nothing()
+    {
+        // The card shows the newest investigation; whether it offers another attempt is the
+        // console's rule, which asks whether ANY investigation has a primary finding (#124).
+        await pg.ResetAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        Guid incidentId;
+        await using (var db = pg.CreateContext())
+        {
+            var incident = new Incident
+            {
+                CorrelationKey = $"cait/Deployment/ledger-{Guid.NewGuid():N}",
+                Title = "ledger is crash looping",
+                Kind = SignalKind.CrashLoopBackOff,
+                Severity = Severity.Warning,
+                State = IncidentState.Escalated,
+                EscalationReason = EscalationReason.NoPlanProduced,
+                Target = new TargetRef { Namespace = "cait", Kind = "Deployment", Name = "ledger" },
+                OpenedAt = Now.AddHours(-2),
+                LastSignalAt = Now.AddHours(-2),
+            };
+            db.Incidents.Add(incident);
+            incidentId = incident.Id;
+
+            var older = new Investigation
+            {
+                IncidentId = incident.Id,
+                ModelId = "claude-opus-5-5",
+                StartedAt = Now.AddMinutes(-30),
+                CompletedAt = Now.AddMinutes(-29),
+                TerminationReason = TerminationReason.Concluded,
+                Executor = InvestigationExecutors.InProcess,
+            };
+            older.Findings.Add(new Finding
+            {
+                InvestigationId = older.Id,
+                Category = "application",
+                Hypothesis = "The ledger cannot reach its database.",
+                Confidence = 0.7,
+                IsPrimary = true,
+            });
+            db.Investigations.Add(older);
+
+            db.Investigations.Add(new Investigation
+            {
+                IncidentId = incident.Id,
+                ModelId = "claude-opus-5-5",
+                StartedAt = Now.AddMinutes(-3),
+                CompletedAt = Now,
+                TerminationReason = TerminationReason.Concluded,
+                Executor = InvestigationExecutors.InProcess,
+            });
+
+            await db.SaveChangesAsync(ct);
+        }
+
+        await using var read = pg.CreateContext();
+        var incident2 = (await new TeamsBotIncidents(read).ByIdAsync([incidentId], ct))[incidentId];
+
+        incident2.Diagnosis.Should().NotBeNull();
+        incident2.Diagnosis!.Grounded.Should().BeFalse("the newest investigation is the one the card shows");
+        incident2.Diagnosed.Should().BeTrue("an earlier one found something");
+        incident2.CanReinvestigate.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Only_an_action_that_can_still_be_decided_is_what_a_card_offers()
+    {
+        // #124. The card of an incident awaiting approval names each waiting action above its
+        // Approve and Deny. Not an action already decided, and not one that still says it is
+        // waiting on an incident somebody closed - nobody can decide that one any more.
+        await pg.ResetAsync();
+        var ct = TestContext.Current.CancellationToken;
+
+        Guid waitingId, closedId, pendingActionId;
+        await using (var db = pg.CreateContext())
+        {
+            var waiting = new Incident
+            {
+                CorrelationKey = $"cait/Deployment/api-{Guid.NewGuid():N}",
+                Title = "api is crash looping",
+                Kind = SignalKind.CrashLoopBackOff,
+                Severity = Severity.Critical,
+                State = IncidentState.AwaitingApproval,
+                Target = new TargetRef { Namespace = "cait", Kind = "Deployment", Name = "api" },
+                OpenedAt = Now.AddMinutes(-10),
+                LastSignalAt = Now.AddMinutes(-10),
+            };
+            var closed = new Incident
+            {
+                CorrelationKey = $"cait/Deployment/ledger-{Guid.NewGuid():N}",
+                Title = "ledger is crash looping",
+                Kind = SignalKind.CrashLoopBackOff,
+                Severity = Severity.Warning,
+                State = IncidentState.Closed,
+                Target = new TargetRef { Namespace = "cait", Kind = "Deployment", Name = "ledger" },
+                OpenedAt = Now.AddMinutes(-20),
+                LastSignalAt = Now.AddMinutes(-20),
+            };
+            db.Incidents.AddRange(waiting, closed);
+            waitingId = waiting.Id;
+            closedId = closed.Id;
+
+            var pending = new AgentAction
+            {
+                IncidentId = waiting.Id,
+                Type = ActionType.ScaleWorkload,
+                Target = new TargetRef { Namespace = "cait", Kind = "Deployment", Name = "api" },
+                Arguments = """{"replicas":3}""",
+                Risk = RiskTier.Medium,
+                State = ActionState.AwaitingApproval,
+            };
+            pendingActionId = pending.Id;
+
+            db.AgentActions.AddRange(
+                pending,
+                new AgentAction
+                {
+                    IncidentId = waiting.Id,
+                    Type = ActionType.RestartPod,
+                    Target = new TargetRef { Namespace = "cait", Kind = "Pod", Name = "api-7d9f" },
+                    State = ActionState.Denied,
+                },
+                new AgentAction
+                {
+                    IncidentId = closed.Id,
+                    Type = ActionType.RestartPod,
+                    Target = new TargetRef { Namespace = "cait", Kind = "Pod", Name = "ledger-0" },
+                    State = ActionState.AwaitingApproval,
+                });
+
+            await db.SaveChangesAsync(ct);
+        }
+
+        await using var read = pg.CreateContext();
+        var reader = new TeamsBotIncidents(read);
+
+        var asked = await reader.ByIdAsync([waitingId, closedId], ct, withPendingActions: true);
+
+        var offered = asked[waitingId].PendingActions.Should().ContainSingle().Which;
+        offered.Id.Should().Be(pendingActionId);
+        offered.Type.Should().Be(ActionType.ScaleWorkload);
+        offered.Risk.Should().Be(RiskTier.Medium);
+        offered.Target.Should().Be("cait/Deployment/api");
+        offered.Arguments.Should().Contain("replicas").And.Contain("3");
+        asked[closedId].PendingActions.Should().BeEmpty("its incident is closed, so nothing can decide it");
+
+        // Approvals off, the default: the actions are not read at all.
+        var unasked = await reader.ByIdAsync([waitingId], ct);
+        unasked[waitingId].PendingActions.Should().BeEmpty();
     }
 
     [Fact]
@@ -135,6 +293,12 @@ public sealed class TeamsBotDiagnosisTests(PostgresFixture pg)
         await using var read = pg.CreateContext();
         var (listed, _) = await new TeamsBotIncidents(read).OpenAsync(10, ct);
 
-        listed.Should().ContainSingle(i => i.Id == incidentId).Which.Diagnosis.Should().BeNull();
+        var never = listed.Should().ContainSingle(i => i.Id == incidentId).Which;
+
+        never.Diagnosis.Should().BeNull();
+
+        // Escalated with nothing found: where the console offers the retry, the card does (#124).
+        never.Diagnosed.Should().BeFalse();
+        never.CanReinvestigate.Should().BeTrue();
     }
 }

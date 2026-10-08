@@ -60,6 +60,9 @@ test.describe('the design language', () => {
     // (a plan with approve/deny, the disabled-approve variant, an implementing and a PR attempt).
     ['codefix-table', 'Code fixes table'],
     ['codefix-section', 'Code fix on an incident'],
+    // v0.14.0: the work-item list, and the head of an attempt's own page - the issue, the
+    // history with who decided and through what, a pull request's description as text.
+    ['workitems', 'Work items'],
   ] as const;
 
   /**

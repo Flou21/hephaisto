@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Components.Authorization;
 
 using Hephaisto.Agent.CodeFix;
 using Hephaisto.Agent.Web;
+using Hephaisto.Agent.WorkItems;
 
 namespace Hephaisto.Agent.Components;
 
@@ -30,6 +31,14 @@ public static class CodeFixAccess
     {
         await using var scope = scopes.CreateAsyncScope();
         return await query(scope.ServiceProvider.GetRequiredService<CodeFixQueries>());
+    }
+
+    /// <summary>The work-item reads, for the same reason: one scope, and so one context, per call.</summary>
+    public static async Task<T> WorkItemsAsync<T>(
+        this IServiceScopeFactory scopes, Func<WorkItemQueries, Task<T>> query)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        return await query(scope.ServiceProvider.GetRequiredService<WorkItemQueries>());
     }
 
     public static async Task<T> CoordinateAsync<T>(

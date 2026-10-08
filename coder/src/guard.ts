@@ -9,6 +9,14 @@ import { type SimpleCommand, type Word, lex } from './shell.js';
 //      settings.json registers as a command hook - defence in depth if 1 is ever bypassed.
 // It only ever sees what the model asked for. The driver's own git/gh calls never pass through
 // here, which is how "push" can be forbidden to the agent and still happen.
+//
+// What it is NOT, since #116: the thing that keeps the GitHub and NuGet tokens from the model.
+// Those are in other containers now (config.ts ROLES), and no command, however indirect, reads
+// another container's /proc. The rules below that deny `env`, /proc and every *TOKEN* name stay
+// exactly as they were - defence in depth, and for one credential still the only defence: the
+// model's own (CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY) has to be in the environment of
+// the CLI the agent runs in, so a process of this uid can in principle reach it. A regular
+// expression cannot promise otherwise, and this file does not claim to.
 
 export type GuardMode = 'plan' | 'implement' | 'investigate';
 

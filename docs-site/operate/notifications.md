@@ -40,6 +40,15 @@ A route naming a channel you have not configured is **refused at startup** rathe
 delivering nowhere. A route with no events, an unknown event, or an invalid severity is a chart
 render failure.
 
+## An event without an incident
+
+A code fix for a [GitHub issue](/operate/github-issues) announces the same three events an
+incident's does — `CodeFixPlanReady`, `CodeFixPrOpened`, `CodeFixFailed` — and has no incident
+behind it: no severity, no namespace, no cluster, no kind, no labels. A route owns it only when it
+is scoped by none of those and asks for no `minSeverity` above `Info`; a fallback route, which is
+for incidents nobody else owns, does not. The same rule `ModeChanged` and `PolicyChanged` have
+always lived by, for their scope.
+
 ## Why the outbox exists
 
 `IIncidentNotifier` is an in-process channel that drops on overflow by design — right for nudging a
@@ -67,6 +76,15 @@ Hephaisto's own approval UI, where the audit row already lives.
 
 There is a test asserting no `Action.Submit` exists anywhere in the card. It exists to make
 removing it a decision rather than a detail.
+
+The registered bot (`notifications.teamsBot`) is the one channel where that decision was made, and
+it is opt-in: with `notifications.teamsBot.actions.enabled`, an alert carries **Acknowledge**,
+**Assign to me** and **Reinvestigate** for any member of the team, and **Close** for the people
+`notifications.teamsBot.actions.approvers` names by Microsoft Entra object id. The inbound route
+that makes this possible is on a port of its own and takes a Bot Framework token; see
+[the chart's values](/reference/helm-values) for what turning it on exposes. Approving an action
+is still a link unless `notifications.teamsBot.actions.approvals.enabled` is set as well: then the
+card names the proposed action above **Approve** and **Deny**, for those same approvers.
 
 ## Signing
 

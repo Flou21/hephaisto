@@ -89,8 +89,25 @@ public sealed record NotificationSnapshot
     /// <summary>The repository a code-fix event is about.</summary>
     public string? Repository { get; init; }
 
-    /// <summary>The code-fix attempt, for the deep link to its section of the incident page.</summary>
+    /// <summary>
+    /// The code-fix attempt: for the deep link to its section of the incident page, or - for a
+    /// work item's, which has no incident - to its own page.
+    /// </summary>
     public Guid? CodeFixAttemptId { get; init; }
+
+    /// <summary>
+    /// The work item a code-fix event is about (v0.14.0), when it is not about an incident:
+    /// <see cref="IncidentId"/> is then null, and so are the kind, the severity above
+    /// <see cref="Severity.Info"/>, the namespace, the cluster and the labels - a route scoped by
+    /// any of them does not own it, exactly as it does not own an event about the agent.
+    /// </summary>
+    public Guid? WorkItemId { get; init; }
+
+    /// <summary><c>owner/repo#12</c>: Hephaisto's own configuration and a number, never the issue's words.</summary>
+    public string? Issue { get; init; }
+
+    /// <summary>The issue's page. A fact, like <see cref="ExternalUrl"/>, so it is frozen here.</summary>
+    public string? IssueUrl { get; init; }
 
     public DateTimeOffset At { get; init; }
 }
@@ -112,6 +129,13 @@ public sealed record NotificationMessage
 
     /// <summary>Absolute link into this Hephaisto's own incident view. Null when unconfigured.</summary>
     public string? IncidentUrl { get; init; }
+
+    /// <summary>
+    /// Absolute link to a code-fix attempt's own page in the console, for an event about a work
+    /// item's attempt - which has no incident page, so <see cref="IncidentUrl"/> is null for it.
+    /// Null for every other event, and when no base URL is configured.
+    /// </summary>
+    public string? CodeFixUrl { get; init; }
 
     /// <summary>Absolute link into Grafana, scoped to the incident's window. Null when unconfigured.</summary>
     public string? GrafanaUrl { get; init; }

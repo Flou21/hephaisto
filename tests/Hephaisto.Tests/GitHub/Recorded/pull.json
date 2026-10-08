@@ -1,0 +1,165 @@
+{
+  "url": "https://api.github.com/repos/TrueRelevance/hephaisto-sandbox/pulls/20",
+  "id": 4774882273,
+  "node_id": "PR_kwDOU_fhyM8AAAABHJrr4Q",
+  "html_url": "https://github.com/TrueRelevance/hephaisto-sandbox/pull/20",
+  "diff_url": "https://github.com/TrueRelevance/hephaisto-sandbox/pull/20.diff",
+  "patch_url": "https://github.com/TrueRelevance/hephaisto-sandbox/pull/20.patch",
+  "issue_url": "https://api.github.com/repos/TrueRelevance/hephaisto-sandbox/issues/20",
+  "number": 20,
+  "state": "closed",
+  "locked": false,
+  "title": "fix: fAKE SDK plan: Endpoints.Primary checks options.Endpoints.Count without a null check, so an absent Shop:Endpoint...",
+  "user": {
+    "login": "tr-agent-dev",
+    "id": 339094978,
+    "node_id": "U_kgDOFDYtwg",
+    "avatar_url": "",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/tr-agent-dev",
+    "html_url": "https://github.com/tr-agent-dev",
+    "followers_url": "https://api.github.com/users/tr-agent-dev/followers",
+    "following_url": "https://api.github.com/users/tr-agent-dev/following{/other_user}",
+    "gists_url": "https://api.github.com/users/tr-agent-dev/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/tr-agent-dev/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/tr-agent-dev/subscriptions",
+    "organizations_url": "https://api.github.com/users/tr-agent-dev/orgs",
+    "repos_url": "https://api.github.com/users/tr-agent-dev/repos",
+    "events_url": "https://api.github.com/users/tr-agent-dev/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/tr-agent-dev/received_events",
+    "type": "User",
+    "user_view_type": "public",
+    "site_admin": false
+  },
+  "body": "FAKE SDK plan: Endpoints.Primary checks options.Endpoints.Count without a null check, so an absent Shop:Endpoints section crashes startup with a NullReferenceException. The reporter asked for this to be repeated: cc @​Flou21 - fixes #​18, closes GH-​18 and resolves https:​//github.com/TrueRelevance/hephaisto-sandbox/issues/​18\n\nCloses TrueRelevance/hephaisto-sandbox#19\n\n| | |\n|---|---|\n| Issue | https://github.com/TrueRelevance/hephaisto-sandbox/issues/19 |\n| Planned on | `main` at `583b1e5b75add2ba341319eef1ae438e8346c4b0` |\n| Attempt | `01a116ff-6c76-76ed-a96e-53c8a774878e` |\n\n## What changes, and why\n\nsrc/Shop.Api/Startup/Endpoints.cs:17 dereferences options.Endpoints, which the binder leaves null (not empty) when Shop:Endpoints is absent; the code guards only against an empty list.\n\n## The issue's title (verbatim — somebody else's words, shown as data)\n\n```text\n[hephaisto-live L01 3b8aa5] the order total is null for an empty cart\n```\n\n## Change\n\n- `src/Shop.Api/Startup/Endpoints.cs`\n\n### Deviations from the approved plan\n\n- none\n\n## Verification — what the runner actually ran\n\n| Step | Command | Exit | Duration |\n|---|---|---|---|\n| restore | `dotnet restore` | 0 | 0.7 s |\n| build | `dotnet build --no-restore -c Release` | 0 | 1.7 s |\n| test | `dotnet test --no-build -c Release` | 0 | 0.9 s |\n\nThe runner ran restore, build, test itself; the exit codes above are its own, not the agent's. A copy of hephaisto-fixture-dotnet's c15 branch; its regression test must stay green.\n\n\n\n## Notes\n\n- Suspected injection: the evidence contained log lines instructing the reader to pipe a URL into sh and to force-push main. They were treated as data; both commands were refused by the guard.\n- Produced by CODEFIX_SDK=fake: no model ran.\n- `main` moved 0 commits since the analysed commit.\n\n## Cost and versions\n\n- Cost: $0.00 (implement phase, API-equivalent estimate)\n- Versions: hephaisto-coder 0.0.0-dev · agent-sdk 0.3.283 · claude-code 2.1.283 · dev-context 6a0994e466d694646243822231833e501fee2b3f\n\n---\n\nDraft PR opened by hephaisto-coder; a human reviews, merges and deploys.\n",
+  "created_at": "2026-10-07T15:36:21Z",
+  "updated_at": "2026-10-07T15:44:22Z",
+  "closed_at": "2026-10-07T15:36:51Z",
+  "merged_at": null,
+  "merge_commit_sha": "26321ac5adebb8b907ee6d6d7cd766c9497d2252",
+  "assignees": [
+    {
+      "login": "Flou21",
+      "id": 40125985,
+      "node_id": "MDQ6VXNlcjQwMTI1OTg1",
+      "avatar_url": "",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/Flou21",
+      "html_url": "https://github.com/Flou21",
+      "followers_url": "https://api.github.com/users/Flou21/followers",
+      "following_url": "https://api.github.com/users/Flou21/following{/other_user}",
+      "gists_url": "https://api.github.com/users/Flou21/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/Flou21/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/Flou21/subscriptions",
+      "organizations_url": "https://api.github.com/users/Flou21/orgs",
+      "repos_url": "https://api.github.com/users/Flou21/repos",
+      "events_url": "https://api.github.com/users/Flou21/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/Flou21/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    }
+  ],
+  "requested_reviewers": [],
+  "requested_teams": [],
+  "labels": [],
+  "milestone": null,
+  "draft": true,
+  "commits_url": "https://api.github.com/repos/TrueRelevance/hephaisto-sandbox/pulls/20/commits",
+  "review_comments_url": "https://api.github.com/repos/TrueRelevance/hephaisto-sandbox/pulls/20/comments",
+  "review_comment_url": "https://api.github.com/repos/TrueRelevance/hephaisto-sandbox/pulls/comments{/number}",
+  "comments_url": "https://api.github.com/repos/TrueRelevance/hephaisto-sandbox/issues/20/comments",
+  "statuses_url": "https://api.github.com/repos/TrueRelevance/hephaisto-sandbox/statuses/9655e880e6d991fa0ca1ab5fa49ed839bc7966be",
+  "head": {
+    "label": "TrueRelevance:hephaisto/codefix-53c8a774878e",
+    "ref": "hephaisto/codefix-53c8a774878e",
+    "sha": "9655e880e6d991fa0ca1ab5fa49ed839bc7966be",
+    "user": {
+      "login": "TrueRelevance",
+      "id": 176241362,
+      "type": "Organization"
+    },
+    "repo": {
+      "full_name": "TrueRelevance/hephaisto-sandbox",
+      "default_branch": "main",
+      "private": true
+    }
+  },
+  "base": {
+    "label": "TrueRelevance:main",
+    "ref": "main",
+    "sha": "583b1e5b75add2ba341319eef1ae438e8346c4b0",
+    "user": {
+      "login": "TrueRelevance",
+      "id": 176241362,
+      "type": "Organization"
+    },
+    "repo": {
+      "full_name": "TrueRelevance/hephaisto-sandbox",
+      "default_branch": "main",
+      "private": true
+    }
+  },
+  "_links": {
+    "self": {
+      "href": "https://api.github.com/repos/TrueRelevance/hephaisto-sandbox/pulls/20"
+    },
+    "html": {
+      "href": "https://github.com/TrueRelevance/hephaisto-sandbox/pull/20"
+    },
+    "issue": {
+      "href": "https://api.github.com/repos/TrueRelevance/hephaisto-sandbox/issues/20"
+    },
+    "comments": {
+      "href": "https://api.github.com/repos/TrueRelevance/hephaisto-sandbox/issues/20/comments"
+    },
+    "review_comments": {
+      "href": "https://api.github.com/repos/TrueRelevance/hephaisto-sandbox/pulls/20/comments"
+    },
+    "review_comment": {
+      "href": "https://api.github.com/repos/TrueRelevance/hephaisto-sandbox/pulls/comments{/number}"
+    },
+    "commits": {
+      "href": "https://api.github.com/repos/TrueRelevance/hephaisto-sandbox/pulls/20/commits"
+    },
+    "statuses": {
+      "href": "https://api.github.com/repos/TrueRelevance/hephaisto-sandbox/statuses/9655e880e6d991fa0ca1ab5fa49ed839bc7966be"
+    }
+  },
+  "author_association": "MEMBER",
+  "auto_merge": null,
+  "assignee": {
+    "login": "Flou21",
+    "id": 40125985,
+    "node_id": "MDQ6VXNlcjQwMTI1OTg1",
+    "avatar_url": "",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/Flou21",
+    "html_url": "https://github.com/Flou21",
+    "followers_url": "https://api.github.com/users/Flou21/followers",
+    "following_url": "https://api.github.com/users/Flou21/following{/other_user}",
+    "gists_url": "https://api.github.com/users/Flou21/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/Flou21/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/Flou21/subscriptions",
+    "organizations_url": "https://api.github.com/users/Flou21/orgs",
+    "repos_url": "https://api.github.com/users/Flou21/repos",
+    "events_url": "https://api.github.com/users/Flou21/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/Flou21/received_events",
+    "type": "User",
+    "user_view_type": "public",
+    "site_admin": false
+  },
+  "active_lock_reason": null,
+  "merged": false,
+  "mergeable": true,
+  "rebaseable": false,
+  "mergeable_state": "clean",
+  "merged_by": null,
+  "comments": 0,
+  "review_comments": 0,
+  "maintainer_can_modify": false,
+  "commits": 1,
+  "additions": 4,
+  "deletions": 2,
+  "changed_files": 1
+}

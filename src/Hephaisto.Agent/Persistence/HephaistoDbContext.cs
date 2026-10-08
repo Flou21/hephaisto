@@ -83,6 +83,8 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
 
     public DbSet<TeamsBotMessage> TeamsBotMessages => Set<TeamsBotMessage>();
 
+    public DbSet<WorkItem> WorkItems => Set<WorkItem>();
+
     /// <summary>
     /// Marks children created since <paramref name="fromEventIndex"/> / for a new
     /// investigation as Added, so they INSERT rather than UPDATE.
@@ -234,6 +236,7 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
         ConfigureAudit(modelBuilder);
         ConfigureDigests(modelBuilder);
         ConfigureAlertNotes(modelBuilder);
+        ConfigureWorkItems(modelBuilder);
         ConfigureOperational(modelBuilder);
 
         ApplyConventions(modelBuilder);
@@ -307,7 +310,12 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
 
         b.Entity<CodeFixAttempt>(e =>
         {
-            e.ToTable("code_fix_attempts");
+            // An attempt is for an incident or for a work item: exactly one, and never neither.
+            // In Postgres and not only in the coordinator, because every path after the start -
+            // collect, cancel, expire, charge - asks the row what it is for and has no third answer.
+            e.ToTable("code_fix_attempts", t => t.HasCheckConstraint(
+                "ck_code_fix_attempts_one_subject",
+                "(incident_id IS NULL) <> (work_item_id IS NULL)"));
             e.HasKey(a => a.Id);
 
             // Verbatim documents as they crossed the process boundary. jsonb so "what did the
@@ -319,6 +327,9 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
             e.Property(a => a.RepositoryUrl).IsRequired();
             e.Property(a => a.Branch).IsRequired();
 
+            // A handful of short keys (v0.14.0): the one-time answers written on an issue.
+            e.Property(a => a.CommandAnswers).HasMaxLength(512);
+
             e.HasIndex(a => a.IncidentId, "ix_code_fix_attempts_incident_id");
             e.HasIndex(a => new { a.State, a.CreatedAt });
 
@@ -329,6 +340,19 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
             // eligibility check: two alerts for one incident arriving in the same second both
             // pass an in-memory "is one open" read, and exactly one of them may win.
             e.HasIndex(a => a.IncidentId, "ux_code_fix_attempts_one_open_per_incident")
+                .IsUnique()
+                .HasFilter(CodeFixOpenStateFilterSql("state"));
+
+            // The same for a work item (v0.14.0): the poller reads "no attempt" before it starts
+            // one, and two passes - or one on either side of a restart - read the same nothing.
+            e.HasOne(a => a.WorkItem)
+                .WithMany()
+                .HasForeignKey(a => a.WorkItemId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            e.HasIndex(a => a.WorkItemId, "ix_code_fix_attempts_work_item_id");
+
+            e.HasIndex(a => a.WorkItemId, "ux_code_fix_attempts_one_open_per_work_item")
                 .IsUnique()
                 .HasFilter(CodeFixOpenStateFilterSql("state"));
         });
@@ -807,6 +831,50 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
     }
 
     // ------------------------------------------------------------------
+    // Work items (v0.14.0)
+    // ------------------------------------------------------------------
+
+    private static void ConfigureWorkItems(ModelBuilder b)
+    {
+        b.Entity<WorkItem>(e =>
+        {
+            e.ToTable("work_items");
+            e.HasKey(w => w.Id);
+
+            e.Property(w => w.Source).HasMaxLength(32).IsRequired();
+            e.Property(w => w.Repository).HasMaxLength(200).IsRequired();
+            e.Property(w => w.NodeId).HasMaxLength(128).IsRequired();
+            e.Property(w => w.Url).HasMaxLength(512).IsRequired();
+            e.Property(w => w.Title).IsRequired();
+            e.Property(w => w.Type).HasMaxLength(64);
+            e.Property(w => w.AuthorLogin).HasMaxLength(64).IsRequired();
+            e.Property(w => w.Body).IsRequired();
+            e.Property(w => w.StateReason).HasMaxLength(MaxErrorLength);
+            e.Property(w => w.StatusCommentDigest).HasMaxLength(64);
+            e.Property(w => w.DeclineCodes).HasMaxLength(512);
+            e.Property(w => w.DeclineReason).HasMaxLength(MaxErrorLength);
+
+            e.Property(w => w.Labels)
+                .HasConversion(StringListConverter, StringListComparer)
+                .HasColumnType("jsonb")
+                .HasDefaultValueSql("'[]'::jsonb")
+                .IsRequired();
+
+            // At most one taken work item per issue, enforced by Postgres and not only by the
+            // poller's read: a restart in the middle of a pass, or two passes, both see "none
+            // taken" and exactly one of them may win. Partial, because an issue that was taken
+            // back and is handed over again is a NEW row beside the cancelled one.
+            e.HasIndex(w => new { w.Source, w.Repository, w.Number }, "ux_work_items_one_taken_per_issue")
+                .IsUnique()
+                .HasFilter(WorkItemTakenFilterSql("state"));
+
+            // The poller's read - what is taken in this repository - and the list's.
+            e.HasIndex(w => new { w.Source, w.Repository, w.State }).HasDatabaseName("ix_work_items_source_repository_state");
+            e.HasIndex(w => new { w.State, w.TakenAt }).HasDatabaseName("ix_work_items_state_taken_at");
+        });
+    }
+
+    // ------------------------------------------------------------------
     // Conventions applied to every mapped property
     // ------------------------------------------------------------------
 
@@ -1016,6 +1084,9 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
     /// <summary>The partial-index predicate, shared with the migration's raw SQL.</summary>
     internal static string CodeFixOpenStateFilterSql(string column) =>
         $"{column} IN ({string.Join(", ", Hephaisto.Core.CodeFix.CodeFixStates.Open.Select(st => $"'{st}'"))})";
+
+    /// <summary>The one state a work item is open in, as the partial index names it.</summary>
+    internal static string WorkItemTakenFilterSql(string column) => $"{column} = '{WorkItemState.Taken}'";
 
     internal static string OpenStateFilterSql(string column) =>
         $"{column} IN ({string.Join(", ", OpenStates.Select(s => $"'{s}'"))})";

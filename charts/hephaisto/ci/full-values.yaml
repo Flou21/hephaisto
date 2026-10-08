@@ -51,6 +51,7 @@ secrets:
   llm: hephaisto-llm
   grafanaMcp: grafana-mcp-caller-token
   mcp: hephaisto-mcp
+  github: hephaisto-github
 
 postgres:
   host: postgres
@@ -143,6 +144,12 @@ notifications:
     actions:
       enabled: true
       port: 8082
+      # Entra object ids: who may close from a card.
+      approvers:
+        - 5f0c0000-0000-0000-0000-000000000001
+        - 5f0c0000-0000-0000-0000-000000000002
+      approvals:
+        enabled: true
   routes:
     - channel: webhook
       events: [IncidentEscalated, CodeFixPlanReady, CodeFixPrOpened, CodeFixFailed]
@@ -225,3 +232,19 @@ mcp:
       mayWrite: false
   networkPolicy:
     fromNamespaces: [gateway]
+
+# GitHub issues as work (v0.14.0): two repositories, an approver whose number has eight digits,
+# and - because the proxy above is on - the agent's GitHub calls through it.
+github:
+  enabled: true
+  apiBaseUrl: https://api.github.com
+  botLogin: hephaisto-bot
+  pollInterval: "00:01:00"
+  issues:
+    repositories:
+      - example/shop
+      - example/dev-context
+  approvers:
+    - 1001
+    - 12345678
+  useEgressProxy: true

@@ -75,10 +75,29 @@ export interface FakeContext {
   request?: unknown;
 }
 
+/** The file in a script directory that says which repositories play another one's scripts. */
+export const ALIASES_FILE = 'aliases.json';
+
+const AliasesZ = z.record(z.string(), z.string().regex(/^[A-Za-z0-9._-]+$/));
+
+/**
+ * The name a repository's scripts are filed under when it has none of its own: `aliases.json`
+ * in the script directory maps a repos.yaml name to another one. A copy of a fixture repository
+ * under a second name (the live tier's sandbox on github.com) then plays the fixture's scripts
+ * AND its patch, from the one set of files - there is nothing to keep in step.
+ */
+export function scriptAlias(scriptDir: string, repoName: string): string | null {
+  const p = join(scriptDir, ALIASES_FILE);
+  if (!repoName || !existsSync(p)) return null;
+  const aliases = AliasesZ.parse(JSON.parse(readFileSync(p, 'utf8')));
+  const alias = Object.hasOwn(aliases, repoName) ? aliases[repoName]! : null;
+  return alias && alias !== repoName ? alias : null;
+}
+
 export function loadScript(ctx: FakeContext): { script: FakeScript; path: string } {
-  const candidates = ctx.scripts
-    ? ctx.scripts.map((f) => join(ctx.scriptDir, f))
-    : [join(ctx.scriptDir, `${ctx.repoName}.${ctx.phase}.json`), join(ctx.scriptDir, `default.${ctx.phase}.json`)];
+  // its own script first, then the one it is an alias of, then the default
+  const names = ctx.scripts ? [] : [ctx.repoName, scriptAlias(ctx.scriptDir, ctx.repoName), 'default'].filter((n): n is string => n !== null);
+  const candidates = ctx.scripts ? ctx.scripts.map((f) => join(ctx.scriptDir, f)) : names.map((n) => join(ctx.scriptDir, `${n}.${ctx.phase}.json`));
   const path = candidates.find((p) => existsSync(p));
   if (!path) throw new Error(`no fake script: looked for ${candidates.join(', ')}`);
   const raw: unknown = JSON.parse(readFileSync(path, 'utf8'));
@@ -369,9 +388,8 @@ export async function* fakeQuery(params: { prompt: string; options: Options }, c
         continue;
       }
       if ('commit' in step) {
-        const incident = ctx.vars.incident_id ?? '';
-        const attempt = ctx.vars.attempt_id ?? '';
-        const msg = `${step.commit}\n\nHephaisto-Incident: ${incident}\nHephaisto-Attempt: ${attempt}`;
+        // the two trailers the prompt names: Hephaisto-Incident or Hephaisto-Issue, then Hephaisto-Attempt
+        const msg = `${step.commit}\n\n${ctx.vars.trailers ?? `Hephaisto-Incident: ${ctx.vars.incident_id ?? ''}\nHephaisto-Attempt: ${ctx.vars.attempt_id ?? ''}`}`;
         if (yield* toolCall('Bash', { command: 'git add -A' })) yield* toolCall('Bash', { command: `git commit -q -m ${shq(msg)}` });
         continue;
       }
