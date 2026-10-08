@@ -1,0 +1,78 @@
+# What `tools/list` returns from the grafana-mcp this stack runs: one tool name per line.
+#
+#   chart:    grafana-community/grafana-mcp 0.27.1
+#   server:   mcp-grafana 2.0.1
+#   values:   infra/observability/grafana-mcp.values.yaml
+#   recorded: 2026-10-08, studio-rancher-desktop
+#
+# This file is why a name on the agent's allowlist (GrafanaOptions.AllowedTools) cannot be a
+# guess: GrafanaMcpAllowlistTests fails when the allowlist names a tool that is not here, and
+# when the chart version above is not the one the Tiltfile and scripts/e2e/lib/deps.sh pin.
+# So moving the pin means recording this again, and a renamed tool is a red build instead of
+# a Degraded row somebody notices a week later.
+#
+# Record it from the agent's pod, which already holds the caller token (it is never printed):
+#
+#   kubectl -n hephaisto exec deploy/hephaisto -c hephaisto -- sh -c 'curl -s -X POST \
+#     "$Grafana__McpUrl" -H "Authorization: Bearer $Grafana__ServiceAccountToken" \
+#     -H "content-type: application/json" -H "accept: application/json, text/event-stream" \
+#     -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"' \
+#     | sed 's/^data: //' | jq -r '.result.tools[].name' | sort
+#
+# The list depends on the server's flags as much as on its version: `api` (grafana_api_request)
+# and `snapshot` are disabled in the values file, as in production, and are absent below.
+alerting_manage_routing
+alerting_routing_write
+alerting_rules_read
+alerting_rules_write
+alerting_silences_read
+alerting_silences_write
+analyze_loki_labels
+check_datasources_health
+create_annotation
+create_datasource
+create_folder
+delete_annotation
+diff_tempo_traces
+generate_deeplink
+get_annotation_tags
+get_annotations
+get_dashboard_by_uid
+get_dashboard_panel_queries
+get_dashboard_property
+get_dashboard_summary
+get_datasource
+get_doc
+get_panel_image
+get_plugin
+get_tempo_trace
+get_tempo_traceql_docs
+install_plugin
+list_dashboard_versions
+list_datasources
+list_loki_label_names
+list_loki_label_values
+list_prometheus_label_names
+list_prometheus_label_values
+list_prometheus_metric_metadata
+list_prometheus_metric_names
+list_provisioning_repositories
+list_tempo_attribute_names
+list_tempo_attribute_values
+query_loki_logs
+query_loki_patterns
+query_loki_stats
+query_prometheus
+query_prometheus_histogram
+query_tempo_metrics
+search_dashboards
+search_docs
+search_folders
+search_plugin_information
+search_tempo_traces
+suggest_loki_alloy_label_config
+update_annotation
+update_dashboard
+update_datasource
+user_info
+validate_provisioning_file

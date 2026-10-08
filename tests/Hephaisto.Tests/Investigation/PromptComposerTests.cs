@@ -1,5 +1,7 @@
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 using Hephaisto.Agent.Investigations;
+using Hephaisto.Agent.Llm;
 using Hephaisto.Core.Domain;
 
 namespace Hephaisto.Tests.Investigations;
@@ -105,15 +107,37 @@ public class PromptComposerTests
     [Fact]
     public void Environment_card_carries_the_alert_rules_caveat()
     {
-        // mcp-grafana's list_alert_rules returns Grafana-managed rules only, and ours are
-        // PrometheusRule CRs, so it comes back empty. Without this the model reads "no alert
-        // rules exist" and wastes the whole investigation.
+        // mcp-grafana's alerting_rules_read answers for Grafana-managed rules unless it is
+        // given a datasource, and ours are PrometheusRule CRs, so it comes back empty. Without
+        // this the model reads "no alert rules exist" and wastes the whole investigation.
         var card = Composer().ComposeEnvironmentCard();
 
-        card.Should().Contain("list_alert_rules");
+        card.Should().Contain("alerting_rules_read");
         card.Should().Contain("EMPTY");
-        card.Should().Contain("grafana_api_request");
-        card.Should().Contain("/api/prometheus/");
+        card.Should().Contain("datasource_uid");
+        card.Should().Contain("search_rule_name");
+    }
+
+    [Fact]
+    public void The_caveat_sends_the_model_to_no_tool_it_is_not_given()
+    {
+        // The caveat used to name the way out as `grafana_api_request`. Production starts its
+        // Grafana MCP server with that category off, so the card told the model to call a tool
+        // it did not have - and `list_alert_rules`, the tool it warned about, was never on the
+        // allowlist at all. Every tool the caveat names in backticks has to be one the default
+        // allowlist hands over.
+        var allowed = new GrafanaOptions().AllowedTools;
+
+        var named = Regex
+            .Matches(GrafanaMcpToolProvider.AlertRulesCaveat, "`([a-z]+(?:_[a-z]+)+)`")
+            .Select(m => m.Groups[1].Value)
+            // Argument names are in backticks too; a tool is what the allowlist could hold.
+            .Where(name => name is not ("datasource_uid" or "search_rule_name"))
+            .ToList();
+
+        named.Should().NotBeEmpty();
+        named.Should().BeSubsetOf(allowed);
+        GrafanaMcpToolProvider.AlertRulesCaveat.Should().NotContain("grafana_api_request");
     }
 
     [Fact]

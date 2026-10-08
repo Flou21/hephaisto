@@ -45,9 +45,21 @@ still works.
 
 ## Grafana, optionally
 
-Grafana plus `grafana-mcp` is what gives the agent its PromQL and LogQL tools. Without it the
-agent degrades to Kubernetes-only reads and says so in its logs. It will still investigate; it
-will simply have fewer instruments.
+Grafana plus `grafana-mcp` is what gives the agent its PromQL, LogQL and trace tools. Without it
+the agent degrades to Kubernetes-only reads and says so in its logs. It will still investigate;
+it will simply have fewer instruments.
+
+The agent hands the model eighteen of that server's tools, by name, and the names are those of
+**mcp-grafana 2.0.1** (chart `grafana-mcp` 0.27.1), the version they were read from and tested
+with. Traces need a server that has Tempo tools of its own: `search_tempo_traces`,
+`get_tempo_trace`, `list_tempo_attribute_names` and `list_tempo_attribute_values`. The alert's
+rule is read with `alerting_rules_read`. An older server still works for metrics and logs; the
+tools it does not offer are not handed to the model, and the `grafana-mcp` row of
+`/api/status` reads `Degraded` and names each one - see
+[troubleshooting](/operate/troubleshooting#the-grafana-mcp-connection-is-degraded).
+
+`grafana_api_request` is not used. A server started with `--disable-api` loses nothing the
+agent needs.
 
 ## What you do not need
 

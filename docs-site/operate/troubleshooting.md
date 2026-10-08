@@ -83,6 +83,33 @@ Check the termination reason on the investigation.
 | `TokenBudgetExhausted` | Raise `MaxInputTokens`. **The concluding-step rescue cannot land here**, because the concluding call resends the conversation — so these produce no finding and are indistinguishable from a decline in a summary line. |
 | `Faulted` | Read the error on the step. |
 
+## The grafana-mcp connection is Degraded
+
+```sh
+curl -s localhost:8080/api/status | jq '.connections[] | select(.name == "grafana-mcp")'
+```
+
+`Degraded - 13 of 18 tools; missing ...` means the Grafana MCP server is reachable and does not
+offer every tool the agent hands the model. The row names each one, and the agent's log says at
+`Warning` what an investigation loses - "cannot follow an exemplar into a trace", "nor read its
+own alert rules". Nothing else tells you: an investigation that lacked a tool concludes without
+it, and looks like one that did not need it.
+
+The names are those of mcp-grafana 2.0.1 (chart `grafana-mcp` 0.27.1). Two causes, both on the
+server:
+
+- **It is older.** `search_tempo_traces`, `get_tempo_trace`, `list_tempo_attribute_names`,
+  `list_tempo_attribute_values` and `alerting_rules_read` missing together is a server from
+  before mcp-grafana had Tempo tools of its own. Upgrade it.
+- **A category is switched off.** The server has a `--disable-<category>` flag for each group
+  of tools - `--disable-tempo` for the trace tools, `--disable-alerting` for the rule reader -
+  and a tool of a disabled group is not offered. `--disable-api` costs the agent nothing: it
+  removes `grafana_api_request`, which the agent does not use, and is how the tested server
+  was started.
+
+To see what a server offers, ask it: an MCP `tools/list` against the address in
+`grafanaMcp.url`, with the bearer token of `secrets.grafanaMcp`.
+
 ## It diagnoses correctly but never proposes an action
 
 Two very different causes, and they are easy to confuse.

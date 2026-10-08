@@ -197,6 +197,41 @@ on - the account, the two tokens, the values - is one page:
   none of which matched. A request the API server failed had the same effect. "Not there" and
   "could not be read" are now held for 30 seconds; an object that was found is still held for
   the hour.
+- **The model is handed the trace tools, and the alert's rule, of a current Grafana MCP
+  server** ([#196](https://github.com/TrueRelevance/hephaisto/issues/196)). The agent offers
+  the model eighteen of the server's tools by name, and five of the names were not ones a
+  current server has: four for Tempo, and `grafana_api_request`, the only way the prompt knew
+  to an alert's rule. With mcp-grafana 2.0.1 the `grafana-mcp` row of `GET /api/status` read
+  `Degraded - 13 of 18 tools; missing query_tempo_traces, query_tempo_traceql,
+  list_tempo_tag_names, list_tempo_tag_values, grafana_api_request`, and every investigation ran
+  without traces - concluding all the same, which from outside looks like an investigation that
+  needed none. The list now names what that server offers: `search_tempo_traces`,
+  `get_tempo_trace`, `list_tempo_attribute_names`, `list_tempo_attribute_values` and
+  `alerting_rules_read`. The row reads `Healthy - All 18 allowlisted tools present.`, and an
+  investigation of a failing traced service searched for its traces and read one.
+  - **It needs a Grafana MCP server that has Tempo tools of its own.** Tested with chart
+    `grafana-mcp` 0.27.1, which is mcp-grafana 2.0.1. **An older server now reports the new
+    names missing** - `Degraded - 13 of 18 tools; missing search_tempo_traces, ...` - where it
+    reported the old ones missing before: upgrade the server. There is no setting that makes an
+    old server read `Healthy`. The list is `Grafana:AllowedTools`, the chart has no value for it,
+    and configuration can only add a name to it (`Grafana__AllowedTools__0` through `extraEnv`
+    appends), never take one away.
+  - **`grafana_api_request` is no longer used**, so the server can be started with
+    `--disable-api`, as the tested one was. An install that relied on the agent reading its
+    rules through that tool gets them through `alerting_rules_read` instead.
+  - **Set `grafanaMcp.datasourceUids`** - `tempo` and `prometheus` at least. Every trace tool
+    requires the Tempo datasource's uid, and `alerting_rules_read` returns PrometheusRule rules
+    only when it is given the uid of the Prometheus that evaluates them; without one it answers
+    for Grafana-managed rules, which is none of the shipped ones. The model is told so in its
+    prompt, and without the value spends a call on `list_datasources` first.
+  - A trace search is held to the same rule as a metrics or logs query: without `start` or
+    `end` it is refused and the model is told to supply one.
+  - **What this does not fix.** A tool's answer is shown to the model in at most 8 kB, and an
+    answer that arrives as one line longer than that is shown as its size and nothing else.
+    That is older than this release and true of every tool, but it meets traces first: a
+    search that matched twenty traces (41 kB as the agent counts it) was shown as nothing on
+    the test cluster, where a trace of two spans (6.5 kB) was shown whole. A trace of some
+    dozens of spans is larger than that.
 - **A warning about a pod that no longer exists opens no incident.** Kubernetes keeps an event
   for about an hour, longer than the pod it is about may live. An agent that restarted within
   `incidents.healedAfter` of a crash-looping pod being deleted - by a rollout that fixed it, by

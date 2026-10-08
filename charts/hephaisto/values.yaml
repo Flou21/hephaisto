@@ -996,6 +996,18 @@ otel:
 # grafana-mcp gives the agent PromQL, LogQL and trace tools. Without it the agent degrades to
 # Kubernetes reads only - which works, and is much worse at diagnosis. Empty url disables it,
 # and the agent logs a warning saying so rather than starting silently toolless.
+#
+# WHICH SERVER. The agent hands the model eighteen of the server's tools, by name, and the
+# names are those of mcp-grafana 2.0.1 (chart grafana-mcp 0.27.1), which is what they were
+# read from. Traces need a server that has Tempo tools of its own - `search_tempo_traces`,
+# `get_tempo_trace`, `list_tempo_attribute_names`, `list_tempo_attribute_values` - and the
+# alert's rule is read with `alerting_rules_read`. A server without one of them still works:
+# the tool is not offered to the model, the `grafana-mcp` row of /api/status reads
+# `Degraded - 13 of 18 tools; missing ...` with the names, and the agent's log says at
+# Warning what an investigation can no longer do. Nothing else tells you.
+#
+# The agent does not use `grafana_api_request`, the server's raw door to Grafana's HTTP API:
+# a server started with --disable-api, as the tested one was, loses nothing the agent needs.
 grafanaMcp:
   # INCLUDE THE PATH. The value is used verbatim as the streamable-http endpoint, so
   # `http://grafana-mcp:8000` connects to nothing and every Grafana tool is lost - which
@@ -1017,6 +1029,12 @@ grafanaMcp:
   #
   # Empty renders no section at all rather than an empty one, so leaving it unset costs a
   # discovery call and nothing else.
+  #
+  # Three names are worth setting. Every trace tool requires `datasourceUid`, so `tempo` saves
+  # the discovery call on each investigation that reads a trace; and `prometheus` is what the
+  # model must pass to `alerting_rules_read` to see PrometheusRule rules at all - without a
+  # datasource that tool answers for Grafana-managed rules only, which is none of the shipped
+  # ones. Name the Prometheus that EVALUATES the rules, if Grafana has several.
   datasourceUids: {}
     # prometheus: abc123
     # loki: def456

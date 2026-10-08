@@ -96,8 +96,18 @@ public sealed partial class SafeToolDecorator(
     /// Tools whose whole job is to run a user-supplied query against a time series or a log
     /// store. These are the ones that can be unbounded; a <c>list_datasources</c> cannot.
     /// </summary>
+    /// <remarks>
+    /// <c>search_tempo</c> is mcp-grafana's trace search since its Tempo tools became its own
+    /// (<c>search_tempo_traces</c>); <c>query_tempo</c> stays for <c>query_tempo_metrics</c>. A
+    /// rename on the server must not take a tool out from under this rule without anybody
+    /// deciding so: the fragments name backends and verbs, never one exact tool, and a tool
+    /// that runs a TraceQL query belongs here whatever it is called next.
+    /// </remarks>
     private static readonly string[] QueryToolFragments =
-        ["query_prometheus", "query_loki", "query_tempo", "traceql", "query_range", "logql", "promql"];
+    [
+        "query_prometheus", "query_loki", "query_tempo", "search_tempo", "traceql", "query_range",
+        "logql", "promql",
+    ];
 
     /// <summary>
     /// Any one of these present and non-empty counts as "bounded". Matched

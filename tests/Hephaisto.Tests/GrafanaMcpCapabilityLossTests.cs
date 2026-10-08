@@ -14,8 +14,10 @@ namespace Hephaisto.Tests;
 /// why the model "never bothered to query traces".
 /// </para>
 /// <para>
-/// The default allowlist carries four Tempo tools, and this repo's own grafana-mcp starts with
-/// Tempo unconfigured, so this is the live configuration rather than a hypothetical.
+/// The default allowlist carries four Tempo tools, and a server from before mcp-grafana had
+/// Tempo tools of its own offers none of them, so this is a live configuration rather than a
+/// hypothetical. Production met it from the other side on 2026-09-30: the server was upgraded,
+/// the allowlist still held names it did not offer, and five went missing at once.
 /// </para>
 /// </remarks>
 public class GrafanaMcpCapabilityLossTests
@@ -24,7 +26,7 @@ public class GrafanaMcpCapabilityLossTests
     public void Absent_tempo_tools_are_described_as_losing_trace_correlation()
     {
         var described = GrafanaMcpToolProvider.DescribeLostCapabilities(
-            ["query_tempo_traces", "query_tempo_traceql", "list_tempo_tag_names", "list_tempo_tag_values"]);
+            ["search_tempo_traces", "get_tempo_trace", "list_tempo_attribute_names", "list_tempo_attribute_values"]);
 
         described.Should().Contain("trace");
     }
@@ -35,7 +37,7 @@ public class GrafanaMcpCapabilityLossTests
         // Four Tempo tools are one lost capability, not four. A message that repeats itself
         // four times is a message people learn to skip.
         var described = GrafanaMcpToolProvider.DescribeLostCapabilities(
-            ["query_tempo_traces", "query_tempo_traceql", "list_tempo_tag_names", "list_tempo_tag_values"]);
+            ["search_tempo_traces", "get_tempo_trace", "list_tempo_attribute_names", "list_tempo_attribute_values"]);
 
         described.Split("; nor ").Should().ContainSingle();
     }
@@ -44,9 +46,32 @@ public class GrafanaMcpCapabilityLossTests
     public void Several_absent_families_are_all_named()
     {
         var described = GrafanaMcpToolProvider.DescribeLostCapabilities(
-            ["query_tempo_traces", "query_loki_logs", "query_prometheus"]);
+            ["search_tempo_traces", "query_loki_logs", "query_prometheus"]);
 
         described.Should().Contain("trace").And.Contain("logs").And.Contain("metrics");
+    }
+
+    [Fact]
+    public void An_absent_alert_rules_tool_is_described_as_losing_the_alert_rules()
+    {
+        // The family is matched on "alert", not on one tool's name: the tool that reads rules
+        // has been `list_alert_rules`, then `grafana_api_request` by way of a caveat, and is
+        // `alerting_rules_read` now.
+        GrafanaMcpToolProvider.DescribeLostCapabilities(["alerting_rules_read"])
+            .Should().Contain("alert rules");
+    }
+
+    [Fact]
+    public void Every_tool_on_the_default_allowlist_belongs_to_a_named_family()
+    {
+        // The generic clause ("use <name>") is for a tool somebody adds later. A tool that
+        // ships on the list and still lands there means its loss would be reported by a name
+        // nobody reading a log can act on.
+        foreach (var tool in new GrafanaOptions().AllowedTools)
+        {
+            GrafanaMcpToolProvider.DescribeLostCapabilities([tool])
+                .Should().NotStartWith("use ", because: $"{tool} is on the default allowlist");
+        }
     }
 
     [Fact]
