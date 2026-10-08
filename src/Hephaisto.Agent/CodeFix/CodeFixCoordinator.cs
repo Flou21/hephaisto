@@ -187,6 +187,13 @@ public sealed class CodeFixCoordinator(
     private const string SubjectGone = "the incident or work item this attempt is for no longer exists";
 
     /// <summary>
+    /// How long an approved attempt may be without its implementing Job before that is a
+    /// failure. Creating a Job is two calls to the API server; the watcher's own patience with
+    /// an attempt that never got its plan Job is the same two minutes.
+    /// </summary>
+    public static readonly TimeSpan LaunchGrace = TimeSpan.FromMinutes(2);
+
+    /// <summary>
     /// After an escalation has committed. Never throws: the investigation this follows is already
     /// safe, and a code-fix problem must stay a code-fix problem.
     /// </summary>
@@ -1007,6 +1014,16 @@ public sealed class CodeFixCoordinator(
 
         if (job is null)
         {
+            // An approval is durable BEFORE its Job exists (DecideCoreAsync: "a Job can never
+            // exist without the record of the human who let it"), so for the moment between the
+            // two an attempt is Implementing and names no Job. That moment is not a failure: a
+            // pass that fell into it used to end the attempt as failed while its Job was being
+            // created - and the Job then ran to its pull request for an attempt that said it
+            // had not worked. Only an attempt that has stayed without a Job for longer than a
+            // launch takes was left by a process that died in between.
+            if (phase == CodeFixPhase.Implement && clock.UtcNow - (attempt.DecidedAt ?? attempt.CreatedAt) <= LaunchGrace)
+                return;
+
             Finish(attempt, subject, phase, "failed", $"the {phase} phase has no job recorded");
             await SaveAndPublishAsync(attempt, ct).ConfigureAwait(false);
             return;

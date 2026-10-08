@@ -978,4 +978,54 @@ public sealed partial class WorkItemStageTests
         world.GitHub.PullReads.Should().Contain(r => r.Number == 31);
         (await WorkItemsAsync()).Single().State.Should().Be(WorkItemState.Done);
     }
+
+    // --- the moment between an approval and its Job ------------------------------------------------
+
+    /// <summary>
+    /// Found by the issues suite on 2026-10-08 (G06): approved at 10:59:16.336, "the Implement
+    /// phase has no job recorded" at .342, Job started at .343. The watcher's pass had read the
+    /// attempt in the moment an approval is durable and its Job is not yet created - and failed
+    /// it. The Job ran for two minutes all the same and opened its pull request, for an attempt
+    /// that said it had not worked.
+    /// </summary>
+    [Fact]
+    public async Task An_approved_attempt_whose_job_is_still_being_created_is_not_failed_by_the_watcher()
+    {
+        var (world, _, _, attemptId) = await PlanOnTheIssueAsync();
+
+        // The row as it is between the approval's commit and the Job's creation.
+        await using (var db = pg.CreateContext())
+        {
+            await db.CodeFixAttempts.Where(a => a.Id == attemptId).ExecuteUpdateAsync(
+                s => s.SetProperty(a => a.State, CodeFixState.Implementing)
+                    .SetProperty(a => a.ApprovedBy, "github:maintainer")
+                    .SetProperty(a => a.ApprovalSource, ApprovalSource.GitHub)
+                    .SetProperty(a => a.DecidedAt, Now),
+                Ct);
+        }
+
+        await using (var db = pg.CreateContext())
+        {
+            await world.Coordinator(db).CollectAsync(await db.CodeFixAttempts.SingleAsync(a => a.Id == attemptId, Ct), Ct);
+        }
+
+        var between = await AttemptAsync();
+        between.State.Should().Be(CodeFixState.Implementing, "its Job is on its way");
+        between.FailureReason.Should().BeNull();
+
+        await using (var db = pg.CreateContext())
+        {
+            (await db.AuditEvents.CountAsync(e => e.Type == CodeFixCoordinator.AuditFailed, Ct)).Should().Be(0);
+
+            // The control: left like that by a process that died - for longer than a launch takes.
+            await db.CodeFixAttempts.Where(a => a.Id == attemptId)
+                .ExecuteUpdateAsync(s => s.SetProperty(a => a.DecidedAt, Now - CodeFixCoordinator.LaunchGrace - TimeSpan.FromSeconds(1)), Ct);
+
+            await world.Coordinator(db).CollectAsync(await db.CodeFixAttempts.SingleAsync(a => a.Id == attemptId, Ct), Ct);
+        }
+
+        var left = await AttemptAsync();
+        left.State.Should().Be(CodeFixState.Failed);
+        left.FailureReason.Should().Be("the Implement phase has no job recorded");
+    }
 }
