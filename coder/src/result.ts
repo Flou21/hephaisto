@@ -181,6 +181,17 @@ export function finalizeResult(phase: Phase, result: AnyResult): string {
   return JSON.stringify(minimalFailed(phase, attemptId, 'result could not be reduced below 512 KiB', (result as Partial<InvestigateResult>).billing));
 }
 
+/**
+ * A result that came out of a handoff file: clamped to the schema caps and valid against the
+ * contract, or null. The caller decides what a null means; nothing of the value is quoted.
+ */
+export function normalizeResult<P extends Phase>(phase: P, value: Record<string, unknown>, attemptId: string): (AnyResult & { phase: P }) | null {
+  const schema = rawSchema(phase);
+  const fixed = { ...value, contract_version: '1', phase, attempt_id: attemptId, cost_usd: sanitiseCost(value.cost_usd) };
+  const clamped = clampToSchema(fixed, schema, schema);
+  return validate(phase, clamped).ok ? (clamped as AnyResult & { phase: P }) : null;
+}
+
 function sanitiseCost(c: unknown): number {
   return typeof c === 'number' && Number.isFinite(c) && c >= 0 ? Math.round(c * 1e6) / 1e6 : 0;
 }

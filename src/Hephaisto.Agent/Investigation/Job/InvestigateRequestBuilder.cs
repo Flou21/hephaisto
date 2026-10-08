@@ -17,7 +17,8 @@ public static class InvestigateRequestBuilder
         InvestigationJobOptions job,
         CodeFixOptions o,
         string token,
-        InvestigateSource? source)
+        InvestigateSource? source,
+        string? workload = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(job);
@@ -43,7 +44,7 @@ public static class InvestigateRequestBuilder
                     Clip(target.Namespace, 253),
                     Clip(target.Kind, 64),
                     Clip(target.Name, 253),
-                    Clip(target.WorkloadKey, 600)),
+                    Clip(string.IsNullOrEmpty(workload) ? target.WorkloadKey : workload, 600)),
             },
             SystemPrompt = Clip(context.SystemPrompt, 200_000),
             OpeningMessage = Clip(context.OpeningMessage, 8_000),

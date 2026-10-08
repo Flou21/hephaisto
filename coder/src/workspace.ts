@@ -3,10 +3,13 @@ import { join } from 'node:path';
 import type { RunnerEnv, WorkPaths } from './config.js';
 import { Git, clone, driverGitEnv, shaFromImage } from './git.js';
 import { log } from './log.js';
-import { loadRepos, repoDirName } from './repos.js';
+import { NOT_ENABLED, enabledRepo, loadRepos, repoDirName } from './repos.js';
 import type { CodeFixRequest, RepoEntry, Repos } from './schemas.js';
 
-// Everything the agent will see is laid out here, by the driver, before the agent exists:
+// Everything the agent will see is laid out here, by the driver, before the agent exists - and,
+// since #116, in another container than the agent's: the prepare role holds the GitHub token
+// these clones need, and has ended before the coder role starts. No token is written anywhere
+// under /work: git gets it through GIT_ASKPASS, and a remote URL never carries one.
 //   /work/context        dev-context @ request.context.ref (its sha goes into the result)
 //   /work/.claude        CLAUDE_CONFIG_DIR - dev-context/.claude is the agent's USER scope
 //   /work/repos/<name>   the target, blobless clone
@@ -97,6 +100,28 @@ export async function cloneTarget(
   const claudeMdPath = join(dir, 'CLAUDE.md');
   const claudeMd = existsSync(claudeMdPath) ? readFileSync(claudeMdPath, 'utf8') : null;
   return { repo, dir, git, notes: [], claudeMd, caitDir: null };
+}
+
+/**
+ * The coder role's view of what the prepare role laid out: the same Target, opened instead of
+ * cloned. Its git has no credential (this role's environment holds none), which is enough for
+ * everything the driver does after the agent - status, commit, diff, bundle - because all of it
+ * reads objects prepare fetched or the agent created.
+ */
+export function openPrepared(
+  repoUrl: string,
+  h: { repo_dir: string | null; claude_md: string | null; notes: string[]; cait: boolean },
+  env: RunnerEnv,
+  paths: WorkPaths,
+  signal?: AbortSignal,
+): { repos: Repos; repo: RepoEntry; target: Target } {
+  const repos = loadRepos(paths.context);
+  const repo = enabledRepo(repos, repoUrl);
+  if (!repo) throw new Error(NOT_ENABLED);
+  const dir = join(paths.repos, repoDirName(repo));
+  if (h.repo_dir !== repoDirName(repo) || !existsSync(join(dir, '.git'))) throw new Error(`the prepare role left no checkout at ${dir}`);
+  const git = new Git(dir, driverGitEnv(env, paths.home), signal);
+  return { repos, repo, target: { repo, dir, git, notes: [...h.notes], claudeMd: h.claude_md, caitDir: h.cait ? join(paths.repos, 'Cait') : null } };
 }
 
 /**
@@ -335,7 +360,11 @@ export function ensureNugetConfig(target: Target, paths: WorkPaths): string | nu
   return p;
 }
 
-/** The two variables the TR nuget.config files expand. Driver children only. */
+/**
+ * The two variables the TR nuget.config files expand. Driver children only, and only where the
+ * token is: in the prepare role's pre-restore. In the coder role this is empty, the placeholders
+ * stay unexpanded, and a feed that is asked answers 401 - verify.ts feedRefusal() names that.
+ */
 export function nugetCredentialEnv(env: RunnerEnv): Record<string, string> {
   return env.nugetToken ? { username: 'x-access-token', token: env.nugetToken } : {};
 }

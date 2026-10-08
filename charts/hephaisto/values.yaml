@@ -427,6 +427,12 @@ secrets:
   #                            mapped repositories ONLY. Never a classic token - a classic
   #                            `repo` scope is every repository the account can see.
   #   NUGET_GITHUB_TOKEN       read:packages, for a private GitHub Packages NuGet feed
+  #
+  # One Secret, but no container of a Job is handed all of it (v0.13.0). The two model keys go to
+  # the `coder` container, where the model runs, and to no other; GITHUB_TOKEN and
+  # NUGET_GITHUB_TOKEN go to `prepare`, which has ended before the model starts; GITHUB_TOKEN
+  # alone goes to `publish`, which starts after it has ended. The containers share no process
+  # namespace, so the model's shell cannot read a token out of another one's environment.
   codeFix: hephaisto-codefix
 
 # -----------------------------------------------------------------------------------------
@@ -763,7 +769,8 @@ codeFix:
   # when nugetCache is off.
   workspaceSize: 8Gi
 
-  # Per coder pod. A .NET restore + build + test of a mid-sized service wants the memory.
+  # Per container of a coder pod, and so per pod: its containers run one after the other, never
+  # side by side. A .NET restore + build + test of a mid-sized service wants the memory.
   resources:
     cpuRequest: "1"
     memoryRequest: 2Gi
@@ -834,6 +841,12 @@ codeFix:
   # A PVC for NuGet packages shared across coder Jobs, so every attempt does not start with a
   # cold 2-4 minute restore. ReadWriteOnce, which is why concurrentJobs defaults to 1: two Jobs
   # scheduled on different nodes cannot both mount it.
+  #
+  # Only the `prepare` container writes to it - the restore of the untouched default branch. The
+  # `coder` container, where the model and its build run, mounts it READ-ONLY (v0.13.0). So with
+  # the cache on, a fix that adds a package cannot be built in the Job, not even one from
+  # nuget.org, and the attempt says so; with it off, packages live in the pod's own workspace
+  # and a public one can still be fetched.
   nugetCache:
     enabled: false
     size: 10Gi

@@ -184,7 +184,8 @@ Three things that are not obvious:
 - **The coder image is a `local_resource`, not a `custom_build`.** Nothing Tilt applies runs it -
   the agent names it in `CodeFix__Image` and creates Jobs from it - so it is built as the fixed tag
   `hephaisto/coder:dev` into the node's docker with `pullPolicy: Never`. The next Job after a
-  rebuild uses it; the agent does not restart.
+  rebuild uses it; the agent does not restart. The two must be of one version: the agent starts
+  the image in three roles (#116), and an image from before v0.13.0 does not know them.
 - **`coder-git` stands in for GitHub** (`infra/coder/git-server`): bare repos over smart HTTP, push
   enabled, seeded at build time from `~/hephaisto-fixture-dotnet` and `~/dev/dev-context` by
   `scripts/coder-git-seed.sh`. Pushed branches live in an emptyDir; `tilt trigger coder-git`
@@ -287,7 +288,7 @@ Two traps worth knowing before you test acting:
 A second, separately gated stage: an escalation whose grounded primary finding points at code,
 on a workload mapped in `codeFix.repositories`, starts a **coder** Job in `hephaisto-coder`
 (`coder/`, Claude Code through the Agent SDK). Plan automatically, implement only after a human
-approves, Draft PR only. Four things to know before touching it:
+approves, Draft PR only. Five things to know before touching it:
 
 - **Its own mode, and silence is Off.** `CodeFixMode {Off, Plan, Pr}` - env `CodeFix__Mode` plus
   the `codeFixMode` key of `hephaisto-switches`, most restrictive wins, and the agent's kill
@@ -297,6 +298,13 @@ approves, Draft PR only. Four things to know before touching it:
   truth; `scripts/sync-schemas.sh` copies it into `src/Hephaisto.Agent/CodeFix/Contract/schemas`
   and `coder/contracts` with a `SCHEMAS.lock`. Never edit the copies; parity tests on both sides
   fail on a hand edit.
+- **Three containers, and the model's holds no git token** (v0.13.0, #116). One image, started
+  as `prepare` (init: clones and restore, the GitHub and NuGet tokens), `coder` (the agent, build
+  and tests, the model credential only) and - to implement - `publish` (push and Draft PR, the
+  GitHub token), with `coder` as an init container there so it has ended before `publish`
+  starts. Never set `shareProcessNamespace`, never hand `coder` another Secret key, and never
+  make `publish` run git in `/work`: it pushes from a bundle it imported into its own `/tmp`
+  (`coder/src/publish.ts` says why). An implementation's result is read from `publish`.
 - **The coder answers through its log.** The last framed block, sha256 and byte count checked,
   read only from a pod the Job's controller created. It has no Hephaisto credential and no route
   in - do not add a callback. **The investigator (v0.12.0 F5) is the one exception, and it is

@@ -58,6 +58,32 @@ the same day.
   Still off by default.
 
 ### Changed
+- **A coder Job is three containers, and the one the model runs in holds no GitHub or NuGet
+  token** ([#116](docs/backlog.md#116)). **Needs the coder image of this version**: the agent
+  now starts that image three times, and an older image knows nothing of the roles - it runs
+  its whole flow in the container that has no GitHub token, and with private repositories
+  every attempt fails at its first clone. `codeFix.image.tag` defaults to the chart's version,
+  so the two move together unless the tag is pinned.
+  `prepare`, an init container, holds `GITHUB_TOKEN` and `NUGET_GITHUB_TOKEN` and does the
+  clones, the open-PR and branch checks and the package restore before the model exists.
+  `coder` holds the model credential alone and runs the agent, the build and the tests.
+  `publish`, for an implementation only, holds `GITHUB_TOKEN` and starts after `coder` has
+  ended: it pushes and opens the Draft PR from a copy of its own, having checked the diff
+  against the publishing policy again. The Secret, its keys and every chart value are as they
+  were. Three things an operator may notice:
+  - `kubectl logs job/codefix-…-impl` wants `-c publish` for the result and `-c coder` for the
+    agent's log and an unpushed patch; a plan's and an investigation's result is still in
+    `coder`.
+  - The build and tests run **without package-feed credentials**, from what the restore in
+    `prepare` cached. A fix that adds or bumps a package from a private feed therefore ends
+    `build_failed`, and its deviations say that in words and that a person has to restore it.
+  - With `codeFix.nugetCache.enabled`, the cache is mounted read-only into `coder`, so only the
+    restore of the untouched default branch writes to it. That closes the channel between
+    attempts the chart warned about; it also means a new package cannot be fetched there at
+    all, not even from nuget.org.
+- **An investigator Job is two containers.** `prepare` clones dev-context and, with source
+  access, the workload's repository; `coder` gets the model credential and no GitHub token.
+  The endpoint, the per-run token and the fallback are unchanged.
 - **`IncidentSweep__*` and `Kubernetes__HealedAfter` are refused in `extraEnv`.** An install that
   set the sweeper there moves it to `incidents.sweep`.
 - **A container that was OOMKilled once and has run cleanly since is no longer reported.** It
@@ -76,6 +102,18 @@ the same day.
   clone without file contents, and git fetched each of the project file's 974 versions with a
   request of its own. They are fetched in one request now, and a lookup that still fails is a
   note on the plan and no longer the end of it. Needs the coder image of this version.
+- **An investigator Job is told the workload, not the pod, when an alert opened the incident.**
+  An incident Alertmanager opens names a pod and nothing above it, and the request to the Job
+  carried that pod as the workload while the source it was handed belonged to the pod's
+  Deployment. Which of the alert and the watcher opens an incident first is a race, so the same
+  fault read differently from one run to the next. The request asks the cluster now, as the
+  source lookup beside it always did.
+- **A protected path with an unusual name is still protected** ([#116](docs/backlog.md#116)).
+  The check that keeps `.github/**` and the other protected paths out of a pushed fix compared
+  names as git prints them, and git prints a name with a backslash or a non-ASCII byte in
+  quotes: such a file under a protected directory passed. And a `.gitattributes` in the fix
+  could mark a file as binary and hide a credential-shaped line from the same check. Both
+  found while moving the check; neither was seen used.
 - **One metric name is one instrument** ([#15](docs/backlog.md#15)). Six names were registered
   twice. `hephaisto_signals_received_total{source="Kubernetes"}`,
   `hephaisto_investigation_terminations_total` and `hephaisto_grounding_rejected_total` each

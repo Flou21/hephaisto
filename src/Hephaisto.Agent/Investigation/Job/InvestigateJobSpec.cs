@@ -12,9 +12,17 @@ namespace Hephaisto.Agent.Investigations.Jobs;
 /// Everything that makes the pod safe is <see cref="CodeFixJobSpec.Hardened"/>, shared on purpose:
 /// no ServiceAccount token, non-root, read-only root, no capabilities, no retries, credentials by
 /// reference. What differs is small and listed here: the label the NetworkPolicies select on, the
-/// deadline, the model, and the credentials - an investigator gets the model's token and, only with
-/// source access on, a GitHub token to clone with. Never the NuGet token, never a Hephaisto one:
-/// its only credential for Hephaisto is the per-run bearer token in its request.
+/// deadline, the model, and the credentials. Never the NuGet token, never a Hephaisto one: its only
+/// credential for Hephaisto is the per-run bearer token in its request.
+/// </para>
+/// <para>
+/// <b>Two containers since #116.</b> <c>prepare</c>, an init container, holds <c>GITHUB_TOKEN</c>
+/// and makes the clones - dev-context, and the workload's source when source access is on - before
+/// the model exists. <c>coder</c> holds the model's credential and nothing else, reaches the
+/// investigator endpoint, and prints the result, exactly as the single container did. There is a
+/// <c>prepare</c> in every investigator Job, source access or not: the context repository is
+/// private in production, so the clone that needs the token happens in every run. (Found on the
+/// first production install, where every Job for an unmapped workload failed at that clone.)
 /// </para>
 /// <para>
 /// The endpoint's host goes on <c>NO_PROXY</c>: the call to the agent is in-cluster and must not be
@@ -27,10 +35,8 @@ public static class InvestigateJobSpec
 
     public const string InvestigationLabel = "hephaisto.dev/investigation";
 
-    public static readonly IReadOnlyList<string> SecretKeys = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"];
-
-    /// <summary>With source access: the same, plus a token to clone the workload's repository.</summary>
-    public static readonly IReadOnlyList<string> SourceSecretKeys = [.. SecretKeys, "GITHUB_TOKEN"];
+    /// <summary>What <c>prepare</c> clones with. Not the NuGet token: an investigator never restores.</summary>
+    public static readonly IReadOnlyList<string> PrepareSecretKeys = ["GITHUB_TOKEN"];
 
     /// <summary><c>investigate-&lt;id12&gt;</c>.</summary>
     public static string JobName(Guid attemptId) => $"investigate-{CodeFixJobSpec.Id12(attemptId)}";
@@ -38,7 +44,7 @@ public static class InvestigateJobSpec
     public static string ConfigMapName(Guid attemptId) => JobName(attemptId) + "-req";
 
     public static V1Job Job(
-        Guid attemptId, Guid incidentId, Guid investigationId, bool withSource,
+        Guid attemptId, Guid incidentId, Guid investigationId,
         InvestigationJobOptions job, CodeFixOptions o)
     {
         ArgumentNullException.ThrowIfNull(job);
@@ -50,13 +56,9 @@ public static class InvestigateJobSpec
             new() { Name = "CODEFIX_SDK", Value = string.IsNullOrWhiteSpace(job.Sdk) ? "real" : job.Sdk },
         };
 
-        if (!string.IsNullOrWhiteSpace(job.Model))
-            env.Add(new V1EnvVar { Name = "CODEFIX_MODEL", Value = job.Model.Trim() });
-
         var endpointHost = Uri.TryCreate(job.EndpointUrl, UriKind.Absolute, out var endpoint) ? endpoint.Host : null;
 
         env.AddRange(CodeFixJobSpec.ProxyEnv(o.EgressProxyUrl, endpointHost is null ? [] : [endpointHost]));
-        env.AddRange(CodeFixJobSpec.SecretEnv(KeysFor(job.Sdk, withSource), o.SecretName));
 
         return CodeFixJobSpec.Hardened(
             new CodeFixJobSpec.JobShape(
@@ -64,25 +66,16 @@ public static class InvestigateJobSpec
                 ConfigMapName(attemptId),
                 Labels(attemptId, incidentId, investigationId),
                 env,
+                [
+                    new CodeFixJobSpec.ContainerShape(CodeFixJobSpec.PrepareContainerName, "prepare", PrepareSecretKeys, []),
+                    new CodeFixJobSpec.ContainerShape(
+                        CodeFixJobSpec.ContainerName, "coder", CodeFixJobSpec.CoderKeysFor(job.Sdk), CodeFixJobSpec.CoderEnv(job.Model)),
+                ],
                 job.Deadline,
                 o.WorkspaceSize,
                 NugetCacheClaim: null),
             o);
     }
-
-    /// <summary>
-    /// The Secret keys a Job is handed. A scripted (<c>fake</c>) investigator gets no model credential
-    /// at all: it calls no model, the runner refuses to start fake while one is present, and a $0
-    /// run that could be flipped into a paid one by a Secret it happens to share is not $0.
-    /// </summary>
-    /// <remarks>
-    /// The GitHub token goes with every Job, source access or not: the runner clones the context
-    /// repository (dev-context) before anything else, and in production that repository is private.
-    /// The driver clones with it; the agent inside never sees it. Found on the first production
-    /// install, where every Job for an unmapped workload failed at that clone.
-    /// </remarks>
-    public static IReadOnlyList<string> KeysFor(string? sdk, bool withSource) =>
-        string.Equals(sdk, "fake", StringComparison.Ordinal) ? ["GITHUB_TOKEN"] : SourceSecretKeys;
 
     public static V1ConfigMap RequestConfigMap(
         Guid attemptId, Guid incidentId, Guid investigationId, CodeFixOptions o, string requestJson, V1Job owner) =>

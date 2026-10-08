@@ -25,9 +25,11 @@ candidate has run on the production install.
 **It grew on 2026-10-06, by the owner's choice of what to do before the full release.** The
 fifth candidate adds the rest of the Teams buttons ([#124](backlog.md#124)), one registration
 per metric ([#15](backlog.md#15)), and a fix for the one thing production found that day: every
-code fix it had started died looking for Cait's pinned commit ([#117](backlog.md#117)). Running
-the coder's agent and its driver in separate containers ([#116](backlog.md#116)) was chosen with
-them and is not in that candidate.
+code fix it had started died looking for Cait's pinned commit ([#117](backlog.md#117)). The
+sixth carries the last thing chosen with them: the coder's agent and its driver run in separate
+containers ([#116](backlog.md#116)), so the container the model runs in is handed no GitHub and
+no NuGet token. It changes the pod of every code-fix and every investigation Job, and needs the
+coder image of the same version.
 
 `v0.12.0` shipped on 2026-10-02. **What production found**, and the first full release since
 v0.8.0: v0.9.0 (it proposes the fix), v0.10.0 (the only thing that tells a person) and v0.11.0
@@ -1725,6 +1727,7 @@ and a fourth that production found on the day of the release.
 | - | **The Teams card closes, re-investigates, approves and denies.** Reinvestigate for any member of the team; close for the Microsoft Entra object ids in `notifications.teamsBot.actions.approvers`, with a reason typed into the card; approve and deny for the same people, behind `actions.approvals.enabled`, which is off | [#124](backlog.md#124) | built, rc5 |
 | - | **One metric name is one instrument.** Six names were registered twice; three counters read double | [#15](backlog.md#15) | built, rc5 |
 | - | **A code fix for a service that pins Cait gets as far as planning.** The project file's versions are fetched in one request, not 974 | [#117](backlog.md#117) | built, rc5 |
+| - | **A coder Job is three containers.** `prepare` clones with the GitHub and NuGet tokens before the model exists, `coder` runs the model, the build and the tests with the model's credential only, `publish` pushes and opens the pull request without running anything from the workspace | [#116](backlog.md#116) | built, rc6 |
 
 F3 is wider than v0.12.0 planned it. The owner decided on 2026-10-02 that pod logs should come
 from Loki first and the Kubernetes API second, not only that the Kubernetes API should cope
@@ -1755,7 +1758,23 @@ What the fifth candidate added, each a test where it can be one:
 - The pinned Cait commit is found in a blobless clone without a request per version: three tests
   in `coder/test/workspace.test.ts`.
 
-And three that no test holds. **An approval that runs**: the pager suite's model plans nothing,
+What the sixth candidate added:
+
+- A process in the container the model runs in holds no git or NuGet token and sees no process
+  of another container, with a token in the Secret for the probe to find; only `prepare` and
+  `publish` are handed one; a fix is still planned, built, tested, pushed and opened as a draft
+  pull request: the code-fix suite's c15 and the investigation suite's I12, on the dev cluster.
+- Each role refuses to start beside a credential that is not its own, and `publish` pushes what
+  it re-derived from a bundle, never what the workspace says: `coder/test/roles.test.ts`.
+- An investigator Job is told the workload and not the pod when an alert opened the incident:
+  a unit test, and the investigation suite's I4 and I11, which were red on exactly that.
+
+And what no test holds about the split: a real GitHub token has not been in such a pod, since
+the dev cluster's git server takes none; and with `codeFix.nugetCache.enabled` the cache is
+read-only in the model's container, so a fix that adds a package cannot be built there. The
+first code fix production runs on this candidate is the measurement of the first.
+
+And three that no test holds from the fifth. **An approval that runs**: the pager suite's model plans nothing,
 so no incident there waits for approval, and the click that approves one is unit-tested only. It
 needs one click on a waiting action before `approvals.enabled` goes on anywhere that matters.
 **Any of the buttons in a real tenant** ([#125](backlog.md#125)). And **Cait itself, from a coder
@@ -1768,10 +1787,6 @@ pod, through the egress proxy**: the next plan production starts is that measure
 - **An HTTP route for the bulk close.** MCP and the console have it; nothing asked for a third.
 - **Pod labels on OTLP-shipped logs.** On the production install those carry `service_name`
   only, so a pod selector finds what promtail ships. That is the shipper's to fix.
-- **The coder's agent and driver in separate containers** ([#116](backlog.md#116)). Chosen on
-  2026-10-06 with what the fifth candidate carries, and not in it: it changes the pod every
-  investigation Job runs in, and goes into a candidate once the code-fix and the investigation
-  suites are green on it.
 - **A gate that runs a code fix against a real service** ([#117](backlog.md#117)). The failure
   production found is fixed; the gate that would have found it first is not built.
 - **Which credential the Jobs run on** ([#118](backlog.md#118)). The documentation is read and
@@ -1781,21 +1796,37 @@ pod, through the egress proxy**: the next plan production starts is that measure
 
 ## Next — a more direct way to talk to Hephaisto
 
-Decided by the owner on 2026-10-06, in place of the louder channel: the next thing is a more
-direct way for a person to communicate with Hephaisto. **Only the direction is decided.** What
-it is, where it lives and what a person may say through it are not, and it gets a version number
-and a "Done when" once they are.
+**v0.14.0: a GitHub issue is work Hephaisto can be handed.** Decided by the owner on 2026-10-06.
+Until now the only way in is an alert. An issue assigned to Hephaisto's GitHub account becomes a
+work item, and the Jobs that plan and implement a code fix for an incident do the same for it:
+a plan, an approval, a draft pull request that closes the issue. The plan is posted on the issue
+and approved there, which is the direct way to talk to it that this section promised.
 
-What exists to build on, so the shaping starts from the code:
+What was decided, each by the owner:
 
-- **The Teams bot already receives what people write to it, and drops it.**
-  `POST /api/teams/messages` authenticates every activity and acts on a button click only; a
-  message typed to the bot is answered 200 and nothing else
-  (`Notifications/TeamsBot/TeamsBotActions.cs`).
-- **An agent can already ask.** The MCP endpoint of v0.11.0 serves an incident's signals,
-  findings, investigation and history, and takes acknowledge, assign, close, feedback and
-  reinvestigate. A person reaches it only through an agent of their own.
-- **The console** has a page per incident and no way to ask a question on it.
+- **Assignment is the trigger.** An issue is taken when it is assigned to the bot account, in a
+  repository the install lists. The account is an ordinary GitHub account: an App cannot be an
+  assignee.
+- **Hephaisto asks GitHub; GitHub does not call Hephaisto.** It polls. A webhook comes later and
+  will only tell the same loop to look now.
+- **Approval happens on the issue**, by an account on an approver list, and still works in the
+  console.
+- **This file and [`backlog.md`](backlog.md) move into GitHub issues**, all of it, so the
+  project's own backlog is the first thing it can be handed.
+
+What the code says about it, so the building starts from there:
+
+- **A code fix belongs to an incident at every layer.** `code_fix_attempts.incident_id` is not
+  nullable, the coordinator loads the incident in every method, the request to the Job requires
+  an incident and findings, and the prompts, the pull request's title and its body speak of one.
+- **The agent has never talked to GitHub.** Only the coder Job does, with `git` and `gh`; the
+  agent holds no GitHub credential, and nothing reads a pull request after it is opened.
+- **No test reaches github.com.** Git is a server in the cluster, `gh` is a script, the model is
+  a script. That stays the everyday tier, with a GitHub stand-in beside the Teams one; a second
+  tier runs the real `gh` and a real token against a sandbox repository before a candidate, which
+  [`verification.md`](verification.md) has claimed since v0.9.0 and nothing did.
+
+It gets its "Done when" as scenarios before it gets code, as v0.10.0 and v0.11.0 did.
 
 ---
 
