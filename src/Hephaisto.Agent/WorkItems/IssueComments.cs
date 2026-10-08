@@ -143,6 +143,18 @@ public static partial class IssueComments
     /// <summary>How many of a plan's notes a comment holds. The contract's own cap.</summary>
     public const int MaxNotes = 20;
 
+    /// <summary>
+    /// How much of one step, and of one note, is shown: all of it. These are the plan result's
+    /// own limits (<c>codefix-plan-result.schema.json</c>), so nothing a planner can return is
+    /// cut here - what bounds a comment is <see cref="MaxBody"/>. A step was cut at half its
+    /// limit until 2026-10-08, and the one plan that had a long step lost the sentence that
+    /// said what must NOT be changed (#294).
+    /// </summary>
+    public const int MaxStepChars = 2000;
+
+    /// <inheritdoc cref="MaxStepChars"/>
+    public const int MaxNoteChars = 2000;
+
     /// <summary>The key of the one answer to everybody who answered a plan and is not an approver.</summary>
     public const string NotApproverKey = "not-approver";
 
@@ -454,7 +466,7 @@ public static partial class IssueComments
                 .Append(")</summary>\n");
 
             foreach (var note in noted.Where(n => !CodeFixQueries.IsInjectionNote(n)))
-                text.Append("\n- ").Append(Neutralise(note, 1000));
+                text.Append("\n- ").Append(Neutralise(note, MaxNoteChars));
 
             if (withheld > 0)
             {
@@ -520,7 +532,11 @@ public static partial class IssueComments
             text.Append("\n**Steps**\n");
 
             for (var i = 0; i < Math.Min(plan.Steps.Count, 20); i++)
-                text.Append((i + 1).ToString(CultureInfo.InvariantCulture)).Append(". ").Append(Neutralise(plan.Steps[i], 1000)).Append('\n');
+            {
+                var number = (i + 1).ToString(CultureInfo.InvariantCulture) + ". ";
+
+                text.Append(number).Append(ItemBlock(plan.Steps[i], MaxStepChars, number.Length)).Append('\n');
+            }
         }
 
         text.Append("\n**Verification.** ").Append(VerificationSentence(attempt.VerificationLevel ?? plan?.Verification.Level));
@@ -531,8 +547,8 @@ public static partial class IssueComments
             // an issue names no workload, and what the Job cannot run is somebody looking.
             text.Append(" What only a person looking at the running application can confirm:\n");
 
-            foreach (var item in plan.Verification.NotVerifiable.Take(10))
-                text.Append("- ").Append(Neutralise(item, 500)).Append('\n');
+            foreach (var item in plan.Verification.NotVerifiable.Take(20))
+                text.Append("- ").Append(Neutralise(item, 1000)).Append('\n');
         }
         else
         {
@@ -815,6 +831,26 @@ public static partial class IssueComments
         Flush();
 
         return cut ? blocks.Append('…').ToString() : blocks.ToString();
+    }
+
+    /// <summary>
+    /// A model's text as ONE item of a list of Hephaisto's own - a step under its number: its
+    /// paragraphs and its list kept (<see cref="NeutraliseBlock"/>), and every line after the
+    /// first indented to where the item's text begins, so that they stay inside the item and the
+    /// numbering goes on after it. A planner that writes a step as "do this, in this order:"
+    /// and six lines of what, then "leave these alone", was posted as one sentence (#294).
+    /// </summary>
+    /// <param name="indent">The width of the item's marker: 3 for <c>1. </c>, 4 for <c>10. </c>.</param>
+    public static string ItemBlock(string? text, int max, int indent)
+    {
+        var block = NeutraliseBlock(text, max);
+
+        if (!block.Contains('\n', StringComparison.Ordinal))
+            return block;
+
+        var pad = new string(' ', indent);
+
+        return string.Join('\n', block.Split('\n').Select((line, at) => at == 0 || line.Length == 0 ? line : pad + line));
     }
 
     /// <summary>A paragraph or an item that would begin something other than itself, with a backslash in front.</summary>

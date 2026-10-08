@@ -455,7 +455,9 @@ And six about an attempt that is for a work item (`GitHubIssuePoller.Work.cs`,
   what it was told to ignore. The one exception is a short note that only says there was none
   (it starts with a denial and holds no quotation mark, backtick, colon or line break) - widen
   it and a note that quotes gets through. A plan's summary and root cause keep their paragraphs
-  and list items (`NeutraliseBlock`); everything else of a model's is one line.
+  and list items (`NeutraliseBlock`), and so does a step, indented under its number
+  (`ItemBlock`); a note, a question and a file are one line. Nothing of a plan is cut below the
+  plan result's own limits - `MaxBody` is what bounds a comment.
 - **The request is contract version 2** (`codefix-request-v2.schema.json`, a file of its own;
   version 1 is byte for byte what it was, and a test holds it). The body is `WorkItem.Body`, the
   snapshot. It is written with the attempt's ROW (`RequestJson`), not when the Job is created:

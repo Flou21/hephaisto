@@ -653,6 +653,56 @@ public sealed class IssueCommentsTests
     }
 
     [Fact]
+    public void AStep_IsShownWhole_WithItsListInsideIt_AndTheNumberingGoesOn()
+    {
+        // The third plan in production, 2026-10-08, shortened: one step that lists what moves,
+        // one to a line, and ends with what must not change. It was posted as one sentence and
+        // cut at 1000 characters, in the middle of "Do not change ...".
+        var body = PlanText(PlanResult(steps:
+        [
+            "feat(nav): add the group and move the entries, in this order:\n"
+            + "- 'Image Caption Settings' (lines 245-249)\n"
+            + "- 'Legacy Queue' (255-259)\n"
+            + "\n"
+            + "Afterwards Development's `children` are: Expert Mode, ADCP Signals. Do not change the template, any route or any page.",
+            "Second step.",
+        ]));
+
+        body.Should().Contain(
+            "**Steps**\n"
+            + "1. feat(nav): add the group and move the entries, in this order:\n\n"
+            + "   - 'Image Caption Settings' (lines 245-249)\n"
+            + "   - 'Legacy Queue' (255-259)\n\n"
+            + "   Afterwards Development's `children` are: Expert Mode, ADCP Signals. Do not change the template, any route or any page.\n"
+            + "2. Second step.\n");
+    }
+
+    [Fact]
+    public void AStepAsLongAsThePlanResultAllows_IsNotCut_AndATenthStepIsIndentedByFour()
+    {
+        var longest = "Do this. " + new string('x', IssueComments.MaxStepChars - 40) + " Do not change the template.";
+        longest.Length.Should().BeLessThanOrEqualTo(2000, "the plan result's own limit for a step");
+
+        var steps = Enumerable.Range(1, 9).Select(n => $"Step {n}.").Append("Tenth:\n- a\n- b").ToArray();
+        steps[0] = longest;
+
+        var body = PlanText(PlanResult(steps: steps));
+
+        body.Should().Contain("1. " + longest + "\n2. Step 2.\n");
+        body.Should().Contain("10. Tenth:\n\n    - a\n    - b\n");
+
+        IssueComments.ItemBlock(new string('y', 3000), IssueComments.MaxStepChars, 3).Should().EndWith("…").And.HaveLength(IssueComments.MaxStepChars + 1);
+    }
+
+    [Fact]
+    public void ANote_IsShownUpToThePlanResultsLimit()
+    {
+        var note = "Left out: " + new string('n', 1900);
+
+        PlanText(PlanResult(notes: [note])).Should().Contain("- " + note + "\n");
+    }
+
+    [Fact]
     public void ATextOfOneParagraph_ComesOutAsItAlwaysDid()
     {
         foreach (var text in new[] { "One line.", "  two   spaces\tand a tab ", "See #12 and @octocat at https://example.com/x, `code [1]` and [a](b).", "" })
