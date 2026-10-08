@@ -236,7 +236,10 @@ public sealed partial class GitHubIssuePoller
                     break;
                 }
 
+                // Counted where the comment is put behind the cursor, so once: a comment that
+                // could not be answered is read again, and is not counted until it was.
                 handled = comment.Id;
+                metrics.Command(command.Kind == IssueCommandKind.Approve, GitHubMetrics.CommandNotApprover);
                 continue;
             }
 
@@ -254,6 +257,7 @@ public sealed partial class GitHubIssuePoller
             if (decision.Outcome == CodeFixDecisionOutcome.Done)
             {
                 handled = comment.Id;
+                metrics.Command(approve, GitHubMetrics.CommandAccepted);
 
                 await AuditCommandAsync(repository, plan, comment, command, approve ? "approved" : "rejected", null, ct).ConfigureAwait(false);
 
@@ -273,6 +277,7 @@ public sealed partial class GitHubIssuePoller
             }
 
             handled = comment.Id;
+            metrics.Command(approve, GitHubMetrics.CommandRefused(key));
 
             logger.LogInformation(
                 "{Login} ({AccountId}) answered the plan of {Repository}#{Number} in comment {CommentId} and was refused: {Message}.",

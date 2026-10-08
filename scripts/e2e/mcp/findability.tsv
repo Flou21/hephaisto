@@ -26,6 +26,12 @@ teams notifications sent	list_incident_notifications
 runbook note for an alert	get_alert_note
 code fixes pull requests	list_code_fixes
 code fix plan of an incident	get_code_fix
+code fix plan for a github issue	get_code_fix
+github issues assigned to hephaisto	list_work_items
+which issues is hephaisto working on	list_work_items
+work items	list_work_items
+what became of the github issue	get_work_item
+work item of an issue number in a repository	get_work_item
 agent status budget kill switch	get_status
 which namespaces have incidents	lookup_incident_filters
 spelling of an alert name	lookup_incident_filters

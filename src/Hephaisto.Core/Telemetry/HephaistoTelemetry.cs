@@ -108,6 +108,17 @@ public static class HephaistoTelemetry
 
         /// <summary>Work items that stopped being taken, by <c>state</c> and <c>reason</c>.</summary>
         public const string WorkItemsClosed = "hephaisto.workitems.closed";
+
+        /// <summary>
+        /// Commands read off an issue - a comment whose first line is <c>/approve</c> or
+        /// <c>/reject</c> - by <c>verb</c> (<c>approve</c>, <c>reject</c>) and <c>outcome</c>:
+        /// <c>accepted</c>, <c>not_approver</c>, or <c>refused:&lt;cause&gt;</c> with the cause one
+        /// of the door's (<c>mode-plan</c>, <c>mode-off</c>, <c>emergency-stop</c>,
+        /// <c>kill-switch</c>, <c>second-repository</c>, <c>not-waiting</c>, <c>taken-back</c>,
+        /// <c>refused</c>). Counted once per comment, when it has been dealt with - never a login,
+        /// a repository or a number.
+        /// </summary>
+        public const string WorkItemCommands = "hephaisto.workitems.commands";
         public const string ActionsExecuted = "hephaisto.actions.executed";
         public const string ActionsRolledBack = "hephaisto.actions.rolled_back";
         public const string VerificationResult = "hephaisto.verification.result";

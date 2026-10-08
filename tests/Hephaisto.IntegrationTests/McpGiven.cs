@@ -99,7 +99,7 @@ internal static class McpGiven
             NullLogger<IncidentQueries>.Instance);
     }
 
-    public static McpIncidentReader Reader(PostgresFixture pg, DateTimeOffset now, CodeFixMode codeFixMode = CodeFixMode.Off)
+    public static McpIncidentReader Reader(PostgresFixture pg, DateTimeOffset now, CodeFixMode codeFixMode = CodeFixMode.Off, bool gitHubEnabled = true)
     {
         var clock = new FixedClock(now);
         var queries = Queries(pg, now);
@@ -122,7 +122,8 @@ internal static class McpGiven
             codeFixes,
             new ConnectionHealthCache([], clock, NullLogger<ConnectionHealthCache>.Instance),
             new InvestigationTracker(clock),
-            new StaticOptionsMonitor<NotificationOptions>(new NotificationOptions { BaseUrl = "https://console.example" }));
+            new StaticOptionsMonitor<NotificationOptions>(new NotificationOptions { BaseUrl = "https://console.example" }),
+            new StaticOptionsMonitor<Hephaisto.Agent.GitHub.GitHubOptions>(new Hephaisto.Agent.GitHub.GitHubOptions { Enabled = gitHubEnabled }));
     }
 
     private sealed class FixedClock(DateTimeOffset now) : IClock

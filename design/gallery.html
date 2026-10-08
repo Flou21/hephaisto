@@ -597,10 +597,14 @@ Events:
         console&rsquo;s. The state cells reuse the incident classes, so &ldquo;waiting for a
         human&rdquo; is one colour on both tables. Its own glyphs where the meaning has no incident
         twin: <code>x</code> failed, <code>-</code> denied, <code>/</code> cancelled by a switch.
+        Since v0.14.0 an attempt may be for a GitHub issue instead of an incident: its row names
+        the issue by reference &mdash; never by its title, which is somebody else&rsquo;s text
+        &mdash; and every row&rsquo;s timestamp leads to the attempt&rsquo;s own page.
       </p>
       <ul class="hp-navlinks" style="margin-bottom:.8rem">
         <li><a href="#">incidents</a></li>
         <li><a href="#" class="active" data-testid="nav-codefixes">code fixes <span class="hp-nav-badge" title="1 running, 1 awaiting approval">2</span></a></li>
+        <li><a href="#" data-testid="nav-workitems">work items</a></li>
         <li><a href="#">search</a></li>
         <li><a href="#">status</a></li>
       </ul>
@@ -612,7 +616,7 @@ Events:
       </div>
       <table class="hp-table hp-codefixes">
         <thead><tr>
-          <th class="c-state">state</th><th class="c-cf-incident">incident</th><th class="c-target">workload</th>
+          <th class="c-state">state</th><th class="c-cf-incident">incident or issue</th><th class="c-target">workload</th>
           <th class="c-cf-repo">repository</th><th class="c-cf-branch">branch</th><th class="c-cf-progress">progress</th>
           <th class="c-num">cost</th><th class="c-time">created</th>
         </tr></thead>
@@ -628,7 +632,23 @@ Events:
             <span class="hp-cf-line">Guard the null Customer on the order path; the payment callback can arrive before the customer is loaded.</span>
           </td>
           <td class="c-num mono">$0.41</td>
-          <td class="c-time mono">2026-09-27 08:02:11Z</td>
+          <td class="c-time mono"><a href="#" data-testid="codefix-detail-link">2026-09-27 08:02:11Z</a></td>
+        </tr>
+        <tr data-testid="codefix-row" data-state="PlanReady" data-attempt="0b7e5a1c-0000-7000-8000-000000000009">
+          <td class="c-state"><span class="hp-state st-awaiting"><span class="glyph">!</span> plan ready</span></td>
+          <td class="c-cf-incident">
+            <a class="mono" href="#" data-testid="codefix-issue">acme/api#412</a>
+            <a class="hp-cf-line" href="#" data-testid="codefix-issue-link">issue on GitHub</a>
+          </td>
+          <td class="c-target mono"></td>
+          <td class="c-cf-repo mono">acme/api</td>
+          <td class="c-cf-branch mono">hephaisto/codefix-5a1c0b7e9d21</td>
+          <td class="c-cf-progress">
+            <span class="hp-codefix-await" data-testid="codefix-awaiting"><span class="glyph">!</span> awaiting approval</span>
+            <span class="hp-cf-line">Return 0 for an empty cart instead of null; the total is computed before the first line item exists.</span>
+          </td>
+          <td class="c-num mono">$0.38</td>
+          <td class="c-time mono"><a href="#" data-testid="codefix-detail-link">2026-10-07 09:14:52Z</a></td>
         </tr>
         <tr data-testid="codefix-row" data-state="Planning" data-attempt="0b7e5a1c-0000-7000-8000-000000000002">
           <td class="c-state"><span class="hp-state st-investigating"><span class="glyph">~</span> planning</span></td>
@@ -640,7 +660,7 @@ Events:
             <span class="hp-running" data-testid="codefix-running"><span class="glyph">*</span> planning 3m12s &middot; job <span class="mono">codefix-1c2d3e4f-plan</span></span>
           </td>
           <td class="c-num mono">$0.00</td>
-          <td class="c-time mono">2026-09-27 08:09:40Z</td>
+          <td class="c-time mono"><a href="#" data-testid="codefix-detail-link">2026-09-27 08:09:40Z</a></td>
         </tr>
         <tr data-testid="codefix-row" data-state="PrOpened" data-attempt="0b7e5a1c-0000-7000-8000-000000000003">
           <td class="c-state"><span class="hp-state st-resolved"><span class="glyph">+</span> pr opened</span></td>
@@ -656,7 +676,7 @@ Events:
             </span>
           </td>
           <td class="c-num mono">$1.87</td>
-          <td class="c-time mono">2026-09-26 21:40:03Z</td>
+          <td class="c-time mono"><a href="#" data-testid="codefix-detail-link">2026-09-26 21:40:03Z</a></td>
         </tr>
         <tr data-testid="codefix-row" data-state="PrOpened" data-attempt="0b7e5a1c-0000-7000-8000-000000000004">
           <td class="c-state"><span class="hp-state st-resolved"><span class="glyph">+</span> pr opened</span></td>
@@ -672,7 +692,7 @@ Events:
             </span>
           </td>
           <td class="c-num mono">$2.10</td>
-          <td class="c-time mono">2026-09-26 17:12:55Z</td>
+          <td class="c-time mono"><a href="#" data-testid="codefix-detail-link">2026-09-26 17:12:55Z</a></td>
         </tr>
         <tr data-testid="codefix-row" data-state="Failed" data-attempt="0b7e5a1c-0000-7000-8000-000000000005">
           <td class="c-state"><span class="hp-state st-escalated"><span class="glyph">x</span> failed</span></td>
@@ -684,7 +704,7 @@ Events:
             <span class="hp-cf-line hp-cf-reason">the plan Job exceeded its 20m deadline and was deleted</span>
           </td>
           <td class="c-num mono">$0.93</td>
-          <td class="c-time mono">2026-09-26 11:03:27Z</td>
+          <td class="c-time mono"><a href="#" data-testid="codefix-detail-link">2026-09-26 11:03:27Z</a></td>
         </tr>
         <tr data-testid="codefix-row" data-state="Denied" data-attempt="0b7e5a1c-0000-7000-8000-000000000006">
           <td class="c-state"><span class="hp-state st-closed"><span class="glyph">-</span> denied</span></td>
@@ -697,7 +717,7 @@ Events:
             <span class="hp-cf-line hp-cf-reason">wrong layer: the fix belongs in the gateway, not the service</span>
           </td>
           <td class="c-num mono">$0.38</td>
-          <td class="c-time mono">2026-09-25 14:20:00Z</td>
+          <td class="c-time mono"><a href="#" data-testid="codefix-detail-link">2026-09-25 14:20:00Z</a></td>
         </tr>
         <tr data-testid="codefix-row" data-state="Expired" data-attempt="0b7e5a1c-0000-7000-8000-000000000007">
           <td class="c-state"><span class="hp-state st-expired"><span class="glyph">.</span> expired</span></td>
@@ -709,7 +729,7 @@ Events:
             <span class="hp-cf-line hp-cf-reason">nobody decided within 72h</span>
           </td>
           <td class="c-num mono">$0.52</td>
-          <td class="c-time mono">2026-09-21 09:00:00Z</td>
+          <td class="c-time mono"><a href="#" data-testid="codefix-detail-link">2026-09-21 09:00:00Z</a></td>
         </tr>
         <tr data-testid="codefix-row" data-state="Cancelled" data-attempt="0b7e5a1c-0000-7000-8000-000000000008">
           <td class="c-state"><span class="hp-state st-suppressed"><span class="glyph">/</span> cancelled</span></td>
@@ -721,7 +741,7 @@ Events:
             <span class="hp-cf-line hp-cf-reason">the emergency stop was engaged</span>
           </td>
           <td class="c-num mono">$0.12</td>
-          <td class="c-time mono">2026-09-20 22:47:10Z</td>
+          <td class="c-time mono"><a href="#" data-testid="codefix-detail-link">2026-09-20 22:47:10Z</a></td>
         </tr>
         </tbody>
       </table>
@@ -888,7 +908,138 @@ so the first callback after a cold start throws NullReferenceException.</pre>
       </section>
     </section>
 
-  </main>
+    <section class="g-sec">
+      <h2>Work items</h2>
+      <p class="g-note">
+        v0.14.0. <code>/workitems</code>: the GitHub issues assigned to Hephaisto&rsquo;s account,
+        and what became of each &mdash; and the head of <code>/codefixes/{id}</code>, an
+        attempt&rsquo;s own page, which is the only page an attempt for an issue has. No new
+        component and no new token: the code-fix table, the state cells, the detail header and
+        the timeline, with three states of their own in the borrowed vocabulary &mdash;
+        <code>~</code> taken, <code>+</code> done, <code>/</code> cancelled. The issue&rsquo;s title is
+        rendered as text, wherever it is shown.
+      </p>
+      <p class="hp-muted" data-testid="workitems-on">
+        An issue assigned to Hephaisto's account in <span class="mono">acme/api, acme/worker</span>
+        becomes a work item. Its plan is answered on the issue or on the attempt's page.
+      </p>
+      <table class="hp-table hp-codefixes">
+        <thead><tr>
+          <th class="c-state">state</th><th class="c-cf-incident">issue</th><th class="c-cf-repo">repository</th>
+          <th class="c-cf-progress">what became of it</th><th class="c-state">code fix</th>
+          <th class="c-time">taken</th><th class="c-time">ended</th>
+        </tr></thead>
+        <tbody>
+        <tr data-testid="workitem-row" data-state="Taken">
+          <td class="c-state"><span class="hp-state st-investigating"><span class="glyph">~</span> taken</span></td>
+          <td class="c-cf-incident">
+            <a class="mono" href="#" data-testid="workitem-issue-link">acme/api#412</a>
+            <span class="hp-cf-line" data-testid="workitem-title">The order total is null for an empty cart</span>
+          </td>
+          <td class="c-cf-repo mono">acme/api</td>
+          <td class="c-cf-progress"></td>
+          <td class="c-state"><a href="#" data-testid="workitem-attempt-link"><span class="hp-state st-awaiting"><span class="glyph">!</span> plan ready</span></a></td>
+          <td class="c-time mono">2026-10-07 09:14:47Z</td>
+          <td class="c-time mono">&mdash;</td>
+        </tr>
+        <tr data-testid="workitem-row" data-state="Taken">
+          <td class="c-state"><span class="hp-state st-investigating"><span class="glyph">~</span> taken</span></td>
+          <td class="c-cf-incident">
+            <a class="mono" href="#">acme/worker#77</a>
+            <span class="hp-cf-line">Retry the upload when the bucket answers 503</span>
+          </td>
+          <td class="c-cf-repo mono">acme/worker</td>
+          <td class="c-cf-progress">
+            <span class="hp-warn"><span class="glyph">!</span> no plan started</span>
+            <span class="hp-cf-line hp-cf-reason">the code-fix mode is Off (configmap:codeFixMode)</span>
+          </td>
+          <td class="c-state"><span class="hp-no"><span class="glyph">-</span> none</span></td>
+          <td class="c-time mono">2026-10-07 08:51:03Z</td>
+          <td class="c-time mono">&mdash;</td>
+        </tr>
+        <tr data-testid="workitem-row" data-state="Done">
+          <td class="c-state"><span class="hp-state st-resolved"><span class="glyph">+</span> done</span></td>
+          <td class="c-cf-incident">
+            <a class="mono" href="#">acme/api#398</a>
+            <span class="hp-cf-line">Endpoints.Primary crashes without a Shop:Endpoints section</span>
+          </td>
+          <td class="c-cf-repo mono">acme/api</td>
+          <td class="c-cf-progress"><span class="hp-cf-line hp-cf-reason">merged</span></td>
+          <td class="c-state"><a href="#"><span class="hp-state st-resolved"><span class="glyph">+</span> pr opened</span></a></td>
+          <td class="c-time mono">2026-10-06 16:11:23Z</td>
+          <td class="c-time mono">2026-10-06 16:14:09Z</td>
+        </tr>
+        <tr data-testid="workitem-row" data-state="Cancelled">
+          <td class="c-state"><span class="hp-state st-suppressed"><span class="glyph">/</span> cancelled</span></td>
+          <td class="c-cf-incident">
+            <a class="mono" href="#">acme/api#391</a>
+            <span class="hp-cf-line">&lt;b&gt;bold&lt;/b&gt; [a link](https://example.invalid) @somebody &mdash; shown as typed</span>
+          </td>
+          <td class="c-cf-repo mono">acme/api</td>
+          <td class="c-cf-progress">
+            <span class="hp-cf-line hp-cf-reason">pull request closed without merging</span>
+            <span class="hp-cf-line">the issue is still assigned; it is not taken again until it was unassigned</span>
+          </td>
+          <td class="c-state"><a href="#"><span class="hp-state st-resolved"><span class="glyph">+</span> pr opened</span></a></td>
+          <td class="c-time mono">2026-10-06 11:02:40Z</td>
+          <td class="c-time mono">2026-10-06 11:20:49Z</td>
+        </tr>
+        </tbody>
+      </table>
+
+      <header class="hp-detail-header" data-testid="codefix-detail" style="margin-top:1.4rem">
+        <h1>code fix <span class="mono">acme/api#412</span></h1>
+        <div class="hp-badges">
+          <span class="hp-state st-awaiting"><span class="glyph">!</span> plan ready</span>
+          <span class="hp-mode mode-auto">code-fix mode pr</span>
+        </div>
+        <dl class="hp-kv">
+          <dt>issue</dt>
+          <dd><span class="mono">acme/api#412</span> &middot; <a href="#">open on GitHub</a></dd>
+          <dt>title</dt>
+          <dd>The order total is null for an empty cart</dd>
+          <dt>opened by</dt>
+          <dd class="mono">reporter</dd>
+          <dt>work item</dt>
+          <dd>
+            <span class="hp-state st-investigating"><span class="glyph">~</span> taken</span>
+            <span class="hp-muted"> &middot; taken <span class="mono">2026-10-07 09:14:47Z</span></span>
+          </dd>
+          <dt>repository</dt>
+          <dd class="mono">acme/api</dd>
+          <dt>branch</dt>
+          <dd class="mono">hephaisto/codefix-5a1c0b7e9d21 <span class="hp-muted">from main</span></dd>
+          <dt>cost</dt>
+          <dd class="mono">$0.38 <span class="hp-muted">plan $0.380000 &middot; implement $0.000000</span></dd>
+        </dl>
+      </header>
+      <section class="hp-section" data-testid="codefix-history">
+        <h2>history</h2>
+        <ol class="hp-timeline">
+          <li><span class="mono hp-muted">2026-10-07 09:14:52Z</span><span class="mono">created</span><span>requested by hephaisto/system</span></li>
+          <li><span class="mono hp-muted">2026-10-07 09:14:53Z</span><span class="mono">planning</span><span>job codefix-5a1c0b7e9d21-plan</span></li>
+          <li><span class="mono hp-muted">2026-10-07 09:19:08Z</span><span class="mono">plan ready</span><span>posted on the issue; waiting for an approver's answer</span></li>
+          <li><span class="mono hp-muted">2026-10-07 09:31:40Z</span><span class="mono">approved</span><span>by github:maintainer, through a comment on the issue</span></li>
+          <li><span class="mono hp-muted">2026-10-07 09:31:41Z</span><span class="mono">implementing</span><span>job codefix-5a1c0b7e9d21-impl</span></li>
+        </ol>
+      </section>
+      <section class="hp-section">
+        <h2>pull request description</h2>
+        <p class="hp-muted">
+          As the runner sent it to GitHub; the copy there may have been edited since. A model
+          wrote parts of it, so it is shown as text and nothing in it is a link.
+        </p>
+        <pre class="hp-code" data-testid="codefix-pr-body">Return 0 for an empty cart instead of null.
+
+Closes acme/api#412
+
+## What changes, and why
+
+`src/Cart/Total.cs:41` - see [the docs](https://example.invalid), cc @somebody</pre>
+      </section>
+    </section>
+
+</main>
 </div>
 </body>
 </html>

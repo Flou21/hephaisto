@@ -52,7 +52,7 @@ public sealed class CodeFixStateMachineTests
         var a = At(CodeFixState.PlanReady);
 
         ((Action)(() => machine.Approve(a, actor, ApprovalSource.Api))).Should().Throw<ArgumentException>();
-        ((Action)(() => machine.Deny(a, actor, null))).Should().Throw<ArgumentException>();
+        ((Action)(() => machine.Deny(a, actor, null, ApprovalSource.Ui))).Should().Throw<ArgumentException>();
         a.State.Should().Be(CodeFixState.PlanReady);
     }
 
@@ -71,10 +71,12 @@ public sealed class CodeFixStateMachineTests
     {
         var a = At(CodeFixState.PlanReady);
 
-        machine.Deny(a, "a human", "wrong file");
+        machine.Deny(a, "a human", "wrong file", ApprovalSource.GitHub);
 
         a.State.Should().Be(CodeFixState.Denied);
         a.FailureReason.Should().Be("wrong file");
+        a.ApprovedBy.Should().Be("a human");
+        a.ApprovalSource.Should().Be(ApprovalSource.GitHub, "the attempt's page says through what a plan was denied");
     }
 
     [Theory]

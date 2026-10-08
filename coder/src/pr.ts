@@ -167,47 +167,44 @@ export function renderPrBody(i: PrBodyInput): string {
     branch: req.repository.branch,
     repo_url: req.repository.url,
   };
+  // What a model wrote is made inert (prompts.ts) for BOTH kinds of request. GitHub reads a
+  // pull request's body for closing keywords, references and mentions whoever it was opened
+  // for: until v0.14.0 only an issue's description was treated, and an incident's carried the
+  // model's summary and root cause as written - so a model repeating "fixes #<n>" from a log
+  // line would have closed that issue on merge, in a repository whose issues are real.
+  const model = {
+    summary: inert(plan.summary),
+    root_cause: inert(plan.root_cause),
+    change_summary: inert(i.changeSummary || plan.summary),
+    deviations: bullets(i.deviations.map(inert), '- none'),
+    verification_weak: weak ? inert(weak) : '',
+    notes: bullets([...plan.notes, ...i.notes].map(inert), '- none'),
+  };
   if (isWorkItem(req)) {
-    // The body of a pull request is read by GitHub for closing keywords and mentions, and this
-    // one is for an issue anybody may have opened. So: the one `Closes` is the template's line,
-    // built from issue_ref; the issue's title is in a fence, where nothing is linked; its body
-    // is not here at all; and what the model wrote is made inert (prompts.ts).
-    const inertWeak = weak ? inert(weak) : '';
+    // This one is for an issue anybody may have opened. So: the one `Closes` is the template's
+    // line, built from issue_ref - the runner's own, and not made inert; the issue's title is
+    // in a fence, where nothing is linked; and its body is not here at all.
     return render(i.template, {
       ...common,
+      ...model,
       issue_ref: subjectOf(req).ref,
       issue_url: req.work_item.url,
       issue_md: fence(req.work_item.title),
-      summary: inert(plan.summary),
-      root_cause: inert(plan.root_cause),
-      change_summary: inert(i.changeSummary || plan.summary),
-      deviations: bullets(i.deviations.map(inert), '- none'),
-      verification_weak: inertWeak,
-      notes: bullets([...plan.notes, ...i.notes].map(inert), '- none'),
       default_branch: req.repository.default_branch,
     });
   }
   return render(i.template, {
+    ...common,
+    ...model,
+    // Hephaisto's own words, and an id in a code span: as written.
     incident_link: `Hephaisto incident \`${req.incident_id}\``,
-    incident_title: req.incident.title,
-    summary: plan.summary,
-    root_cause: plan.root_cause,
+    // An alert's words - an annotation, a label - outside any fence: inert like the model's.
+    incident_title: inert(req.incident.title),
+    // Verbatim evidence is fenced (evidenceMarkdown), and GitHub links nothing inside a fence.
     evidence_md: evidenceMarkdown(req),
-    change_summary: i.changeSummary || plan.summary,
-    files: bullets(i.files.map((f) => `\`${f}\``), '- (none)'),
-    deviations: bullets(i.deviations, '- none'),
-    verification_table: verificationTable(i.report),
-    verification_weak: weak,
-    notes: bullets([...plan.notes, ...i.notes], '- none'),
-    cost: `$${i.costUsd.toFixed(2)} (implement phase, API-equivalent estimate)`,
-    versions: i.versions,
-    attempt_id: req.attempt_id,
     incident_id: req.incident_id,
     workload: req.incident.target.workload,
     image: req.incident.image ?? '(unknown)',
-    analysed_ref: plan.analysed_ref ?? '(unknown)',
-    branch: req.repository.branch,
-    repo_url: req.repository.url,
   });
 }
 
@@ -219,8 +216,9 @@ export function renderPrBody(i: PrBodyInput): string {
 export function prTitle(req: CodeFixRequest, plan: PlanResult): string {
   const first = (plan.summary.split(/(?<=[.!?])\s/)[0] ?? plan.summary).trim().replace(/\s+/g, ' ');
   const prefix = isWorkItem(req) ? prType(req.work_item.type) : `fix(${req.incident.target.workload.split('/').pop() || 'service'})`;
-  // a title notifies and links like any other text: an issue's is made inert as its body is
-  const sentence = isWorkItem(req) ? inert(first) : first;
+  // a title notifies and links like any other text: it is made inert as the body is, for an
+  // incident as for an issue (the prefix is the runner's: a type, and a workload's name)
+  const sentence = inert(first);
   const t = `${prefix}: ${lowerFirstWord(sentence)}`.replace(/\.$/, '');
   return t.length > 120 ? `${t.slice(0, 117)}...` : t;
 }

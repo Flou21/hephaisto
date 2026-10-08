@@ -720,6 +720,124 @@ describe('inert', () => {
 
 // =============================================================================================
 
+// Until v0.14.0 only an issue's pull request was treated: an incident's description carried the
+// model's summary and root cause as written, and its title the first sentence of the summary.
+// The live tier (scripts/e2e/github-live.sh) showed what that means on github.com - a repeated
+// "resolves <address>" closed a second issue - and nothing had ever run v0.9.0's path there.
+describe("an incident's pull request is made inert like an issue's", () => {
+  const said = 'cc @octocat - fixes #7, closes GH-7, resolves https://github.com/octo/shop/issues/7 and /pull/8, see octo/other/issues/9 and www.example.com';
+  const MENTION = /(^|[^A-Za-z0-9/])@[A-Za-z0-9_]/;
+
+  function incidentBody(w: World, over: (req: ReturnType<typeof implementRequest>) => void = () => {}): { body: string; req: ReturnType<typeof implementRequest> } {
+    const req = implementRequest(w);
+    req.plan = { ...req.plan!, summary: `Make greet deterministic. ${said}`, root_cause: `src/app.sh:2. ${said}`, notes: [said], verification: { level: 'build-only', not_verifiable: [said] } };
+    over(req);
+    const body = renderPrBody({
+      req,
+      plan: req.plan!,
+      changeSummary: said,
+      files: ['src/app.sh'],
+      deviations: [said],
+      notes: [said],
+      report: { level: 'build-only', steps: [], buildPassed: true, testsPassed: null, failed: null, logTail: '', honestyNote: '' },
+      costUsd: 0,
+      versions: 'test',
+      template: loadTemplate('pr-body', null).text,
+    });
+    return { body, req };
+  }
+
+  it('a model that repeats a log line closes nothing, references nothing and mentions nobody', () => {
+    const { body } = incidentBody(makeWorld());
+    const outsideFence = body.replace(/^```+text\n[\s\S]*?\n```+$/gm, '');
+    // the model's words are there seven times over: summary, root cause, change, deviation, weak, two notes
+    expect(count(outsideFence.replace(/\u200b/g, ''), said)).toBeGreaterThanOrEqual(6);
+    expect(outsideFence).not.toMatch(MENTION);
+    expect(outsideFence.match(CLOSING)).toBeNull();
+    expect(outsideFence.match(/#\d/g)).toBeNull();
+    expect(outsideFence).not.toMatch(/GH-\d/i);
+    expect(outsideFence).not.toMatch(/\/(issues|pull|discussions)\/\d/i);
+    expect(outsideFence).not.toMatch(/:\/\//);
+    expect(outsideFence).not.toMatch(/\bwww\./i);
+    // and it reads as it was written: nothing was added but a character without width
+    expect(body.replace(/\u200b/g, '')).toContain(`Make greet deterministic. ${said}`);
+    expect(body.replace(/\u200b/g, '')).toContain(`src/app.sh:2. ${said}`);
+  });
+
+  it("the incident's title is an alert's words, outside any fence, and is treated the same", () => {
+    const { body } = incidentBody(makeWorld(), (req) => {
+      req.incident.title = 'CrashLoopBackOff on shop-api: fixes #7 for @octocat, see /issues/8';
+    });
+    const row = body.split('\n').find((l) => l.startsWith('| Incident |'))!;
+    expect(row).toContain('CrashLoopBackOff on shop-api: fixes #\u200b7 for @\u200boctocat, see /issues/\u200b8');
+  });
+
+  it('what the runner writes on purpose is as it was: the incident, the workload, the image, the attempt, the evidence', () => {
+    const w = makeWorld();
+    const { body, req } = incidentBody(w);
+    expect(body).toContain(`| Incident | Hephaisto incident \`${INCIDENT}\` — ${req.incident.title} |`);
+    expect(body).toContain(`| Workload | \`${req.incident.target.workload}\` |`);
+    expect(body).toContain(`| Image analysed | \`${req.incident.image}\` (commit \`${w.firstSha}\`) |`);
+    expect(body).toContain(`| Attempt | \`${ATTEMPT}\` |`);
+    expect(body).toContain('- `src/app.sh`');
+    // the evidence is verbatim in its fence, where GitHub links nothing: not a character added
+    const fences = body.match(/^```+text\n[\s\S]*?\n```+$/gm) ?? [];
+    expect(fences.length).toBeGreaterThan(0);
+    expect(fences.join('\n')).not.toContain('\u200b');
+    expect(fences.join('\n')).toContain('greet: unexpected output\n   at src/app.sh line 2');
+    // markdown a reviewer needs survives: a code span, a path with a line
+    expect(body).toContain('src/app.sh:2.');
+  });
+
+  it('evidence that quotes a closing keyword stays in its fence and is not rewritten', () => {
+    const { body } = incidentBody(makeWorld(), (req) => {
+      req.findings[0]!.evidence[0]!.excerpt = 'ERROR see @octocat, fixes #7 https://github.com/octo/shop/issues/7';
+    });
+    expect(body).toContain('ERROR see @octocat, fixes #7 https://github.com/octo/shop/issues/7');
+  });
+
+  it('the title is made inert too, and a title without anything GitHub reads is unchanged', () => {
+    const w = makeWorld();
+    const req = implementRequest(w);
+    expect(prTitle(req, { ...req.plan!, summary: 'Fixes #7 for @octocat, see /issues/8. More.' })).toBe('fix(shop-api): fixes #\u200b7 for @\u200boctocat, see /issues/\u200b8');
+    expect(prTitle(req, { ...req.plan!, summary: 'Resolves https://github.com/octo/shop/issues/7.' })).toBe('fix(shop-api): resolves https:\u200b//github.com/octo/shop/issues/\u200b7');
+    expect(prTitle(req, { ...req.plan!, summary: 'Greet prints the wrong thing. More.' })).toBe('fix(shop-api): greet prints the wrong thing');
+  });
+
+  it('through the whole runner: the description gh was given and the title it was opened with', async () => {
+    const w = makeWorld();
+    script(w, 'svc.implement.json', {
+      steps: [
+        { patch: '--- a/src/app.sh\n+++ b/src/app.sh\n@@ -1,3 +1,4 @@\n greet() {\n+  # deterministic\n   echo hello\n }\n' },
+        { commit: 'fix(svc): greet is deterministic' },
+        { result: { cost_usd: 1, structured_output: { files: ['src/app.sh'], deviations: ['As @octocat asked, this also resolves #4.'], summary: 'x' } } },
+      ],
+    });
+    const req = implementRequest(w);
+    req.plan!.summary = 'Fixes #1 for @octocat. And closes octo/other#2.';
+    req.plan!.root_cause = 'See GH-3 and https://github.com/octo/other/issues/3; cc @octo-org/everyone.';
+    req.plan!.notes = ['closes #5'];
+
+    const { doc } = await runRequest(w, req);
+    expect(doc.outcome).toBe('pr_opened');
+
+    const body = prBody(w);
+    const outsideFence = body.replace(/^```+text\n[\s\S]*?\n```+$/gm, '');
+    expect(outsideFence.match(CLOSING)).toBeNull();
+    expect(outsideFence).not.toMatch(MENTION);
+    expect(outsideFence).not.toMatch(/GH-\d/);
+    expect(outsideFence).not.toMatch(/\/(issues|pull|discussions)\/\d/i);
+    expect(body.replace(/\u200b/g, '')).toContain('Fixes #1 for @octocat. And closes octo/other#2.');
+    expect(body.replace(/\u200b/g, '')).toContain('As @octocat asked, this also resolves #4.');
+    expect(pr(w).title).toBe('fix(shop-api): fixes #\u200b1 for @\u200boctocat');
+    // the trailers of the commit are the runner's own and name the incident as before
+    const message = git(w.remote, 'log', '-1', '--format=%B', BRANCH);
+    expect(message).toContain(`Hephaisto-Incident: ${INCIDENT}`);
+  });
+});
+
+// =============================================================================================
+
 describe('a request is held to the version it states', () => {
   it('an incident smuggled into a version-2 request is refused by name of file and member', async () => {
     const w = makeWorld();

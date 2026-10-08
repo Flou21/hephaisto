@@ -251,7 +251,9 @@ public sealed class TeamsBotNotificationChannel(
             }
         }
 
-        return (TeamsBotCards.AgentEvent(message), null);
+        // A work item's code fix (v0.14.0): no incident, so no card that is edited afterwards and
+        // none on the board - one message, final, like an event about the agent.
+        return (s.WorkItemId is null ? TeamsBotCards.AgentEvent(message) : TeamsBotCards.WorkItemEvent(message), null);
     }
 
     /// <summary>

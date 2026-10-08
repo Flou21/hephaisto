@@ -89,7 +89,7 @@ else
         <thead>
             <tr>
                 <th class="c-state">state</th>
-                <th class="c-cf-incident">incident</th>
+                <th class="c-cf-incident">incident or issue</th>
                 <th class="c-target">workload</th>
                 <th class="c-cf-repo">repository</th>
                 <th class="c-cf-branch">branch</th>
@@ -116,10 +116,16 @@ else
                         }
                         else
                         {
-                            @* An attempt for a GitHub issue (v0.14.0) has no incident page to link.
-                               Its reference is Hephaisto's own configuration and a number; the
-                               issue's title is somebody else's text and is not shown here. *@
-                            <span class="mono" data-testid="codefix-issue">@(a.Issue ?? "a work item")</span>
+                            @* An attempt for a GitHub issue (v0.14.0) has no incident page: its
+                               own page is where the plan is read and answered. The reference is
+                               Hephaisto's own configuration and a number; the issue's title is
+                               somebody else's text and stays on that page. *@
+                            <a class="mono" href="codefixes/@a.Id" data-testid="codefix-issue">@(a.Issue ?? "a work item")</a>
+                            @if (Display.HttpUrl(a.IssueUrl) is { } issueUrl)
+                            {
+                                <a class="hp-cf-line" href="@issueUrl" target="_blank" rel="noopener"
+                                   data-testid="codefix-issue-link" title="@issueUrl">issue on GitHub</a>
+                            }
                         }
                     </td>
                     <td class="c-target mono">@a.Workload</td>
@@ -132,7 +138,11 @@ else
                         title="plan @Display.Usd(a.PlanCostUsd) · implement @Display.Usd(a.ImplementCostUsd)">
                         $@a.TotalCostUsd.ToString("0.00", CultureInfo.InvariantCulture)
                     </td>
-                    <td class="c-time mono">@Display.Timestamp(a.CreatedAt)</td>
+                    <td class="c-time mono">
+                        @* Every attempt has a page of its own (v0.14.0): history, the plan in
+                           full, the decision. An incident's row keeps its link to the incident. *@
+                        <a href="codefixes/@a.Id" data-testid="codefix-detail-link" title="This attempt's own page">@Display.Timestamp(a.CreatedAt)</a>
+                    </td>
                 </tr>
             }
         </tbody>

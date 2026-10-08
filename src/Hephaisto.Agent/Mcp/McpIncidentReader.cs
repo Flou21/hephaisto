@@ -40,7 +40,8 @@ public sealed partial class McpIncidentReader(
     CodeFixQueries codeFixes,
     ConnectionHealthCache connections,
     Pipeline.InvestigationTracker tracker,
-    IOptionsMonitor<NotificationOptions> notifications)
+    IOptionsMonitor<NotificationOptions> notifications,
+    IOptionsMonitor<GitHub.GitHubOptions> github)
 {
     /// <summary>How many rows a count reads at most. Past this it says so.</summary>
     public const int CountWindow = 5_000;

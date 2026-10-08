@@ -14,7 +14,12 @@ the same number.
 ## v0.14.0 — unreleased
 
 **A second way in.** Until now the only thing Hephaisto could be handed was an alert. This
-release is about handing it a GitHub issue ([#243](https://github.com/Flou21/hephaisto/issues/243)).
+release is about handing it a GitHub issue ([#243](https://github.com/Flou21/hephaisto/issues/243)):
+an issue assigned to its account is planned, the plan is posted and answered on the issue, and
+the draft pull request that follows closes it. It is off unless `github.enabled` is set, and an
+install that leaves it off changes in three small ways, listed under *Upgrading*. How to turn it
+on - the account, the two tokens, the values - is one page:
+[GitHub issues as work](https://docs.hephaisto.dev/operate/github-issues).
 
 ### New
 - **An issue assigned to Hephaisto's account is taken as work** ([#245](https://github.com/Flou21/hephaisto/issues/245)).
@@ -87,6 +92,39 @@ release is about handing it a GitHub issue ([#243](https://github.com/Flou21/hep
   `GET /api/codefixes` and in `attempts` of a work item, for an incident's attempt as for an
   issue's - what the runner sent GitHub, so that "does it close the issue" can be read without
   opening GitHub. Null without a pull request.
+- **The console shows what was handed over, and every code fix has a page**
+  ([#248](https://github.com/Flou21/hephaisto/issues/248)). *Work items* in the navigation lists
+  the issues that were taken, newest first, with what became of each: its state, why it ended -
+  or why no plan was started yet - and its attempt. `/codefixes/<attempt id>` is one attempt on
+  a page of its own, for an incident's attempt as for an issue's: what it is for, its history
+  (created, plan ready, approved or denied by whom and through what - the console, the API, a
+  comment on the issue - implementing, the pull request, how it ended), the plan in full, the
+  pull request's description, the cost, and approve and deny with the reason box for whoever
+  holds the approver role. On the code-fixes page a row for an issue names it (`owner/repo#n`)
+  and leads there; an incident's row keeps its link to the incident. The badge beside *code
+  fixes* counts a waiting plan of either kind. An issue's title, a plan, a pull request's
+  description and a rejection's reason are shown as text: no markdown, no HTML, no link made
+  of them.
+- **An MCP client can ask about work items.** Two read tools: `list_work_items` (by state,
+  repository and time; `enabled` says whether issues are taken at all) and `get_work_item` (by
+  id, or by repository and number). `list_code_fixes` and `get_code_fix` include an attempt for
+  an issue: a row names `workItemId`, `issue` and `issueUrl` where an incident's names
+  `incidentId`, and `get_code_fix` also answers `issueTitle`, `pullRequestBody` and
+  `decidedThrough`. Everything a stranger or a model wrote is in the `<untrusted-evidence>`
+  envelope, as before. There is no tool that answers a plan: that stays with a person, in the
+  console or on the issue.
+- **A work item's code fix is announced.** The three moments an incident's code fix announces -
+  `CodeFixPlanReady`, `CodeFixPrOpened`, `CodeFixFailed` - go through the notification outbox
+  for an issue's too. The message names the issue by its reference, says where the plan is
+  answered (the issue or the console; the console alone when `github.approvers` is empty) and
+  links the attempt's page. There is no incident behind it, so a route takes it only when it is
+  **not scoped** by namespace, cluster, kind or label and asks for no severity above `Info`; a
+  fallback route does not. The Teams bot sends it to each recipient's chat - the board stays a
+  board of incidents - and the webhook's payload carries `workItem` and `links.codeFix` in
+  place of `incident` and `links.incident`.
+- `GET /api/codefixes/{attemptId}`: one attempt by its own id with what it is for (`attempt`,
+  `workItem`, `mode`). An attempt carries `decidedThrough` - `Ui`, `Api`, `Oidc` or `GitHub` -
+  once somebody answered its plan.
 - **GitHub among the dependencies.** `github` is a row in the connections of `GET /api/status`,
   the status page and the MCP tool `get_status`: healthy while every listed repository answers,
   degraded with one line of why - a refused token, a rate limit and until when, a 5xx, no
@@ -98,9 +136,13 @@ release is about handing it a GitHub issue ([#243](https://github.com/Flou21/hep
   (`github.useEgressProxy`), and the chart adds the two NetworkPolicy rules that takes.
 - `github.approvers` lists who may answer a plan on the issue, by account number
   (`gh api users/<login> --jq .id`). A login there is refused at render and at start.
-- Three metrics: `hephaisto.github.polls` by outcome, `hephaisto.workitems.taken` and
-  `hephaisto.workitems.closed` - by state (`Done`, `Cancelled`) and reason (`merged`,
-  `pull_request_closed`, `issue_closed`, `unassigned`, `issue_gone`).
+- Four metrics: `hephaisto.github.polls` by outcome; `hephaisto.workitems.taken`;
+  `hephaisto.workitems.closed` by state (`Done`, `Cancelled`) and reason (`merged`,
+  `pull_request_closed`, `issue_closed`, `unassigned`, `issue_gone`); and
+  `hephaisto.workitems.commands` - every `/approve` and `/reject` read off an issue, by `verb`
+  and by what was done with it: `accepted`, `not_approver`, or `refused:<cause>` (`mode-plan`,
+  `mode-off`, `emergency-stop`, `kill-switch`, `second-repository`, `not-waiting`,
+  `taken-back`).
 - Audit rows for a work item: `workitem.taken`, `workitem.cancelled`, `workitem.done`, and
   `workitem.command` - one per comment that decided a plan or was answered, with the account's
   number and the comment's id.
@@ -131,6 +173,16 @@ release is about handing it a GitHub issue ([#243](https://github.com/Flou21/hep
     wait for it.
 
 ### Fixed
+- **An incident's pull request closes and mentions nothing a model repeats.** The description
+  and the title of a pull request for an *incident's* code fix carried the model's summary, root
+  cause, notes and deviations as written. GitHub reads a description for closing keywords,
+  references and mentions whatever the pull request is for, so a model that repeated "fixes" and
+  an issue's number from a log line would have closed that issue on merge, and one that repeated
+  an `@` and a name would have notified that person. Those fields, and the incident's title, now
+  get the treatment an issue's pull request has: a zero-width space after `@`, `#` and `GH-`,
+  inside `://`, after `www` and after every `/` before a digit. A link a model wrote there is
+  text; the evidence, which is in a fence, is as it was. Found by the run against github.com;
+  not seen in production. It needs the coder image of this version.
 - **A credential named the way an environment names it is redacted.** `GITHUB_TOKEN=...`,
   `GitHub__Token=...` and `CLAUDE_CODE_OAUTH_TOKEN=...` in a log line went to the coder's request
   and to MCP readers as they were unless the value itself had a known prefix: `_` is a word
@@ -158,10 +210,18 @@ release is about handing it a GitHub issue ([#243](https://github.com/Flou21/hep
 ### Changed
 - **`incidentId` on a code-fix attempt can be null** - in `GET /api/codefixes`, and in the
   `code_fix_attempts` and `llm_usage` tables. It is null exactly for an attempt that is for an
-  issue; a client that follows it to an incident has to check. The console's code-fixes page
-  shows such a row by its issue. The MCP tools `list_code_fixes` and `get_code_fix`, and the
-  Teams board, show the attempts of incidents only until they learn to show an issue; an
-  attempt for an issue is not announced through the notification routes, it is told on its issue.
+  issue; a client that follows it to an incident has to check.
+- **The MCP tool list has 26 tools, two more than before**, and the descriptions of
+  `list_code_fixes` and `get_code_fix` changed. A gateway that allows tools by name needs
+  `list_work_items` and `get_work_item` added; one that indexes descriptions will re-index. In
+  the answers of the two code-fix tools `incidentId` is absent for an attempt that is for an
+  issue, and `workload` is absent there too - a client that required either has to check.
+- **A denial records through what it was given.** `code_fix_attempts.approval_source` used to
+  stay `NotApplicable` for a denied attempt; it is now set as an approval sets it. Attempts
+  denied before this release keep `NotApplicable`: `decidedThrough` is null for them, and their
+  page says who denied them and not through what.
+- **The code-fixes page**: the column *incident* is *incident or issue*, and every row's
+  timestamp is a link to the attempt's page.
 - **The coder's request has a second version.** A Job for an issue is handed contract version 2
   (`codefix-request-v2.schema.json`: `work_item` in place of `incident`, `findings` and
   `investigation_summary`). A Job for an incident is handed version 1, byte for byte what it
@@ -176,16 +236,32 @@ release is about handing it a GitHub issue ([#243](https://github.com/Flou21/hep
 - `approvalSource` has a seventh value, `GitHub`. The others keep their names and numbers.
 
 ### Upgrading
-- Three migrations, `WorkItems`, `WorkItemCodeFix` and `ApprovalOnIssue`. The first is a new
-  table. The second makes `code_fix_attempts.incident_id` and `llm_usage.incident_id` nullable,
-  adds `code_fix_attempts.work_item_id` with a check that exactly one of the two is set, and
-  three columns to `work_items`. The third adds `command_comment_id`, `command_answers` and
-  `pr_body` to `code_fix_attempts` and `still_assigned` to `work_items`. Existing rows are valid
-  as they are, and all three run when the agent starts.
+- **Migrations run when the agent starts**: three, `WorkItems`, `WorkItemCodeFix` and
+  `ApprovalOnIssue`. The first is a new table. The second makes `code_fix_attempts.incident_id`
+  and `llm_usage.incident_id` nullable, adds `code_fix_attempts.work_item_id` with a check that
+  exactly one of the two is set, and three columns to `work_items`. The third adds
+  `command_comment_id`, `command_answers` and `pr_body` to `code_fix_attempts` and
+  `still_assigned` to `work_items`. Existing rows are valid as they are.
+- **The coder image has to be of this version**, as for every release since v0.13.0: the agent
+  starts it in three roles and hands a Job for an issue a request an older image refuses. The
+  chart's default follows the chart; an install that pins `codeFix.image.tag` moves both.
+- **Nothing is on by default.** Without `github.enabled` the agent holds no GitHub credential
+  and asks GitHub nothing, `/api/workitems` answers an empty list, and the *work items* page
+  says that the feature is off. Three things change for such an install all the same: the
+  navigation has that entry; the MCP endpoint lists two more tools (see *Changed*); and an
+  incident's pull request is made inert (see *Fixed*).
+- To turn it on: a bot account that is a member of the organisation with write access to the
+  repositories, two fine-grained tokens - the agent's (Issues read and write, Pull requests
+  read) and the coder's (Contents and Pull requests read and write) - `github.enabled`,
+  `secrets.github`, `github.issues.repositories`, and the repository enabled in the context
+  repository's `repos.yaml`. [GitHub issues as work](https://docs.hephaisto.dev/operate/github-issues)
+  has each step.
 - To let anybody answer a plan on its issue, list their account numbers in `github.approvers`.
   Until then a plan for an issue is approved in the console or through the API.
-- Nothing is on by default. Without `github.enabled` the agent holds no GitHub credential and
-  asks GitHub nothing; `/api/workitems` answers an empty list.
+- To have a work item's code fix announced, a notification route has to list the code-fix
+  events **without** a namespace, cluster, kind or label scope and without a `minSeverity`
+  above `Info`. A route written for incidents that is scoped that way stays silent for issues,
+  on purpose.
 
 ## v0.13.0 — unreleased
 

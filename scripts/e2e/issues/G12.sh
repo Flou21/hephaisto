@@ -12,10 +12,12 @@ G12_FOUND=""
 
 scenario() {
     issues_ready || return
-    local n attempt_id mode effective told
+    local n attempt_id mode effective told before
 
     G12_FOUND=$(issues_switch_get)
     [ -n "$G12_FOUND" ] || { fail "the code-fix switch can be read" "no codeFixMode in $ISSUES_SWITCHES_CM"; return; }
+    # What the agent makes of the switch and its other arms, before anything is lowered.
+    before=$(_issues_curl "$ISSUES_API/api/codefixes/mode" | jq -r '.effective // empty')
     # Whatever happens below. A switch left lowered turns every later scenario red, and the dev
     # cluster's own code fixes off.
     trap 'issues_switch_set "$G12_FOUND"' EXIT
@@ -48,5 +50,16 @@ scenario() {
     done
 
     issues_switch_set "$G12_FOUND"
+
+    # Putting the key back is not the mode being back: the agent reads the ConfigMap from a
+    # volume, and the kubelet takes up to a minute to carry a change there. A scenario that
+    # ended before that left the cluster's code fixes off for whatever ran next - on 2026-10-07
+    # codefix-local.sh started 36 seconds after this suite and its preflight read "Off".
+    if [ -n "$before" ]; then
+        wait_for "the mode to be $before again" 180 issues_mode_is "$before" \
+            && pass "the mode is back where it was found" \
+            || fail "the mode is back where it was found" "it is $(_issues_curl "$ISSUES_API/api/codefixes/mode" | jq -r .effective), and was $before"
+    fi
+
     issues_done "$ISSUES_REPO" "$n"
 }

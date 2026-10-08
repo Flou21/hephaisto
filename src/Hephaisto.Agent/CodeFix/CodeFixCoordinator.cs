@@ -673,7 +673,7 @@ public sealed class CodeFixCoordinator(
         }
         else
         {
-            machine.Deny(attempt, actor, reason);
+            machine.Deny(attempt, actor, reason, source);
         }
 
         audit.Enlist(Audit(subject, attempt.InvestigationId, attempt.Id, approve ? AuditApproved : AuditDenied, actor.Trim(),
@@ -973,14 +973,18 @@ public sealed class CodeFixCoordinator(
     }
 
     /// <summary>
-    /// The outbox, for an incident's attempt. A work item's is told on its issue - the comment
-    /// the poller keeps true - and a card that names an incident's kind, severity and workload
-    /// has nothing to say about an issue.
+    /// The outbox, for both kinds of attempt. An incident's is announced as part of it; a work
+    /// item's has no incident, and its snapshot says so by leaving every incident field out
+    /// (<see cref="CodeFixNotifier.Enlist(NotificationEvent, CodeFixAttempt, WorkItem, string?)"/>).
+    /// The issue is still told by the comment the poller keeps true - this is for the people a
+    /// route names, who are not watching an issue.
     /// </summary>
     private void Notify(NotificationEvent kind, CodeFixAttempt attempt, CodeFixSubject subject, string? reason)
     {
         if (subject.Incident is { } incident)
             notifier.Enlist(kind, attempt, incident, reason);
+        else if (subject.WorkItem is { } item)
+            notifier.Enlist(kind, attempt, item, reason);
     }
 
     /// <summary>

@@ -1,0 +1,267 @@
+@page "/workitems"
+@using Microsoft.Extensions.Options
+@using Hephaisto.Agent.CodeFix
+@using Hephaisto.Agent.GitHub
+@using Hephaisto.Agent.WorkItems
+@using Hephaisto.Core.CodeFix
+@inject IServiceScopeFactory Scopes
+@inject IIncidentNotifier Notifier
+@inject IOptionsMonitor<GitHubOptions> GitHub
+@implements IDisposable
+
+@*
+    What Hephaisto was handed (v0.14.0): the GitHub issues assigned to its account, and what
+    became of each. Read only - a work item begins and ends on its issue; what is decided here is
+    its plan, on the attempt's own page.
+
+    An issue's title is somebody else's text and is rendered as text. Its address is a link only
+    when it is an absolute http(s) address.
+*@
+
+<PageTitle>hephaisto — work items</PageTitle>
+
+<h1>work items</h1>
+
+@if (!GitHub.CurrentValue.Enabled)
+{
+    @* The configuration working, not the feature broken - said before the empty table, as the
+       code-fix page says its mode. *@
+    <p class="hp-empty" data-testid="workitems-off">
+        GitHub issues as work is off: <span class="mono">github.enabled</span> is not set, so no issue is
+        taken. With it on, an issue assigned to Hephaisto's account in a listed repository becomes a work
+        item, and its plan is posted on the issue.
+    </p>
+}
+else
+{
+    <p class="hp-muted" data-testid="workitems-on">
+        An issue assigned to Hephaisto's account in
+        <span class="mono">@string.Join(", ", GitHub.CurrentValue.Repositories)</span>
+        becomes a work item. Its plan is answered on the issue or on the attempt's page.
+    </p>
+}
+
+<div class="hp-filters">
+    <label>
+        state
+        <select value="@_state" @onchange="OnStateChanged" data-testid="workitems-filter">
+            <option value="any">any</option>
+            @foreach (var s in Enum.GetValues<WorkItemState>())
+            {
+                <option value="@s">@Display.WorkItemWord(s)</option>
+            }
+        </select>
+    </label>
+
+    <span class="hp-filter-status">
+        @if (_loading)
+        {
+            <span class="hp-muted">loading…</span>
+        }
+        else
+        {
+            <span class="hp-muted">@_rows.Count shown · refreshed @Display.TimeOnly(_refreshedAt)</span>
+        }
+        @if (_error is not null)
+        {
+            <span class="hp-error" title="@_error"><span class="glyph">!!</span> query failed</span>
+        }
+    </span>
+</div>
+
+@if (_rows.Count == 0 && !_loading)
+{
+    <p class="hp-empty" data-testid="workitems-empty">No work items match this filter.</p>
+}
+else if (_rows.Count > 0)
+{
+    <table class="hp-table hp-codefixes">
+        <thead>
+            <tr>
+                <th class="c-state">state</th>
+                <th class="c-cf-incident">issue</th>
+                <th class="c-cf-repo">repository</th>
+                <th class="c-cf-progress">what became of it</th>
+                <th class="c-state">code fix</th>
+                <th class="c-time">taken</th>
+                <th class="c-time">ended</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var row in _rows)
+            {
+                var w = row.Item;
+
+                <tr @key="w.Id" data-testid="workitem-row" data-state="@w.State" data-workitem="@w.Id">
+                    <td class="c-state">
+                        <span class="hp-state @Display.WorkItemClass(w.State)">
+                            <span class="glyph">@Display.WorkItemGlyph(w.State)</span>
+                            @Display.WorkItemWord(w.State)
+                        </span>
+                    </td>
+                    <td class="c-cf-incident">
+                        @if (Display.HttpUrl(w.Url) is { } url)
+                        {
+                            <a class="mono" href="@url" target="_blank" rel="noopener" data-testid="workitem-issue-link"
+                               title="@url">@w.Repository#@w.Number</a>
+                        }
+                        else
+                        {
+                            <span class="mono">@w.Repository#@w.Number</span>
+                        }
+                        <span class="hp-cf-line" title="@w.Title" data-testid="workitem-title">@Display.Truncate(w.Title, 80)</span>
+                    </td>
+                    <td class="c-cf-repo mono">@w.Repository</td>
+                    <td class="c-cf-progress">
+                        @if (w.StateReason is { Length: > 0 } reason)
+                        {
+                            <span class="hp-cf-line hp-cf-reason" data-testid="workitem-reason">@reason</span>
+                        }
+                        else if (row.Attempt is null && w.DeclineReason is { Length: > 0 } declined)
+                        {
+                            @* Asked again on every pass, and written down only when the reason
+                               changes: "not now", never "no". *@
+                            <span class="hp-warn"><span class="glyph">!</span> no plan started</span>
+                            <span class="hp-cf-line hp-cf-reason" title="@declined" data-testid="workitem-declined">@Display.Truncate(declined, 200)</span>
+                        }
+                        else if (row.Attempt is null)
+                        {
+                            <span class="hp-queued"><span class="glyph">.</span> waiting for its plan</span>
+                        }
+                        @if (w.StillAssigned)
+                        {
+                            <span class="hp-cf-line" title="Unassign Hephaisto and assign it again to hand the issue over once more">
+                                the issue is still assigned; it is not taken again until it was unassigned
+                            </span>
+                        }
+                    </td>
+                    <td class="c-state">
+                        @if (row.Attempt is { } attempt)
+                        {
+                            <a href="codefixes/@attempt.Id" data-testid="workitem-attempt-link" data-attempt="@attempt.Id"
+                               data-attempt-state="@attempt.State" title="The plan, its history and the decision">
+                                <span class="hp-state @Display.CodeFixClass(attempt.State)">
+                                    <span class="glyph">@Display.CodeFixGlyph(attempt.State)</span>
+                                    @Display.CodeFixWord(attempt.State)
+                                </span>
+                            </a>
+                        }
+                        else
+                        {
+                            <span class="hp-no"><span class="glyph">-</span> none</span>
+                        }
+                    </td>
+                    <td class="c-time mono">@Display.Timestamp(w.TakenAt)</td>
+                    <td class="c-time mono">@(w.ClosedAt is { } closed ? Display.Timestamp(closed) : "—")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private IReadOnlyList<WorkItemWithAttempt> _rows = [];
+    private DateTimeOffset _refreshedAt;
+    private bool _loading = true;
+    private string? _error;
+
+    /// <summary>
+    /// Everything by default, where the API defaults to what is taken now: this page answers
+    /// "what became of the issue I handed over", and most of those have ended.
+    /// </summary>
+    private string _state = "any";
+
+    private CancellationTokenSource? _cts;
+
+    /// <summary>
+    /// The poller's pass is what moves a work item, and it publishes nothing; an attempt moving
+    /// does. So both: the code-fix event, and a tick.
+    /// </summary>
+    private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(10);
+
+    /// <summary>Kept in step with the code-fix list's cap, and for its reason (#49).</summary>
+    private const int Limit = 200;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _cts = new CancellationTokenSource();
+
+        await LoadAsync();
+
+        _ = TickAsync(_cts.Token);
+        _ = ListenAsync(_cts.Token);
+    }
+
+    private async Task ListenAsync(CancellationToken ct)
+    {
+        try
+        {
+            await foreach (var e in Notifier.SubscribeAsync(ct))
+            {
+                if (e.Kind != IncidentLiveEventKind.CodeFixChanged)
+                {
+                    continue;
+                }
+
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task TickAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(RefreshInterval);
+
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        var ct = _cts?.Token ?? CancellationToken.None;
+
+        WorkItemState? state = Enum.TryParse<WorkItemState>(_state, ignoreCase: false, out var s) ? s : null;
+
+        try
+        {
+            _rows = await Scopes.WorkItemsAsync(q => q.RowsAsync(state, Limit, ct));
+            _error = null;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            // Keeps the last good rows: an empty table reads as "nothing was handed over".
+            _error = ex.Message;
+        }
+
+        _refreshedAt = DateTimeOffset.UtcNow;
+        _loading = false;
+    }
+
+    private async Task OnStateChanged(ChangeEventArgs e)
+    {
+        _state = e.Value?.ToString() ?? "any";
+        await LoadAsync();
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+}

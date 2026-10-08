@@ -34,6 +34,16 @@ codeFix:
   budgets:
     attemptsPerRepositoryPerDay: 500
 
+# Since #248 a work item's code fix is announced like an incident's - a plan, a pull request, an
+# end without one - and the dev route sends all three to the Teams stand-in. A run of the issues
+# suite is about thirty such messages on the one channel, where the chart allows sixty an hour:
+# the second run within the hour would be suppressed, and with it every incident's message of
+# whatever suite ran beside it. Raised here for the reason the budget above is - and to the
+# pager suite's own number: this file is layered after scripts/e2e/values-pager.yaml when both
+# are on, and must not lower what that suite set.
+notifications:
+  maxPerChannelPerHour: 1000
+
 secrets:
   # Applied with the stand-in, and holding the stand-in's own token - which opens nothing but
   # that pod's /github/api. Its own name, so that pointing a dev agent at github.com can never

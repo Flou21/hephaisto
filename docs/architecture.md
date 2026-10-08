@@ -272,6 +272,39 @@ it. And the verification verdict a PR carries is that container's word: code tha
 guard could report a green build for a tree it did not test, though it could not push anywhere but
 the assigned branch, nor a diff the policy refuses.
 
+## The second way in: a GitHub issue (v0.14.0)
+
+Everything above starts with an alert. Since v0.14.0 there is a second way in, off by default
+(`github.enabled`): an issue **assigned to Hephaisto's GitHub account**, in a listed repository,
+is a `WorkItem`, and the code-fix stage runs for it without an incident.
+
+- **Hephaisto asks; GitHub does not call.** `GitHubIssuePoller` is level-triggered: each pass
+  states what should be true - every assigned issue is a work item, every work item has its one
+  attempt, every waiting plan has been read for an answer, every open pull request has been
+  asked about - and makes it so. There is no queue and no retry state; the next pass is the
+  retry, and a restart loses nothing. An unchanged list is a 304.
+- **An attempt has exactly one subject**, an incident or a work item - a check constraint - and
+  everything after the decision to start is the same Job, result, cost and cancel. What differs
+  is `CodeFixSubject`: who is told, and what a row is filed under.
+- **The issue is where it is talked about.** One status comment, edited as the row moves, and
+  one comment with the plan. An account listed by number in `github.approvers` answers with a
+  comment whose first line is `/approve` or `/reject <reason>`; the door is the coordinator's
+  own (`DecideForWorkItemAsync`), the same one the console and the API open, and what is
+  approved is the plan in Postgres.
+- **Two tokens.** The agent's reads issues and writes comments and cannot push; the coder's
+  pushes one branch and opens a draft pull request, and the agent cannot read it.
+- **Text a stranger or a model wrote is made inert** wherever GitHub would act on it
+  (`IssueComments.Neutralise` for comments, the runner's `inert()` for a pull request - an
+  incident's too), is enveloped for an MCP reader, and is rendered as text in the console.
+- **The surfaces know both kinds.** `/codefixes`, an attempt's own page, `/workitems`, the MCP
+  tools and the three code-fix notifications show a work item's attempt with its issue where an
+  incident's has its incident. A notification about one carries no incident field, so a route
+  scoped by namespace, cluster, kind or label does not own it.
+
+Operating it - the account, the two tokens, the values - is written for operators at
+[docs.hephaisto.dev/operate/github-issues](https://docs.hephaisto.dev/operate/github-issues)
+(`docs-site/operate/github-issues.md` in this repository).
+
 ## Investigating in a Job (v0.12.0 F5)
 
 The in-process investigation runs against `Llm:Provider` - Gemini or anything on the OpenAI wire.
@@ -534,9 +567,11 @@ MCP (#157): streamable HTTP at `/mcp`, stateless, on a port of its own (8083) an
   `mcp/<name>`) or `person` (acts as its subject) - or, with sign-in on, the identity provider's
   bearer token. Compared hashed, in constant time, every token every time. The scheme and its
   three policies are the endpoint's own; the console's allow-all never applies.
-- **What it offers.** 23 tools in a reviewed order (`scripts/e2e/mcp/tools.golden.json`): 17 reads
-  and 6 changes - acknowledge, assign, a note entry, feedback, and for an approver close and
-  re-investigate. No tool approves or denies an action or a code-fix plan, re-arms or sets a mode.
+- **What it offers.** 26 tools in a reviewed order (`scripts/e2e/mcp/tools.golden.json`): 19 reads
+  and 7 changes - acknowledge, assign, a note entry, feedback, and for an approver close, close
+  many and re-investigate. Two of the reads are of work items (`list_work_items`,
+  `get_work_item`), and the code-fix reads show an attempt for an issue beside an incident's. No
+  tool approves or denies an action or a code-fix plan, re-arms or sets a mode.
   Tools reach incidents only through `McpIncidentReader` and `McpIncidentActions`; the writes go
   through the console's own `IncidentQueries` methods, with an `origin` in the audit detail.
 - **What it hands over.** Anything a workload, an alert or a model wrote is redacted, stripped of
@@ -544,7 +579,7 @@ MCP (#157): streamable HTTP at `/mcp`, stateless, on a port of its own (8083) an
   a plain string fails its call; every answer stays under 32,000 characters and says what it cut.
 - **Being found.** Behind a gateway with tool search a model sees only a search tool, which
   scores each tool's name and description by the words of the question. The descriptions are
-  written for that, and `McpFindabilityTests` ranks 36 real questions the way the gateway does.
+  written for that, and `McpFindabilityTests` ranks 44 real questions the way the gateway does.
 
 ## Persistence: Postgres 17 + pgvector
 

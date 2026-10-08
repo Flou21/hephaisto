@@ -633,6 +633,96 @@ public static class TeamsBotCards
     }
 
     /// <summary>
+    /// A code-fix event about a work item - a GitHub issue handed to Hephaisto - which has no
+    /// incident to follow: one message, never edited, and never a row on the board.
+    /// </summary>
+    /// <remarks>
+    /// The issue's title and the plan's summary are somebody else's words and a model's, so both
+    /// are <see cref="Plain"/> runs: Teams shows a TextRun as it is and never as markdown. The
+    /// sentence between them is Hephaisto's own. Its buttons open pages and decide nothing - a
+    /// plan is answered on the issue or in the console.
+    /// </remarks>
+    public static JsonObject WorkItemEvent(NotificationMessage message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+
+        var s = message.Snapshot;
+
+        var headline = s.Event switch
+        {
+            NotificationEvent.CodeFixPlanReady => "Code fix planned",
+            NotificationEvent.CodeFixPrOpened => "Draft PR opened",
+            NotificationEvent.CodeFixFailed => "Code fix ended without a PR",
+            _ => "Hephaisto",
+        };
+
+        var issue = string.IsNullOrWhiteSpace(s.Issue) ? "an issue" : s.Issue;
+        var title = ModelText(s.Title, 200);
+
+        var body = new JsonArray
+        {
+            new JsonObject
+            {
+                ["type"] = "TextBlock",
+                ["text"] = $"{headline} for {issue}",
+                ["weight"] = "Bolder",
+                ["size"] = "Medium",
+                ["wrap"] = true,
+            },
+            Plain(title.Length == 0 ? "(no title)" : title),
+        };
+
+        if (!string.IsNullOrWhiteSpace(s.Reason))
+        {
+            body.Add(Plain(ModelText(s.Reason, 600), subtle: true));
+        }
+
+        if (s.Event is NotificationEvent.CodeFixPlanReady && ModelText(s.Summary, 600) is { Length: > 0 } summary)
+        {
+            body.Add(Plain(summary));
+        }
+
+        body.Add(new JsonObject
+        {
+            ["type"] = "TextBlock",
+            ["text"] = Stamp(s.At),
+            ["isSubtle"] = true,
+            ["wrap"] = true,
+        });
+
+        var card = Card(body);
+        var actions = new JsonArray();
+
+        if (s.Event is NotificationEvent.CodeFixPrOpened && !string.IsNullOrWhiteSpace(s.ExternalUrl))
+        {
+            actions.Add(OpenUrl("Open the Draft PR", s.ExternalUrl));
+        }
+
+        if (!string.IsNullOrWhiteSpace(message.CodeFixUrl))
+        {
+            actions.Add(OpenUrl(
+                s.Event is NotificationEvent.CodeFixPlanReady ? "Review the plan in Hephaisto" : "Open in Hephaisto",
+                message.CodeFixUrl));
+        }
+
+        if (!string.IsNullOrWhiteSpace(s.IssueUrl))
+        {
+            actions.Add(OpenUrl("Open the issue", s.IssueUrl));
+        }
+
+        if (actions.Count > 0)
+        {
+            card["actions"] = actions;
+        }
+
+        var announced = $"{headline} for {issue}";
+
+        return Activity(card, summary: message.AlsoSuppressed > 0
+            ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{announced} (+{message.AlsoSuppressed} suppressed)")
+            : announced);
+    }
+
+    /// <summary>
     /// Identifies a card's content, so an unchanged one is not sent again.
     /// </summary>
     /// <remarks>

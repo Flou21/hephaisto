@@ -234,6 +234,16 @@ An issue whose pull request was merged or closed is not started over while it si
 assigned: unassign the account and assign it again (or close and reopen the issue) to hand it
 back.
 
+**Where else it shows.** The console lists what was taken under *work items*, and every attempt
+has a page of its own (`/codefixes/<attempt id>`) with its history, the plan in full, and approve
+and deny for the approver role. The MCP tools `list_code_fixes` and `get_code_fix` include an
+issue's attempt, and `list_work_items` and `get_work_item` read the work items; no tool answers a
+plan. And a work item's code fix is announced through `notifications.routes` like an incident's
+(`CodeFixPlanReady`, `CodeFixPrOpened`, `CodeFixFailed`) - to a route that is **not scoped** by
+namespace, cluster, kind or label and asks for no severity above `Info`, because an issue has
+none of those; a fallback route is for incidents and does not take it. The Teams board stays a
+board of incidents.
+
 **What it takes on github.com**, as measured against it (`scripts/e2e/github-live.sh`), not as
 read in its documentation:
 

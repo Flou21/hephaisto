@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Hephaisto.Agent.CodeFix;
 using Hephaisto.Agent.Persistence;
+using Hephaisto.Core.CodeFix;
 using Hephaisto.Core.Domain;
 
 namespace Hephaisto.Agent.WorkItems;
@@ -43,6 +44,15 @@ public sealed record WorkItemView(
     bool StillAssigned = false,
     IReadOnlyList<CodeFixAttemptView>? Attempts = null);
 
+/// <summary>
+/// What became of a work item's one attempt, for a row of the console's list: enough to say
+/// where it stands and to link its page and its pull request, and nothing a model wrote.
+/// </summary>
+public sealed record WorkItemAttemptRef(Guid Id, CodeFixState State, string? PrUrl, int? PrNumber);
+
+/// <summary>One row of the console's work-item list: the work item and, when it has one, its attempt.</summary>
+public sealed record WorkItemWithAttempt(WorkItemView Item, WorkItemAttemptRef? Attempt);
+
 /// <summary>Reads of <c>work_items</c> for the API. Never tracked, never written.</summary>
 public sealed class WorkItemQueries(HephaistoDbContext db)
 {
@@ -66,6 +76,32 @@ public sealed class WorkItemQueries(HephaistoDbContext db)
             .ConfigureAwait(false);
 
         return rows.ConvertAll(View);
+    }
+
+    /// <summary>
+    /// The list with each work item's attempt beside it, for the console: one query for the
+    /// rows and one for all their attempts, never one per row.
+    /// </summary>
+    public async Task<IReadOnlyList<WorkItemWithAttempt>> RowsAsync(WorkItemState? state, int limit, CancellationToken ct)
+    {
+        var items = await ListAsync(state, limit, ct).ConfigureAwait(false);
+        var ids = items.Select(i => i.Id).ToList();
+
+        var attempts = await db.CodeFixAttempts.AsNoTracking()
+            .Where(a => a.WorkItemId != null && ids.Contains(a.WorkItemId.Value))
+            .OrderByDescending(a => a.CreatedAt)
+            .Select(a => new { WorkItemId = a.WorkItemId!.Value, a.Id, a.State, a.PrUrl, a.PrNumber })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        // Newest first, so the first of a work item is its latest - there is one today.
+        var latest = attempts
+            .GroupBy(a => a.WorkItemId)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        return [.. items.Select(i => new WorkItemWithAttempt(
+            i,
+            latest.TryGetValue(i.Id, out var a) ? new WorkItemAttemptRef(a.Id, a.State, a.PrUrl, a.PrNumber) : null))];
     }
 
     public async Task<WorkItemView?> GetAsync(Guid id, CancellationToken ct) =>

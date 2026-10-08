@@ -49,6 +49,25 @@ internal static class GivenNotifications
         At = Now,
     };
 
+    /// <summary>
+    /// A code-fix event about a work item (v0.14.0): a GitHub issue handed to Hephaisto. No
+    /// incident, and so no kind, no namespace, no labels, and the severity at its zero.
+    /// </summary>
+    public static NotificationSnapshot WorkItemPlan(NotificationEvent @event = NotificationEvent.CodeFixPlanReady) => new()
+    {
+        Event = @event,
+        CorrelationKey = "workitem/0199a1b2c3d47e5f8a9b0c1d2e3f4a5b/codefix",
+        Title = "The order total is null for an empty cart",
+        Summary = "Guard the null total; see [the docs](https://evil.example) and @octocat",
+        Reason = "A plan for octo/shop#12 is waiting for an answer.",
+        Repository = "https://github.com/octo/shop",
+        CodeFixAttemptId = Guid.Parse("0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c"),
+        WorkItemId = Guid.Parse("0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"),
+        Issue = "octo/shop#12",
+        IssueUrl = "https://github.com/octo/shop/issues/12",
+        At = Now,
+    };
+
     public static NotificationRoute Route(
         string channel = "teams",
         Severity minSeverity = Severity.Info,
