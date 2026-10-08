@@ -492,8 +492,10 @@ build: v0.3.0 is a minor bump, and four scripts would have called it a patch
 ```
 
 Bodies are long and hard-wrapped near 76 columns: the symptom, the wrong hypotheses, the evidence,
-and what was actually verified. **A fix and its `docs/backlog.md` entry land in the same commit**,
-not in a documentation sweep afterwards. Scopes in use: `pipeline`, `policy`, `safety`, `chart`,
+and what was actually verified. **A fix closes its issue in the same commit** (`Closes #n` in the body),
+not in a sweep afterwards. `docs/backlog.md` is frozen since 2026-10-06: "backlog #N" in a comment
+is an entry there, its issue has the same number from 77 up, and the file's last table names the
+issue of every lower one - so a bare `#N` below 77 in a commit or a pull request is a pull request. Scopes in use: `pipeline`, `policy`, `safety`, `chart`,
 `telemetry`, `persistence`, `web`, `e2e`, `notify`, `design`, `website`, `prompts`, `docs`.
 
 ## The cluster is a single shared resource

@@ -101,7 +101,7 @@ public sealed partial class PagerSuiteTests
     {
         File.Exists(Path.Combine(Pager(), id + ".sh")).Should().BeTrue($"'{sentence}' is {id}");
         File.ReadAllText(Path.Combine(Pager(), id + ".sh")).Should().Contain("scenario()");
-        var roadmap = Regex.Replace(File.ReadAllText(Path.Combine(RepoRoot(), "docs", "roadmap.md")), @"\s+", " ");
+        var roadmap = Regex.Replace(File.ReadAllText(Path.Combine(RepoRoot(), "docs", "roadmap-archive.md")), @"\s+", " ");
 
         roadmap.Should().Contain(sentence, "the roadmap's Done when is what these scenarios stand for");
     }

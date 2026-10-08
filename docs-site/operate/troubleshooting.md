@@ -151,5 +151,5 @@ Check which of the four gates was open:
 ## Getting help
 
 Open an issue with the output of `GET /api/status`, the investigation's step trace, and the chart
-values you installed with — redacted. `docs/backlog.md` in the repository lists everything already
-known to be broken; it is worth a search before filing.
+values you installed with — redacted. The repository's [issues](https://github.com/Flou21/hephaisto/issues) list everything already
+known to be broken, closed ones included; they are worth a search before filing.

@@ -74,7 +74,7 @@ or name is dropped before an executor sees it.
 A reserved concluding step lets a run that hits `MaxSteps` still write a finding. It releases two
 calls rather than one, because the conclusion is taken through the `conclude` tool and a tool call
 is two model round trips; reserving a single step paid for the first and refused the second, which
-is [#78](https://github.com/hephaisto-dev/hephaisto/blob/main/docs/backlog.md).
+is [#78](https://github.com/Flou21/hephaisto/issues/78).
 
 That rescue used not to be able to land when the exhausted ceiling was **tokens**, because the
 concluding call resends the conversation. That limitation was closed by #82 — the conversation is
