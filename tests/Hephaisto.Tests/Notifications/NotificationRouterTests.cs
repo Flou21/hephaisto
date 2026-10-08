@@ -175,4 +175,62 @@ public sealed class NotificationRouterTests
 
         NotificationRouter.Match(GivenNotifications.ModeChanged(), [route]).Any.Should().BeTrue();
     }
+
+    // --- a work item's code fix (v0.14.0): an event with no incident ---------------------------
+
+    [Fact]
+    public void AWorkItemsPlan_GoesToAnUnscopedRouteThatListsTheEvent()
+    {
+        var route = GivenNotifications.Route(channel: "developers", events: [NotificationEvent.CodeFixPlanReady]);
+
+        var result = NotificationRouter.Match(GivenNotifications.WorkItemPlan(), [route]);
+
+        result.Channels.Should().Equal("developers");
+        result.SuppressedByUnknownNamespace.Should().BeFalse();
+    }
+
+    [Fact]
+    public void AWorkItemsPlan_IsNotOwnedByARouteScopedToWhatOnlyAnIncidentHas()
+    {
+        // The absent-field rule an event about the agent already lives by: nothing to match a
+        // namespace, a cluster, a kind or a label against is "not this route's" - and not the
+        // unknown-namespace warning, which is about an incident that should have had one.
+        NotificationEvent[] events = [NotificationEvent.CodeFixPlanReady];
+        var plan = GivenNotifications.WorkItemPlan();
+
+        NotificationRoute[] scoped =
+        [
+            GivenNotifications.Route(events: events, namespaces: ["shop"]),
+            new NotificationRoute { Channel = "teams", Events = [.. events], Clusters = ["prod"] },
+            new NotificationRoute { Channel = "teams", Events = [.. events], Kinds = [SignalKind.CrashLoopBackOff] },
+            new NotificationRoute { Channel = "teams", Events = [.. events], Matchers = [new LabelMatcher { Label = "team", Values = ["shop"] }] },
+        ];
+
+        foreach (var route in scoped)
+        {
+            var result = NotificationRouter.Match(plan, [route]);
+
+            result.Any.Should().BeFalse();
+            result.SuppressedByUnknownNamespace.Should().BeFalse();
+        }
+    }
+
+    [Fact]
+    public void AWorkItemsPlan_IsNotCaughtByTheFallback_WhichIsForIncidentsNobodyOwns()
+    {
+        var fallback = new NotificationRoute { Channel = "oncall", Fallback = true, Events = [NotificationEvent.CodeFixPlanReady] };
+
+        NotificationRouter.Match(GivenNotifications.WorkItemPlan(), [fallback]).Any.Should().BeFalse();
+    }
+
+    [Fact]
+    public void AWorkItemsPlan_HasNoSeverity_SoARouteThatAsksForOneAboveInfoDoesNotWantIt()
+    {
+        NotificationEvent[] events = [NotificationEvent.CodeFixPlanReady];
+
+        NotificationRouter.Match(GivenNotifications.WorkItemPlan(), [GivenNotifications.Route(minSeverity: Severity.Warning, events: events)])
+            .Any.Should().BeFalse();
+        NotificationRouter.Match(GivenNotifications.WorkItemPlan(), [GivenNotifications.Route(minSeverity: Severity.Info, events: events)])
+            .Any.Should().BeTrue();
+    }
 }

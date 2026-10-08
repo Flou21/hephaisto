@@ -4,11 +4,264 @@ What changed in each release, for someone deciding whether to upgrade.
 
 Two companions carry the rest, and this file deliberately does not duplicate them:
 [`docs/history.md`](docs/history.md) is the engineering record — what was learned doing the work,
-including the wrong turns — and [`docs/backlog.md`](docs/backlog.md) is everything known to be
-broken, with the evidence for each.
+including the wrong turns — and the [issues](https://github.com/Flou21/hephaisto/issues) are everything known to be broken, with the
+evidence for each. Until 2026-10-06 that was [`docs/backlog.md`](docs/backlog.md), frozen since;
+the links to it below are to that record.
 
 Versions are set by the git tag through MinVer; the chart version and the app version are always
 the same number.
+
+## v0.14.0 — unreleased
+
+**A second way in.** Until now the only thing Hephaisto could be handed was an alert. This
+release is about handing it a GitHub issue ([#243](https://github.com/Flou21/hephaisto/issues/243)):
+an issue assigned to its account is planned, the plan is posted and answered on the issue, and
+the draft pull request that follows closes it. It is off unless `github.enabled` is set, and an
+install that leaves it off changes in three small ways, listed under *Upgrading*. How to turn it
+on - the account, the two tokens, the values - is one page:
+[GitHub issues as work](https://docs.hephaisto.dev/operate/github-issues).
+
+### New
+- **An issue assigned to Hephaisto's account is taken as work** ([#245](https://github.com/Flou21/hephaisto/issues/245)).
+  With `github.enabled`, the agent asks GitHub which open issues are assigned to its account in
+  the repositories listed in `github.issues.repositories` - once a minute, a free 304 while
+  nothing changed - and records each as a work item: `GET /api/workitems` and
+  `GET /api/workitems/{id}`. Unassigning the account, or closing the issue, cancels it; assigning
+  it again is a new work item, with the issue's text as it is then. An issue in a repository that
+  is not listed is never asked about. The agent only asks, so there is no webhook to expose.
+- **A taken issue is planned, and the plan is posted on the issue** ([#246](https://github.com/Flou21/hephaisto/issues/246)).
+  The same read-only plan Job an escalated incident gets, under the same `codeFix.mode`, switches
+  and caps - with `codeFix.mode: off` nothing starts, and the issue is told so. There is no
+  incident, no investigation and no running image behind it: the Job reads the issue and the
+  repository's default branch. Hephaisto then writes two comments on the issue and never more:
+  one that says where the work stands, edited in place as it moves, and one with the plan -
+  summary, what will change, files, steps, verification - and how to answer it. The issue's text
+  travels to the model as it was when the issue was taken, as data in one element of its own; an
+  edit afterwards is not picked up. Unassigning or closing the issue cancels the attempt and
+  deletes a running Job. An issue is planned once: to have it planned again, hand it over again.
+- **A plan is answered on the issue** ([#247](https://github.com/Flou21/hephaisto/issues/247)).
+  An approver replies with a comment whose first line is `/approve`, or `/reject` with a reason
+  after it (without one it is recorded as "no reason given"). Nothing else is a command: not
+  `/approve please`, not `LGTM /approve`, not a quotation or a code block of either, not
+  `/Approve`. Who may answer is `github.approvers` - account **numbers**, because a login can be
+  given up and registered by somebody else; the login is what is recorded
+  (`approvedBy: github:<login>`, source `GitHub`). The first such comment after the plan
+  decides, exactly once, also across an agent restart. What is approved is the plan as Hephaisto
+  stored it, never the text of a comment, and a comment that was read once is not read again
+  whatever it is edited into. An approval in mode `pr` starts the implementing Job; its draft
+  pull request says `Closes owner/repo#n`, its title is `fix:`, `feat:` or `chore:` by the
+  issue's type, and its commits carry `Hephaisto-Issue: owner/repo#n`. The issue's status comment
+  then links the pull request.
+  - **Everybody else is answered once.** A command from an account that is not an approver
+    changes nothing and gets one short comment per plan, however many follow; it names the first
+    of them in a code span, mentions nobody and does not say who the approvers are.
+  - **A refusal says why, once per cause.** With `codeFix.mode` at `plan` or `off`, with the
+    emergency stop engaged, or for a plan that needs a change in a second repository, `/approve`
+    is refused in one sentence that names the cause. A refusal does not use the plan up: once an
+    operator has set the mode to `pr`, a **new** `/approve` is taken. (At `off` every open
+    attempt is cancelled, as before.)
+  - **Never more than six comments** of Hephaisto's for one work item, whatever anybody writes
+    there: the status, the plan, and at most four answers. Beyond that it only edits its status
+    comment.
+  - With `github.approvers` empty nobody can answer by comment, no comment is read, and the
+    plan says that it is answered in the console. The API routes
+    `POST /api/workitems/{id}/codefix/{attemptId}/approve` and `.../deny` are as they were, for
+    whoever the console's approver policy admits.
+- **The pull request is followed to its end.** While it is open Hephaisto asks GitHub about it
+  on every poll (a free 304 while nothing changed). Merged, and the work item is `Done`; closed
+  without merging, and it is `Cancelled` with `pull request closed without merging`; the status
+  comment says which. A merge that closes the issue is `Done`, not "the issue was closed": the
+  pull request is read before the list of assigned issues.
+- **A finished issue is not started over.** An issue that is still open and assigned when its
+  work item ends - merged into another branch than the default one, or closed unmerged - is
+  not taken again by the next poll. It is taken again when it is handed over again: Hephaisto
+  unassigned and assigned once more, or the issue closed and reopened. `stillAssigned` on a
+  work item says that it is held this way.
+- **Unassigning stops an implementation too.** The implementing Job is deleted, nothing is
+  pushed afterwards, and an `/approve` that arrives with or after the unassignment does nothing.
+- **Where an issue's code is.** The first `codeFix.repositories` entry whose `url` names the
+  repository (it ends in `/owner/repo` or `/owner/repo.git`) gives the clone URL, the branch and
+  the path; with no such entry it is `https://github.com/owner/repo` on the default branch
+  GitHub reports. The host has to be in `codeFix.allowedRepositoryHosts` either way, and the
+  repository enabled in the context repository's `repos.yaml`.
+- `GET /api/codefixes` rows carry `workItemId`, `issue` (`owner/repo#12`), `issueUrl` and
+  `planCommentId`; `incidentId` is null on a row that is for an issue. `GET /api/workitems/{id}`
+  carries `attempts`, and a work item says why no plan was started (`declineReason`) while a cap
+  or a switch is in the way - it is asked again by itself.
+- **The pull request's description is kept with the attempt**: `prBody` on a row of
+  `GET /api/codefixes` and in `attempts` of a work item, for an incident's attempt as for an
+  issue's - what the runner sent GitHub, so that "does it close the issue" can be read without
+  opening GitHub. Null without a pull request.
+- **The console shows what was handed over, and every code fix has a page**
+  ([#248](https://github.com/Flou21/hephaisto/issues/248)). *Work items* in the navigation lists
+  the issues that were taken, newest first, with what became of each: its state, why it ended -
+  or why no plan was started yet - and its attempt. `/codefixes/<attempt id>` is one attempt on
+  a page of its own, for an incident's attempt as for an issue's: what it is for, its history
+  (created, plan ready, approved or denied by whom and through what - the console, the API, a
+  comment on the issue - implementing, the pull request, how it ended), the plan in full, the
+  pull request's description, the cost, and approve and deny with the reason box for whoever
+  holds the approver role. On the code-fixes page a row for an issue names it (`owner/repo#n`)
+  and leads there; an incident's row keeps its link to the incident. The badge beside *code
+  fixes* counts a waiting plan of either kind. An issue's title, a plan, a pull request's
+  description and a rejection's reason are shown as text: no markdown, no HTML, no link made
+  of them.
+- **An MCP client can ask about work items.** Two read tools: `list_work_items` (by state,
+  repository and time; `enabled` says whether issues are taken at all) and `get_work_item` (by
+  id, or by repository and number). `list_code_fixes` and `get_code_fix` include an attempt for
+  an issue: a row names `workItemId`, `issue` and `issueUrl` where an incident's names
+  `incidentId`, and `get_code_fix` also answers `issueTitle`, `pullRequestBody` and
+  `decidedThrough`. Everything a stranger or a model wrote is in the `<untrusted-evidence>`
+  envelope, as before. There is no tool that answers a plan: that stays with a person, in the
+  console or on the issue.
+- **A work item's code fix is announced.** The three moments an incident's code fix announces -
+  `CodeFixPlanReady`, `CodeFixPrOpened`, `CodeFixFailed` - go through the notification outbox
+  for an issue's too. The message names the issue by its reference, says where the plan is
+  answered (the issue or the console; the console alone when `github.approvers` is empty) and
+  links the attempt's page. There is no incident behind it, so a route takes it only when it is
+  **not scoped** by namespace, cluster, kind or label and asks for no severity above `Info`; a
+  fallback route does not. The Teams bot sends it to each recipient's chat - the board stays a
+  board of incidents - and the webhook's payload carries `workItem` and `links.codeFix` in
+  place of `incident` and `links.incident`.
+- `GET /api/codefixes/{attemptId}`: one attempt by its own id with what it is for (`attempt`,
+  `workItem`, `mode`). An attempt carries `decidedThrough` - `Ui`, `Api`, `Oidc` or `GitHub` -
+  once somebody answered its plan.
+- **GitHub among the dependencies.** `github` is a row in the connections of `GET /api/status`,
+  the status page and the MCP tool `get_status`: healthy while every listed repository answers,
+  degraded with one line of why - a refused token, a rate limit and until when, a 5xx, no
+  answer. A rate limit is waited out, not asked through.
+- **The agent's own token.** `secrets.github` names a Secret in the release namespace with the
+  key `GITHUB_TOKEN`: Issues read and write, Pull requests read. It is not the coder's Secret,
+  which the agent still cannot read, and the chart refuses the same name for both. With
+  `codeFix.egressProxy` rendered, the agent's GitHub calls go through that proxy
+  (`github.useEgressProxy`), and the chart adds the two NetworkPolicy rules that takes.
+- `github.approvers` lists who may answer a plan on the issue, by account number
+  (`gh api users/<login> --jq .id`). A login there is refused at render and at start.
+- Four metrics: `hephaisto.github.polls` by outcome; `hephaisto.workitems.taken`;
+  `hephaisto.workitems.closed` by state (`Done`, `Cancelled`) and reason (`merged`,
+  `pull_request_closed`, `issue_closed`, `unassigned`, `issue_gone`); and
+  `hephaisto.workitems.commands` - every `/approve` and `/reject` read off an issue, by `verb`
+  and by what was done with it: `accepted`, `not_approver`, or `refused:<cause>` (`mode-plan`,
+  `mode-off`, `emergency-stop`, `kill-switch`, `second-repository`, `not-waiting`,
+  `taken-back`).
+- Audit rows for a work item: `workitem.taken`, `workitem.cancelled`, `workitem.done`, and
+  `workitem.command` - one per comment that decided a plan or was answered, with the account's
+  number and the comment's id.
+- **All of it was asked of github.com before release** ([#249](https://github.com/Flou21/hephaisto/issues/249)).
+  `scripts/e2e/github-live.sh` runs the road above against GitHub itself - a real bot account,
+  its two fine-grained tokens, the real `gh`, the agent's client through the egress proxy - in
+  a sandbox repository, with the model scripted. It is the first test of this project that
+  leaves the cluster for GitHub, and what it found is in this release rather than in yours:
+  - **What a model repeats cannot close or mention another issue.** GitHub reads `/issues/12`,
+    `/pull/12` and `/discussions/12` as references *by themselves* - no scheme, no host - and
+    takes a closing keyword before an issue's address as it does before `#12`. A plan that
+    repeated "resolves `<another issue's address>`" from its issue was a pull request GitHub
+    listed as closing that other issue too, and a comment that wrote "mentioned this issue"
+    into its timeline under the bot's name. Text a model or a stranger wrote now has a
+    zero-width space after every slash before a digit, in comments and in a pull request's
+    description alike, and in a description no address is a link.
+  - **The token permissions named above are enough**, measured: Issues read and write and
+    Pull requests read for the agent (it cannot push); Contents and Pull requests read and
+    write for the coder, which covers the draft pull request and its assignee. A **label**
+    named in dev-context's `repos.yaml` has to exist in the repository: `gh` refuses one that
+    does not, and the pull request is then opened without it and the attempt says so
+    (`deviations`).
+  - **A title keeps a name's capitals.** The first word after `fix:` is lowered only when it
+    is an ordinary capitalised word: "The loop ..." becomes "the loop ...", and "HTTP client
+    ..." no longer becomes "hTTP client ...". For an incident's pull request too.
+  - **What a pull request closes is worked out by GitHub afterwards** - seconds as a rule,
+    minutes on a bad day. Nothing in Hephaisto reads it; a script of yours that does should
+    wait for it.
+
+### Fixed
+- **An incident's pull request closes and mentions nothing a model repeats.** The description
+  and the title of a pull request for an *incident's* code fix carried the model's summary, root
+  cause, notes and deviations as written. GitHub reads a description for closing keywords,
+  references and mentions whatever the pull request is for, so a model that repeated "fixes" and
+  an issue's number from a log line would have closed that issue on merge, and one that repeated
+  an `@` and a name would have notified that person. Those fields, and the incident's title, now
+  get the treatment an issue's pull request has: a zero-width space after `@`, `#` and `GH-`,
+  inside `://`, after `www` and after every `/` before a digit. A link a model wrote there is
+  text; the evidence, which is in a fence, is as it was. Found by the run against github.com;
+  not seen in production. It needs the coder image of this version.
+- **A credential named the way an environment names it is redacted.** `GITHUB_TOKEN=...`,
+  `GitHub__Token=...` and `CLAUDE_CODE_OAUTH_TOKEN=...` in a log line went to the coder's request
+  and to MCP readers as they were unless the value itself had a known prefix: `_` is a word
+  character, so the pattern for `token=` did not match inside a longer name. GitHub's `ghu_` and
+  `ghr_` tokens are now known by sight as well.
+- **A workload that is deleted and created again is found again.** The watcher remembers which
+  object owns which, and it remembered "there is no such object" for as long as a hit: an hour.
+  A Deployment deleted and created again under its name within that hour - a re-install, a
+  `kubectl delete -f` and `apply -f` - keeps its ReplicaSet's name too, so a lookup made in
+  between left the new pods' incident filed under `namespace/ReplicaSet/name-hash` instead of
+  the Deployment: its own workload key, with its own cooldown, mapping and code-fix repository,
+  none of which matched. A request the API server failed had the same effect. "Not there" and
+  "could not be read" are now held for 30 seconds; an object that was found is still held for
+  the hour.
+- **A warning about a pod that no longer exists opens no incident.** Kubernetes keeps an event
+  for about an hour, longer than the pod it is about may live. An agent that restarted within
+  `incidents.healedAfter` of a crash-looping pod being deleted - by a rollout that fixed it, by
+  a `helm uninstall` - was handed that pod's `BackOff` warnings again, could no longer ask whose
+  pod it had been, and opened "CrashLoopBackOff on `<pod name>`" with the pod as its own
+  workload: investigated, escalated and announced, never seen to heal, and matching no cooldown
+  or mapping. Such a warning is now dropped, for a pod and for every other kind the agent can
+  look up. Only when the API server says the object is gone: one that could not be read is
+  handled as before.
+
+### Changed
+- **`incidentId` on a code-fix attempt can be null** - in `GET /api/codefixes`, and in the
+  `code_fix_attempts` and `llm_usage` tables. It is null exactly for an attempt that is for an
+  issue; a client that follows it to an incident has to check.
+- **The MCP tool list has 26 tools, two more than before**, and the descriptions of
+  `list_code_fixes` and `get_code_fix` changed. A gateway that allows tools by name needs
+  `list_work_items` and `get_work_item` added; one that indexes descriptions will re-index. In
+  the answers of the two code-fix tools `incidentId` is absent for an attempt that is for an
+  issue, and `workload` is absent there too - a client that required either has to check.
+- **A denial records through what it was given.** `code_fix_attempts.approval_source` used to
+  stay `NotApplicable` for a denied attempt; it is now set as an approval sets it. Attempts
+  denied before this release keep `NotApplicable`: `decidedThrough` is null for them, and their
+  page says who denied them and not through what.
+- **The code-fixes page**: the column *incident* is *incident or issue*, and every row's
+  timestamp is a link to the attempt's page.
+- **The coder's request has a second version.** A Job for an issue is handed contract version 2
+  (`codefix-request-v2.schema.json`: `work_item` in place of `incident`, `findings` and
+  `investigation_summary`). A Job for an incident is handed version 1, byte for byte what it
+  was. Agent and coder image have to be of one version, as before: a v0.13.0 coder refuses a
+  version-2 request, and says so in its result.
+- A work item's coder spend counts in the day's and the hour's LLM budget like any other, and
+  in `codeFix.budgets`; it has no incident whose own ceiling could hold it.
+- **The implementing Job prints one more block.** Before its result, the publish role prints
+  the description of the pull request it opened (`---HEPHAISTO-PR-BODY-BEGIN ...`, three lines).
+  It is not part of the result contract, whose schemas are unchanged, and nothing is decided by
+  it: a coder image from before this prints none, and `prBody` is then null.
+- `approvalSource` has a seventh value, `GitHub`. The others keep their names and numbers.
+
+### Upgrading
+- **Migrations run when the agent starts**: three, `WorkItems`, `WorkItemCodeFix` and
+  `ApprovalOnIssue`. The first is a new table. The second makes `code_fix_attempts.incident_id`
+  and `llm_usage.incident_id` nullable, adds `code_fix_attempts.work_item_id` with a check that
+  exactly one of the two is set, and three columns to `work_items`. The third adds
+  `command_comment_id`, `command_answers` and `pr_body` to `code_fix_attempts` and
+  `still_assigned` to `work_items`. Existing rows are valid as they are.
+- **The coder image has to be of this version**, as for every release since v0.13.0: the agent
+  starts it in three roles and hands a Job for an issue a request an older image refuses. The
+  chart's default follows the chart; an install that pins `codeFix.image.tag` moves both.
+- **Nothing is on by default.** Without `github.enabled` the agent holds no GitHub credential
+  and asks GitHub nothing, `/api/workitems` answers an empty list, and the *work items* page
+  says that the feature is off. Three things change for such an install all the same: the
+  navigation has that entry; the MCP endpoint lists two more tools (see *Changed*); and an
+  incident's pull request is made inert (see *Fixed*).
+- To turn it on: a bot account that is a member of the organisation with write access to the
+  repositories, two fine-grained tokens - the agent's (Issues read and write, Pull requests
+  read) and the coder's (Contents and Pull requests read and write) - `github.enabled`,
+  `secrets.github`, `github.issues.repositories`, and the repository enabled in the context
+  repository's `repos.yaml`. [GitHub issues as work](https://docs.hephaisto.dev/operate/github-issues)
+  has each step.
+- To let anybody answer a plan on its issue, list their account numbers in `github.approvers`.
+  Until then a plan for an issue is approved in the console or through the API.
+- To have a work item's code fix announced, a notification route has to list the code-fix
+  events **without** a namespace, cluster, kind or label scope and without a `minSeverity`
+  above `Info`. A route written for incidents that is scoped that way stays silent for issues,
+  on purpose.
 
 ## v0.13.0 — unreleased
 
@@ -36,10 +289,54 @@ the same day.
   issues" in the incident list's filter box. It counts first, then acknowledges the open
   incidents the filter matches that nobody holds yet; one somebody already acknowledged is left
   alone.
+- **Close and Reinvestigate from a Teams card** ([#124](docs/backlog.md#124)). With
+  `notifications.teamsBot.actions.enabled`, an escalated alert that no investigation found
+  anything for carries **Reinvestigate**, for any member of the team, as in the console.
+  **Close** asks for a reason and takes an approver: `notifications.teamsBot.actions.approvers`
+  lists Microsoft Entra object ids (`az ad user show --id <address> --query id -o tsv`) and is
+  empty by default, which draws no Close and refuses a click that asks for it. With somebody
+  named, everybody sees the button; a member who is not on the list is told so and nothing
+  changes. Both go through the console's own close and re-investigate, so the audit row is the
+  same one.
+- **Approve and Deny from a Teams card, behind their own switch** ([#124](docs/backlog.md#124)).
+  `notifications.teamsBot.actions.approvals.enabled`, off by default, and refused without
+  `actions.enabled` and without at least one entry in `actions.approvers`. An alert whose
+  incident is awaiting approval then says what is proposed - the action, its target, its
+  arguments, its risk - above an **Approve** and a **Deny** for it. Only a mapped approver's
+  click is taken; it is recorded as that person, with `Teams` as the approval's source, and runs
+  through the same admission as an approval in the console. A second click on a card that is
+  still on somebody's screen is answered "already decided" and changes nothing. With the switch
+  off, both stay links and a forged click is refused.
 - **The sweeper has chart values**: `incidents.sweep.enabled`, `expireAfter`, `approvalTimeout`.
   Still off by default.
 
 ### Changed
+- **A coder Job is three containers, and the one the model runs in holds no GitHub or NuGet
+  token** ([#116](docs/backlog.md#116)). **Needs the coder image of this version**: the agent
+  now starts that image three times, and an older image knows nothing of the roles - it runs
+  its whole flow in the container that has no GitHub token, and with private repositories
+  every attempt fails at its first clone. `codeFix.image.tag` defaults to the chart's version,
+  so the two move together unless the tag is pinned.
+  `prepare`, an init container, holds `GITHUB_TOKEN` and `NUGET_GITHUB_TOKEN` and does the
+  clones, the open-PR and branch checks and the package restore before the model exists.
+  `coder` holds the model credential alone and runs the agent, the build and the tests.
+  `publish`, for an implementation only, holds `GITHUB_TOKEN` and starts after `coder` has
+  ended: it pushes and opens the Draft PR from a copy of its own, having checked the diff
+  against the publishing policy again. The Secret, its keys and every chart value are as they
+  were. Three things an operator may notice:
+  - `kubectl logs job/codefix-…-impl` wants `-c publish` for the result and `-c coder` for the
+    agent's log and an unpushed patch; a plan's and an investigation's result is still in
+    `coder`.
+  - The build and tests run **without package-feed credentials**, from what the restore in
+    `prepare` cached. A fix that adds or bumps a package from a private feed therefore ends
+    `build_failed`, and its deviations say that in words and that a person has to restore it.
+  - With `codeFix.nugetCache.enabled`, the cache is mounted read-only into `coder`, so only the
+    restore of the untouched default branch writes to it. That closes the channel between
+    attempts the chart warned about; it also means a new package cannot be fetched there at
+    all, not even from nuget.org.
+- **An investigator Job is two containers.** `prepare` clones dev-context and, with source
+  access, the workload's repository; `coder` gets the model credential and no GitHub token.
+  The endpoint, the per-run token and the fallback are unchanged.
 - **`IncidentSweep__*` and `Kubernetes__HealedAfter` are refused in `extraEnv`.** An install that
   set the sweeper there moves it to `incidents.sweep`.
 - **A container that was OOMKilled once and has run cleanly since is no longer reported.** It
@@ -48,6 +345,38 @@ the same day.
   longer re-reports a warning from before a pod healed.
 
 ### Fixed
+- **Deciding an action whose incident has moved on is a conflict, not a server error.** Approving
+  or denying an action that still said it was waiting, on an incident somebody had closed in the
+  meantime, left `POST /api/incidents/{id}/actions/{actionId}/approve` and `/deny` as a 500. Both
+  answer 409 with the reason now, and nothing is changed - as for an action already decided.
+- **A code fix for a service that pins Cait gets as far as planning**
+  ([#117](docs/backlog.md#117)). Every plan production started ended after ten minutes in
+  `git log -G<Version>… -- Cait.csproj exited 137`: the coder looked for the pinned commit in a
+  clone without file contents, and git fetched each of the project file's 974 versions with a
+  request of its own. They are fetched in one request now, and a lookup that still fails is a
+  note on the plan and no longer the end of it. Needs the coder image of this version.
+- **An investigator Job is told the workload, not the pod, when an alert opened the incident.**
+  An incident Alertmanager opens names a pod and nothing above it, and the request to the Job
+  carried that pod as the workload while the source it was handed belonged to the pod's
+  Deployment. Which of the alert and the watcher opens an incident first is a race, so the same
+  fault read differently from one run to the next. The request asks the cluster now, as the
+  source lookup beside it always did.
+- **A protected path with an unusual name is still protected** ([#116](docs/backlog.md#116)).
+  The check that keeps `.github/**` and the other protected paths out of a pushed fix compared
+  names as git prints them, and git prints a name with a backslash or a non-ASCII byte in
+  quotes: such a file under a protected directory passed. And a `.gitattributes` in the fix
+  could mark a file as binary and hide a credential-shaped line from the same check. Both
+  found while moving the check; neither was seen used.
+- **One metric name is one instrument** ([#15](docs/backlog.md#15)). Six names were registered
+  twice. `hephaisto_signals_received_total{source="Kubernetes"}`,
+  `hephaisto_investigation_terminations_total` and `hephaisto_grounding_rejected_total` each
+  counted an event twice and now read half of what they did: a panel or alert with a
+  threshold on one of them needs a look. `hephaisto_investigation_steps_total` and
+  `hephaisto_investigation_duration_milliseconds_*` are gone; the histogram
+  `hephaisto_investigation_steps` and `hephaisto_investigation_duration_seconds` are what the
+  shipped dashboard reads. Both carry `kind` and `termination_reason` now, and the termination
+  counter `kind`, so the dashboard's kind filter works on them.
+  `hephaisto_signals_dropped_total` has `source` on every series and `kind` on none.
 - **A grounding rejection says why in the log**, at Warning. Its detail was in no log line.
 - **The incident list says who acknowledged a row** ([#165](docs/backlog.md#165)).
 - **A finding that quotes a grafana-mcp result survives grounding.** An MCP text block was stored

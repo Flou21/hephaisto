@@ -62,11 +62,17 @@ public sealed class CodeFixStateMachine(IClock clock)
         attempt.ImplementStartedAt = clock.UtcNow;
     }
 
-    public void Deny(CodeFixAttempt attempt, string actor, string? reason)
+    /// <summary>
+    /// PlanReady -&gt; Denied. <paramref name="source"/> is recorded as it is for an approval: a
+    /// page that says who decided also says through what - the console, the API, a comment on the
+    /// issue - and before v0.14.0 a denial left that to its audit row.
+    /// </summary>
+    public void Deny(CodeFixAttempt attempt, string actor, string? reason, ApprovalSource source)
     {
         RefuseMachine(actor, "deny");
         Move(attempt, [CodeFixState.PlanReady], CodeFixState.Denied);
         attempt.ApprovedBy = actor.Trim();
+        attempt.ApprovalSource = source;
         attempt.DecidedAt = clock.UtcNow;
         attempt.FailureReason = string.IsNullOrWhiteSpace(reason) ? $"denied by {actor.Trim()}" : reason.Trim();
         attempt.FinishedAt = clock.UtcNow;

@@ -230,7 +230,9 @@ public sealed class TeamsBotNotificationChannel(
 
         if (s.IncidentId is { } id)
         {
-            var known = await incidents.ByIdAsync([id], ct).ConfigureAwait(false);
+            var known = await incidents
+                .ByIdAsync([id], ct, withPendingActions: TeamsBotLinks.Alert(o, null).Approvals)
+                .ConfigureAwait(false);
 
             if (known.TryGetValue(id, out var incident))
             {
@@ -243,21 +245,15 @@ public sealed class TeamsBotNotificationChannel(
                     .FirstOrDefaultAsync(ct)
                     .ConfigureAwait(false);
 
-                var links = new TeamsCardLinks
-                {
-                    BaseUrl = o.BaseUrl,
-                    GrafanaUrl = o.GrafanaUrl,
-                    BoardUrl = TeamsBotLinks.Board(o.TeamsBot, board),
-                    Actions = o.TeamsBot.Actions.Enabled,
-                };
-
-                var card = TeamsBotCards.Alert(incident, links);
+                var card = TeamsBotCards.Alert(incident, TeamsBotLinks.Alert(o, board));
 
                 return (TeamsBotCards.WithSummary(card, Announcement(message, incident.Title)), id);
             }
         }
 
-        return (TeamsBotCards.AgentEvent(message), null);
+        // A work item's code fix (v0.14.0): no incident, so no card that is edited afterwards and
+        // none on the board - one message, final, like an event about the agent.
+        return (s.WorkItemId is null ? TeamsBotCards.AgentEvent(message) : TeamsBotCards.WorkItemEvent(message), null);
     }
 
     /// <summary>

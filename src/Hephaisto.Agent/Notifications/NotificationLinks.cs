@@ -13,6 +13,33 @@ namespace Hephaisto.Agent.Notifications;
 /// </remarks>
 public static class NotificationLinks
 {
+    /// <summary>
+    /// The links one message carries, by what it is about.
+    /// </summary>
+    /// <remarks>
+    /// An incident's event links its incident - at the code-fix section when it is a code-fix
+    /// event, where the plan and its buttons are - and Grafana around the time. A code-fix event
+    /// about a work item (v0.14.0) has no incident page and no dashboard: an issue names a
+    /// repository, not something that runs. It links the attempt's own page and nothing else.
+    /// </remarks>
+    public static (string? Incident, string? CodeFix, string? Grafana) For(
+        string? baseUrl, string? grafanaUrl, Guid? incidentId, NotificationSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        if (snapshot.WorkItemId is not null)
+        {
+            return (null, CodeFix(baseUrl, snapshot.CodeFixAttemptId), null);
+        }
+
+        var incident = Incident(baseUrl, incidentId);
+
+        return (
+            incident is not null && snapshot.CodeFixAttemptId is not null ? incident + "#codefix" : incident,
+            null,
+            Grafana(grafanaUrl, snapshot));
+    }
+
     /// <summary>The incident in Hephaisto's own console, which is where approval happens.</summary>
     public static string? Incident(string? baseUrl, Guid? incidentId)
     {
@@ -22,6 +49,21 @@ public static class NotificationLinks
         }
 
         return $"{baseUrl.TrimEnd('/')}/incidents/{id}";
+    }
+
+    /// <summary>
+    /// One code-fix attempt's own page in the console: the plan in full and the place it is
+    /// answered. What a notification about a work item's attempt links, since there is no
+    /// incident page to open.
+    /// </summary>
+    public static string? CodeFix(string? baseUrl, Guid? attemptId)
+    {
+        if (string.IsNullOrWhiteSpace(baseUrl) || attemptId is not { } id)
+        {
+            return null;
+        }
+
+        return $"{baseUrl.TrimEnd('/')}/codefixes/{id}";
     }
 
     /// <summary>The note people keep for an alert name (#145), in the console.</summary>

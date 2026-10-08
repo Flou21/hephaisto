@@ -115,7 +115,10 @@ public sealed class CodeFixEligibilityTests
     {
         var covered = OneChange.Select(row => row.Data.Item2).ToHashSet();
 
-        covered.Should().BeEquivalentTo(Enum.GetValues<CodeFixReasonCode>());
+        // Two codes are a work item's own and no incident can produce them; they are reached,
+        // one change each, in WorkItemEligibilityTests.
+        covered.Should().BeEquivalentTo(Enum.GetValues<CodeFixReasonCode>()
+            .Except([CodeFixReasonCode.RepositoryNotListed, CodeFixReasonCode.WorkItemNotTaken]));
     }
 
     [Fact]

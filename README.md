@@ -154,6 +154,7 @@ Being precise about this matters, because the difference is the whole safety arg
 | Runbook memory, OIDC approval identity, in-card approval | not built |
 | A written design language, one token set, visual regression baselines | **works** |
 | An MCP endpoint a coding agent or an MCP gateway can ask about incidents | **works**, against a gateway with tool search and a real model locally |
+| A GitHub issue assigned to Hephaisto's account: planned, the plan answered on the issue, a draft pull request that closes it (v0.14.0) | **works against a stand-in, and against a sandbox repository on github.com** with a scripted model; no real model has planned an issue in a test, and nothing has merged one of its pull requests on github.com |
 
 **The wording of each row is chosen, not casual.** Detection, investigation and diagnosis are
 measured against a real cluster over ten seeded scenarios. The delivery path was measured in
@@ -179,7 +180,8 @@ times where the planner ran, against `deepseek-v4-flash`'s 4 of 8
 willingness to act; c12 measures an inference. If you need the agent to propose remediations on
 the harder shape, that is a model-selection decision.
 
-`docs/roadmap.md` has the detail, and `docs/backlog.md` has everything known to be broken.
+`docs/roadmap.md` says where the project stands, and the [issues](https://github.com/Flou21/hephaisto/issues) have everything known to
+be broken; `docs/backlog.md` is the frozen list they were moved from.
 
 The executor covers exactly the verbs the write `Role` grants: `RestartPod`,
 `RolloutRestart`, `ScaleWorkload`, `DeleteStuckJob` and `DeleteFailedJobPods`. Anything
@@ -433,14 +435,23 @@ that is later edited to say how the incident ended. Deleting is not used at all 
 "This message has been deleted." behind, for a post and for a reply alike, and nothing switches
 that off.
 
-**A Teams card carries a link, not an Approve button.** Approving in-card means accepting a
-Microsoft Entra identity as an approver, whose role lives in your own identity provider. The link
-goes to Hephaisto's own approval UI, where the audit row already lives. Two buttons do act, when
-`notifications.teamsBot.actions.enabled` is set: **Acknowledge** and **Assign to me**, which are
-read-level acts in the console too. Microsoft delivers the click to `POST /api/teams/messages`,
-the one inbound route it calls, on a port of its own where nothing else answers; the request must
-carry a Bot Framework token for this bot, signed by a key endorsed for Teams, from this tenant, by
-a member of the team, and the click is recorded as the team's member list names that person.
+**A Teams card carries a link, not an Approve button, until you ask for one.** Approving in-card
+means accepting a Microsoft Entra identity as an approver, whose role lives in your own identity
+provider. The link goes to Hephaisto's own approval UI, where the audit row already lives. Other
+buttons do act, when `notifications.teamsBot.actions.enabled` is set. **Acknowledge**, **Assign to
+me** and **Reinvestigate** are read-level acts in the console too, and any member of the team may
+click them. **Close** asks for a reason and takes an approver, as it does in the console - and
+because the click arrives as a Microsoft Entra identity, who is an approver is said explicitly:
+`notifications.teamsBot.actions.approvers` lists Entra object ids, and is empty until you fill it.
+**Approve** and **Deny** take the same approvers and a switch of their own,
+`notifications.teamsBot.actions.approvals.enabled`, off by default: the card then names the
+proposed action, its target, its arguments and its risk above the two buttons, and an approval
+runs exactly as one given in the console does. Everybody sees the same card, so every check is
+made at the click, and somebody who may not close or approve is told so. Microsoft delivers the
+click to `POST /api/teams/messages`, the one inbound route it
+calls, on a port of its own where nothing else answers; the request must carry a Bot Framework
+token for this bot, signed by a key endorsed for Teams, from this tenant, by a member of the team,
+and the click is recorded as the team's member list names that person.
 
 ### HTTP surface
 
@@ -454,15 +465,18 @@ a member of the team, and the click is recorded as the team's member list names 
 | `POST /api/incidents/{id}/feedback` | mark a diagnosis right or wrong |
 | `GET /api/status` | mode, budgets, kill-switch arms |
 | `GET /api/version` | the running version and commit; touches no database |
-| `GET /api/codefixes`, `/counts`, `/mode` | code-fix attempts, running and waiting counts, the code-fix mode |
+| `GET /api/codefixes`, `/counts`, `/mode` | code-fix attempts - an incident's, or one for a GitHub issue (`workItemId`, `issue`, `issueUrl`; `incidentId` is then null) - the running and waiting counts, the code-fix mode |
+| `GET /api/codefixes/{attemptId}` | one attempt by its own id, with what it is for: `attempt`, `workItem` (null for an incident's) and `mode`. `decidedThrough` on an attempt says through what its plan was answered: `Ui`, `Api`, `Oidc`, `GitHub` |
 | `GET /api/incidents/{id}/codefix` | an incident's code-fix attempts and its latest verdict |
 | `POST /api/incidents/{id}/codefix` | ask for a code fix (approver policy) |
 | `POST /api/incidents/{id}/codefix/{attemptId}/approve`, `/deny` | decide on a plan (approver policy; approve needs mode `Pr`) |
+| `GET /api/workitems?state=Taken\|Done\|Cancelled\|any`, `/api/workitems/{id}` | GitHub issues taken as work (v0.14.0): without `state`, what is taken now; one work item carries its `attempts` |
+| `POST /api/workitems/{id}/codefix/{attemptId}/approve`, `/deny` | decide on the plan for an issue (approver policy; approve needs mode `Pr`) - the incident routes' body and refusals. The same plan can be answered on the issue itself, by an account listed in `github.approvers`: a comment whose first line is `/approve` or `/reject <reason>` |
 | `GET /api/alerts/{name}/note` | what people wrote about an alert name, and what was done each time |
 | `POST /api/alerts/{name}/note/entries` | add a line of what was done this time |
 | `PUT /api/alerts/{name}/note` | rewrite the note the agent reads beside its runbook (approver policy) |
 | `GET /healthz`, `/readyz`, `/metrics` | health and Prometheus metrics |
-| `POST /api/teams/messages` | a click on a Teams alert's Acknowledge or Assign-to-me button; off by default, its own port, a Bot Framework token |
+| `POST /api/teams/messages` | a click on one of a Teams alert's buttons that act (acknowledge, assign to me, reinvestigate; close for a mapped approver; approve and deny for one too, behind their own switch); off by default, its own port, a Bot Framework token |
 | `/` | Blazor Server UI |
 
 v0.9.0 added the code-fix rows, the first new inbound routes since v0.3.0 — all on the console
@@ -591,7 +605,7 @@ docs/                          architecture, roadmap, backlog, history, verifica
 
 Start with [`docs/architecture.md`](docs/architecture.md) for how it works,
 [`docs/roadmap.md`](docs/roadmap.md) for where it is going,
-[`docs/backlog.md`](docs/backlog.md) for what is known-broken and unfixed, and
+the [issues](https://github.com/Flou21/hephaisto/issues) for what is known-broken and unfixed, and
 [`docs/history.md`](docs/history.md) for why it is shaped the way it is.
 
 **`Hephaisto.Core` has zero I/O dependencies, on purpose.** Every safety-critical decision —

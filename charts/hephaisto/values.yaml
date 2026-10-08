@@ -427,7 +427,28 @@ secrets:
   #                            mapped repositories ONLY. Never a classic token - a classic
   #                            `repo` scope is every repository the account can see.
   #   NUGET_GITHUB_TOKEN       read:packages, for a private GitHub Packages NuGet feed
+  #
+  # One Secret, but no container of a Job is handed all of it (v0.13.0). The two model keys go to
+  # the `coder` container, where the model runs, and to no other; GITHUB_TOKEN and
+  # NUGET_GITHUB_TOKEN go to `prepare`, which has ended before the model starts; GITHUB_TOKEN
+  # alone goes to `publish`, which starts after it has ended. The containers share no process
+  # namespace, so the model's shell cannot read a token out of another one's environment.
   codeFix: hephaisto-codefix
+  # The AGENT's GitHub token: key `GITHUB_TOKEN`. Only referenced when github.enabled is true.
+  # A Secret in THIS release's namespace, and deliberately not the one above: that one lives in
+  # codeFix.namespace, holds a token that may push, and the agent has no way to read it. This
+  # one reads issues and writes comments:
+  #
+  #   repositories owned by an organisation  a FINE-GRAINED token of the bot account, limited to
+  #                                          the listed repositories: Issues read and write,
+  #                                          Pull requests read, Metadata read
+  #   repositories owned by a user           a fine-grained token only reaches repositories its
+  #                                          own account or organisation owns, so a bot that is a
+  #                                          collaborator there needs a classic token (`repo`)
+  #
+  # The chart refuses the same name as secrets.codeFix: one token for both is the coder's write
+  # access held by the process that reads every issue.
+  github: ""
 
 # -----------------------------------------------------------------------------------------
 # Alertmanager - for the SilenceAlert action, and nothing else
@@ -501,7 +522,9 @@ notifications:
   #     channel post and for a reply alike, and there is no setting that stops it.
   #
   # Every button is a link, unless `actions.enabled` below: then an open alert also carries
-  # Acknowledge and Assign to me, which Microsoft delivers by calling this pod.
+  # buttons that act - Acknowledge, Assign to me, Reinvestigate, Close for the approvers you
+  # name, and, behind a switch of their own, Approve and Deny - which Microsoft delivers by
+  # calling this pod.
   #
   # You need, in the SAME Microsoft tenant as your Teams: a single-tenant app registration, an
   # Azure Bot resource (free tier) with the Teams channel on, and a Teams app that names the bot
@@ -526,9 +549,13 @@ notifications:
       # How many incidents the board lists before it says "and N more". At most 40. The board
       # also trims itself to 100 KB whatever this says, because a count is not a size.
       maxIncidents: 20
-    # Buttons that ACT on an alert: Acknowledge and Assign to me. Nothing else - close, approve
-    # and deny stay links into the console, because the click arrives as a Microsoft Entra
-    # identity and your approver role lives in auth.authority.
+    # Buttons that ACT on an alert.
+    #   Any member of the team: Acknowledge, Assign to me, and - on an escalated incident no
+    #     investigation found anything for - Reinvestigate. All three are read-level in the
+    #     console too.
+    #   An approver only: Close, which asks for a reason first. See `approvers` below.
+    #   An approver only, and only with `approvals.enabled`: Approve and Deny of a proposed
+    #     action. Without it they stay links into the console.
     #
     # Turning this on creates the ONE inbound route Microsoft calls: POST /api/teams/messages,
     # on its own port and nowhere else, and nothing else answers on that port. Set your Azure
@@ -541,6 +568,26 @@ notifications:
       enabled: false
       # Must differ from 8080 and from webhookPort.
       port: 8082
+      # Who holds the approver role in Teams, as Microsoft Entra OBJECT IDS - GUIDs, not
+      # addresses. A click arrives as an Entra identity, and the console's approver role lives
+      # in whatever auth.authority names, so the mapping between the two is said here, in a
+      # reviewed file, and nothing in somebody else's directory can grant it.
+      #   az ad user show --id someone@example.com --query id -o tsv
+      # Empty means nobody: Close is then not drawn, and a click that asks for it is refused. A
+      # card is the same for everybody, so with somebody named here everybody SEES Close; who
+      # may press it is decided at the click. An approver must also be a member of the team.
+      approvers: []
+      # Approve and Deny, on an alert whose incident has an action awaiting approval. The card
+      # then says what is proposed - the action, its target, its arguments, its risk - with the
+      # two buttons under it, and an approver's click is recorded as that person and runs the
+      # action exactly as approving in the console does: through admission, under the mode,
+      # the budgets and the kill switch.
+      #
+      # Its own switch, off by default, because it is the one click here that can change your
+      # cluster: you can let the team acknowledge and close from Teams and keep every approval
+      # in the console. Refused without `enabled` above, and without at least one approver.
+      approvals:
+        enabled: false
 
   # Which events, at which severity, in which namespaces, go where. Additive only - there is
   # no deny rule, because a subtractive routing table is one nobody can reason about and the
@@ -737,7 +784,8 @@ codeFix:
   # when nugetCache is off.
   workspaceSize: 8Gi
 
-  # Per coder pod. A .NET restore + build + test of a mid-sized service wants the memory.
+  # Per container of a coder pod, and so per pod: its containers run one after the other, never
+  # side by side. A .NET restore + build + test of a mid-sized service wants the memory.
   resources:
     cpuRequest: "1"
     memoryRequest: 2Gi
@@ -808,6 +856,12 @@ codeFix:
   # A PVC for NuGet packages shared across coder Jobs, so every attempt does not start with a
   # cold 2-4 minute restore. ReadWriteOnce, which is why concurrentJobs defaults to 1: two Jobs
   # scheduled on different nodes cannot both mount it.
+  #
+  # Only the `prepare` container writes to it - the restore of the untouched default branch. The
+  # `coder` container, where the model and its build run, mounts it READ-ONLY (v0.13.0). So with
+  # the cache on, a fix that adds a package cannot be built in the Job, not even one from
+  # nuget.org, and the attempt says so; with it off, packages live in the pod's own workspace
+  # and a public one can still be fetched.
   nugetCache:
     enabled: false
     size: 10Gi
@@ -820,6 +874,84 @@ codeFix:
   # without it the coder can reach anything the cluster can, and the proxy is advisory.
   networkPolicy:
     enabled: true
+
+# -----------------------------------------------------------------------------------------
+# GitHub issues as work (v0.14.0) - OFF by default
+# -----------------------------------------------------------------------------------------
+# An issue assigned to Hephaisto's account, in a repository listed here, is taken as work. The
+# agent ASKS GitHub - a poll per repository, nothing reaches in, no webhook to expose - and an
+# unchanged list is answered with a 304 that costs nothing against the rate limit.
+#
+# The account is an ordinary GitHub account (a machine user), not a GitHub App: an App cannot
+# be an assignee. Make it a collaborator on each listed repository, create its token signed in
+# as it, and put the token in the Secret secrets.github names.
+#
+# A taken issue is planned by a coder Job (codeFix has to be enabled; see issues.repositories
+# below), the plan is posted on the issue, an approver answers it there, and the pull request the
+# implementing Job opens is followed until it is merged or closed. GET /api/workitems shows them,
+# and `github` is among the connections of GET /api/status. Unassigning the account, or closing
+# the issue, takes it back at any point. With the agent's mode Off nothing is asked and nothing
+# is taken.
+github:
+  enabled: false
+
+  # The REST API's root. GitHub Enterprise Server's is https://<host>/api/v3.
+  apiBaseUrl: https://api.github.com
+
+  # The account issues are assigned to. Empty means whoever the token belongs to, which is
+  # right unless the token is somebody else's.
+  botLogin: ""
+
+  # How often each repository is asked. .NET TimeSpan (hh:mm:ss), at least five seconds;
+  # GitHub's own advice for a poller is a minute.
+  pollInterval: "00:01:00"
+
+  issues:
+    # THE AUTHORIZATION LIST: owner/repo. An issue anywhere else is never asked about, however
+    # it is assigned. Required when enabled - an empty list would poll nothing and look fine.
+    #
+    # An issue taken from one of these is planned by a coder Job, under codeFix.mode and every
+    # codeFix cap and switch (with the mode off, the issue is told so and nothing starts). Where
+    # the code is cloned from: the FIRST codeFix.repositories entry whose url names the
+    # repository - it ends in /owner/repo or /owner/repo.git - with that entry's defaultBranch
+    # and path; with no such entry, https://github.com/owner/repo on the default branch GitHub
+    # reports. Either way the host has to be in codeFix.allowedRepositoryHosts, and the
+    # repository has to be enabled in the context repository's repos.yaml.
+    #
+    # repositories:
+    #   - example/shop
+    repositories: []
+
+  # Who may answer a plan ON THE ISSUE, by account NUMBER - a login can be renamed and taken by
+  # somebody else. `gh api users/<login> --jq .id`.
+  #
+  # An approver answers with a comment whose first line is `/approve`, or `/reject` followed by
+  # a reason. Nothing else is a command, and nobody else's comment is one: an account that is not
+  # listed is told so once per plan and changes nothing. What is approved is the plan as
+  # Hephaisto stored it, never the comment's text. An approval still needs codeFix.mode: pr - at
+  # plan or off it is refused, and the issue is told which.
+  #
+  # Empty: nobody can answer by comment, no comment is read, and the plan says that it is
+  # answered in the console. The API is there either way, for whoever the console's approver
+  # policy admits: POST /api/workitems/{id}/codefix/{attemptId}/approve and .../deny.
+  #
+  # These people can make Hephaisto push a branch to every repository listed above. List
+  # maintainers, not everybody who may comment.
+  #
+  # approvers:
+  #   - 1234567
+  approvers: []
+
+  # Send the agent's GitHub calls through codeFix.egressProxy when that proxy is rendered
+  # (codeFix.enabled and codeFix.egressProxy.enabled): its allowlist already holds
+  # api.github.com, its log then shows the agent's requests beside the coder's, and with
+  # networkPolicy.egress.enabled it is the agent's only way out to GitHub - the chart adds the
+  # rule that lets the agent reach the proxy, and the one that lets the proxy accept it.
+  #
+  # Without the proxy and with networkPolicy.egress.enabled, GitHub has to be reachable through
+  # networkPolicy.egress.extraEgressCIDRs on 443. A GitHub Enterprise host has to be added to
+  # codeFix.egressProxy.extraAllowlist, and the proxy tunnels to port 443 only.
+  useEgressProxy: true
 
 # -----------------------------------------------------------------------------------------
 # Database

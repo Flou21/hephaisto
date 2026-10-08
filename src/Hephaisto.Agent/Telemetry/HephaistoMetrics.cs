@@ -179,12 +179,28 @@ public sealed class HephaistoMetrics : IDisposable
     /// Who ran the model loop (v0.12.0 F5): InProcess, Job or JobFallback. A closed vocabulary, so it
     /// is safe as a label.
     /// </param>
-    public void InvestigationCompleted(TimeSpan duration, int steps, TerminationReason reason, string? executor = null)
+    /// <param name="kind">
+    /// What the incident is about. The dashboard's duration, steps and termination panels all
+    /// filter by <c>kind</c>, and until backlog #15 was fixed the only series that carried one was
+    /// a second registration of the duration, in milliseconds, under <c>signal_kind</c>.
+    /// </param>
+    public void InvestigationCompleted(
+        SignalKind kind,
+        TimeSpan duration,
+        int steps,
+        TerminationReason reason,
+        string? executor = null)
     {
-        investigationDuration.Record(duration.TotalSeconds);
-        investigationSteps.Record(steps);
+        var about = new KeyValuePair<string, object?>("kind", kind.ToString());
+
+        // The two labels the dashboard's metric-spec table gives both histograms.
+        var how = new KeyValuePair<string, object?>("termination_reason", reason.ToString());
+
+        investigationDuration.Record(duration.TotalSeconds, about, how);
+        investigationSteps.Record(steps, about, how);
         investigationTerminations.Add(
             1,
+            about,
             new KeyValuePair<string, object?>("reason", reason.ToString()),
             new KeyValuePair<string, object?>("executor", executor ?? Core.Investigations.InvestigationExecutors.InProcess));
     }

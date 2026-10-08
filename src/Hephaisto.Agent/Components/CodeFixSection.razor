@@ -200,149 +200,13 @@
                     </p>
                 }
 
-                @if (a.Summary is { Length: > 0 } || a.Steps.Count > 0)
-                {
-                    <h3>plan</h3>
-
-                    @if (a.Summary is { Length: > 0 } summary)
-                    {
-                        <p class="hp-plan-summary" data-testid="codefix-summary">@summary</p>
-                    }
-
-                    <dl class="hp-kv">
-                        @if (a.Confidence is { } confidence)
-                        {
-                            <dt>confidence</dt>
-                            <dd>
-                                <span class="hp-conf" title="The coder's own estimate. Advisory, uncalibrated.">
-                                    <span class="hp-conf-track">
-                                        <span class="hp-conf-fill" style="width:@Width(confidence)"></span>
-                                    </span>
-                                    <span class="mono">@confidence.ToString("F2", CultureInfo.InvariantCulture)</span>
-                                </span>
-                            </dd>
-                        }
-
-                        <dt>verification</dt>
-                        <dd>
-                            <span class="mono">@(a.VerificationLevel ?? "unstated")</span>
-                            @if (!string.Equals(a.VerificationLevel, "tests", StringComparison.OrdinalIgnoreCase))
-                            {
-                                @* Anything short of tests means the PR can be green and wrong, and the
-                                   reviewer is the only check left. That belongs in front of the approver. *@
-                                <span class="hp-warn" data-testid="codefix-verification-weak">
-                                    <span class="glyph">!</span> verification weak
-                                </span>
-                            }
-                        </dd>
-
-                        @if (a.NotVerifiable.Count > 0)
-                        {
-                            <dt>not verifiable</dt>
-                            <dd>
-                                <ul class="hp-cf-list">
-                                    @foreach (var nv in a.NotVerifiable)
-                                    {
-                                        <li>@nv</li>
-                                    }
-                                </ul>
-                            </dd>
-                        }
-
-                        @if (a.PlanJobName is { Length: > 0 } || a.ImplementJobName is { Length: > 0 })
-                        {
-                            <dt>jobs</dt>
-                            <dd class="mono">
-                                @a.PlanJobName
-                                @if (a.ImplementJobName is { Length: > 0 } impl)
-                                {
-                                    <text> · @impl</text>
-                                }
-                            </dd>
-                        }
-                    </dl>
-
-                    @if (a.RootCause is { Length: > 0 } rootCause)
-                    {
-                        <h4>root cause</h4>
-                        <pre class="hp-code" data-testid="codefix-root-cause">@rootCause</pre>
-                    }
-
-                    @if (a.Files.Count > 0)
-                    {
-                        <h4>affected files <span class="hp-count">@a.Files.Count</span></h4>
-                        <ul class="hp-cf-files mono" data-testid="codefix-files">
-                            @foreach (var f in a.Files)
-                            {
-                                <li>@f</li>
-                            }
-                        </ul>
-                    }
-
-                    @if (a.Steps.Count > 0)
-                    {
-                        <h4>steps</h4>
-                        <ol class="hp-cf-steps" data-testid="codefix-steps">
-                            @foreach (var step in a.Steps)
-                            {
-                                <li>@step</li>
-                            }
-                        </ol>
-                    }
-
-                    @if (a.Notes.Count > 0)
-                    {
-                        <h4>notes <span class="hp-count">@a.Notes.Count</span></h4>
-                        <ul class="hp-cf-notes" data-testid="codefix-notes">
-                            @foreach (var note in a.Notes)
-                            {
-                                @if (IsInjection(note))
-                                {
-                                    @* Text in the evidence that read like an instruction to the coder.
-                                       Loud on purpose: a workload emitting that is itself worth a
-                                       human's attention, whatever the plan says. *@
-                                    <li class="note-injection" data-testid="codefix-note-injection">
-                                        <span class="hp-chip chip-injection"><span class="glyph">!!</span> suspected injection</span>
-                                        <span>@note</span>
-                                    </li>
-                                }
-                                else
-                                {
-                                    <li>@note</li>
-                                }
-                            }
-                        </ul>
-                    }
-                }
-
-                @if (a.DeniedToolCalls.Count > 0)
-                {
-                    <details class="hp-cf-denied" data-testid="codefix-denied-tools">
-                        <summary>
-                            <span class="hp-warn"><span class="glyph">!</span> @a.DeniedToolCalls.Count denied tool call@(a.DeniedToolCalls.Count == 1 ? "" : "s")</span>
-                            <span class="hp-muted">— the coder asked for something its sandbox refused</span>
-                        </summary>
-                        <table class="hp-table">
-                            <thead>
-                                <tr><th>tool</th><th>input</th><th>reason</th></tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var d in a.DeniedToolCalls)
-                                {
-                                    <tr>
-                                        <td class="mono">@d.Tool</td>
-                                        <td class="mono hp-cf-input">@d.Input</td>
-                                        <td>@d.Reason</td>
-                                    </tr>
-                                }
-                            </tbody>
-                        </table>
-                    </details>
-                }
+                @* The plan itself, and what the sandbox refused: shared with the attempt's own
+                   page (/codefixes/{id}), so the two cannot come to describe one plan differently. *@
+                <CodeFixPlan Attempt="a" />
 
                 @if (a.State == CodeFixState.PlanReady)
                 {
-                    var blocked = ApproveBlockedBecause(view.Mode, a);
+                    var blocked = CodeFixDoor.BlockedBecause(view.Mode, a, _viewer);
 
                     <div class="hp-cf-decide" data-testid="codefix-approval">
                         <div class="hp-retry-controls">
@@ -558,19 +422,6 @@
         }
     }
 
-    /// <summary>
-    /// Why approve is unavailable, in the words the reader needs, or null when it is available.
-    /// </summary>
-    /// <remarks>
-    /// A courtesy, never the guard: <see cref="CodeFixCoordinator.DecideAsync"/> re-checks all of
-    /// this under a row lock at the moment of approving, and its refusal is shown verbatim.
-    /// </remarks>
-    private string? ApproveBlockedBecause(CodeFixModeView mode, CodeFixAttemptView attempt) =>
-        !mode.CanApprove ? mode.ApprovalBlockedBecause ?? "the code-fix mode does not allow it"
-        : attempt.NeedsCait ? "this fix needs a Cait change first; that is staged delivery by a human, Cait first"
-        : !_viewer.MayDecide ? "your account does not hold the approver role"
-        : null;
-
     private async Task DecideAsync(Guid attemptId, bool approve)
     {
         var actor = _viewer.Actor(_actor);
@@ -677,9 +528,6 @@
         }
     }
 
-    private static bool IsInjection(string note) =>
-        note.Contains("injection", StringComparison.OrdinalIgnoreCase);
-
     private static string ArticleClass(CodeFixState state) => state switch
     {
         CodeFixState.Planning or CodeFixState.Implementing or CodeFixState.Eligible => "hp-codefix-live",
@@ -687,9 +535,6 @@
         CodeFixState.PrOpened => "hp-codefix-pr",
         _ => string.Empty,
     };
-
-    private static string Width(double confidence) =>
-        (Math.Clamp(confidence, 0, 1) * 100).ToString("F1", CultureInfo.InvariantCulture) + "%";
 
     public async ValueTask DisposeAsync()
     {

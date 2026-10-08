@@ -10,6 +10,16 @@
 # still goes through the real guard, the real driver verification, a real push to the in-cluster
 # git server and a real Draft-PR shape; with "real" it spends subscription quota.
 #
+# Who investigates decides how repeatable c15 is. Without "investigator" the local model does,
+# and a run in which it runs out of steps never reaches a code fix: that is a statement about
+# the model. With "investigator": true and "investigator-sdk": "fake" the investigation is a
+# script as well, and the whole chain from the alert to the Draft PR is the same every time.
+#
+# c15 also holds the Job to backlog #116: the coder container is handed no git or NuGet key, no
+# process inside it holds one (read from inside it while the agent works), and the implement
+# result is printed by the publish container. It needs an agent and a coder image of the same
+# version - `tilt trigger coder-image` after pulling; rebuilding the agent does not rebuild it.
+#
 # SAFETY. This machine's default kube context is a production cluster. The runner never reads
 # ~/.kube/config after its first line: it extracts ONE context into a private kubeconfig, checks
 # that context's API server is this machine, and exports only that file. A mistyped namespace

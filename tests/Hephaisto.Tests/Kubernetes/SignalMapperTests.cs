@@ -596,6 +596,50 @@ public class SignalMapperTests
         SignalMapper.FromEvent(stale, K8sFixtures.Cluster).Should().NotBeNull();
     }
 
+    /// <summary>
+    /// An event outlives the object it is about. A pod that crash-looped and was deleted leaves
+    /// its warnings behind, and an agent that restarts is handed them again - about a pod whose
+    /// owner can no longer be asked for, so the incident was filed under the pod's own name.
+    /// </summary>
+    [Fact]
+    public void A_warning_about_an_object_that_no_longer_exists_is_dropped()
+    {
+        var warning = Event("Warning", "BackOff", "Back-off restarting failed container");
+        var asked = new List<string>();
+
+        bool Gone(string kind, string ns, string name)
+        {
+            asked.Add($"{kind}/{ns}/{name}");
+            return true;
+        }
+
+        SignalMapper.FromEvent(warning, K8sFixtures.Cluster, lookup: (_, _, _) => null, isGone: Gone).Should().BeNull();
+        asked.Should().Equal($"Pod/{K8sFixtures.Namespace}/api-7d4c9f8b6-x2k9p");
+
+        // Not known to be gone - never asked about, or the API server did not answer: as before,
+        // a signal about the pod itself. "Could not be read" must not silence a warning.
+        var unknown = SignalMapper.FromEvent(warning, K8sFixtures.Cluster, lookup: (_, _, _) => null, isGone: (_, _, _) => false);
+
+        unknown.Should().NotBeNull();
+        unknown!.Target.WorkloadKey.Should().Be($"{K8sFixtures.Namespace}/Pod/api-7d4c9f8b6-x2k9p");
+        SignalMapper.FromEvent(warning, K8sFixtures.Cluster, lookup: (_, _, _) => null).Should().NotBeNull("nobody says it is gone");
+    }
+
+    [Fact]
+    public void An_object_that_was_found_is_not_asked_whether_it_is_gone()
+    {
+        var warning = Event("Warning", "BackOff", "Back-off restarting failed container");
+        var pod = new V1ObjectMeta { Name = "api-7d4c9f8b6-x2k9p", NamespaceProperty = K8sFixtures.Namespace };
+
+        var signal = SignalMapper.FromEvent(
+            warning,
+            K8sFixtures.Cluster,
+            lookup: (kind, _, _) => kind == "Pod" ? pod : null,
+            isGone: (_, _, _) => throw new InvalidOperationException("it was found a moment ago"));
+
+        signal.Should().NotBeNull();
+    }
+
     private static Corev1Event EventWithCount(string type, string reason, string message, int? count)
     {
         var e = Event(type, reason, message);

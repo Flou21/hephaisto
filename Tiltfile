@@ -95,6 +95,17 @@ config.define_bool('pager-e2e',     args = False, usage = 'Layer scripts/e2e/val
 # The MCP endpoint (#157) with the pager suite's five tokens (scripts/e2e/values-mcp.yaml), forwarded
 # to 8183. On whenever pager-e2e is, because the suite's P29-P48 ask it.
 config.define_bool('mcp',           args = False, usage = 'The MCP endpoint on 8183, with the tokens mcp-secrets.sh makes')
+# GitHub issues as work (v0.14.0, #243): an issue assigned to Hephaisto's account is polled for,
+# planned, and approved in a comment.
+#   off       (default)
+#   stand-in  against infra/e2e/teams-stand-in.yaml, whose pod is GitHub too (GitHubStandIn.cs,
+#             Service github-stand-in) - no account, nothing leaves the cluster. It is what
+#             scripts/e2e/issues-local.sh runs against.
+#   live      against github.com: the real bot account, its two tokens, the real `gh`
+#             (charts/hephaisto/values-dev-github-live.yaml). For scripts/e2e/github-live.sh and
+#             nothing else: it lists ONE repository, the sandbox, and needs `coder`. The Secrets
+#             are made by hand; see that file's header.
+config.define_string('github',      args = False, usage = 'GitHub issues as work: off | stand-in | live (default off)')
 cfg = config.parse()
 
 HOST    = cfg.get('host', 'localhost')
@@ -113,6 +124,7 @@ investigator_sdk = cfg.get('investigator-sdk', 'fake')
 teams_bot     = cfg.get('teams-bot', 'off')
 pager_e2e     = cfg.get('pager-e2e', False)
 mcp           = cfg.get('mcp', False) or pager_e2e
+github        = cfg.get('github', 'off')
 if pager_e2e:
     local_llm = False
     teams_bot = 'stand-in'
@@ -121,6 +133,12 @@ if coder_mode not in ['off', 'plan', 'pr']:
     fail("coder-mode must be off, plan or pr - got '%s'" % coder_mode)
 if teams_bot not in ['off', 'stand-in', 'real']:
     fail('teams-bot must be off, stand-in or real, not %r' % teams_bot)
+if github not in ['off', 'stand-in', 'live']:
+    fail('github must be off, stand-in or live, not %r' % github)
+if github == 'live' and not coder:
+    fail('github=live needs coder: an issue is planned and implemented by a coder Job, and the live tier is about its real `gh`.')
+if github == 'live' and pager_e2e:
+    fail('github=live and pager-e2e do not go together: the pager suite replaces the model and every window under a run against github.com.')
 if coder_sdk not in ['fake', 'real']:
     fail("coder-sdk must be fake or real - got '%s'" % coder_sdk)
 if investigator_sdk not in ['fake', 'real']:
@@ -271,9 +289,9 @@ if tracing:
 
 # --- the agent ----------------------------------------------------------------------------
 
-# One binary, two jobs: the c19 egress canary and the Teams stand-in. Built once, here, so
-# that neither depends on the other being switched on.
-if chaos or teams_bot == 'stand-in':
+# One binary, three jobs: the c19 egress canary, the Teams stand-in and the GitHub one. Built
+# once, here, so that none depends on another being switched on.
+if chaos or teams_bot == 'stand-in' or github == 'stand-in':
     local_resource(
         'notification-receiver-image',
         cmd = 'docker build -q -f infra/e2e/notification-receiver/Dockerfile -t hephaisto/notification-receiver:dev .',
@@ -283,6 +301,7 @@ if chaos or teams_bot == 'stand-in':
             'infra/e2e/notification-receiver/LlmStandIn.cs',
             'infra/e2e/notification-receiver/DecoyMcp.cs',
             'infra/e2e/notification-receiver/OidcStandIn.cs',
+            'infra/e2e/notification-receiver/GitHubStandIn.cs',
             'scripts/e2e/mcp/neighbour-tools.json',
             'infra/e2e/notification-receiver/notification-receiver.csproj',
             'infra/e2e/notification-receiver/Dockerfile',
@@ -374,8 +393,10 @@ if agent:
         chart_set.append('codeFix.sdk=%s' % coder_sdk)
         # The shim follows where the repositories live, not which SDK runs: every dev mapping points
         # at the in-cluster git server, which real gh refuses, so a real-model run would push its
-        # branch and then fail at `gh pr create`.
-        chart_set.append('codeFix.gh=shim')
+        # branch and then fail at `gh pr create`. With github=live the one repository is on
+        # github.com, and running the real gh against it is what that mode is for.
+        if github != 'live':
+            chart_set.append('codeFix.gh=shim')
         if investigator:
             chart_values.append('charts/hephaisto/values-dev-investigator.yaml')
             chart_set.append('investigation.job.sdk=%s' % investigator_sdk)
@@ -467,12 +488,38 @@ if agent:
         # bool parsing trims it. values-pager.yaml quotes it and never needed this.
         chart_set.append("extraEnv[%d].value=false " % (taken + 4))
 
-    if teams_bot == 'stand-in':
+    # --- GitHub issues as work ---------------------------------------------------------------
+    #
+    # The stand-in is the same pod as Teams', under a Service name of its own, so "stand-in" here
+    # only makes sure that pod is applied - below, with Teams'.
+    #
+    # The agent is pointed at it by a values file, like the Teams bot: its API base URL becomes
+    #
+    #     http://github-stand-in.hephaisto-obs:8080/github/api
+    #
+    # its token the stand-in's GITHUB_STANDIN_TOKEN - by the chart's own secretKeyRef, from the
+    # Secret hephaisto-github-stand-in that is applied with the stand-in below - and the account
+    # it polls for the stand-in's GITHUB_STANDIN_BOT_LOGIN (infra/e2e/teams-stand-in.yaml).
+    # scripts/e2e/issues-local.sh reads GitHub__ApiBaseUrl off the Deployment to tell which
+    # GitHub an agent talks to; if the variable gets another name, change it there too.
+    if github == 'stand-in':
+        chart_values.append('charts/hephaisto/values-dev-github.yaml')
+
+    # Live: github.com itself, through the coder's egress proxy, with the token of the Secret
+    # hephaisto-github - made by hand and applied by nobody here. Layered after
+    # values-dev-coder.yaml, whose context ref and workload mappings it replaces. The stand-in
+    # pod is not applied for it (Teams' still is, when teams-bot says so).
+    # scripts/e2e/github-live.sh reads GitHub__ApiBaseUrl, GitHub__Repositories__*,
+    # GitHub__Approvers__* and CodeFix__Sdk off the Deployment and refuses anything but this.
+    if github == 'live':
+        chart_values.append('charts/hephaisto/values-dev-github-live.yaml')
+
+    if teams_bot == 'stand-in' or github == 'stand-in':
 
         k8s_yaml('infra/e2e/teams-stand-in.yaml')
         k8s_resource(
             'teams-stand-in',
-            objects = ['hephaisto-notification-teams-bot-stand-in:secret'],
+            objects = ['hephaisto-notification-teams-bot-stand-in:secret', 'hephaisto-github-stand-in:secret'],
             resource_deps = ['notification-receiver-image'],
             port_forwards = [tailnet(8110, 8080)],
             labels = ['agent'],

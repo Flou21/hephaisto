@@ -335,13 +335,24 @@ public sealed record CodeFixRow
 {
     public required Guid Id { get; init; }
 
-    public required Guid IncidentId { get; init; }
+    /// <summary>The incident the attempt is for. Absent for a work item's attempt.</summary>
+    public Guid? IncidentId { get; init; }
+
+    /// <summary>The work item the attempt is for (v0.14.0). Absent for an incident's attempt.</summary>
+    public Guid? WorkItemId { get; init; }
+
+    /// <summary><c>owner/repo#12</c>: a configured repository and a number, so Hephaisto's own words.</summary>
+    [ServerAuthored]
+    public string? Issue { get; init; }
+
+    public McpText? IssueUrl { get; init; }
 
     public required CodeFixState State { get; init; }
 
     public required McpText Repository { get; init; }
 
-    public required McpText Workload { get; init; }
+    /// <summary>Absent for a work item's attempt: an issue names no workload.</summary>
+    public McpText? Workload { get; init; }
 
     public McpText? Branch { get; init; }
 
@@ -372,6 +383,9 @@ public sealed record CodeFixDetail
 {
     public required CodeFixRow Attempt { get; init; }
 
+    /// <summary>The title of the issue a work item's attempt is for: somebody else's words.</summary>
+    public McpText? IssueTitle { get; init; }
+
     public McpText? RootCause { get; init; }
 
     public double? Confidence { get; init; }
@@ -392,6 +406,9 @@ public sealed record CodeFixDetail
 
     public required IReadOnlyList<McpText> Deviations { get; init; }
 
+    /// <summary>The pull request's description as the runner sent it: text a model had a hand in.</summary>
+    public McpText? PullRequestBody { get; init; }
+
     public required decimal PlanCostUsd { get; init; }
 
     public required decimal ImplementCostUsd { get; init; }
@@ -400,12 +417,93 @@ public sealed record CodeFixDetail
 
     public McpText? DecidedBy { get; init; }
 
+    /// <summary>Through what the plan was answered: Ui (the console), Api, Oidc, GitHub (a comment on the issue).</summary>
+    public ApprovalSource? DecidedThrough { get; init; }
+
     public DateTimeOffset? PlanReadyAt { get; init; }
 
     public DateTimeOffset? DecidedAt { get; init; }
 
     [ServerAuthored]
     public required string Note { get; init; }
+
+    /// <summary>The tools that go further from this attempt.</summary>
+    [ServerAuthored]
+    public IReadOnlyList<string> Next { get; init; } = [];
+}
+
+/// <summary>One work item - a GitHub issue handed to Hephaisto - as a row of a list.</summary>
+public sealed record WorkItemRow
+{
+    public required Guid Id { get; init; }
+
+    /// <summary><c>owner/repo#12</c>: a configured repository and a number, so Hephaisto's own words.</summary>
+    [ServerAuthored]
+    public required string Issue { get; init; }
+
+    public required McpText Repository { get; init; }
+
+    public required int Number { get; init; }
+
+    public McpText? Url { get; init; }
+
+    /// <summary>The issue's title as it was when the work item was taken: somebody else's words.</summary>
+    public required McpText Title { get; init; }
+
+    public required WorkItemState State { get; init; }
+
+    /// <summary>Why it is no longer taken: merged, the issue closed, Hephaisto unassigned.</summary>
+    public McpText? StateReason { get; init; }
+
+    public required DateTimeOffset TakenAt { get; init; }
+
+    public DateTimeOffset? ClosedAt { get; init; }
+
+    /// <summary>Its code-fix attempt, when a plan was started. One per work item.</summary>
+    public CodeFixSummary? CodeFix { get; init; }
+}
+
+public sealed record WorkItemPage
+{
+    public required IReadOnlyList<WorkItemRow> WorkItems { get; init; }
+
+    /// <summary>Whether GitHub issues are taken as work on this install; off, the list is empty by configuration.</summary>
+    public required bool Enabled { get; init; }
+
+    [ServerAuthored]
+    public string? NextCursor { get; init; }
+}
+
+public sealed record WorkItemDetail
+{
+    public required WorkItemRow WorkItem { get; init; }
+
+    public McpText? Type { get; init; }
+
+    public required McpText Author { get; init; }
+
+    public required IReadOnlyList<McpText> Labels { get; init; }
+
+    /// <summary>The issue's text as it was when the work item was taken. A later edit is not here.</summary>
+    public McpText? Body { get; init; }
+
+    /// <summary>Why no plan was started when it was last asked, while there is no attempt.</summary>
+    public McpText? DeclineReason { get; init; }
+
+    /// <summary>
+    /// True for a work item that ended while its issue stayed open and assigned: the issue is
+    /// not taken again until Hephaisto was unassigned and assigned again.
+    /// </summary>
+    public required bool StillAssigned { get; init; }
+
+    /// <summary>What was tried for it, newest first. One attempt per work item.</summary>
+    public required IReadOnlyList<CodeFixRow> CodeFixes { get; init; }
+
+    [ServerAuthored]
+    public required string Note { get; init; }
+
+    [ServerAuthored]
+    public required IReadOnlyList<string> Next { get; init; }
 }
 
 public sealed record IncidentCodeFixes

@@ -211,6 +211,51 @@ pager_alerts_sent() { pager_teams "$1" | jq '[.[] | select(.kind == "chat")] | l
 
 pager_teams_deletes() { _pager_curl "$PAGER_STANDIN/teams/messages" | jq '.deletes'; }
 
+# A click on a card's button (#124): the stand-in signs an invoke the way the Bot Framework does
+# and delivers it to the agent's actions port. Prints the stand-in's whole answer:
+# {status, body, objectId} - the agent's HTTP status, what it answered, who the click was sent as.
+#   pager_click '{"incidentId":"...","verb":"close","user":"oncall@example.com","reason":"..."}'
+# user is a member of the stand-in's team or anybody else; who is an APPROVER is the agent's
+# notifications.teamsBot.actions.approvers (values-pager.yaml names oncall@example.com's id).
+pager_click() {
+    _pager_curl -X POST "$PAGER_STANDIN/teams/click" -H 'Content-Type: application/json' --data "$1"
+}
+
+# What the agent's answer to a click says, whichever of the three shapes it took: a message's
+# text, an error's message, or "card" for a refreshed card. Empty when it answered no body.
+#   pager_click_said <answer-json>
+pager_click_said() {
+    jq -r '.body as $b
+        | if ($b | type) != "object" then ""
+          elif $b.type == "application/vnd.microsoft.card.adaptive" then "card"
+          elif ($b.value | type) == "string" then $b.value
+          else ($b.value.message // "") end' <<<"$1"
+}
+
+# Every verb a button on the newest personal alert about the incident would send, sorted and
+# comma-separated - wherever in the card the button sits (the card's own row, an ActionSet in
+# its body, the card a ShowCard unfolds).
+#   pager_card_verbs <incident-id>
+pager_card_verbs() {
+    _pager_curl "$PAGER_STANDIN/teams/messages" \
+        | jq -r --arg id "$1" '
+            [.messages[] | select(.kind == "chat") | select((.activity | tostring) | contains($id))]
+            | (last // {}) | [.activity | .. | objects | select(.type? == "Action.Execute") | .verb]
+            | unique | join(",")'
+}
+
+# Waits until the newest alert about the incident carries a button with that verb.
+#   pager_wait_verb <incident-id> <verb> [timeout]
+pager_wait_verb() {
+    local id="$1" verb="$2" timeout="${3:-40}"
+    local deadline=$(( SECONDS + timeout ))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        case ",$(pager_card_verbs "$id" 2>/dev/null)," in *",$verb,"*) return 0 ;; esac
+        sleep 2
+    done
+    return 1
+}
+
 # Outbound webhook deliveries that mention the incident.
 pager_received() {
     _pager_curl "$PAGER_STANDIN/received" \
@@ -235,14 +280,4 @@ pager_close() {
 pager_ack() {
     _pager_curl -o /dev/null -w '%{http_code}' -X POST "$PAGER_API/api/incidents/$1/acknowledge" \
         -H 'Content-Type: application/json' --data '{"actor":"pager-suite"}'
-}
-
-# Asserts, recording through common.sh's pass/fail.
-#   want <name> <actual> <op> <expected>     op: -eq -ne -ge -le -gt -lt = !=
-want() {
-    local name="$1" actual="$2" op="$3" want="$4"
-    case "$op" in
-        =|!=) [ "$actual" "$op" "$want" ] ;;
-        *)    [ "${actual:-0}" "$op" "$want" ] 2>/dev/null ;;
-    esac && pass "$name" || fail "$name" "got '${actual}', wanted $op '${want}'"
 }

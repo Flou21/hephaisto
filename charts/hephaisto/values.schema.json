@@ -238,6 +238,10 @@
         "mcp": {
           "type": "string",
           "description": "Secret holding the MCP endpoint's tokens: one key per mcp.tokens[].name, each at least 32 characters. Required when mcp.tokens is not empty."
+        },
+        "github": {
+          "type": "string",
+          "description": "Secret in the RELEASE namespace holding the agent's GitHub token under key `GITHUB_TOKEN`. Required when github.enabled is true. Never the same name as secrets.codeFix."
         }
       },
       "additionalProperties": false
@@ -353,7 +357,7 @@
             },
             "actions": {
               "type": "object",
-              "description": "Buttons that act on an alert (Acknowledge, Assign to me). Creates the one inbound route Microsoft calls, POST /api/teams/messages, on its own port.",
+              "description": "Buttons that act on an alert (Acknowledge, Assign to me, Reinvestigate; Close for the approvers named; Approve and Deny with approvals.enabled). Creates the one inbound route Microsoft calls, POST /api/teams/messages, on its own port.",
               "properties": {
                 "enabled": {
                   "type": "boolean"
@@ -363,6 +367,25 @@
                   "minimum": 1,
                   "maximum": 65535,
                   "description": "The port the route answers on, and the only thing that does. Not 8080 and not webhookPort."
+                },
+                "approvers": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+                  },
+                  "description": "Who holds the approver role in Teams, as Microsoft Entra object ids (GUIDs). Empty means nobody: Close is not drawn and is refused."
+                },
+                "approvals": {
+                  "type": "object",
+                  "description": "Approve and Deny of a proposed action from the card. Its own switch; refused without actions.enabled and without an approver.",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
                 }
               },
               "additionalProperties": false
@@ -1333,6 +1356,60 @@
               }
             }
           }
+        }
+      }
+    },
+    "github": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "GitHub issues as work (v0.14.0): an issue assigned to the agent's account, in a listed repository, is taken as a work item. Off by default.",
+      "required": [
+        "enabled"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "apiBaseUrl": {
+          "type": "string",
+          "pattern": "^https?://[^\\s/]+(/[^\\s]*)?$",
+          "description": "The REST API's root. https://api.github.com, or https://<host>/api/v3 for GitHub Enterprise Server."
+        },
+        "botLogin": {
+          "type": "string",
+          "pattern": "^$|^[A-Za-z0-9][A-Za-z0-9-]*(\\[bot\\])?$",
+          "description": "The account issues are assigned to. Empty means whoever the token belongs to."
+        },
+        "pollInterval": {
+          "type": "string",
+          "pattern": "^([0-9]+\\.)?[0-9]{1,2}:[0-9]{2}:[0-9]{2}$",
+          "description": "How often each repository is asked. .NET TimeSpan (hh:mm:ss), not Go duration. At least five seconds."
+        },
+        "issues": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repositories": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+$"
+              },
+              "description": "The authorization list: owner/repo. An issue in any other repository is never asked about."
+            }
+          }
+        },
+        "approvers": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "description": "Who may answer a plan on the issue with /approve or /reject, by GitHub account number - never a login. Empty: nobody can answer by comment."
+        },
+        "useEgressProxy": {
+          "type": "boolean",
+          "description": "Send the agent's GitHub calls through codeFix.egressProxy when that proxy is rendered."
         }
       }
     }

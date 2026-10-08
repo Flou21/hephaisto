@@ -11,7 +11,7 @@
         "cost_usd": 0,
         "structured_output": {
           "outcome": "planned",
-          "summary": "FAKE SDK plan: Endpoints.Primary checks options.Endpoints.Count without a null check, so an absent Shop:Endpoints section crashes startup with a NullReferenceException.",
+          "summary": "FAKE SDK plan: Endpoints.Primary checks options.Endpoints.Count without a null check, so an absent Shop:Endpoints section crashes startup with a NullReferenceException.{{repeated}}",
           "root_cause": "src/Shop.Api/Startup/Endpoints.cs:17 dereferences options.Endpoints, which the binder leaves null (not empty) when Shop:Endpoints is absent; the code guards only against an empty list.",
           "confidence": 0.9,
           "files": ["src/Shop.Api/Startup/Endpoints.cs"],

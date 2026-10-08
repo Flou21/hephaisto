@@ -102,6 +102,17 @@ check() {
     fi
 }
 
+# Assert helper for a value: `want "<name>" <actual> <op> <expected>`, where op is one of
+# -eq -ne -ge -le -gt -lt = !=. Here rather than in lib/pager.sh, where it began, since the
+# issues suite's scenarios are written with it too.
+want() {
+    local name="$1" actual="$2" op="$3" want="$4"
+    case "$op" in
+        =|!=) [ "$actual" "$op" "$want" ] ;;
+        *)    [ "${actual:-0}" "$op" "$want" ] 2>/dev/null ;;
+    esac && pass "$name" || fail "$name" "got '${actual}', wanted $op '${want}'"
+}
+
 # ---------------------------------------------------------------------------------------
 # The safety wrappers
 # ---------------------------------------------------------------------------------------

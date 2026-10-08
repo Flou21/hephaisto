@@ -3,6 +3,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { type InvestigatorRunResult, type InvestigatorStop, buildAgentEnv, guardEnvFor, runInvestigator } from './agent.js';
 import { type RunnerEnv, type WorkPaths, withNoProxyFor } from './config.js';
 import { type GuardContext, realish } from './guard.js';
+import { type PrepareHandoff, newPrepareHandoff } from './handoff.js';
 import { addRedaction, log } from './log.js';
 import { EndpointUnauthorizedError, InvestigatorClient } from './mcp-client.js';
 import { loadTemplate, render } from './prompts.js';
@@ -20,6 +21,18 @@ import { checkoutAnalysedRef, cloneTarget, makeDirs, prepareContext, sanitizeTar
 //
 //   /work/context        dev-context @ request.context.ref (notes and memory, read-only)
 //   /work/repos/<name>   the workload's source, read-only, when request.source is set
+//
+// Two halves since #116. prepareInvestigate makes those two clones - the only thing here that
+// needs a GitHub token, and dev-context is private in production, so it is needed by every run -
+// in the prepare role. runInvestigate is the coder role: the endpoint preflight, the model, the
+// result. Its container is handed the model credential and no GitHub token.
+
+export interface InvestigatePrepareDeps {
+  env: RunnerEnv;
+  paths: WorkPaths;
+  abort: AbortController;
+  startedAt: number;
+}
 
 export interface InvestigateDeps {
   env: RunnerEnv;
@@ -144,11 +157,55 @@ function syntheticEntry(url: string, defaultBranch: string): RepoEntry {
   return { name, url, defaultBranch, stack: 'other', coderEnabled: false, workloads: [], commands: {}, verification: { hasUnitTests: false } };
 }
 
-export async function runInvestigate(req: InvestigateRequest, deps: InvestigateDeps): Promise<InvestigateResult> {
+/**
+ * The prepare role of an investigation: dev-context, and the workload's source when the request
+ * names one. A context clone that fails ends the run (as it always did); a source clone that
+ * fails is reported in the result and the investigation goes on without it.
+ */
+export async function prepareInvestigate(req: InvestigateRequest, deps: InvestigatePrepareDeps): Promise<PrepareHandoff> {
+  const { env, paths } = deps;
+  addRedaction(req.endpoint.token);
+  const h = newPrepareHandoff(req.attempt_id, 'investigate', deps.startedAt);
+  h.source = req.source ? { cloned: false, analysed_ref: null, error: null } : null;
+  try {
+    makeDirs(paths);
+    const ctx = await prepareContext(req, env, paths, deps.abort.signal);
+    h.context_sha = ctx.contextSha;
+
+    // Part 8: the source, read-only. Any failure is reported and the investigation goes on without it.
+    if (req.source) {
+      const src = req.source;
+      const entry = findRepo(ctx.repos, src.url) ?? syntheticEntry(src.url, src.default_branch);
+      const dir = join(paths.repos, repoDirName(entry));
+      try {
+        const target = await cloneTarget({ repository: { url: src.url, default_branch: src.default_branch } }, ctx.repos, entry, env, paths, deps.abort.signal);
+        const analysedRef = await checkoutAnalysedRef(target, src.image, src.default_branch, src.ref);
+        await sanitizeTarget(target);
+        for (const n of target.notes) log.info(`source: ${n}`);
+        h.repo_dir = repoDirName(entry);
+        h.source = { cloned: true, analysed_ref: analysedRef, error: null };
+      } catch (e) {
+        rmSync(dir, { recursive: true, force: true });
+        const msg = (e as Error).message.split('\n')[0]!;
+        log.warn(`the source ${src.url} could not be cloned: ${msg}; investigating without it`);
+        h.source = { cloned: false, analysed_ref: null, error: Array.from(msg).slice(0, 1000).join('') };
+      }
+    }
+    return h;
+  } catch (e) {
+    log.error(`investigate could not be prepared: ${(e as Error).stack ?? String(e)}`);
+    // billing is the printing role's to say: this one holds no model credential to judge it by
+    const result = minimalFailed('investigate', req.attempt_id, (e as Error).message, 'api');
+    return { ...h, terminal: { ...result, context_sha: h.context_sha, source: h.source } };
+  }
+}
+
+export async function runInvestigate(req: InvestigateRequest, deps: InvestigateDeps, h: PrepareHandoff): Promise<InvestigateResult> {
   const { env, paths } = deps;
   addRedaction(req.endpoint.token);
   const result = minimalFailed('investigate', req.attempt_id, 'investigate did not complete', billingOf(env));
-  result.source = req.source ? { cloned: false, analysed_ref: null, error: null } : null;
+  result.context_sha = h.context_sha;
+  result.source = h.source;
   const progress = () => deps.onProgress?.(structuredClone(result));
   progress();
   try {
@@ -162,32 +219,8 @@ export async function runInvestigate(req: InvestigateRequest, deps: InvestigateD
     }
     log.info(`investigator endpoint ok: ${pre.tools.length} tools${pre.tools.includes('conclude') ? '' : ' (WARNING: no conclude tool)'}`);
 
-    const ctx = await prepareContext(req, env, paths, deps.abort.signal);
-    result.context_sha = ctx.contextSha;
-    progress();
-
-    // Part 8: the source, read-only. Any failure is reported and the investigation goes on without it.
-    let repoDir: string | null = null;
-    let analysedRef: string | null = null;
-    if (req.source) {
-      const src = req.source;
-      const entry = findRepo(ctx.repos, src.url) ?? syntheticEntry(src.url, src.default_branch);
-      const dir = join(paths.repos, repoDirName(entry));
-      try {
-        const target = await cloneTarget({ repository: { url: src.url, default_branch: src.default_branch } }, ctx.repos, entry, env, paths, deps.abort.signal);
-        analysedRef = await checkoutAnalysedRef(target, src.image, src.default_branch, src.ref);
-        await sanitizeTarget(target);
-        for (const n of target.notes) log.info(`source: ${n}`);
-        repoDir = target.dir;
-        result.source = { cloned: true, analysed_ref: analysedRef, error: null };
-      } catch (e) {
-        rmSync(dir, { recursive: true, force: true });
-        const msg = (e as Error).message.split('\n')[0]!;
-        log.warn(`the source ${src.url} could not be cloned: ${msg}; investigating without it`);
-        result.source = { cloned: false, analysed_ref: null, error: Array.from(msg).slice(0, 1000).join('') };
-      }
-      progress();
-    }
+    const repoDir = req.source && h.source?.cloned && h.repo_dir && existsSync(join(paths.repos, h.repo_dir)) ? join(paths.repos, h.repo_dir) : null;
+    const analysedRef = h.source?.analysed_ref ?? null;
 
     const sourceBlock = repoDir
       ? `\`${repoDir}\` - the workload's source, read-only, checked out at commit \`${analysedRef}\`, the commit the running image was built from when it was known (otherwise ${req.source!.default_branch} HEAD)${req.source!.path ? `; the workload is built from its \`${req.source!.path}\` subdirectory` : ''}.`

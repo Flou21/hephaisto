@@ -158,6 +158,58 @@ public static class Display
     };
 
     /// <summary>
+    /// An address that may be the target of a link: absolute, http or https. Anything else -
+    /// empty, relative, another scheme - is null, and the caller shows text instead. An issue's
+    /// address is whatever the API that was asked said it is.
+    /// </summary>
+    public static string? HttpUrl(string? url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var parsed) && parsed.Scheme is "http" or "https" ? url : null;
+
+    /// <summary>
+    /// Through what a plan was answered, in the words a reader of the attempt's page needs. The
+    /// console records <c>Ui</c>; the API <c>Api</c>, or <c>Oidc</c> when the caller carried a
+    /// token; a comment on the issue <c>GitHub</c> (v0.14.0). Null where nothing was recorded.
+    /// </summary>
+    public static string? DecidedThrough(ApprovalSource? source) => source switch
+    {
+        ApprovalSource.Ui => "the console",
+        ApprovalSource.Api => "the API",
+        ApprovalSource.Oidc => "the API, signed in",
+        ApprovalSource.Teams => "a Teams card",
+        ApprovalSource.GitHub => "a comment on the issue",
+        _ => null,
+    };
+
+    /// <summary>
+    /// A work item's three states (v0.14.0), in the code-fix vocabulary: taken is work in
+    /// progress, done is the good end, and cancelled - the issue closed, Hephaisto unassigned,
+    /// its pull request closed unmerged - is nobody's failure.
+    /// </summary>
+    public static string WorkItemGlyph(WorkItemState state) => state switch
+    {
+        WorkItemState.Taken => "~",
+        WorkItemState.Done => "+",
+        WorkItemState.Cancelled => "/",
+        _ => "?",
+    };
+
+    public static string WorkItemClass(WorkItemState state) => state switch
+    {
+        WorkItemState.Taken => "st-investigating",
+        WorkItemState.Done => "st-resolved",
+        WorkItemState.Cancelled => "st-suppressed",
+        _ => "st-detected",
+    };
+
+    public static string WorkItemWord(WorkItemState state) => state switch
+    {
+        WorkItemState.Taken => "taken",
+        WorkItemState.Done => "done",
+        WorkItemState.Cancelled => "cancelled",
+        _ => "unknown",
+    };
+
+    /// <summary>
     /// The code-fix mode as the nav's agent-mode badge colours it: Off is quiet, Plan only reads
     /// (the observe colour), Pr can end in a write and takes the auto colour.
     /// </summary>

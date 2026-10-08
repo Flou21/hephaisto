@@ -278,3 +278,203 @@ Two more tiers, local and on demand, never in CI:
 
 A scenario that needs an investigation with evidence scripts the model stand-in first
 (`mcp_script`, `POST /llm/script`): it reads one tool, then concludes citing the step it read.
+
+## The issues suite (`issues-local.sh`), v0.14.0
+
+A third suite, about a third question: can Hephaisto be handed a GitHub issue. An issue assigned
+to its account is planned by a Job, the plan is a comment on the issue, an approver answers
+`/approve` or `/reject <reason>` in a comment, and the implementing Job opens a draft pull request
+that closes the issue (#243). One scenario per file (`issues/G*.sh`; `issues-local.sh --list`
+prints them), in the pager suite's shape: a header line, a `scenario()` function, `KNOWN_RED`
+with a milestone per entry, `--strict` as the release gate, `IssuesSuiteTests` for the
+bookkeeping.
+
+```sh
+# tilt_config.json: "github": "stand-in", "coder": true, "coder-mode": "pr", "coder-sdk": "fake"
+scripts/e2e/issues-local.sh                 # every scenario, one at a time
+scripts/e2e/issues-local.sh --only G01,G03
+```
+
+It runs on the dev cluster only. Not in CI yet: a plan clones a repository and the dev-context,
+and the in-cluster git server is seeded from a private one.
+
+**GitHub is a stand-in** (`infra/e2e/notification-receiver/GitHubStandIn.cs`), in the pod that
+is Teams and the model too, under a Service name of its own: an agent's API base URL is
+`http://github-stand-in.hephaisto-obs:8080/github/api`. It answers the eight REST calls the agent
+makes, with GitHub's field names, and copies what a client gets wrong against the real thing:
+`ETag` and a 304 for a list already given, 30 per page unless asked, `"body": null`, `since`
+inclusive at whole seconds, comment ids beyond 32 bits, a rate limit as a 403. What it does not
+copy: GitHub's issue list also returns pull requests, and this one never does.
+
+The other half is for the harness - a person at github.com, and a witness. Through Tilt's
+forward (`$H:8110`), no token:
+
+| | |
+|---|---|
+| `POST /github/control/repos/{o}/{r}/issues` `{title, body?, login, id?}` | somebody opens an issue |
+| `POST .../issues/{n}/assign`, `.../unassign` | the bot becomes, or stops being, an assignee |
+| `PATCH .../issues/{n}` `{body?, title?, state?}` | an edit; `state` closes and reopens |
+| `POST .../issues/{n}/comments` `{body, login, id?}` | a comment as that account |
+| `PUT .../pulls/{n}` `{merged?, state?}` | what became of a pull request; one nobody registered is an open draft |
+| `DELETE .../pulls/{n}` | forget it: an open draft again. The `gh` shim numbers pull requests from 1 in every Job |
+| `POST /github/control/fail/{500\|rate-limit\|off}?count=N` | the next N API calls fail |
+| `GET /github/control/requests` | every API call the agent made: `seq`, method, path, query, status |
+| `GET /github/control/comments` | every comment, with its issue, its author and how often it was edited |
+| `GET /github/control/state`, `DELETE /github/control` | everything it holds; forget it |
+
+An account is a login **and** a number, and a scenario comments as an approver by number
+(`lib/issues.sh`: `maintainer`, 1001) - which is what the install under test has to list. The
+stand-in's token and the bot's login are in `infra/e2e/teams-stand-in.yaml`.
+
+`lib/issues.sh` has two halves and says which is which: `gh_*` drives the stand-in and was
+exercised when it was written; `wi_*` reads an agent API that did not exist yet, and is the one
+place a later stage adjusts when a path or a field turns out differently. Its header lists six
+things it reads and marks each BUILT or ASSUMED: since stage 2.2 (#245) the work items
+(`GET /api/workitems`), a cancel, and `github` in `/api/status` are built, and G02 and G09 are
+green. Since stage 2.3 (#246) a work item's attempt is a row of `GET /api/codefixes` with a
+`workItemId`, its Job's request is contract version 2 with the issue under `work_item`, and the
+plan is a comment on the issue - G01, G07 and G08 are green. `issues_plan_ready`, the road ten
+scenarios start on, ends where the issue has been told: `PlanReady` is written by the loop that
+collects a Job, the comment by the poller's next pass, and the attempt names it (`planCommentId`)
+once it is there. Since stage 2.4 (#247) nothing is ASSUMED: a plan is answered on the issue, the
+pull request's body is `prBody` on the attempt (`issues_pr_body` reads it there - the Job's pod is
+gone when a scenario looks), a merged pull request is `Done`, and G03 to G06 and G10 to G12 are
+green. `KNOWN_RED` lists nothing, so a plain run and `--strict` are the same. Since stage 2.5
+(#248) G01 also reads the Teams stand-in: a plan for an issue is announced through the outbox,
+and where the install routes `CodeFixPlanReady` to the Teams bot - the dev values do, with
+`"teams-bot": "stand-in"` - one message per recipient's chat names the issue by its reference,
+says where the plan is answered and links the attempt's page (`issues_route_takes`,
+`issues_teams_alerts`). An install without that route skips the block and says why.
+
+What the bot writes on an issue is one status comment per work item, edited in place as the work
+moves, and one comment per attempt with its plan - and, only when somebody answered a plan and
+was not heard, one answer per attempt to people who are not approvers and one per cause an
+approver was refused for. Never more than six for one work item (`ISSUES_COMMENT_CAP`, which a
+unit test holds to `IssueComments.MaxPerWorkItem`). `curl -s
+http://$H:8110/github/control/comments | jq -r '.[] | "\(.edits) \(.body)"'` shows them.
+
+A scenario answers a plan the way a person does: `gh_comment_as <repo> <n> maintainer 1001
+"/approve"`. The command is the comment's first non-blank line; the number is what makes it
+count.
+
+All scenarios work in one repository, and each is an attempt on it. `values-dev-coder.yaml` allows
+20 a day, which two runs of this suite beside the incident suites would use up - reported as "no
+plan for the issue: 20 attempts on this repository today (cap 20)" on the issue and in
+`declineReason`. `values-dev-github.yaml` therefore raises `codeFix.budgets.attemptsPerRepositoryPerDay`
+to 500, for the stand-in only - and, since every work item's code fix is announced,
+`notifications.maxPerChannelPerHour` to 1000: a run is about thirty messages on the one channel,
+and the chart's sixty an hour would have the second run within the hour suppress them, with every
+incident's message of whatever suite ran beside it.
+
+**The agent is pointed at the stand-in by a values file**, `charts/hephaisto/values-dev-github.yaml`,
+which the Tiltfile layers for `"github": "stand-in"`: the stand-in's URL, its bot's login, the one
+listed repository, approver 1001, a five-second poll, and `secrets.github` naming the Secret
+`hephaisto-github-stand-in` that is applied with the stand-in. The dev agent therefore gets its
+token the way an install does - the chart's `secretKeyRef` - and not through `extraEnv`, which
+the chart refuses for every `GitHub__` name.
+
+**`github` in `/api/status` is up to a minute behind.** The row is what the poller last saw,
+served from the status page's cache, which is refreshed every 60 seconds. G09 waits for each
+change of it, so that scenario takes four to five minutes however fast the poller is.
+
+**The stand-in's image can vanish.** It is a fixed tag (`hephaisto/notification-receiver:dev`)
+that no container uses between a rebuild and the pod's restart, and a kubelet whose disk is
+filling up deletes images nothing uses (seen on the dev node on 2026-10-06, at 84%: `kubectl get
+events -A --field-selector reason=ImageGCFailed`). The restart then ends in `ImagePullBackOff`
+and takes Teams and the model stand-in with it. Rebuild the image and delete the pod:
+
+```sh
+docker build -f infra/e2e/notification-receiver/Dockerfile -t hephaisto/notification-receiver:dev .
+kubectl -n hephaisto-obs delete pod -l app.kubernetes.io/name=teams-stand-in
+```
+
+## The live tier (`github-live.sh`), v0.14.0
+
+The issues suite asks a stand-in, and a stand-in answers what its authors believed GitHub
+answers. `github-live.sh` asks GitHub ([#249](https://github.com/Flou21/hephaisto/issues/249)):
+the dev agent against `https://api.github.com`, a real bot account with its two real tokens, the
+real `gh` in the coder Job. It is the only automated test in this repository that leaves the
+cluster for github.com. The model stays the script, so a run costs nothing but a quarter of an
+hour. **Run it before each release candidate**, and after any change to what Hephaisto sends
+GitHub or writes there.
+
+```sh
+# tilt_config.json: "github": "live", "coder": true, "coder-mode": "pr", "coder-sdk": "fake"
+scripts/e2e/github-live.sh                 # every scenario, one at a time, about 15 minutes
+scripts/e2e/github-live.sh --only L01
+scripts/e2e/github-live.sh --list
+scripts/e2e/github-live.sh --sweep         # close whatever a killed run left in the sandbox
+```
+
+| | What it asks of GitHub |
+|---|---|
+| L01 | The whole road: an issue opened and assigned with `gh` is a work item within a poll; the status comment and the plan are comments **by the bot account**, the first edited in place (GitHub says `updated_at > created_at`), never a third; `/approve` by a person whose number the install lists starts the implementing Job; the pull request is a **draft**, by the bot, from a `hephaisto/codefix-<id>` branch into `main`; **GitHub itself** names the issue as closed by it and no other (`closingIssuesReferences`, and the closing keyword its renderer marks); the diff is the scripted fix's files; every commit carries the attempt's trailer and the head `Hephaisto-Issue`; `main` did not move; what the agent kept as `prBody` is the description GitHub has. Then the pull request is closed without merging: the work item is `Cancelled`, "pull request closed without merging", the issue says so, and the issue - still open and assigned - is not taken again |
+| L02 | `/reject <reason>`: `Denied` by `github:<login>` with the reason, said on the issue; no Job, no branch, no pull request on GitHub. Closing the issue then ends the work item with "the issue was closed" |
+| L03 | The bot unassigned while the plan waits: `Cancelled`, "`<bot>` is no longer an assignee", the issue is told; an `/approve` afterwards changes nothing, starts nothing and is not answered |
+| L04 | What was only assumed. An unchanged list is answered **304** (the agent's own counter), through the egress proxy (its log has the agent's tunnels to `api.github.com`); GitHub also answers 304 for the two other things the agent asks with a tag - an issue's comments since a time, and a pull request; `github` is `Healthy`. And **what Hephaisto repeats does nothing**: the plan repeats a line of the issue with a mention, `#n`, `GH-n` and an issue's address, the status comment the same from a `/reject` - GitHub's HTML of both has no mention and no link, and the other issue's timeline has no reference by the bot. With a control: the approver's own comment with the same words does produce a mention, a link and a timeline entry |
+
+**What it needs**, all made by hand, and checked before anything is written:
+
+- **A bot account**, a member of the sandbox's organisation with write on the sandbox - GitHub
+  ignores an assignee it will not accept, and answers 201 all the same.
+- **Its two tokens**, fine-grained, in the two Secrets: the agent's in `hephaisto-github`
+  (namespace `hephaisto`, key `GITHUB_TOKEN`: Issues read and write, Pull requests read - it
+  cannot push), the coder's as `GITHUB_TOKEN` in `hephaisto-codefix` (namespace
+  `hephaisto-coder`: Contents read and write, Pull requests read and write). That was enough
+  for everything above, including `gh pr create --draft --assignee`.
+- **The sandbox**, `TrueRelevance/hephaisto-sandbox`, with GitHub Actions **disabled** - a pushed
+  branch must not run anything, and the suite refuses to start when they are on. Its `main` is
+  the fixture's `fixture/c15-null-deref`, which is what the scripted fix applies to; the fake
+  SDK plays the fixture's scripts for it (`coder/fake-scripts/aliases.json`).
+- **The sandbox in dev-context's `repos.yaml`**, `coderEnabled`. The dev cluster serves
+  dev-context from `coder-git`, seeded from the local checkout, and
+  `values-dev-github-live.yaml` names the ref (`codeFix.contextRepository.ref`).
+- **`gh` on this machine**, logged in as an account whose number is in the agent's
+  `github.approvers`. The suite plays the person with it.
+
+**It refuses to run** unless the kube context is this machine's, the agent's
+`GitHub__ApiBaseUrl` is `https://api.github.com`, the one repository it lists is the sandbox,
+`CodeFix__Sdk` is `fake`, the Job's `gh` is not the shim, `gh` is an approver, Actions are off
+on the sandbox, and neither the sandbox nor the agent holds anything an earlier run left.
+
+**It writes in one repository.** `lib/live.sh` is `lib/issues.sh` with the person's half
+redefined: every call to GitHub goes through `_live_api` or `_live_gh`, which put
+`TrueRelevance/hephaisto-sandbox` into the request themselves - the name is a `readonly`
+constant, not a setting, and `LiveSuiteTests` fails on a bare `gh` anywhere else, on a merge,
+on a push, and on a delete of anything but a `hephaisto/codefix-<id>` branch. A run opens five
+issues (one per scenario and a bystander that nothing may point at), writes four comments as
+the person, and has the bot open one branch and one draft pull request. A trap cleans up on
+every exit: its issues are closed, the pull request is closed - never merged - and the branch is
+deleted, after the agent has let go of the issues, so that no Job pushes afterwards. The last
+four lines of a run say whether the sandbox was left as it was found, `main` included.
+
+**What it does not test**, and where that is tested instead:
+
+- **Merged is `Done`.** A merge would move `main`, and the scripted fix would no longer apply.
+  That the agent reads a merge as `Done` is issues G11, against the stand-in; that GitHub will
+  close the issue on a merge is what `closingIssuesReferences` says, without merging.
+- **Somebody who is not an approver** (G04): there is one human account.
+- **GitHub failing or limiting** (G09): it cannot be told to. It did, once - see below.
+- **A model.** The coder is the script. What it repeats is what an issue's
+  `FAKE-SDK-REPEAT:` line asks for (`coder/src/phases.ts`), which is how a mention and a
+  closing keyword get into a plan at all.
+- The comment cap (G10), a restart in the middle (G08), the mode (G12), a label on the pull
+  request (the sandbox has none named `hephaisto`; the run asserts that the attempt says so).
+
+**GitHub is not a stand-in, and behaves like it.** Two things from the first afternoon:
+
+- *It is late sometimes.* What a pull request will close is worked out by GitHub after the
+  pull request is saved: seconds as a rule. On the second run it was still empty eight minutes
+  later, a `PATCH` that closes a pull request was answered with an error and no body, and a
+  comment the agent wrote was answered 500 - which the agent survived as designed (the next
+  pass wrote it, once). L01 waits for the list and asks once more to close; a run in such a
+  window may still be red, and the log says which request GitHub refused.
+- *It reads more than was assumed.* `/issues/12` is a reference by itself. Both functions that
+  make a model's words inert were wrong about that until this suite ran; `git log --grep '#249'`
+  has the two fixes.
+
+**The dev cluster in this mode is not the dev cluster.** `values-dev-github-live.yaml` empties
+`codeFix.repositories`: with the real `gh` in the Job, a chaos fixture's code fix would fail at
+`gh pr list` against the in-cluster git server and hold the one Job slot meanwhile. So
+`codefix-local.sh`, `investigate-local.sh` and `issues-local.sh` do not run while it is on. Put
+`"github"` back to `"stand-in"` afterwards and wait for the agent.

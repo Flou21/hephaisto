@@ -167,6 +167,15 @@ public sealed class HttpNotificationChannel(
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public CodeFixPayload? CodeFix { get; init; }
 
+        /// <summary>
+        /// The issue a code-fix event is about, when it is about a work item and not an incident
+        /// (v0.14.0). <c>incident</c> is then absent, and <c>severity</c> is <c>Info</c>: an
+        /// issue has none.
+        /// </summary>
+        [JsonPropertyName("workItem")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public WorkItemPayload? WorkItem { get; init; }
+
         public static Payload From(NotificationMessage message)
         {
             var s = message.Snapshot;
@@ -203,11 +212,32 @@ public sealed class HttpNotificationChannel(
                     ? null
                     : new CodeFixPayload { AttemptId = attempt, Repository = s.Repository, PrUrl = s.ExternalUrl },
 
-                Links = message.IncidentUrl is null && message.GrafanaUrl is null
+                WorkItem = s.WorkItemId is not { } workItem
                     ? null
-                    : new LinksPayload { Incident = message.IncidentUrl, Grafana = message.GrafanaUrl },
+                    : new WorkItemPayload { Id = workItem, Issue = s.Issue, Url = s.IssueUrl, Summary = s.Summary },
+
+                Links = message.IncidentUrl is null && message.GrafanaUrl is null && message.CodeFixUrl is null
+                    ? null
+                    : new LinksPayload { Incident = message.IncidentUrl, CodeFix = message.CodeFixUrl, Grafana = message.GrafanaUrl },
             };
         }
+    }
+
+    private sealed record WorkItemPayload
+    {
+        [JsonPropertyName("id")]
+        public required Guid Id { get; init; }
+
+        /// <summary><c>owner/repo#12</c>.</summary>
+        [JsonPropertyName("issue")]
+        public string? Issue { get; init; }
+
+        [JsonPropertyName("url")]
+        public string? Url { get; init; }
+
+        /// <summary>The plan's summary - a model's words, as <c>incident.summary</c> is.</summary>
+        [JsonPropertyName("summary")]
+        public string? Summary { get; init; }
     }
 
     private sealed record CodeFixPayload
@@ -260,6 +290,11 @@ public sealed class HttpNotificationChannel(
     {
         [JsonPropertyName("incident")]
         public string? Incident { get; init; }
+
+        /// <summary>The attempt's own console page, for a work item's code-fix event; absent otherwise.</summary>
+        [JsonPropertyName("codeFix")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? CodeFix { get; init; }
 
         [JsonPropertyName("grafana")]
         public string? Grafana { get; init; }

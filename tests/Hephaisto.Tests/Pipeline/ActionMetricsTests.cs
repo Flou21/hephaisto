@@ -42,7 +42,7 @@ public sealed class ActionMetricsTests : IDisposable
     [Fact]
     public async Task A_rollback_records_that_it_happened()
     {
-        using var recorded = new Recorder(HephaistoTelemetry.Metrics.ActionsRolledBack);
+        using var recorded = new Recorder(factory, HephaistoTelemetry.Metrics.ActionsRolledBack);
 
         var executor = Substitute.For<IActionExecutor>();
         executor
@@ -69,7 +69,7 @@ public sealed class ActionMetricsTests : IDisposable
     [Fact]
     public void A_verification_result_records_its_outcome_and_attempt()
     {
-        using var recorded = new Recorder(HephaistoTelemetry.Metrics.VerificationResult);
+        using var recorded = new Recorder(factory, HephaistoTelemetry.Metrics.VerificationResult);
 
         metrics.VerificationResult(VerificationOutcome.Failed, 3);
 
@@ -81,7 +81,7 @@ public sealed class ActionMetricsTests : IDisposable
     [Fact]
     public void An_executed_action_records_a_closed_outcome_vocabulary()
     {
-        using var recorded = new Recorder(HephaistoTelemetry.Metrics.ActionsExecuted);
+        using var recorded = new Recorder(factory, HephaistoTelemetry.Metrics.ActionsExecuted);
 
         metrics.ActionExecuted(ActionType.RestartPod, AgentMode.Auto, ActionExecutor.Outcomes.Applied);
 
@@ -98,7 +98,7 @@ public sealed class ActionMetricsTests : IDisposable
         // are prose for a human: "workload is quarantined until 2026-08-30T12:34:56.789Z",
         // "pod is 45s old, younger than the 120s minimum". A timestamp in a label value is an
         // unbounded series on a counter that fires for every proposed action.
-        using var recorded = new Recorder(HephaistoTelemetry.Metrics.PolicyDecisions);
+        using var recorded = new Recorder(factory, HephaistoTelemetry.Metrics.PolicyDecisions);
 
         metrics.PolicyDecision(
             PolicyDecision.RequireApproval,
@@ -134,11 +134,17 @@ public sealed class ActionMetricsTests : IDisposable
         private readonly List<Dictionary<string, string?>> tags = [];
         private readonly Lock gate = new();
 
-        public Recorder(string instrumentName)
+        /// <param name="factory">
+        /// Whose meters are listened to: this test's, and nobody else's. A listener is
+        /// process-wide, and a name alone also matches the meter of every other test class that
+        /// happens to run beside this one - <c>VerificationTests</c> rolls back a ScaleWorkload
+        /// too, and whether its measurement landed in this list was a matter of scheduling.
+        /// </param>
+        public Recorder(Factory factory, string instrumentName)
         {
             listener.InstrumentPublished = (instrument, l) =>
             {
-                if (instrument.Meter.Name == HephaistoTelemetry.MeterName && instrument.Name == instrumentName)
+                if (factory.Owns(instrument.Meter) && instrument.Name == instrumentName)
                 {
                     l.EnableMeasurementEvents(instrument);
                 }
@@ -186,6 +192,8 @@ public sealed class ActionMetricsTests : IDisposable
             meters.Add(meter);
             return meter;
         }
+
+        public bool Owns(Meter meter) => meters.Contains(meter);
 
         public void Dispose()
         {

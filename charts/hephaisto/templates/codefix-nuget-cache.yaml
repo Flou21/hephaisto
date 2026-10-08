@@ -7,12 +7,17 @@ second attempt against a repository start warm.
 ReadWriteOnce, so two coder Jobs on different nodes cannot both mount it - which is one reason
 codeFix.budgets.concurrentJobs defaults to 1.
 
-OFF BY DEFAULT, because it is the one channel between attempts. Every other thing a coder
-touches is an emptyDir that dies with its pod; this survives. A coder that was steered by an
-injected instruction could write a package into it, and a NuGet package can carry MSBuild
-targets that the NEXT attempt's `dotnet build` executes. The coder never writes credentials
-here (its nuget.config holds a %NUGET_GITHUB_TOKEN% placeholder), but a cache is still code
-the next build runs. Turn it on for the speed, knowing that.
+OFF BY DEFAULT, because it is the one thing that outlives an attempt. Every other thing a coder
+touches is an emptyDir that dies with its pod; this survives, and a NuGet package can carry
+MSBuild targets that the NEXT attempt's restore and build execute - the restore in a container
+that holds the GitHub and NuGet tokens.
+
+Since v0.13.0 the Job mounts it writable only into `prepare`, whose restore is of the untouched
+default branch and runs before the model exists, and READ-ONLY into `coder`, where the model
+and the build of what it wrote run. So the model's container cannot put anything here for a
+later attempt to execute. What is left is what a mapped repository's own default branch restores.
+
+No credential is ever written here (a nuget.config holds %placeholders%, never a token).
 
 Hephaisto holds no delete on PVCs anywhere, and this one outlives `helm uninstall` only if you
 annotate it to - by default Helm removes it with the release.

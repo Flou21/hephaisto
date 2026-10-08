@@ -1,0 +1,162 @@
+@using Hephaisto.Agent.CodeFix
+
+@*
+    The plan of one code-fix attempt, in full: summary, confidence, how it would be verified, root
+    cause, files, steps, notes - and the tool calls its sandbox refused. Rendered on the incident
+    page (CodeFixSection) and on the attempt's own page (/codefixes/{id}, v0.14.0), which is the
+    only place an attempt for a GitHub issue has.
+
+    Every string here is a model's and is rendered as text: Razor encodes it, nothing is passed
+    through MarkupString, and nothing is turned into a link.
+*@
+
+@if (Attempt.Summary is { Length: > 0 } || Attempt.Steps.Count > 0)
+{
+    <h3>plan</h3>
+
+    @if (Attempt.Summary is { Length: > 0 } summary)
+    {
+        <p class="hp-plan-summary" data-testid="codefix-summary">@summary</p>
+    }
+
+    <dl class="hp-kv">
+        @if (Attempt.Confidence is { } confidence)
+        {
+            <dt>confidence</dt>
+            <dd>
+                <span class="hp-conf" title="The coder's own estimate. Advisory, uncalibrated.">
+                    <span class="hp-conf-track">
+                        <span class="hp-conf-fill" style="width:@Width(confidence)"></span>
+                    </span>
+                    <span class="mono">@confidence.ToString("F2", CultureInfo.InvariantCulture)</span>
+                </span>
+            </dd>
+        }
+
+        <dt>verification</dt>
+        <dd>
+            <span class="mono">@(Attempt.VerificationLevel ?? "unstated")</span>
+            @if (!string.Equals(Attempt.VerificationLevel, "tests", StringComparison.OrdinalIgnoreCase))
+            {
+                @* Anything short of tests means the PR can be green and wrong, and the
+                   reviewer is the only check left. That belongs in front of the approver. *@
+                <span class="hp-warn" data-testid="codefix-verification-weak">
+                    <span class="glyph">!</span> verification weak
+                </span>
+            }
+        </dd>
+
+        @if (Attempt.NotVerifiable.Count > 0)
+        {
+            <dt>not verifiable</dt>
+            <dd>
+                <ul class="hp-cf-list">
+                    @foreach (var nv in Attempt.NotVerifiable)
+                    {
+                        <li>@nv</li>
+                    }
+                </ul>
+            </dd>
+        }
+
+        @if (Attempt.PlanJobName is { Length: > 0 } || Attempt.ImplementJobName is { Length: > 0 })
+        {
+            <dt>jobs</dt>
+            <dd class="mono">
+                @Attempt.PlanJobName
+                @if (Attempt.ImplementJobName is { Length: > 0 } impl)
+                {
+                    <text> · @impl</text>
+                }
+            </dd>
+        }
+    </dl>
+
+    @if (Attempt.RootCause is { Length: > 0 } rootCause)
+    {
+        <h4>root cause</h4>
+        <pre class="hp-code" data-testid="codefix-root-cause">@rootCause</pre>
+    }
+
+    @if (Attempt.Files.Count > 0)
+    {
+        <h4>affected files <span class="hp-count">@Attempt.Files.Count</span></h4>
+        <ul class="hp-cf-files mono" data-testid="codefix-files">
+            @foreach (var f in Attempt.Files)
+            {
+                <li>@f</li>
+            }
+        </ul>
+    }
+
+    @if (Attempt.Steps.Count > 0)
+    {
+        <h4>steps</h4>
+        <ol class="hp-cf-steps" data-testid="codefix-steps">
+            @foreach (var step in Attempt.Steps)
+            {
+                <li>@step</li>
+            }
+        </ol>
+    }
+
+    @if (Attempt.Notes.Count > 0)
+    {
+        <h4>notes <span class="hp-count">@Attempt.Notes.Count</span></h4>
+        <ul class="hp-cf-notes" data-testid="codefix-notes">
+            @foreach (var note in Attempt.Notes)
+            {
+                @if (IsInjection(note))
+                {
+                    @* Text in the evidence that read like an instruction to the coder.
+                       Loud on purpose: a workload emitting that is itself worth a
+                       human's attention, whatever the plan says. *@
+                    <li class="note-injection" data-testid="codefix-note-injection">
+                        <span class="hp-chip chip-injection"><span class="glyph">!!</span> suspected injection</span>
+                        <span>@note</span>
+                    </li>
+                }
+                else
+                {
+                    <li>@note</li>
+                }
+            }
+        </ul>
+    }
+}
+
+@if (Attempt.DeniedToolCalls.Count > 0)
+{
+    <details class="hp-cf-denied" data-testid="codefix-denied-tools">
+        <summary>
+            <span class="hp-warn"><span class="glyph">!</span> @Attempt.DeniedToolCalls.Count denied tool call@(Attempt.DeniedToolCalls.Count == 1 ? "" : "s")</span>
+            <span class="hp-muted">— the coder asked for something its sandbox refused</span>
+        </summary>
+        <table class="hp-table">
+            <thead>
+                <tr><th>tool</th><th>input</th><th>reason</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var d in Attempt.DeniedToolCalls)
+                {
+                    <tr>
+                        <td class="mono">@d.Tool</td>
+                        <td class="mono hp-cf-input">@d.Input</td>
+                        <td>@d.Reason</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </details>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public CodeFixAttemptView Attempt { get; set; } = default!;
+
+    private static bool IsInjection(string note) =>
+        note.Contains("injection", StringComparison.OrdinalIgnoreCase);
+
+    private static string Width(double confidence) =>
+        (Math.Clamp(confidence, 0, 1) * 100).ToString("F1", CultureInfo.InvariantCulture) + "%";
+}

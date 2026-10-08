@@ -10,4 +10,4 @@ manually" is fine when it says what was done.
 - [ ] `scripts/visual-test.sh` passes, if the console or the site changed — baselines reviewed as
       images, not as a diffstat
 - [ ] New configuration has a reader in `src/` in this same commit
-- [ ] The backlog entry is updated in this same commit, if this fixes one
+- [ ] The commit that fixes an issue says `Closes #n`

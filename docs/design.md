@@ -190,8 +190,8 @@ only the stylesheet would document half the system.**
 
 | Concern | Where |
 |---|---|
-| `StateGlyph`, `SeverityGlyph`, `DecisionGlyph`, `CodeFixGlyph` | `Display.cs` |
-| `StateClass`, `SeverityClass`, `RiskClass`, `CodeFixClass` | `Display.cs` |
+| `StateGlyph`, `SeverityGlyph`, `DecisionGlyph`, `CodeFixGlyph`, `WorkItemGlyph` | `Display.cs` |
+| `StateClass`, `SeverityClass`, `RiskClass`, `CodeFixClass`, `WorkItemClass` | `Display.cs` |
 | timestamps (always UTC), USD to 6 dp, `ShortId`, byte and token counts | `Display.cs` |
 | everything those classes then look like | `app.css` |
 
@@ -228,6 +228,31 @@ typed name otherwise, and the approve policy checked so the console is never a w
 `POST .../approve`. Approve is disabled — with the reason printed beside it — when the mode is not
 Pr, when the plan needs a Cait change first, or when the viewer lacks the approver role. Deny stays
 available: refusing a plan never needs more than being a named human.
+
+### Work items, and an attempt's own page (v0.14.0)
+
+A GitHub issue handed to Hephaisto is a work item, and it has three states. They take the
+code-fix vocabulary rather than a fourth one, and **no token, class or component was added**:
+
+| State | Glyph | Word | Class | Why |
+|---|---|---|---|---|
+| Taken | `~` | taken | `st-investigating` | work in progress |
+| Done | `+` | done | `st-resolved` | its pull request was merged |
+| Cancelled | `/` | cancelled | `st-suppressed` | taken back, closed, or its pull request closed; nobody's failure |
+
+`/workitems` is the code-fix table with other columns. `/codefixes/{id}` is one attempt on a page
+of its own - the detail header, the timeline as its history, and the attempt panel the incident
+page has, whose plan is the shared `CodeFixPlan` component so the two cannot come to describe one
+plan differently. Approve and deny there follow the rules above and go through the same door, by
+the attempt's subject (`DecideAsync` for an incident, `DecideForWorkItemAsync` for a work item).
+
+**Somebody else's text is text.** An issue's title, a plan, a pull request's description and a
+rejection's reason are written by a stranger, a model, or an approver typing into a comment. They
+are rendered through Razor's encoding and nowhere through `MarkupString`: no markdown, no HTML,
+no link made from them. An address is a link only where Hephaisto recorded it as one - the
+issue's, the pull request's - and only when it is absolute http(s) (`Display.HttpUrl`). The
+console suite holds this by comparing an element's text with the stored string and counting the
+elements inside it: none.
 
 ---
 

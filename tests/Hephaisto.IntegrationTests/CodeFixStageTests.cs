@@ -434,7 +434,7 @@ public sealed class CodeFixStageTests(PostgresFixture pg)
             new NullWorkloadImageReader(),
             new CodeFixRequestBuilder(options),
             new CodeFixStateMachine(clock),
-            new CodeFixNotifier(db, notifications, new NullNotifier(), clock, NullLogger<CodeFixNotifier>.Instance),
+            new CodeFixNotifier(db, notifications, new OptionsStub<Hephaisto.Agent.GitHub.GitHubOptions>(new Hephaisto.Agent.GitHub.GitHubOptions()), new NullNotifier(), clock, NullLogger<CodeFixNotifier>.Instance),
             new CodeFixMetrics(meters),
             new NullGlobalLlmBudget(),
             new NullGrafanaAnnotator(),

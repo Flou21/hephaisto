@@ -262,12 +262,6 @@ public sealed class InvestigationRunner(
         activity?.SetTag("investigation.tool_calls", investigation.ToolCallsUsed);
         activity?.SetTag("investigation.cost_usd", investigation.CostUsd);
 
-        LlmInstrumentation.Terminations.Add(
-            1, new TagList { { "reason", termination.ToString() }, { "executor", investigation.Executor } });
-        LlmInstrumentation.InvestigationDuration.Record(
-            (clock.UtcNow - investigation.StartedAt).TotalMilliseconds,
-            new TagList { { "signal.kind", incident.Kind.ToString() } });
-
         // ---- grounding, between the phases ----
 
         // A Job's conclude grounded its findings already, and its plan cites their ids: keep those.
@@ -1083,10 +1077,7 @@ public sealed class InvestigationRunner(
     {
         foreach (var rejection in rejections)
         {
-            LlmInstrumentation.GroundingRejected.Add(
-                1,
-                new TagList { { "reason", rejection.Reason.ToString() } });
-
+            // Counted by InvestigationCoordinator, once, with the rest of the outcome (#15).
             // The detail was in no log line (#160): an investigation ended GroundingRejected and
             // the only way to learn which citation failed, and why, was to re-run it.
             logger.LogWarning("Grounding rejected ({Reason}): {Detail}", rejection.Reason, rejection.Detail);

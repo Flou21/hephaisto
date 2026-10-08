@@ -128,7 +128,10 @@ switch still stops the stage.
 
 **What the coder can reach.** No cluster identity: its ServiceAccount is bound to nothing and its
 token is never mounted. No Hephaisto credential and no inbound surface: it answers by printing a
-framed result to its own log, which Hephaisto reads. Egress only through a squid allowlist proxy
+framed result to its own log, which Hephaisto reads. The model runs in a container that is
+handed its own credential and no GitHub or NuGet token: those go to an init container that has
+ended before the model starts (`prepare`) and, for the push and the Draft PR, to one that starts
+after it has ended (`publish`). Egress only through a squid allowlist proxy
 (`codeFix.egressProxy`), enforced by a NetworkPolicy that is independent of the top-level one —
 DNS and the proxy, nothing else — and every request it makes is a line in the proxy's log.
 
@@ -186,6 +189,88 @@ kubectl -n hephaisto patch cm hephaisto-switches --type merge -p '{"data":{"inve
 workload's repository at its running commit, so a finding can name file and line - shown on the
 finding and passed to a code fix, never counted as evidence.
 
+## GitHub issues as work (v0.14.0)
+
+With `github.enabled`, an issue **assigned to Hephaisto's account**, in a repository listed in
+`github.issues.repositories`, is taken as work. The agent asks GitHub - one poll per repository
+every `github.pollInterval`, answered with a free 304 while nothing changed - so nothing has to
+reach in and there is no webhook to expose. A taken issue is planned by a coder Job under
+`codeFix.mode` and every `codeFix` cap; the plan is posted on the issue; an approver answers it
+there; and the pull request the implementing Job opens - a draft, whose description says
+`Closes owner/repo#n` - is followed until it is merged (the work item is done) or closed.
+`GET /api/workitems` shows them, and `github` is among the connections of `GET /api/status` and
+the MCP tool `get_status`. Unassigning the account, or closing the issue, takes it back at any
+point and stops a running Job.
+
+It ships **off, and unrendered**. The account is an ordinary GitHub account (a machine user) and
+not a GitHub App, because an App cannot be an assignee; make it a collaborator on every listed
+repository. Its token is the **agent's own**, in a Secret of the release namespace - never
+`secrets.codeFix`, which lives in the coder namespace, may push, and stays unreadable to the
+agent. The chart refuses the same name for both.
+
+```sh
+# Signed in as the bot account. Organisation repositories: a fine-grained token limited to the
+# listed repositories - Issues read and write, Pull requests read. A repository a USER owns is
+# out of a fine-grained token's reach for a collaborator; that needs a classic token (`repo`).
+kubectl -n hephaisto create secret generic hephaisto-github --from-literal=GITHUB_TOKEN=github_pat_...
+
+helm upgrade hephaisto oci://ghcr.io/flou21/charts/hephaisto -n hephaisto --reuse-values \
+  --set github.enabled=true --set secrets.github=hephaisto-github \
+  --set 'github.issues.repositories[0]=you/shop' \
+  --set 'github.approvers[0]=1234567'        # gh api users/<login> --jq .id
+```
+
+`github.approvers` is who may answer a plan on the issue, by account **number** - a login can be
+renamed and taken by somebody else. An approver replies with a comment whose first line is
+`/approve`, or `/reject` and a reason; what is approved is the plan as Hephaisto stored it, never
+the comment's text. Anybody else's `/approve` changes nothing and is answered once. With
+`codeFix.mode` at `plan` or `off` an approval is refused and the issue is told which. Hephaisto
+writes at most six comments for one issue it was handed: where the work stands (edited in place),
+the plan, and a few one-time answers. With the list empty nobody can answer by comment and the
+plan is approved in the console. **Whoever is listed can make Hephaisto push a branch** to the
+listed repositories: list maintainers.
+
+An issue whose pull request was merged or closed is not started over while it simply stays
+assigned: unassign the account and assign it again (or close and reopen the issue) to hand it
+back.
+
+**Where else it shows.** The console lists what was taken under *work items*, and every attempt
+has a page of its own (`/codefixes/<attempt id>`) with its history, the plan in full, and approve
+and deny for the approver role. The MCP tools `list_code_fixes` and `get_code_fix` include an
+issue's attempt, and `list_work_items` and `get_work_item` read the work items; no tool answers a
+plan. And a work item's code fix is announced through `notifications.routes` like an incident's
+(`CodeFixPlanReady`, `CodeFixPrOpened`, `CodeFixFailed`) - to a route that is **not scoped** by
+namespace, cluster, kind or label and asks for no severity above `Info`, because an issue has
+none of those; a fallback route is for incidents and does not take it. The Teams board stays a
+board of incidents.
+
+**What it takes on github.com**, as measured against it (`scripts/e2e/github-live.sh`), not as
+read in its documentation:
+
+- The agent's token above is enough: with Issues and Pull requests it can also ask whose token
+  it is and what the repository's default branch is. It cannot push, and should not be able to.
+- The coder's token (`secrets.codeFix`, key `GITHUB_TOKEN`): Contents read and write, Pull
+  requests read and write. That clones, pushes the one branch, opens the **draft** pull request
+  and assigns it. A plan without draft pull requests in private repositories refuses the
+  `--draft`, and Hephaisto opens nothing else (GitHub's documentation; not measured).
+- The account has to be **assignable** in the repository - a member or collaborator with write.
+  GitHub answers an assignment it ignores with success.
+- A **label** the context repository names for pull requests (`defaults.pr.labels` in its
+  `repos.yaml`) has to exist in the target repository. `gh` refuses one that does not; the pull
+  request is then opened without it, and the attempt's `deviations` say so.
+- Text a model or a stranger wrote is posted with a zero-width space wherever GitHub would act
+  on it - after `@`, `#`, `GH-`, inside `://`, after every `/` before a digit - so a copy of an
+  address or a path out of a plan comment or a pull request's description carries that
+  character.
+
+**Egress.** With `codeFix.egressProxy` rendered, the agent's GitHub calls go through that proxy
+(`github.useEgressProxy`, on by default): `api.github.com` is already on its allowlist, its log
+then shows the agent's requests beside the coder's, and the chart adds the two NetworkPolicy
+rules that needs - the agent may reach the proxy's pods on 3128, and the proxy admits the agent's
+pods. Without the proxy and with `networkPolicy.egress.enabled`, GitHub has to be reachable
+through `networkPolicy.egress.extraEgressCIDRs` on 443. With the agent's `mode: Off` nothing is
+asked and nothing is taken.
+
 ## Try it without a cluster
 
 The published image can run with no Kubernetes behind it at all, loaded with recorded
@@ -199,7 +284,7 @@ curl -fsSL https://raw.githubusercontent.com/Flou21/hephaisto/main/demo/compose.
 ## Links
 
 - [Source, and the documentation](https://github.com/Flou21/hephaisto)
-- [What is known to be broken](https://github.com/Flou21/hephaisto/blob/main/docs/backlog.md)
+- [What is known to be broken](https://github.com/Flou21/hephaisto/issues)
 - [How it is verified](https://github.com/Flou21/hephaisto/blob/main/docs/verification.md)
 
 Licensed AGPL-3.0-only.

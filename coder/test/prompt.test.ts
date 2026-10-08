@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { APP_ROOT } from '../src/config.js';
 import { buildEvidenceElement, evidenceMarkdown, fence, fencedJson, loadTemplate, render, renderEvidenceBlock, repoNotesBlock } from '../src/prompts.js';
-import type { CodeFixRequest } from '../src/schemas.js';
+import type { IncidentRequest as CodeFixRequest } from '../src/schemas.js';
 
 const sample = JSON.parse(readFileSync(join(APP_ROOT, 'contracts', 'samples', 'valid', 'request-plan.json'), 'utf8')) as CodeFixRequest;
 

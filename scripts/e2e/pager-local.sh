@@ -96,6 +96,10 @@ curl -sf --max-time 10 "$PAGER_STANDIN/healthz" >/dev/null || die "the stand-in 
 # restart the pod. One that predates the model stand-in answers 404 here.
 curl -sf --max-time 10 "$PAGER_STANDIN/v1/models" >/dev/null \
     || die "the stand-in has no model: its pod predates LlmStandIn.cs - kubectl -n hephaisto-obs rollout restart deploy/teams-stand-in"
+# The same trap, one change later (#124): a pod that predates the click's reason and actionId
+# drops both without a word, and P52 and P54 would fail as "give a reason" and "named no action".
+curl -sf --max-time 10 "$PAGER_STANDIN/teams/members" >/dev/null \
+    || die "the stand-in does not know a click's reason and actionId: its pod is older than its image - kubectl -n hephaisto-obs rollout restart deploy/teams-stand-in"
 
 # The sign-in install (P48), when scripts/e2e/signin-install.sh has put one on this cluster. Its
 # port-forward is this script's own, so the script waits for the suite instead of exec-ing it.

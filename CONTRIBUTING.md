@@ -19,16 +19,21 @@ to grant more than one at once, that is the change being reviewed, not a detail 
 **No audit, no action.** If the audit path cannot be written, the executor must refuse. Anything
 that weakens that is a design discussion before it is a patch.
 
-**A backlog item leaves `docs/backlog.md` by being fixed, or by being reclassified as a deliberate
-limitation and written down somewhere permanent. It does not leave by being ignored.**
+**An issue is closed by being fixed, or by being reclassified as a deliberate limitation, with
+the reasoning written on it and the label `limitation`. It is not closed by being ignored.**
 
 ## The documents, and which one you want
 
 - [`docs/architecture.md`](docs/architecture.md) — how the pipeline fits together. Start here.
-- [`docs/backlog.md`](docs/backlog.md) — everything known to be broken, with evidence. Check
-  before reporting; the entry probably exists and probably explains why.
-- [`docs/roadmap.md`](docs/roadmap.md) — what is planned, written against what is in the repo.
-  Where the two disagree, the file follows the code.
+- [Issues](https://github.com/Flou21/hephaisto/issues) — everything known to be broken, with evidence. Check before reporting; the issue
+  probably exists and probably explains why, and a closed one labelled `limitation` is deliberate.
+  [`docs/backlog.md`](docs/backlog.md) is the list they were moved from on 2026-10-06, frozen and
+  kept because the code cites its numbers: from 77 up an entry's number is its issue's, and a
+  table in the file names the rest.
+- [Milestones](https://github.com/Flou21/hephaisto/milestones) — what is planned.
+  [`docs/roadmap.md`](docs/roadmap.md) says where the project stands, written against what is in
+  the repo: where the two disagree, the file follows the code.
+  [`docs/roadmap-archive.md`](docs/roadmap-archive.md) is every released milestone as written.
 - [`docs/history.md`](docs/history.md) — what was learned, including the wrong turns.
 - [`docs/verification.md`](docs/verification.md) — how claims here are measured.
 - [`docs/design.md`](docs/design.md) — the token set and the rules for the console's appearance.
@@ -37,7 +42,8 @@ limitation and written down somewhere permanent. It does not leave by being igno
 
 One commit per change, with a message that says **why**. The repository's history is used as an
 explanation of itself, so a message that restates the diff has done nothing the diff did not
-already do. Where a fix has a backlog entry, the fix and the entry go in the same commit.
+already do. Where a fix has an issue, the commit that fixes it says `Closes #n`, so the fix and its record
+close together.
 
 ## Before you open a pull request
 

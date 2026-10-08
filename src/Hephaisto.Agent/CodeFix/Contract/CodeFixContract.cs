@@ -16,6 +16,12 @@ public static class CodeFixContract
 {
     public const string Version = "1";
 
+    /// <summary>
+    /// The version of a request for a work item (<see cref="CodeFixWorkItemRequest"/>). Only the
+    /// request has a second version; both results are version 1 for either.
+    /// </summary>
+    public const string WorkItemVersion = "2";
+
     public static readonly JsonSerializerOptions Json = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
@@ -53,6 +59,63 @@ public sealed record CodeFixRequest
     /// <summary>Null in the plan phase; the approved plan in the implement phase.</summary>
     public required CodeFixPlanResult? Plan { get; init; }
 }
+
+/// <summary>
+/// The request for a piece of work somebody handed over (contract version 2,
+/// <c>codefix-request-v2.schema.json</c>): <see cref="WorkItem"/> in place of the incident, the
+/// findings and the investigation summary, which are absent rather than empty.
+/// </summary>
+/// <remarks>
+/// A second record rather than nullable members on <see cref="CodeFixRequest"/>: that one
+/// serialises exactly as it did before there were work items, which is what "version 1 is
+/// unchanged" has to mean for a runner that refuses unknown members.
+/// </remarks>
+public sealed record CodeFixWorkItemRequest
+{
+    public string ContractVersion { get; init; } = CodeFixContract.WorkItemVersion;
+
+    public required Guid AttemptId { get; init; }
+
+    /// <summary><c>plan</c> or <c>implement</c>.</summary>
+    public required string Phase { get; init; }
+
+    public required CodeFixBudget Budget { get; init; }
+
+    public required CodeFixRepository Repository { get; init; }
+
+    public required CodeFixContextRef Context { get; init; }
+
+    public required CodeFixWorkItem WorkItem { get; init; }
+
+    /// <summary>Null in the plan phase; the approved plan in the implement phase.</summary>
+    public required CodeFixPlanResult? Plan { get; init; }
+}
+
+/// <summary>The issue, as the coder is told about it. Title, author, body and comments are untrusted.</summary>
+public sealed record CodeFixWorkItem
+{
+    public required string Source { get; init; }
+
+    /// <summary><c>owner/repo</c>, from the install's list - not from the issue.</summary>
+    public required string Repository { get; init; }
+
+    public required int Number { get; init; }
+
+    public required string Url { get; init; }
+
+    public required string Title { get; init; }
+
+    public required string? Type { get; init; }
+
+    public required string Author { get; init; }
+
+    /// <summary>The snapshot taken when the issue was taken. Never the issue as it is now.</summary>
+    public required string Body { get; init; }
+
+    public required IReadOnlyList<CodeFixWorkItemComment> Comments { get; init; }
+}
+
+public sealed record CodeFixWorkItemComment(string Author, string Body);
 
 public sealed record CodeFixBudget(decimal MaxCostUsd, int DeadlineSeconds);
 

@@ -179,9 +179,11 @@ The outermost layer is the one that survives a compromised process.
 13. **Coder isolation.** A coder pod has no ServiceAccount token (its identity is bound to
     nothing), no Hephaisto credential, no inbound surface, a read-only root, no capabilities, and
     egress only to DNS and an allowlist proxy that logs every request. Its credentials arrive by
-    `secretKeyRef` from a Secret Hephaisto can name and cannot read. The investigator's read
-    tools are denied the coder namespace, so a coder's output never becomes the next
-    investigation's evidence.
+    `secretKeyRef` from a Secret Hephaisto can name and cannot read, each key to the one
+    container that needs it: the container the model runs in is handed the model's credential
+    and no GitHub or NuGet token, and no container can read another's processes. The
+    investigator's read tools are denied the coder namespace, so a coder's output never becomes
+    the next investigation's evidence.
 
 ### Why L3 is safe enough to enable, in four sentences
 
@@ -242,13 +244,66 @@ database, or see a credential Hephaisto holds. The only model-influenced input t
 ConfigMap of JSON the coder treats as data; the image and the spec are chart values and golden-
 tested C#.
 
-**The same-uid caveat, stated rather than hidden.** Inside the coder pod the driver (which holds
-the GitHub token to push) and the agent's Bash tool run as the same uid, so a determined agent
-could read the driver's environment through `/proc`. The controls that actually bound that are
-outside the pod: the token's repository scope, branch protection, the proxy allowlist and its log,
-and the guard hook's denial record. The v2 hardening is a two-container split — a driver container
-holding the tokens and an agent container without them, sharing `/work` — deferred because the
-first version has to prove the flow before it is worth splitting.
+**Three containers, so that the separation is the kernel's** (v0.13.0, backlog #116).
+Until v0.13.0 the driver that held the GitHub token and the agent's Bash tool were one uid in one
+PID namespace, and a guard over shell commands stood between the model and
+`/proc/<driver>/environ`. Now a coder Job is the same image in up to three containers with no
+shared process namespace:
+
+| | when | holds | does |
+|---|---|---|---|
+| `prepare` | init | `GITHUB_TOKEN`, `NUGET_GITHUB_TOKEN` | clones, the open-PR and branch checks, the package restore |
+| `coder` | the regular container of a plan; the second init container of an implementation | the model credential | the agent, and the build and tests of what it wrote |
+| `publish` | implementation only, the regular container | `GITHUB_TOKEN` | push, Draft PR, the result |
+
+An init container has ended before the next container starts, so nothing of `coder` is running
+when `publish` holds the token. `publish` does not trust the volume the model worked on either:
+it never runs git in that repository - where a hook or a line of `.git/config` would run beside
+the token - but imports the branch as a bundle into a repository in its own `/tmp`, checks there
+that the commit is the one the driver verified, descends from the base and passes the publishing
+policy, and pushes it by id to the URL in the request. What `prepare` decided reaches it on a
+volume the `coder` container does not mount. Hephaisto reads an implementation's result from
+`publish`, a container the model never ran in.
+
+**What is left of the caveat, stated rather than hidden.** The model's own credential is in the
+container the model runs in - the CLI needs it there - so a determined agent could reach *that*;
+it calls a model and pushes nothing, and the proxy allowlist and the guard's denial record bound
+it. And the verification verdict a PR carries is that container's word: code that defeated the
+guard could report a green build for a tree it did not test, though it could not push anywhere but
+the assigned branch, nor a diff the policy refuses.
+
+## The second way in: a GitHub issue (v0.14.0)
+
+Everything above starts with an alert. Since v0.14.0 there is a second way in, off by default
+(`github.enabled`): an issue **assigned to Hephaisto's GitHub account**, in a listed repository,
+is a `WorkItem`, and the code-fix stage runs for it without an incident.
+
+- **Hephaisto asks; GitHub does not call.** `GitHubIssuePoller` is level-triggered: each pass
+  states what should be true - every assigned issue is a work item, every work item has its one
+  attempt, every waiting plan has been read for an answer, every open pull request has been
+  asked about - and makes it so. There is no queue and no retry state; the next pass is the
+  retry, and a restart loses nothing. An unchanged list is a 304.
+- **An attempt has exactly one subject**, an incident or a work item - a check constraint - and
+  everything after the decision to start is the same Job, result, cost and cancel. What differs
+  is `CodeFixSubject`: who is told, and what a row is filed under.
+- **The issue is where it is talked about.** One status comment, edited as the row moves, and
+  one comment with the plan. An account listed by number in `github.approvers` answers with a
+  comment whose first line is `/approve` or `/reject <reason>`; the door is the coordinator's
+  own (`DecideForWorkItemAsync`), the same one the console and the API open, and what is
+  approved is the plan in Postgres.
+- **Two tokens.** The agent's reads issues and writes comments and cannot push; the coder's
+  pushes one branch and opens a draft pull request, and the agent cannot read it.
+- **Text a stranger or a model wrote is made inert** wherever GitHub would act on it
+  (`IssueComments.Neutralise` for comments, the runner's `inert()` for a pull request - an
+  incident's too), is enveloped for an MCP reader, and is rendered as text in the console.
+- **The surfaces know both kinds.** `/codefixes`, an attempt's own page, `/workitems`, the MCP
+  tools and the three code-fix notifications show a work item's attempt with its issue where an
+  incident's has its incident. A notification about one carries no incident field, so a route
+  scoped by namespace, cluster, kind or label does not own it.
+
+Operating it - the account, the two tokens, the values - is written for operators at
+[docs.hephaisto.dev/operate/github-issues](https://docs.hephaisto.dev/operate/github-issues)
+(`docs-site/operate/github-issues.md` in this repository).
 
 ## Investigating in a Job (v0.12.0 F5)
 
@@ -439,20 +494,43 @@ both leave "This message has been deleted." behind, and nothing switches that of
 `ITeamsBotClient` has no delete, a closed incident leaves the board by being edited out, and an
 alert that is over is edited into its final state and left.
 
-**Two buttons act, and only when asked to.** With `Notifications:TeamsBot:Actions:Enabled` an open
-alert carries Acknowledge and Assign to me as `Action.Execute`, and Teams delivers the click as an
-`adaptiveCard/action` invoke to `POST /api/teams/messages`:
+**Some buttons act, and only when asked to.** With `Notifications:TeamsBot:Actions:Enabled` an open
+alert carries Acknowledge and Assign to me; Reinvestigate where the console offers the retry and
+the card is still kept in step, which is an Escalated incident none of whose investigations has a
+primary finding; and, when `Actions:Approvers` names anybody, Close - an `Action.ShowCard` whose
+card requires a reason before its button. Each is an `Action.Execute`, and Teams delivers the
+click as an `adaptiveCard/action` invoke to `POST /api/teams/messages`:
 
 ```
 Teams --invoke + Bot Framework JWT--> :8082 /api/teams/messages   (nothing else answers on 8082)
   scheme "BotFramework": issuer, audience = app id, signature, key ENDORSED for msteams
   handler: serviceurl claim = activity.serviceUrl, tenant = ours, from.aadObjectId in the roster
-  --> IncidentQueries.Acknowledge/Assign as the roster names the person --> refreshed card
+           close:        that object id in Actions:Approvers, and data.reason not empty
+           approve/deny: Actions:Approvals:Enabled, that object id in Actions:Approvers,
+                         and data.actionId a GUID
+  --> IncidentQueries.Acknowledge/Assign/RequestReinvestigation/Close/DecideAction
+      as the roster names the person --> refreshed card
 ```
 
 Every check fails closed before an incident is touched, and a roster nobody could read is a 503,
 not a yes. The actor is the member list's name for the object id, never the display name the
-activity carries. Close, approve and deny stay links (backlog #124).
+activity carries. **A card is the same for everybody who reads it**, so nothing is hidden per
+person: what is drawn follows the configuration and the incident's state, and who may close is
+decided at the click from `Actions:Approvers` - Microsoft Entra object ids, because the click
+arrives as an Entra identity and the console's approver role lives in whatever `Auth:Authority`
+names. A member who is not on it is answered in words and nothing changes.
+
+**Approving from a card is a second switch**, `Actions:Approvals:Enabled`, off by default and
+refused at startup without the route or without an approver. With it, an alert whose incident
+is awaiting approval names each waiting action - type, target, arguments, risk - directly above
+its own Approve and Deny, which carry the action's id. Two verbs and two methods behind them, for
+the reason the console has two routes: nothing in a payload can turn a denial into an approval.
+The click goes through `IncidentQueries.DecideActionAsync` with `ApprovalSource.Teams`, so the
+approval is committed in the roster's name before anything runs and the action runs only through
+admission. The buttons reach a card already sent, and leave it again, by the reconciler's
+comparison: the waiting actions are part of the card's content. A card stays where it was posted,
+so a second press - or one after the incident was closed - is answered "already decided" in a
+message and changes nothing (backlog #124).
 
 **An edit notifies nobody**, which is why an alert is a new message and why it goes to a personal
 chat: the channel holds one message, and a person's own chat with the bot is where a message per
@@ -489,9 +567,11 @@ MCP (#157): streamable HTTP at `/mcp`, stateless, on a port of its own (8083) an
   `mcp/<name>`) or `person` (acts as its subject) - or, with sign-in on, the identity provider's
   bearer token. Compared hashed, in constant time, every token every time. The scheme and its
   three policies are the endpoint's own; the console's allow-all never applies.
-- **What it offers.** 23 tools in a reviewed order (`scripts/e2e/mcp/tools.golden.json`): 17 reads
-  and 6 changes - acknowledge, assign, a note entry, feedback, and for an approver close and
-  re-investigate. No tool approves or denies an action or a code-fix plan, re-arms or sets a mode.
+- **What it offers.** 26 tools in a reviewed order (`scripts/e2e/mcp/tools.golden.json`): 19 reads
+  and 7 changes - acknowledge, assign, a note entry, feedback, and for an approver close, close
+  many and re-investigate. Two of the reads are of work items (`list_work_items`,
+  `get_work_item`), and the code-fix reads show an attempt for an issue beside an incident's. No
+  tool approves or denies an action or a code-fix plan, re-arms or sets a mode.
   Tools reach incidents only through `McpIncidentReader` and `McpIncidentActions`; the writes go
   through the console's own `IncidentQueries` methods, with an `origin` in the audit detail.
 - **What it hands over.** Anything a workload, an alert or a model wrote is redacted, stripped of
@@ -499,7 +579,7 @@ MCP (#157): streamable HTTP at `/mcp`, stateless, on a port of its own (8083) an
   a plain string fails its call; every answer stays under 32,000 characters and says what it cut.
 - **Being found.** Behind a gateway with tool search a model sees only a search tool, which
   scores each tool's name and description by the words of the question. The descriptions are
-  written for that, and `McpFindabilityTests` ranks 36 real questions the way the gateway does.
+  written for that, and `McpFindabilityTests` ranks 44 real questions the way the gateway does.
 
 ## Persistence: Postgres 17 + pgvector
 

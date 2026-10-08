@@ -1,0 +1,500 @@
+@page "/codefixes/{AttemptId:guid}"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Hephaisto.Agent.CodeFix
+@using Hephaisto.Agent.WorkItems
+@using Hephaisto.Core.CodeFix
+@inject IServiceScopeFactory Scopes
+@inject IIncidentNotifier Notifier
+@inject IJSRuntime Js
+@inject IAuthorizationService Authorization
+@implements IAsyncDisposable
+
+@*
+    One code-fix attempt (v0.14.0), whatever it is for. An incident's attempt is also a section of
+    its incident page; an attempt for a GitHub issue has no incident, and until this page its plan
+    could be read in full only on the issue.
+
+    What is somebody else's text here - the issue's title, the plan, the pull request's
+    description, a rejection's reason - is rendered as text. Razor encodes every @expression, and
+    nothing on this page is a MarkupString or a link built from such text: the only links are the
+    incident's page, the issue's address as the work item recorded it, and the pull request the
+    runner reported.
+*@
+
+<PageTitle>hephaisto — code fix @Display.ShortId(AttemptId)</PageTitle>
+
+@if (_detail is null)
+{
+    <h1>code fix</h1>
+    <p class="hp-muted" data-testid="codefix-missing">
+        @(_loading ? "loading…" : _error is { } e ? $"could not load this code fix: {e}" : "No code fix with this id.")
+    </p>
+}
+else
+{
+    var a = _detail.Attempt;
+    var item = _detail.WorkItem;
+    var mode = _detail.Mode;
+
+    <header class="hp-detail-header" data-testid="codefix-detail" data-attempt="@a.Id" data-state="@a.State"
+            data-subject="@(item is null ? "incident" : "workitem")">
+        <h1>code fix <span class="mono">@(a.Issue ?? Display.ShortId(a.Id))</span></h1>
+
+        <div class="hp-badges">
+            <span class="hp-state @Display.CodeFixClass(a.State)" data-testid="codefix-state">
+                <span class="glyph">@Display.CodeFixGlyph(a.State)</span>
+                @Display.CodeFixWord(a.State)
+            </span>
+            <span class="hp-mode @Display.CodeFixModeClass(mode.Effective)" title="@mode.Explanation" data-testid="codefix-mode">
+                code-fix mode @mode.Effective.ToString().ToLowerInvariant()
+            </span>
+        </div>
+
+        <dl class="hp-kv">
+            @if (item is not null)
+            {
+                <dt>issue</dt>
+                <dd>
+                    <span class="mono" data-testid="codefix-issue">@a.Issue</span>
+                    @if (Display.HttpUrl(item.Url) is { } issueUrl)
+                    {
+                        <text> &middot; </text>
+                        <a href="@issueUrl" target="_blank" rel="noopener" data-testid="codefix-issue-link">open on GitHub</a>
+                    }
+                </dd>
+
+                @* Somebody else's words, as they were when the issue was taken. Text, never markup. *@
+                <dt title="As it was when Hephaisto took the issue. A later edit is not copied.">title</dt>
+                <dd data-testid="codefix-issue-title">@item.Title</dd>
+
+                <dt>opened by</dt>
+                <dd class="mono" data-testid="codefix-issue-author">@item.AuthorLogin</dd>
+
+                <dt>work item</dt>
+                <dd>
+                    <span class="hp-state @Display.WorkItemClass(item.State)" data-testid="codefix-workitem-state">
+                        <span class="glyph">@Display.WorkItemGlyph(item.State)</span>
+                        @Display.WorkItemWord(item.State)
+                    </span>
+                    @if (item.StateReason is { Length: > 0 } why)
+                    {
+                        <span class="hp-muted"> &middot; @why</span>
+                    }
+                    <span class="hp-muted"> &middot; taken <span class="mono">@Display.Timestamp(item.TakenAt)</span></span>
+                </dd>
+            }
+            else if (a.IncidentId is { } incidentId)
+            {
+                <dt>incident</dt>
+                <dd>
+                    <a href="incidents/@incidentId#codefix" data-testid="codefix-incident-link">@(a.IncidentTitle is { Length: > 0 } t ? t : incidentId.ToString())</a>
+                </dd>
+
+                <dt>workload</dt>
+                <dd class="mono">@a.Workload</dd>
+            }
+
+            <dt>repository</dt>
+            <dd class="mono" title="@a.Repository">@Display.ShortRepo(a.Repository)</dd>
+
+            <dt>branch</dt>
+            <dd class="mono">@a.Branch <span class="hp-muted">from @a.DefaultBranch</span></dd>
+
+            @if (a.AnalysedRef is { Length: > 0 } analysed)
+            {
+                <dt title="The commit the coder analysed">analysed</dt>
+                <dd class="mono" title="@analysed">@Display.ShortSha(analysed)</dd>
+            }
+
+            <dt>cost</dt>
+            <dd class="mono" data-testid="codefix-cost">
+                $@a.TotalCostUsd.ToString("0.00", CultureInfo.InvariantCulture)
+                <span class="hp-muted">plan @Display.Usd(a.PlanCostUsd) &middot; implement @Display.Usd(a.ImplementCostUsd)</span>
+            </dd>
+
+            <dt>attempt id</dt>
+            <dd class="mono">@a.Id</dd>
+        </dl>
+    </header>
+
+    <section class="hp-section" data-testid="codefix-history">
+        <h2>history</h2>
+        <ol class="hp-timeline">
+            @foreach (var entry in CodeFixHistory.Of(a, item))
+            {
+                <li data-step="@entry.Step">
+                    <span class="mono hp-muted">@Display.Timestamp(entry.At)</span>
+                    <span class="mono">@entry.Step</span>
+                    <span>@entry.Detail</span>
+                </li>
+            }
+        </ol>
+    </section>
+
+    <section class="hp-section" id="plan">
+        <h2>plan and decision</h2>
+
+        <article class="hp-codefix @ArticleClass(a.State)" data-testid="codefix-attempt" data-state="@a.State" data-attempt="@a.Id">
+            @if (a.State.IsRunning() || a.State == CodeFixState.Eligible)
+            {
+                <div class="hp-cf-phase"><CodeFixProgress Attempt="a" Now="_now" /></div>
+            }
+
+            @if (a.State == CodeFixState.PrOpened)
+            {
+                <div class="hp-cf-phase hp-cf-pr-row">
+                    <span class="hp-muted">draft pull request</span>
+                    <CodeFixPrLink Attempt="a" />
+                </div>
+                @if (a.Deviations.Count > 0)
+                {
+                    <h4>deviations from the approved plan <span class="hp-count">@a.Deviations.Count</span></h4>
+                    <ul class="hp-cf-list" data-testid="codefix-deviations">
+                        @foreach (var d in a.Deviations)
+                        {
+                            <li>@d</li>
+                        }
+                    </ul>
+                }
+            }
+
+            @if (a.FailureReason is { Length: > 0 } reason && a.State is CodeFixState.Failed or CodeFixState.Denied or CodeFixState.Expired or CodeFixState.Cancelled)
+            {
+                @* For a denial this is whatever the person typed - into the console's reason box,
+                   or after /reject in a comment on the issue. As text. *@
+                <div class="hp-callout @(a.State == CodeFixState.Failed ? "callout-error" : "callout-suppressed")"
+                     data-testid="codefix-failure">
+                    <span class="glyph">@Display.CodeFixGlyph(a.State)</span>
+                    <strong>@Display.CodeFixWord(a.State)</strong>@(a.State == CodeFixState.Denied && a.ApprovedBy is { Length: > 0 } by ? $" by {by}" : ""):
+                    <span data-testid="codefix-failure-reason">@reason</span>
+                </div>
+            }
+
+            @if (a.ApprovedBy is { Length: > 0 } && a.State != CodeFixState.Denied)
+            {
+                <p class="hp-muted hp-cf-approved" data-testid="codefix-approved">
+                    <span class="glyph">+</span> approved by <span class="mono">@a.ApprovedBy</span>
+                    @if (Display.DecidedThrough(a.DecidedThrough) is { } through)
+                    {
+                        <text> through @through</text>
+                    }
+                    @if (a.DecidedAt is { } decided)
+                    {
+                        <text> at <span class="mono">@Display.Timestamp(decided)</span></text>
+                    }
+                </p>
+            }
+
+            @if (a.Summary is not { Length: > 0 } && a.Steps.Count == 0)
+            {
+                <p class="hp-empty" data-testid="codefix-no-plan">
+                    @(a.State.IsOpen() ? "No plan yet: the coder has not answered." : "No plan was recorded for this attempt.")
+                </p>
+            }
+
+            <CodeFixPlan Attempt="a" />
+
+            @if (a.State == CodeFixState.PlanReady)
+            {
+                var blocked = CodeFixDoor.BlockedBecause(mode, a, _viewer);
+
+                <div class="hp-cf-decide" data-testid="codefix-approval">
+                    @if (item is not null)
+                    {
+                        <span class="hp-muted">
+                            An approver can also answer on the issue: <span class="mono">/approve</span>, or
+                            <span class="mono">/reject</span> and a reason, as the first line of a comment.
+                        </span>
+                    }
+                    <div class="hp-retry-controls">
+                        <ActorField Viewer="_viewer" @bind-Name="_actor" TestId="codefix-actor" />
+                        <input class="hp-retry-name" placeholder="deny reason (optional)" aria-label="deny reason"
+                               data-testid="codefix-deny-reason"
+                               @bind="_denyReason" @bind:event="oninput" />
+                        <button type="button" class="hp-submit" data-testid="codefix-approve"
+                                disabled="@(blocked is not null || _busy || string.IsNullOrWhiteSpace(_viewer.Actor(_actor)))"
+                                title="@(blocked ?? "Starts the implement Job: a coder with write access to one branch, ending in a Draft PR")"
+                                @onclick="() => DecideAsync(true)">
+                            @(_busy && _approving ? "…" : "approve")
+                        </button>
+                        <button type="button" class="hp-submit" data-testid="codefix-deny"
+                                disabled="@(!_viewer.MayDecide || _busy || string.IsNullOrWhiteSpace(_viewer.Actor(_actor)))"
+                                @onclick="() => DecideAsync(false)">
+                            @(_busy && !_approving ? "…" : "deny")
+                        </button>
+                    </div>
+                    @if (blocked is not null)
+                    {
+                        <span class="hp-warn" data-testid="codefix-approve-blocked">
+                            <span class="glyph">!</span> approve is unavailable: @blocked
+                        </span>
+                    }
+                </div>
+            }
+
+            @if (_message is { } message)
+            {
+                <span class="@(message.Ok ? "hp-yes" : "hp-error")" data-testid="codefix-decision-message">
+                    <span class="glyph">@(message.Ok ? "+" : "!!")</span> @message.Text
+                </span>
+            }
+        </article>
+    </section>
+
+    @if (a.PrBody is { Length: > 0 } prBody)
+    {
+        <section class="hp-section">
+            <h2>pull request description</h2>
+            <p class="hp-muted">
+                As the runner sent it to GitHub; the copy there may have been edited since. A model
+                wrote parts of it, so it is shown as text and nothing in it is a link.
+            </p>
+            <pre class="hp-code hp-raw-code" data-testid="codefix-pr-body">@prBody</pre>
+        </section>
+    }
+}
+
+@code {
+    [Parameter]
+    public Guid AttemptId { get; set; }
+
+    private CodeFixAttemptDetail? _detail;
+    private ConsoleViewer _viewer = ConsoleViewer.Anonymous;
+    private bool _loading = true;
+    private string? _error;
+    private Guid _loadedFor;
+    private DateTimeOffset _now = DateTimeOffset.UtcNow;
+
+    private string _actor = string.Empty;
+    private string _denyReason = string.Empty;
+    private bool _busy;
+    private bool _approving;
+    private (bool Ok, string Text)? _message;
+
+    private CancellationTokenSource? _cts;
+
+    /// <summary>Shared with the incident page, so a name typed once is typed once.</summary>
+    private const string NameStorageKey = "hephaisto.feedback.name";
+
+    [Inject]
+    private AuthenticationStateProvider? AuthProvider { get; set; }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedFor == AttemptId && _cts is not null)
+        {
+            return;
+        }
+
+        if (_cts is not null)
+        {
+            await _cts.CancelAsync();
+            _cts.Dispose();
+        }
+
+        _cts = new CancellationTokenSource();
+        _loadedFor = AttemptId;
+        _detail = null;
+        _loading = true;
+        _message = null;
+
+        _viewer = await ConsoleViewer.ResolveAsync(AuthProvider, Authorization);
+
+        await LoadAsync();
+
+        _ = ListenAsync(_cts.Token);
+        _ = TickAsync(_cts.Token);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        try
+        {
+            var remembered = await Js.InvokeAsync<string?>("hephaisto.storageGet", NameStorageKey);
+
+            if (!string.IsNullOrWhiteSpace(remembered) && string.IsNullOrWhiteSpace(_actor))
+            {
+                _actor = remembered;
+                StateHasChanged();
+            }
+        }
+        catch (JSException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        var ct = _cts?.Token ?? CancellationToken.None;
+
+        try
+        {
+            // Null is an answer - no such attempt - and replaces what was shown; a failure is
+            // not, and keeps it: a blip must not make a waiting plan look absent.
+            _detail = await Scopes.QueryAsync(q => q.AttemptAsync(AttemptId, ct));
+            _error = null;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+
+        _now = DateTimeOffset.UtcNow;
+        _loading = false;
+    }
+
+    /// <summary>
+    /// Any code-fix event: a work item's is published with no incident's id, so there is nothing
+    /// narrower to filter on, and one read of one row is cheap.
+    /// </summary>
+    private async Task ListenAsync(CancellationToken ct)
+    {
+        try
+        {
+            await foreach (var e in Notifier.SubscribeAsync(ct))
+            {
+                if (e.Kind != IncidentLiveEventKind.CodeFixChanged)
+                {
+                    continue;
+                }
+
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// The clock for a running phase's elapsed time, and - every fifth second, while the attempt
+    /// or its work item can still move - the fallback read: a Job that is merely running
+    /// publishes nothing, and a merge on GitHub is found by the poller, not by an event here.
+    /// </summary>
+    private async Task TickAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        var second = 0;
+
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                var live = _detail is { } d && (d.Attempt.State.IsOpen() || d.WorkItem is { State: WorkItemState.Taken });
+
+                if (!live && _detail is not null)
+                {
+                    continue;
+                }
+
+                _now = DateTimeOffset.UtcNow;
+
+                if (++second % 5 == 0)
+                {
+                    await LoadAsync();
+                }
+
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task DecideAsync(bool approve)
+    {
+        var actor = _viewer.Actor(_actor);
+
+        if (_detail is not { } detail || string.IsNullOrWhiteSpace(actor) || _busy)
+        {
+            return;
+        }
+
+        _busy = true;
+        _approving = approve;
+        _message = null;
+
+        try
+        {
+            var ct = _cts?.Token ?? CancellationToken.None;
+            var reason = approve || string.IsNullOrWhiteSpace(_denyReason) ? null : _denyReason.Trim();
+            var attempt = detail.Attempt;
+
+            // The same door the incident page and the API use, by the attempt's own subject: the
+            // console's source, the viewer's authentication, and every refusal shown verbatim.
+            var result = await Scopes.CoordinateAsync(c => attempt.WorkItemId is { } workItemId
+                ? c.DecideForWorkItemAsync(workItemId, attempt.Id, approve, actor, ApprovalSource.Ui, _viewer.Authenticated, reason, ct)
+                : c.DecideAsync(attempt.IncidentId ?? Guid.Empty, attempt.Id, approve, actor, ApprovalSource.Ui, _viewer.Authenticated, reason, ct));
+
+            _message = (result.Outcome == CodeFixDecisionOutcome.Done, result.Message);
+
+            if (result.Outcome == CodeFixDecisionOutcome.Done && !approve)
+            {
+                _denyReason = string.Empty;
+            }
+
+            await RememberAsync();
+            await LoadAsync();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _message = (false, ex.Message);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task RememberAsync()
+    {
+        if (_viewer.Authenticated || string.IsNullOrWhiteSpace(_actor))
+        {
+            return;
+        }
+
+        try
+        {
+            await Js.InvokeVoidAsync("hephaisto.storageSet", NameStorageKey, _actor.Trim());
+        }
+        catch (JSException)
+        {
+            // A convenience; the decision is already recorded.
+        }
+    }
+
+    private static string ArticleClass(CodeFixState state) => state switch
+    {
+        CodeFixState.Planning or CodeFixState.Implementing or CodeFixState.Eligible => "hp-codefix-live",
+        CodeFixState.PlanReady => "hp-codefix-ready",
+        CodeFixState.PrOpened => "hp-codefix-pr",
+        _ => string.Empty,
+    };
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_cts is not null)
+        {
+            await _cts.CancelAsync();
+            _cts.Dispose();
+            _cts = null;
+        }
+    }
+}

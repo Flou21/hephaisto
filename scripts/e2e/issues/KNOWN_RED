@@ -1,0 +1,19 @@
+# Scenarios of scripts/e2e/issues/ that are known not to pass yet, one per line:
+#
+#   <id> <milestone> <the stage that turns it green, and why it is red until then>
+#
+# Same rules as scripts/e2e/pager/KNOWN_RED: a red scenario listed here is reported and does not
+# fail the run; a GREEN one listed here fails it - so a fix and its removal from this list land in
+# the same commit. The milestone is the version whose release needs the scenario green: once
+# Directory.Build.props' floor passes it, the entry is stale and a unit test fails
+# (IssuesSuiteTests). issues-local.sh --strict, the release gate, fails every entry.
+#
+# All twelve landed before any of the agent's side (v0.14.0 stage 2.1, #244): the suite is what
+# the stages after it are accepted by. G02 and G09 left with stage 2.2 (#245) - the client, the
+# poller, the work item and github among the dependencies. G01, G07 and G08 left with stage 2.3
+# (#246) - a code fix without an incident, contract version 2, and the plan on the issue. The
+# last seven - G03 to G06 and G10 to G12 - left with stage 2.4 (#247): a plan answered on the
+# issue, the pull request followed to its end, and the cap on what the agent writes.
+#
+# Nothing is listed: every scenario is expected green, and --strict and a plain run are the same
+# thing until one lands red again.

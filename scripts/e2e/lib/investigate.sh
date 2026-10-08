@@ -82,6 +82,30 @@ iv_ensure_incident() {
     printf '%s' "$incident"
 }
 
+# Incidents of the chaos namespace, opened since a time, that are filed under something nobody
+# deployed: a ReplicaSet, or a Pod that does not exist. Prints one "Kind/name" per line.
+#
+# An incident under a pod that DOES exist is not one of them: an Alertmanager alert names the
+# bare pod and its incident is filed there, by design, beside the watcher's under the
+# Deployment. The two this looks for are what broke this suite in October 2026: a warning about
+# a pod that was gone, handed to a restarted agent again and filed under that pod; and a lookup
+# made while a fixture was deleted, remembered for an hour, which left the new pod's incident
+# under its ReplicaSet. Either was then "the newest incident on shop-api" to iv_incident_on -
+# by the prefix of its name - and the scripted investigator, which picks its script by
+# workload, played the default one: red from there on, for a reason no scenario named.
+#   iv_misfiled_since <iso time>
+iv_misfiled_since() {
+    local kind name
+    cf_get "/api/incidents?state=any&limit=200" | jq -r --arg ns "$CF_CHAOS_NS" --arg since "$1" '
+        .[] | select(.namespace == $ns and .openedAt >= $since and ((.ownerKind // "") != "Deployment"))
+            | "\(.ownerKind // "Pod") \(.ownerName // .targetName)"' \
+    | while read -r kind name; do
+        if [ "$kind" != Pod ] || ! kc -n "$CF_CHAOS_NS" get pod "$name" >/dev/null 2>&1; then
+            printf '%s/%s\n' "$kind" "$name"
+        fi
+    done
+}
+
 iv_incident() { cf_get "/api/incidents/$1"; }
 
 iv_investigation_count() { iv_incident "$1" | jq '.investigations | length'; }
@@ -90,7 +114,13 @@ iv_latest_investigation() { iv_incident "$1" | jq -c '.investigations | sort_by(
 
 iv_is_running() { [ "$(iv_incident "$1" | jq -r '.inProgress != null')" = true ]; }
 
+# An incident whose last investigation proposed an action waits for a person's answer and cannot
+# be investigated again until it has one: lib/codefix.sh, cf_release, which the code-fix suite
+# needs for the same reason.
+iv_release() { cf_release "$1"; }
+
 iv_reinvestigate() {
+    iv_release "$1"
     cf_post "/api/incidents/$1/reinvestigate" "$(jq -cn --arg a "$CF_ACTOR" '{requestedBy:$a}')"
 }
 
@@ -99,6 +129,11 @@ iv_is_idle() { ! iv_is_running "$1"; }
 # A re-investigation is refused while one runs - an earlier scenario's fallback, say - so every
 # scenario that starts one waits for its incident to be idle first.
 iv_wait_idle() { wait_for "incident $1 to be idle" "${2:-1500}" iv_is_idle "$1" >&2 || true; }
+
+# Nothing else is investigating, and has not been for a while: lib/codefix.sh, cf_wait_quiet,
+# which says what a fixture's several incidents do to the one Job slot.
+iv_busy() { cf_busy; }
+iv_wait_quiet() { cf_wait_quiet "$@"; }
 
 # Re-investigates and waits for the new investigation to be written. Prints its JSON; empty on
 # timeout. The count is read before the request so an investigation that finishes between the
@@ -250,6 +285,7 @@ scenario_I4() {
     local jobs_before
     jobs_before=$(iv_job_count "$incident")
 
+    iv_wait_quiet || true
     inv=$(iv_investigate_once "$incident" 900) || { fail "a Job investigation completed"; iv_set_executor inprocess; return 0; }
     record_json I4-investigation "$inv"
     IV_JOB_INVESTIGATION="$inv"
@@ -309,7 +345,8 @@ scenario_I5() {
     spec=$(kc -n "$CF_CODER_NS" get job "$job" -o json)
     jq -e '.spec.template.metadata.labels["app.kubernetes.io/name"] == "hephaisto-investigator"' <<<"$spec" >/dev/null \
         && pass "$job: labelled as an investigator, not a coder" || fail "$job: labelled as an investigator, not a coder"
-    jq -e '[.spec.template.spec.containers[0].env[] | select(.name == "NUGET_GITHUB_TOKEN")] | length == 0' <<<"$spec" >/dev/null \
+    jq -e '[(.spec.template.spec.initContainers // [])[], .spec.template.spec.containers[]]
+           | [.[].env[]? | select(.name == "NUGET_GITHUB_TOKEN")] | length == 0' <<<"$spec" >/dev/null \
         && pass "$job: no NuGet token" || fail "$job: no NuGet token"
 
     local cm
@@ -379,6 +416,7 @@ scenario_I8() {
     incident=$(iv_ensure_incident catalog-api c19-injection)
     [ -n "$incident" ] || { fail "an incident on catalog-api exists"; iv_set_executor inprocess; return 0; }
     iv_wait_idle "$incident"
+    iv_wait_quiet || true
     before=$(iv_investigation_count "$incident")
 
     # catalog-api's script is the slow one: the Job is still running when it is deleted.
@@ -416,6 +454,7 @@ scenario_I9() {
     [ -n "$slow" ] && [ -n "$fast" ] || { fail "incidents on catalog-api and shop-api exist"; iv_set_executor inprocess; return 0; }
 
     iv_wait_idle "$slow"
+    iv_wait_quiet || true
     iv_reinvestigate "$slow" >/dev/null
     find_job() { job=$(iv_running_job "$slow"); [ -n "$job" ]; }
     wait_for "the slow Job to hold the slot" 180 find_job || { fail "the slow Job holds the slot"; iv_set_executor inprocess; return 0; }
@@ -441,6 +480,7 @@ scenario_I10() {
     local incident before job
     incident=$(iv_ensure_incident catalog-api c19-injection)
     iv_wait_idle "$incident"
+    iv_wait_quiet || true
     before=$(iv_investigation_count "$incident")
 
     iv_reinvestigate "$incident" >/dev/null
@@ -448,7 +488,8 @@ scenario_I10() {
     wait_for "a running investigator Job" 180 find_job || { fail "a running investigator Job"; iv_set_executor inprocess; return 0; }
     pass "a running investigator Job" "$job"
 
-    local old_pod
+    local old_pod restarted_at misfiled
+    restarted_at=$(date -u +%Y-%m-%dT%H:%M:%S)
     old_pod=$(kc -n "$CF_APP_NS" get pods -l app.kubernetes.io/name=hephaisto -o jsonpath='{.items[0].metadata.name}')
     kc -n "$CF_APP_NS" delete pod "$old_pod" --wait=false >/dev/null
     say "deleted the agent pod $old_pod mid-run"
@@ -476,6 +517,13 @@ scenario_I10() {
     [ "$(iv_investigation_count "$incident")" -eq $((before + 1)) ] \
         && pass "exactly one investigation was written" || fail "exactly one investigation was written" "$before -> $(iv_investigation_count "$incident")"
 
+    # A new agent is handed every warning of the last minutes again, also those about pods an
+    # earlier scenario's fixture no longer has. None of them is an incident of its own.
+    misfiled=$(iv_misfiled_since "$restarted_at" | tr '\n' ' ')
+    [ -z "$misfiled" ] \
+        && pass "the restart opened no incident under a ReplicaSet or a pod that is gone" \
+        || fail "the restart opened no incident under a ReplicaSet or a pod that is gone" "$misfiled"
+
     iv_set_executor inprocess
 }
 
@@ -486,6 +534,7 @@ scenario_I11() {
 
     local incident inv
     incident=$(iv_ensure_incident shop-api c15-null-deref)
+    iv_wait_quiet || true
     inv=$(iv_investigate_once "$incident" 900) || { fail "a Job investigation with source completed"; iv_set_executor inprocess; return 0; }
     record_json I11-investigation "$inv"
     pass "a Job investigation with source completed"
@@ -501,4 +550,46 @@ scenario_I11() {
     iv_set_executor inprocess
 }
 
-IV_SCENARIOS="I0 I1 I2 I3 I4 I5 I6 I7 I8 I9 I10 I11"
+# I12: the container the model runs in holds no GitHub token (#116). The clones that need one -
+# dev-context always, the workload's source when source access is on - happen in the `prepare`
+# init container before the model exists; `coder` is handed the model credential and nothing
+# else. Asserted on the Job's spec and from inside the running container, and then the Job is
+# left to finish, because the other half of the claim is that it still can.
+scenario_I12() {
+    iv_use_executor job Job || { fail "the executor is Job"; return 0; }
+
+    local incident before job inv
+    incident=$(iv_ensure_incident catalog-api c19-injection)
+    [ -n "$incident" ] || { fail "an incident on catalog-api exists"; iv_set_executor inprocess; return 0; }
+    iv_wait_idle "$incident"
+    iv_wait_quiet || true
+    before=$(iv_investigation_count "$incident")
+
+    # catalog-api's script waits three minutes before its first tool call: the window to look in.
+    iv_reinvestigate "$incident" >/dev/null
+    find_job() { job=$(iv_running_job "$incident"); [ -n "$job" ]; }
+    wait_for "a running investigator Job for catalog-api" 180 find_job \
+        || { fail "a running investigator Job for catalog-api"; iv_set_executor inprocess; return 0; }
+    pass "a running investigator Job for catalog-api" "$job"
+
+    cf_assert_token_separation "$job" investigate
+    cf_probe_coder_env "$job"
+
+    done_after() { [ "$(iv_investigation_count "$incident")" -gt "$before" ] && ! iv_is_running "$incident"; }
+    wait_for "the investigation to finish" 900 done_after \
+        || { fail "the investigation finished"; iv_set_executor inprocess; return 0; }
+    inv=$(iv_latest_investigation "$incident")
+    record_json I12-investigation "$inv"
+
+    # Not JobFallback: the Job itself answered, with its clones done by a container it never saw.
+    jq -e '.executor == "Job"' <<<"$inv" >/dev/null \
+        && pass "the Job answered without a GitHub token in the model's container" "$(jq -r .terminationReason <<<"$inv")" \
+        || fail "the Job answered without a GitHub token in the model's container" "$(jq -r '.executor + " " + .terminationReason + " " + (.error // "")' <<<"$inv")"
+    [ "$(cf_frames_in "$job" coder)" = 1 ] && [ "$(cf_frames_in "$job" prepare)" = 0 ] \
+        && pass "its one framed result is in the coder container's log" \
+        || skip "its one framed result is in the coder container's log" "coder $(cf_frames_in "$job" coder), prepare $(cf_frames_in "$job" prepare) - the Job may already be collected"
+
+    iv_set_executor inprocess
+}
+
+IV_SCENARIOS="I0 I1 I2 I3 I4 I5 I6 I7 I8 I9 I10 I11 I12"
