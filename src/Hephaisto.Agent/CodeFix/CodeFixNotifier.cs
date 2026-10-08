@@ -91,8 +91,8 @@ public sealed class CodeFixNotifier(
         kind switch
         {
             NotificationEvent.CodeFixPlanReady => commentsAreRead
-                ? $"A plan for {issue} is waiting for an answer. An approver answers on the issue - /approve, or /reject and a reason, "
-                    + "as the first line of a comment - or in the console."
+                ? $"A plan for {issue} is waiting for an answer. An approver answers on the issue - /approve, /reject and a reason, "
+                    + "or /replan after answering what the plan asks, as the first line of a comment - or in the console."
                 : $"A plan for {issue} is waiting for an answer. It is answered in the console: this install reads no comments, "
                     + "because GitHub:Approvers is empty.",
             NotificationEvent.CodeFixPrOpened =>

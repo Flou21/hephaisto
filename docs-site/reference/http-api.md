@@ -8,7 +8,7 @@
 | `GET /api/incidents/search?q=` | Semantic search over incidents |
 | `POST /api/incidents/{id}/reinvestigate` | Re-drive an incident's investigation |
 | `POST /api/incidents/{id}/feedback` | Mark a diagnosis right or wrong |
-| `GET /api/codefixes`, `/{attemptId}` | Code-fix attempts, for incidents and for issues; one attempt with what it is for |
+| `GET /api/codefixes`, `/{attemptId}` | Code-fix attempts, for incidents and for issues, each with the planner's `questions` beside its `notes`; one attempt with what it is for, and for an issue every attempt of its work item |
 | `GET /api/workitems`, `/{id}` | [GitHub issues taken as work](/operate/github-issues): `?state=Taken\|Done\|Cancelled\|any` |
 | `POST /api/workitems/{id}/codefix/{attemptId}/approve`, `/deny` | Decide on the plan for an issue (approver policy) |
 | `GET /api/status` | Mode, budgets, kill-switch arms |

@@ -107,6 +107,18 @@ test.describe('work items', () => {
       } else {
         await expect(row.getByTestId('workitem-attempt-link')).toHaveCount(0);
       }
+
+      // An issue that was planned again (v0.14.0, /replan): the link above is its NEWEST
+      // attempt, and the ones before it are named beside it, oldest first, each with its page.
+      // The API lists a work item's attempts newest first.
+      const earlier = (one.attempts ?? []).slice(1).reverse();
+      const before = row.getByTestId('workitem-earlier-attempt');
+      await expect(before).toHaveCount(earlier.length);
+
+      for (let i = 0; i < earlier.length; i++) {
+        await expect(before.nth(i)).toHaveAttribute('href', `codefixes/${earlier[i].id}`);
+        await expect(before.nth(i)).toHaveAttribute('data-attempt-state', earlier[i].state);
+      }
     }
   });
 

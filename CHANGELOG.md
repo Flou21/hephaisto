@@ -67,6 +67,27 @@ on - the account, the two tokens, the values - is one page:
     plan says that it is answered in the console. The API routes
     `POST /api/workitems/{id}/codefix/{attemptId}/approve` and `.../deny` are as they were, for
     whoever the console's approver policy admits.
+- **A planner's questions are on the issue, and an answer reaches a new plan**
+  ([#286](https://github.com/TrueRelevance/hephaisto/issues/286),
+  [#252](https://github.com/TrueRelevance/hephaisto/issues/252)). The first real plan left an
+  entry where it was because the issue did not name it, and asked whether it should move too -
+  in a field no comment showed. Now:
+  - **A plan can ask.** The plan result has `questions` beside `notes`: what only a person can
+    decide, one decision each, with what the plan assumed meanwhile. The plan comment shows them
+    as a numbered list and the planner's notes in a fold below; the attempt's page in the console,
+    `GET /api/codefixes` and MCP `get_code_fix` carry them too. The planning prompt says that the
+    questions will be read and how to ask, and that work beside what the issue names is asked
+    about - neither added to the plan nor left out in silence.
+  - **`/replan`.** A third command, with the grammar of `/approve` and for the same approvers.
+    Answer in a comment, reply `/replan`: the waiting plan ends (rejected, with the reason
+    `replanned by github:<login>`), and a new attempt plans the **same** issue with the earlier
+    plan and with what the issue's author and the approvers wrote since it was handed over -
+    nobody else's comments, never Hephaisto's own. The issue's text is read again at that moment.
+    A second plan comment follows and says that it replaces the first.
+  - **A failed attempt is not the end.** Its status comment shows what its planner found, asked
+    and noted, and `/replan` has it tried again - also after a rejection or an expired plan.
+  - **Refused in one sentence, once**: while a Job is running for the issue, once a pull request
+    is open, and after the fifth attempt of one hand-over.
 - **The pull request is followed to its end.** While it is open Hephaisto asks GitHub about it
   on every poll (a free 304 while nothing changed). Merged, and the work item is `Done`; closed
   without merging, and it is `Cancelled` with `pull request closed without merging`; the status
@@ -171,8 +192,41 @@ on - the account, the two tokens, the values - is one page:
   - **What a pull request closes is worked out by GitHub afterwards** - seconds as a rule,
     minutes on a bad day. Nothing in Hephaisto reads it; a script of yours that does should
     wait for it.
+  - **A plan's questions are a list on GitHub, its notes a fold, and an assignment has a
+    time.** GitHub renders the numbered questions as list items and lets the `<details>` block
+    through; an answer and `/replan` written on github.com reach the second plan; and the
+    issue's timeline is what told an assignment made a second after an unassignment from one
+    that had been there all along.
+  - **One account, one install per repository.** The bot's token is an account's. A second
+    install that holds it and lists the same repository takes the same issues, writes a second
+    status comment and plans them with its own coder: on 2026-10-08 the sandbox was also listed
+    on a production install, and each issue of a test run was planned there by a real model. The
+    live tier now refuses to run when the last run's issues carry a status comment of a work
+    item the agent under test does not know.
 
 ### Fixed
+- **Unassigning and assigning again within one poll interval is noticed**
+  ([#285](https://github.com/TrueRelevance/hephaisto/issues/285)). After a failed attempt the
+  issue said "unassign Hephaisto and assign it again"; done within seconds, against a poll a
+  minute apart, nothing followed, because an unassignment existed only for a poll that fell into
+  it. For an issue whose newest attempt has ended without a pull request Hephaisto now reads the
+  issue's timeline, and an assignment newer than that end is a new hand-over: a new attempt for
+  the same work item. A waiting plan is left alone - assigning again does not answer it - and for
+  it, a running Job or an open pull request the timeline is not read at all. An unchanged
+  timeline is a free 304.
+- **An approval that races the watcher no longer fails its attempt.** An approval is recorded
+  before its implementing Job is created; a watcher pass that fell into that moment ended the
+  attempt as failed ("the Implement phase has no job recorded") while the Job was being started -
+  and the Job then ran on and opened its pull request for an attempt that said it had not
+  worked. For an incident's code fix as for an issue's, since v0.9.0. Such an attempt is now
+  left alone for two minutes after it was approved.
+- **A code span in a plan is posted as it was written.** `children: [...]` in a plan was shown
+  on the issue as `children: \[...\]`: brackets were escaped where an escape is not one. GitHub
+  acts on nothing inside a code span, so a span is now left alone and only the text between
+  spans is made inert.
+- **The plan prompts no longer say the build may be run while planning.** "The driver will run
+  these commands (you may run them too)" was false in the read-only plan phase, where the guard
+  refuses them.
 - **A coder Job is shown a repository's whole `CLAUDE.md`**
   ([#281](https://github.com/TrueRelevance/hephaisto/issues/281)). The runner pastes that file
   into the Job's prompt, and cut it at 24,000 characters with nothing but "(truncated)": the
@@ -252,6 +306,30 @@ on - the account, the two tokens, the values - is one page:
   handled as before.
 
 ### Changed
+- **A work item can have several attempts, one of them open.** It was one attempt, ever: a
+  failed, rejected or expired plan ended the issue until it was handed over again. The next
+  attempt is never started by itself - an approver's `/replan` or a fresh assignment asks for
+  it - and every cap still applies; one that cannot start yet waits, with its reason on the
+  status comment. `GET /api/workitems/{id}` lists the attempts, the console's work-item row
+  names the earlier ones, and an attempt's page says which of how many it is.
+- **The ceiling on what Hephaisto writes on an issue is per attempt.** It was six comments for a
+  work item. It is five for one attempt - its plan and four one-time answers - and at most five
+  attempts for one hand-over: with the status comment, at most 26.
+- **A plan's notes are posted, folded - but for one kind.** They were not posted at all, because
+  a note is where a planner quotes text it took for an injected instruction. Such a note is
+  still not quoted on the issue: it is counted, and an operator reads it in the console.
+- **Hephaisto reads an issue's comments while a Job runs and after a pull request**, not only
+  while a plan waits - conditionally, so an unchanged issue costs nothing - to refuse a
+  `/replan` in words. `/approve` and `/reject` at those times are passed over, as before.
+- **The words about handing an issue over again changed.** An ended attempt's status names
+  `/replan` first. Where a poll still has to see the gap - an issue whose pull request was
+  merged or closed and that stayed assigned - it says to wait a minute or two before assigning
+  again.
+- **`hephaisto.workitems.commands` has the verb `replan`.**
+- **The request for a work item can carry `previous` and comments**, and the plan result
+  `questions` - both optional members of contract versions that did not move. A coder image from
+  before this release refuses a request with `previous`, and an agent from before it refuses a
+  result with `questions`: as always, the two have to be of one version.
 - **`incidentId` on a code-fix attempt can be null** - in `GET /api/codefixes`, and in the
   `code_fix_attempts` and `llm_usage` tables. It is null exactly for an attempt that is for an
   issue; a client that follows it to an incident has to check.
@@ -289,12 +367,14 @@ on - the account, the two tokens, the values - is one page:
   `image.repository` or `codeFix.image.repository` needs nothing else. Everything up to and
   including `v0.14.0-rc1` stays where it was published, under `ghcr.io/flou21/`, and is not
   published again. Links to the old repository redirect.
-- **Migrations run when the agent starts**: three, `WorkItems`, `WorkItemCodeFix` and
-  `ApprovalOnIssue`. The first is a new table. The second makes `code_fix_attempts.incident_id`
-  and `llm_usage.incident_id` nullable, adds `code_fix_attempts.work_item_id` with a check that
-  exactly one of the two is set, and three columns to `work_items`. The third adds
-  `command_comment_id`, `command_answers` and `pr_body` to `code_fix_attempts` and
-  `still_assigned` to `work_items`. Existing rows are valid as they are.
+- **Migrations run when the agent starts**: five, `WorkItems`, `WorkItemCodeFix`,
+  `ApprovalOnIssue`, `ReplanOnIssue` and `AssignedAgain`. The first is a new table. The second
+  makes `code_fix_attempts.incident_id` and `llm_usage.incident_id` nullable, adds
+  `code_fix_attempts.work_item_id` with a check that exactly one of the two is set, and three
+  columns to `work_items`. The third adds `command_comment_id`, `command_answers` and `pr_body`
+  to `code_fix_attempts` and `still_assigned` to `work_items`. The last two add three nullable
+  columns to `work_items`: `replan_after_attempt_id`, `replan_requested_by` and
+  `assignment_seen_at`. Existing rows are valid as they are.
 - **The coder image has to be of this version**, as for every release since v0.13.0: the agent
   starts it in three roles and hands a Job for an issue a request an older image refuses. The
   chart's default follows the chart; an install that pins `codeFix.image.tag` moves both.

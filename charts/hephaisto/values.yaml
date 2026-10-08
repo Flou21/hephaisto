@@ -925,11 +925,15 @@ github:
   # Who may answer a plan ON THE ISSUE, by account NUMBER - a login can be renamed and taken by
   # somebody else. `gh api users/<login> --jq .id`.
   #
-  # An approver answers with a comment whose first line is `/approve`, or `/reject` followed by
-  # a reason. Nothing else is a command, and nobody else's comment is one: an account that is not
-  # listed is told so once per plan and changes nothing. What is approved is the plan as
-  # Hephaisto stored it, never the comment's text. An approval still needs codeFix.mode: pr - at
-  # plan or off it is refused, and the issue is told which.
+  # An approver answers with a comment whose first line is `/approve`, `/reject` followed by a
+  # reason, or `/replan`. Nothing else is a command, and nobody else's comment is one: an
+  # account that is not listed is told so once per plan and changes nothing. What is approved
+  # is the plan as Hephaisto stored it, never the comment's text. An approval still needs
+  # codeFix.mode: pr - at plan or off it is refused, and the issue is told which.
+  #
+  # `/replan` has the issue planned again, and then what an approver - and the issue's author -
+  # wrote on the issue since it was handed over is given to the planning Job, as untrusted text.
+  # Nobody else's comment reaches a Job.
   #
   # Empty: nobody can answer by comment, no comment is read, and the plan says that it is
   # answered in the console. The API is there either way, for whoever the console's approver

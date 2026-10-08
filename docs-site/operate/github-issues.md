@@ -128,35 +128,106 @@ or
 /reject the null is the caller's to handle
 ```
 
+or, to have the issue planned again with what was written on it since,
+
+```text
+/replan
+```
+
 Nothing else is a command — not `/approve please`, not `LGTM /approve`, not a quotation or a
-code block of either, not `/Approve`. Strict on purpose: a comment wrongly read as an approval
-pushes a branch. The first such comment after the plan decides, once; a comment that was read is
-never read again, whatever it is edited into.
+code block of either, not `/Approve`, not `/replan with the second option`. Strict on purpose: a
+comment wrongly read as an approval pushes a branch. The first such comment after the plan
+decides, once; a comment that was read is never read again, whatever it is edited into.
 
 The same plan can be answered in the **console**: *work items* lists what was taken, and each
 attempt has a page — `/codefixes/<attempt id>` — with the plan in full, its history, and approve
 and deny for whoever holds the approver role. Or through the API,
 `POST /api/workitems/{id}/codefix/{attemptId}/approve` and `.../deny`.
 
+## Questions, answers and a new plan
+
+A planner cannot ask while it runs, so it asks in its result. A plan comment has a section
+**Questions** — a numbered list of what only a person can decide, each with what the plan
+assumed in the meantime — and, folded below it, **the planner's notes**: what it left out and
+why. "Should 'Legacy Queue' move too? The plan leaves it where it is" is a question; before
+v0.14.0 it was a note nobody was shown.
+
+Three things can then be said:
+
+- `/approve` takes the plan **as it is, with its assumptions**.
+- An answer, then `/replan`. Answer in a comment like any other — by number, in a sentence —
+  and reply `/replan`, in the same comment after that first line or in a later one. The waiting
+  plan ends (it is recorded as rejected, with the reason `replanned by github:<login>`), a new
+  attempt plans the **same** issue, and a second plan comment follows that says it replaces the
+  first.
+- `/reject <reason>`.
+
+**What a replanning Job is given.** The earlier plan — its summary, its questions and its steps
+— and the comments written on the issue since it was handed over **by the issue's author and by
+the approvers**, oldest first. Nobody else's comment reaches a Job, and none of Hephaisto's own.
+The newest fifty are passed on, each cut at 16,000 characters, and credential shapes are scrubbed
+as they are from the issue's text. The issue's title and text are **read again** at `/replan` —
+it is an explicit act by an approver. A silent edit of the issue is still not picked up.
+
+**When `/replan` is taken, and when not.**
+
+| The newest attempt | `/replan` by an approver |
+|---|---|
+| its plan is waiting | taken: that plan ends, a new one is made |
+| it did not work, was rejected, expired or was stopped | taken: a new attempt for the same issue |
+| a Job is running for it (planning, implementing) | refused, in one sentence, once |
+| it opened a pull request | refused, in one sentence, once: the work goes on in the review |
+
+A `/replan` that is taken and cannot start yet — the daily cap, the one Job slot, the mode `off`
+— waits like a first plan does: the status comment says what it waits for, and Hephaisto asks
+again by itself.
+
+**An attempt that did not work** — `insufficient_context`, `not_a_code_problem`, a failure — has
+no plan comment, so the status comment shows what its planner found, asked and noted, and says
+how to go on: an approver answers and replies `/replan`.
+
+**At most five attempts for one hand-over.** After the fifth, `/replan` is refused and the
+status comment says so. Unassign the account, wait until the status comment says Hephaisto has
+let go, and assign it again: that is a new work item.
+
+### Assigning again
+
+For an issue whose newest attempt has **ended without a pull request**, unassigning the account
+and assigning it again is the same as `/replan` without an answer — however quickly it is done.
+Hephaisto reads the issue's timeline for it (`GET /repos/{owner}/{repo}/issues/{n}/timeline`,
+conditionally, so an unchanged timeline costs nothing against the rate limit) and takes an
+`assigned` event for its account that is newer than the attempt's end as a new hand-over.
+
+Only for those issues: for an issue whose plan is waiting, or whose Job is running, the timeline
+is not read at all, and **assigning again does not answer a waiting plan** — it is left alone.
+
 ## What Hephaisto writes on an issue
 
 - **One status comment**, edited in place as the work moves: planning, plan ready, implementing,
   the pull request, how it ended.
-- **One comment with the plan** — summary, what will change, files, steps, verification — and how
-  to answer it. Never edited.
+- **One comment with the plan per attempt** — summary, what will change, files, steps,
+  verification, the planner's questions, its notes folded — and how to answer it. Never edited,
+  also not when a new plan replaces it.
 - **At most one answer** to people who are not approvers, per plan, however many of them write
-  `/approve`: it names the first in a code span, mentions nobody and does not say who the
+  a command: it names the first in a code span, mentions nobody and does not say who the
   approvers are.
-- **At most one answer per cause** when an approver's `/approve` is refused — the mode is `plan`
-  or `off`, the emergency stop is engaged, the plan needs a change in a second repository.
+- **At most one answer per cause** when an approver's command is refused — the mode is `plan`
+  or `off`, the emergency stop is engaged, the plan needs a change in a second repository, a Job
+  is running, a pull request is open.
 
-**Never more than six comments** for one issue it was handed, whatever anybody writes there.
-Beyond that it only edits its status comment.
+**Never more than five comments for one attempt** — its plan and four answers — whatever anybody
+writes there, and at most five attempts for one hand-over: with the status comment, never more
+than 26 comments for one issue it was handed. Beyond a ceiling it only edits its status comment.
 
 Nothing of the issue's own text is repeated in a comment, and what a model wrote is posted with a
 zero-width space wherever GitHub would act on it — after `@`, `#` and `GH-`, inside `://`, after
 every `/` before a digit — so that it mentions nobody and closes nothing. A path or an address
-copied out of a plan comment or a pull request's description carries that character.
+copied out of a plan comment or a pull request's description carries that character. A code span
+the model wrote is posted as it was written: GitHub acts on nothing inside one.
+
+One kind of note is counted and not quoted: a note that speaks of injected text. That is where a
+planner quotes what somebody planted in the issue, and a comment is written under Hephaisto's
+name. An operator reads it on the attempt's page in the console.
 
 ## The mode decides what an issue gets
 
@@ -216,8 +287,9 @@ curl -s 'https://hephaisto.example.com/api/workitems?state=any' | jq '.[] | {rep
 minute. An MCP client asks the same with `list_work_items` and `get_work_item`.
 
 Four counters: `hephaisto.github.polls` by outcome, `hephaisto.workitems.taken`,
-`hephaisto.workitems.closed` by state and reason, and `hephaisto.workitems.commands` by verb and
-by what was done with the command (`accepted`, `not_approver`, `refused:<cause>`).
+`hephaisto.workitems.closed` by state and reason, and `hephaisto.workitems.commands` by verb
+(`approve`, `reject`, `replan`) and by what was done with the command (`accepted`,
+`not_approver`, `refused:<cause>`).
 
 ## Handing an issue back
 
@@ -225,19 +297,35 @@ Unassign the account, or close the issue: the work item is cancelled, a running 
 and nothing is pushed afterwards.
 
 An issue whose pull request was merged or closed is **not started over** while it simply stays
-assigned. Unassign the account and assign it again — or close and reopen the issue — to hand it
-over once more; that is a new work item, with the issue's text as it is then.
+assigned. Unassign the account and assign it again a minute or two later — Hephaisto has to have
+seen the issue without itself on it, which takes one poll — or close and reopen the issue, to
+hand it over once more; that is a new work item, with the issue's text as it is then.
+
+## One install per repository
+
+The token is an account's, not an install's. Two installs that hold the same account's token and
+list the same repository **both** take an issue assigned to that account: each writes its own
+status comment, and each plans it with its own coder and its own budget. Nothing tells them
+about each other. List a repository on one install - and give a test install an account of its
+own, or a repository no other install lists.
 
 ## Limits, and what is not built
 
 - **Polling only.** A new assignment is seen within `github.pollInterval`. A webhook that tells
   the poller to look now is [not built](https://github.com/TrueRelevance/hephaisto/issues/250).
-- **No replanning from a comment.** A plan cannot be asked to change; reject it, edit the issue
-  and hand it over again. [Not built](https://github.com/TrueRelevance/hephaisto/issues/252).
+- **A fresh assignment is only known by its time for an attempt that ended.** For an issue whose
+  pull request was merged or closed and that stayed assigned, off and on again within one poll
+  interval is still not noticed.
+- **A long conversation is read one page at a time.** GitHub lists an issue's comments oldest
+  first, a hundred to a page; a replanning Job is given the newest fifty of the first hundred
+  written since the issue was handed over.
 - **"Merged is done" was never run against github.com.** The test that runs against GitHub
   itself never merges, so that a merge ends the work item is held against a stand-in only.
 - **No real model has planned an issue in a test.** Every automated run used a scripted model;
   what a model makes of an issue's text is yours to watch on the first few.
-- **One attempt per work item.** A failed, denied or expired plan is not followed by another.
+- **One open attempt per work item, and at most five in a row.** The next one is never started
+  by itself: an approver asks for it, or the issue is assigned again.
+- **No real model has been asked a question's answer.** Whether a planner asks well, and what it
+  makes of an answer, was run with a scripted model only.
 - **A commit message is not made inert.** The implementing prompt forbids closing keywords
   there; nothing checks it.

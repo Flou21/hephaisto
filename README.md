@@ -468,12 +468,12 @@ and the click is recorded as the team's member list names that person.
 | `GET /api/status` | mode, budgets, kill-switch arms |
 | `GET /api/version` | the running version and commit; touches no database |
 | `GET /api/codefixes`, `/counts`, `/mode` | code-fix attempts - an incident's, or one for a GitHub issue (`workItemId`, `issue`, `issueUrl`; `incidentId` is then null) - the running and waiting counts, the code-fix mode |
-| `GET /api/codefixes/{attemptId}` | one attempt by its own id, with what it is for: `attempt`, `workItem` (null for an incident's) and `mode`. `decidedThrough` on an attempt says through what its plan was answered: `Ui`, `Api`, `Oidc`, `GitHub` |
+| `GET /api/codefixes/{attemptId}` | one attempt by its own id, with what it is for: `attempt`, `workItem` (null for an incident's), `mode`, and `attempts` - every attempt of that work item, oldest first, since an issue can be planned again. An attempt carries `questions` beside `notes`: what its planner asks of a person. `decidedThrough` on an attempt says through what its plan was answered: `Ui`, `Api`, `Oidc`, `GitHub` |
 | `GET /api/incidents/{id}/codefix` | an incident's code-fix attempts and its latest verdict |
 | `POST /api/incidents/{id}/codefix` | ask for a code fix (approver policy) |
 | `POST /api/incidents/{id}/codefix/{attemptId}/approve`, `/deny` | decide on a plan (approver policy; approve needs mode `Pr`) |
-| `GET /api/workitems?state=Taken\|Done\|Cancelled\|any`, `/api/workitems/{id}` | GitHub issues taken as work (v0.14.0): without `state`, what is taken now; one work item carries its `attempts` |
-| `POST /api/workitems/{id}/codefix/{attemptId}/approve`, `/deny` | decide on the plan for an issue (approver policy; approve needs mode `Pr`) - the incident routes' body and refusals. The same plan can be answered on the issue itself, by an account listed in `github.approvers`: a comment whose first line is `/approve` or `/reject <reason>` |
+| `GET /api/workitems?state=Taken\|Done\|Cancelled\|any`, `/api/workitems/{id}` | GitHub issues taken as work (v0.14.0): without `state`, what is taken now; one work item carries its `attempts`, newest first, and `replanRequestedBy` while a new plan was asked for and has not started |
+| `POST /api/workitems/{id}/codefix/{attemptId}/approve`, `/deny` | decide on the plan for an issue (approver policy; approve needs mode `Pr`) - the incident routes' body and refusals. The same plan can be answered on the issue itself, by an account listed in `github.approvers`: a comment whose first line is `/approve`, `/reject <reason>` or - to have the issue planned again with the comments written since - `/replan` |
 | `GET /api/alerts/{name}/note` | what people wrote about an alert name, and what was done each time |
 | `POST /api/alerts/{name}/note/entries` | add a line of what was done this time |
 | `PUT /api/alerts/{name}/note` | rewrite the note the agent reads beside its runbook (approver policy) |
