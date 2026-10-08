@@ -71,7 +71,8 @@ public sealed class IssueCommentsTests
         DeniedToolCalls = [],
     };
 
-    private static string PlanText(CodeFixPlanResult plan, CodeFixMode mode = CodeFixMode.Pr) => IssueComments.Plan(Stored(plan), plan, mode);
+    private static string PlanText(CodeFixPlanResult plan, CodeFixMode mode = CodeFixMode.Pr, bool answerable = true) =>
+        IssueComments.Plan(Stored(plan), plan, mode, answerable);
 
     // --- the status comment, state by state -------------------------------------------------
 
@@ -90,7 +91,8 @@ public sealed class IssueCommentsTests
         { "failed", "**It did not work.** the coder returned not_a_code_problem.\n\n**What it found.** This is a question, not a change." },
         { "let go", "**Hephaisto has let go of this issue:** the issue was closed. Anything that was running for it was stopped." },
         { "let go with pr", "**Hephaisto has let go of this issue:** hephaisto-bot is no longer an assignee. The draft pull request stays as it is: https://github.com/octo/shop/pull/7" },
-        { "done", "**Done.** The pull request was merged. https://github.com/octo/shop/pull/7" },
+        { "done", "**Done.** The pull request was merged: https://github.com/octo/shop/pull/7\n\nFor more work on this issue, reopen it, or unassign Hephaisto and assign it again." },
+        { "pr closed", "**Hephaisto has let go of this issue:** its pull request was closed without merging: https://github.com/octo/shop/pull/7\n\nTo hand the issue back, unassign Hephaisto and assign it again." },
     };
 
     private static IssueStatus StatusOf(string state) => state switch
@@ -111,7 +113,11 @@ public sealed class IssueCommentsTests
         {
             State = WorkItemState.Cancelled, StateReason = "hephaisto-bot is no longer an assignee",
         },
-        "done" => Taken(Attempt(CodeFixState.PrOpened, pr: "https://github.com/octo/shop/pull/7")) with { State = WorkItemState.Done },
+        "done" => Taken(Attempt(CodeFixState.PrOpened, pr: "https://github.com/octo/shop/pull/7")) with { State = WorkItemState.Done, StateReason = WorkItemReasons.Merged },
+        "pr closed" => Taken(Attempt(CodeFixState.PrOpened, pr: "https://github.com/octo/shop/pull/7")) with
+        {
+            State = WorkItemState.Cancelled, StateReason = WorkItemReasons.PullRequestClosed,
+        },
         _ => throw new ArgumentOutOfRangeException(nameof(state), state, null),
     };
 
@@ -226,6 +232,125 @@ public sealed class IssueCommentsTests
         body.Should().Contain("`/reject <reason>`");
     }
 
+    [Fact]
+    public void WithNobodyWhoMayAnswer_ThePlanDoesNotInviteAnAnswer()
+    {
+        var body = PlanText(PlanResult(), answerable: false);
+
+        body.Should().Contain("**This plan is not answered on the issue.**").And.Contain("Hephaisto's console");
+        body.Should().NotContain("/approve").And.NotContain("/reject", "a reply that will not be read is not asked for");
+        body.Should().Contain("**Summary.** Endpoints.Primary needs a null check.", "it is still the plan");
+        body.Should().EndWith(IssueComments.PlanMarker(AttemptId));
+
+        PlanText(PlanResult(), CodeFixMode.Plan, answerable: false).Should().Contain("its code-fix mode was Plan");
+        PlanText(PlanResult(needsCait: true), answerable: false).Should().Contain("a change in a shared library first").And.NotContain("/reject");
+    }
+
+    // --- the one-time answers -----------------------------------------------------------------
+
+    [Fact]
+    public void SomebodyWhoIsNotAnApprover_IsToldSo_ByNameAndWithoutBeingMentioned()
+    {
+        var body = IssueComments.NotApprover(AttemptId, "passerby");
+
+        body.Should().StartWith("**Not counted.** `passerby` is not one of the approvers of this install");
+        body.Should().Contain("Nothing was changed.").And.Contain("once per plan");
+        body.Should().EndWith(IssueComments.AnswerMarker(AttemptId, IssueComments.NotApproverKey));
+
+        // Nobody is notified, and nobody who may answer is named.
+        body.Should().NotContain("@").And.NotContain("maintainer");
+        IssueComments.AnswerKeysIn(AttemptId, body).Should().Equal(IssueComments.NotApproverKey);
+    }
+
+    [Fact]
+    public void ALoginThatIsNotOne_CannotLeaveItsCodeSpan()
+    {
+        // GitHub's logins are letters, digits and hyphens. A server that says otherwise is not believed.
+        var body = IssueComments.NotApprover(AttemptId, "x` @octo-org/everyone closes #1 `y");
+
+        body.Should().StartWith("**Not counted.** `x' @octo-org/everyone closes #1 'y` is not one of");
+        body.Count(c => c == '`').Should().Be(2, "one span, opened and closed by Hephaisto");
+    }
+
+    public static TheoryData<CodeFixRefusal, CodeFixMode?, string, string> Refusals => new()
+    {
+        { CodeFixRefusal.ModeBelowPr, CodeFixMode.Plan, "mode-plan", "the code-fix mode of this install is Plan, which plans and changes nothing. Implementing needs an operator to set it to Pr. The plan still stands: reply `/approve` again once that has changed." },
+        { CodeFixRefusal.ModeBelowPr, CodeFixMode.Off, "mode-off", "the code-fix mode of this install is Off. No Job is started, and with nothing allowed to run this plan is withdrawn." },
+        { CodeFixRefusal.EmergencyStop, null, "emergency-stop", "an operator has engaged Hephaisto's emergency stop. No Job is started" },
+        { CodeFixRefusal.KillSwitch, null, "kill-switch", "Hephaisto's kill switch is holding it back. No Job is started" },
+        { CodeFixRefusal.NeedsSecondRepository, null, "second-repository", "this plan needs a change in a second repository first, which a person makes. It cannot be approved here; reply `/reject <reason>` to close it." },
+        { CodeFixRefusal.NotWaiting, null, "not-waiting", "this plan is no longer waiting for an answer." },
+        { CodeFixRefusal.SubjectTakenBack, null, "taken-back", "this issue is no longer Hephaisto's." },
+        { CodeFixRefusal.ActorForbidden, null, "refused", "it could not be recorded. An operator finds the reason in Hephaisto's console." },
+        { CodeFixRefusal.NotFound, null, "refused", "it could not be recorded." },
+    };
+
+    [Theory]
+    [MemberData(nameof(Refusals))]
+    public void ARefusalSaysItsCauseInASentence_AndIsKeyedByIt(CodeFixRefusal refusal, CodeFixMode? mode, string key, string sentence)
+    {
+        var body = IssueComments.Refused(AttemptId, "maintainer", IssueCommandKind.Approve, refusal, mode);
+
+        IssueComments.AnswerKey(refusal, mode).Should().Be(key);
+        body.Should().StartWith("**Not done.** `maintainer`'s `/approve` was read and refused: " + sentence);
+        body.Should().Contain("once per plan and cause");
+        body.Should().EndWith(IssueComments.AnswerMarker(AttemptId, key));
+        body.Should().NotContain("@").And.NotContain("configmap").And.NotContain("env:", "an issue is not told which arm of which switch");
+    }
+
+    [Fact]
+    public void EveryCauseTheDoorHas_IsAnAnswer_AndTheModeIsTwo()
+    {
+        var keys = Enum.GetValues<CodeFixRefusal>()
+            .Where(r => r != CodeFixRefusal.None)
+            .SelectMany(r => r == CodeFixRefusal.ModeBelowPr
+                ? new[] { IssueComments.AnswerKey(r, CodeFixMode.Plan), IssueComments.AnswerKey(r, CodeFixMode.Off) }
+                : [IssueComments.AnswerKey(r, null)])
+            .ToList();
+
+        // Plan and Off are two things to be told; a forbidden actor and a missing attempt are one.
+        keys.Distinct().Should().HaveCount(keys.Count - 1);
+        keys.Should().OnlyContain(k => System.Text.RegularExpressions.Regex.IsMatch(k, "^[a-z-]+$"), "a key is stored in a comma-separated column");
+        keys.Should().NotContain(IssueComments.NotApproverKey);
+    }
+
+    [Theory]
+    [InlineData("the mode", "plan")]
+    [InlineData("the mode", "off")]
+    public void ARefusalForTheMode_NamesTheMode_TheWayTheSuiteLooksForIt(string _, string mode)
+    {
+        // scripts/e2e/issues/G12.sh: the word and the value in one sentence.
+        var body = IssueComments.Refused(
+            AttemptId, "maintainer", IssueCommandKind.Approve, CodeFixRefusal.ModeBelowPr, mode == "plan" ? CodeFixMode.Plan : CodeFixMode.Off);
+
+        body.Should().MatchRegex($@"(?i)\bmode\b[^.\n]{{0,40}}\b{mode}\b");
+    }
+
+    [Fact]
+    public void ARejectionThatWasRefused_SaysWhichWordItWas() =>
+        IssueComments.Refused(AttemptId, "maintainer", IssueCommandKind.Reject, CodeFixRefusal.NotWaiting, null)
+            .Should().StartWith("**Not done.** `maintainer`'s `/reject` was read and refused: this plan is no longer waiting for an answer.");
+
+    [Fact]
+    public void AnAnswersMarker_IsFoundForItsOwnAttemptOnly()
+    {
+        var other = Guid.Parse("0192a6f0-0000-7000-8000-000000000002");
+        var body = "text\n" + IssueComments.AnswerMarker(AttemptId, "mode-plan") + "\n" + IssueComments.AnswerMarker(other, "mode-off")
+            + IssueComments.AnswerMarker(AttemptId, IssueComments.NotApproverKey);
+
+        IssueComments.AnswerKeysIn(AttemptId, body).Should().Equal("mode-plan", IssueComments.NotApproverKey);
+        IssueComments.AnswerKeysIn(other, body).Should().Equal("mode-off");
+        IssueComments.AnswerKeysIn(AttemptId, IssueComments.PlanMarker(AttemptId) + IssueComments.StatusMarker(WorkItemId)).Should().BeEmpty();
+        IssueComments.AnswerMarker(AttemptId, "mode-plan").Should().StartWith("<!--").And.EndWith("-->");
+    }
+
+    [Fact]
+    public void TheCeilingIsAboveWhatTheRulesAllowByThemselves()
+    {
+        // One status comment, one plan, one answer to strangers, and room for three causes.
+        IssueComments.MaxPerWorkItem.Should().Be(6);
+    }
+
     [Theory]
     [InlineData("build-only", "Build only")]
     [InlineData("typecheck-only", "Type check only")]
@@ -255,7 +380,7 @@ public sealed class IssueCommentsTests
 
         CodeFixQueries.Plan(attempt).Should().BeNull();
 
-        var body = IssueComments.Plan(attempt, CodeFixQueries.Plan(attempt), CodeFixMode.Pr);
+        var body = IssueComments.Plan(attempt, CodeFixQueries.Plan(attempt), CodeFixMode.Pr, answerable: true);
 
         body.Should().Contain("**Summary.** Endpoints.Primary needs a null check.");
         body.Should().Contain("- (the plan names none)");

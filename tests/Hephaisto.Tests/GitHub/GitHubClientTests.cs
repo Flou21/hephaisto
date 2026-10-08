@@ -225,7 +225,7 @@ public sealed class GitHubClientTests
             """{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}""",
             headers: [("retry-after", "30")]));
 
-        var result = await client.GetPullRequestAsync(Repo, 7, Ct);
+        var result = await client.GetPullRequestAsync(Repo, 7, etag: null, Ct);
 
         result.Outcome.Should().Be(GitHubOutcome.RateLimited);
         result.RetryAt.Should().Be(Given.Now.AddSeconds(30));
@@ -309,7 +309,7 @@ public sealed class GitHubClientTests
     {
         var (client, handler, _) = Build(_ => Json(HttpStatusCode.OK, CommentList));
 
-        var comments = await client.ListCommentsAsync(Repo, 42, new DateTimeOffset(2026, 10, 6, 9, 30, 15, 987, TimeSpan.Zero), Ct);
+        var comments = await client.ListCommentsAsync(Repo, 42, new DateTimeOffset(2026, 10, 6, 9, 30, 15, 987, TimeSpan.Zero), etag: null, Ct);
 
         handler.Requests.Single().Uri.Should().Be(
             "https://github.example/api/v3/repos/octo/shop/issues/42/comments?per_page=100&since=2026-10-06T09%3A30%3A15Z");
@@ -327,7 +327,7 @@ public sealed class GitHubClientTests
     {
         var (client, handler, _) = Build(_ => Json(HttpStatusCode.OK, "[]"));
 
-        await client.ListCommentsAsync(Repo, 42, since: null, Ct);
+        await client.ListCommentsAsync(Repo, 42, since: null, etag: null, Ct);
 
         handler.Requests.Single().Uri.Should().Be("https://github.example/api/v3/repos/octo/shop/issues/42/comments?per_page=100");
     }
@@ -386,8 +386,8 @@ public sealed class GitHubClientTests
             ? Json(HttpStatusCode.OK, """{"number":7,"state":"closed","draft":false,"merged":true,"merged_at":"2026-10-06T10:00:00Z","html_url":"https://github.com/octo/shop/pull/7","head":{"ref":"hephaisto/issue-42"},"body":"Closes octo/shop#42"}""")
             : Json(HttpStatusCode.OK, """{"number":8,"state":"open","draft":true,"merged":false,"merged_at":null,"html_url":"https://github.com/octo/shop/pull/8","head":{"ref":null},"body":null}"""));
 
-        var merged = await client.GetPullRequestAsync(Repo, 7, Ct);
-        var draft = await client.GetPullRequestAsync(Repo, 8, Ct);
+        var merged = await client.GetPullRequestAsync(Repo, 7, etag: null, Ct);
+        var draft = await client.GetPullRequestAsync(Repo, 8, etag: null, Ct);
 
         handler.Requests[0].Uri.Should().Be("https://github.example/api/v3/repos/octo/shop/pulls/7");
 
@@ -398,6 +398,56 @@ public sealed class GitHubClientTests
         draft.Value.Draft.Should().BeTrue();
         draft.Value.MergedAt.Should().BeNull();
         draft.Value.HeadRef.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task A_pull_request_is_open_only_while_it_is_neither_closed_nor_merged()
+    {
+        GitHubPullRequest Pull(string state, bool merged) => new(7, state, Draft: true, merged, null, "https://github.com/octo/shop/pull/7", null);
+
+        Pull("open", false).IsOpen.Should().BeTrue();
+        Pull("OPEN", false).IsOpen.Should().BeTrue();
+        Pull("closed", false).IsOpen.Should().BeFalse("closed without merging");
+        Pull("closed", true).IsOpen.Should().BeFalse("merged, which GitHub also calls closed");
+        Pull("open", true).IsOpen.Should().BeFalse("merged is merged, whatever the state says");
+        Pull(string.Empty, false).IsOpen.Should().BeFalse("a state GitHub did not send is not 'open'");
+
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task Comments_and_a_pull_request_are_asked_for_with_the_tag_of_the_last_answer()
+    {
+        // What makes asking on every pass free: a 304 does not count against the rate limit.
+        var (client, handler, _) = Build(_ => new HttpResponseMessage(HttpStatusCode.NotModified));
+
+        var comments = await client.ListCommentsAsync(Repo, 42, new DateTimeOffset(2026, 10, 6, 9, 30, 15, TimeSpan.Zero), etag: "W/\"c1\"", Ct);
+        var pull = await client.GetPullRequestAsync(Repo, 7, etag: "W/\"p1\"", Ct);
+
+        handler.Requests[0].Headers["If-None-Match"].Should().Be("W/\"c1\"");
+        handler.Requests[1].Headers["If-None-Match"].Should().Be("W/\"p1\"");
+
+        comments.Outcome.Should().Be(GitHubOutcome.NotModified);
+        comments.Value.Should().BeNull("there is no list in a 304");
+        pull.Outcome.Should().Be(GitHubOutcome.NotModified);
+        pull.Value.Should().BeNull();
+        pull.ETag.Should().Be("W/\"p1\"");
+    }
+
+    [Fact]
+    public async Task An_answer_carries_its_tag_and_no_tag_is_sent_without_one()
+    {
+        var (client, handler, _) = Build(_ =>
+        {
+            var response = Json(HttpStatusCode.OK, "[]");
+            response.Headers.TryAddWithoutValidation("ETag", "W/\"fresh\"");
+            return response;
+        });
+
+        var comments = await client.ListCommentsAsync(Repo, 42, since: null, etag: null, Ct);
+
+        handler.Requests.Single().Headers.Should().NotContainKey("If-None-Match");
+        comments.ETag.Should().Be("W/\"fresh\"");
     }
 
     [Fact]

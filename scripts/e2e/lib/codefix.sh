@@ -80,6 +80,95 @@ cf_incident_for() {
 
 cf_incident_state() { cf_get "/api/incidents/$1" | jq -r '.state // .incident.state // empty'; }
 
+# An incident whose last investigation proposed an action waits for a person's answer, and
+# cannot be investigated again until it has one (409, "AwaitingApproval -> Investigating").
+# Whether an investigation proposes one is the in-process model's to decide - I1 runs a real
+# model, and on 2026-10-07 it proposed RollbackDeployment for shop-api where the run before had
+# proposed nothing, and I9 was red on the refusal; the same day c19 waited twenty-five minutes
+# for an incident to be Escalated that was waiting for an approval instead. The harness gives
+# the answer a person would give a fixture: no. Everything it prints goes to stderr; callers
+# capture stdout.
+cf_release() {
+    local incident="$1" doc action
+    doc=$(cf_get "/api/incidents/$incident")
+    [ "$(jq -r '.state // empty' <<<"$doc")" = AwaitingApproval ] || return 0
+
+    for action in $(jq -r '.actions[]? | select(.state == "AwaitingApproval") | .id' <<<"$doc"); do
+        cf_post "/api/incidents/$incident/actions/$action/deny" "$(jq -cn --arg a "$CF_ACTOR" '{decidedBy:$a}')" >/dev/null
+        say "denied the action an earlier investigation proposed for $incident ($action)" >&2
+    done
+
+    _cf_released() { [ "$(cf_get "/api/incidents/$incident" | jq -r '.state // empty')" != AwaitingApproval ]; }
+    wait_for "incident $incident to stop waiting for an approval" 60 _cf_released >&2 || true
+}
+
+
+# Whether anything in the chaos namespace is being investigated, or an investigator Job runs.
+cf_busy() {
+    [ "$(kc -n "$CF_CODER_NS" get jobs -l "app.kubernetes.io/name=${IV_LABEL:-hephaisto-investigator}" -o json 2>/dev/null \
+        | jq '[.items[] | select((.status.active // 0) > 0)] | length')" != 0 ] && return 0
+    cf_get "/api/incidents?state=open&limit=200" | jq -e --arg ns "$CF_CHAOS_NS" '
+        [ .[] | select(.namespace == $ns and (.state == "Detected" or .state == "Triaging" or .state == "Investigating")) ]
+        | length > 0' >/dev/null
+}
+
+# Waits until nothing is being investigated and has not been for IV_QUIET seconds.
+#
+# There is ONE investigator Job slot, and a scenario that needs it - to see its own Job run, or
+# to hold it on purpose - cannot share it with an investigation nobody asked for. A fixture that
+# was just brought up gets several of those, minutes apart, and iv_wait_idle on the scenario's
+# own incident sees none of them (iv_wait_idle, in lib/investigate.sh):
+#
+#   - the watcher's incident, under the Deployment, investigated at once;
+#   - the incident of the alert that names the pod (KubePodCrashLooping), filed under that pod
+#     by design, about two minutes later;
+#   - and, when an incident of the same workload was CLOSED BY A PERSON in the last 24 hours -
+#     which is what cleaning up after a run does - a third: the Deployment-level alert
+#     (KubeDeploymentReplicasMismatch) reopens that closed one (Ingest:ReopenWindow) although
+#     an incident for the workload is already open, and it is investigated again.
+#
+# On 2026-10-07 the third one's three-minute Job took the slot nineteen seconds before I8
+# asked for it, and was three seconds from done when I9 did; both then ran in-process and both
+# scenarios were red. Run 1 of four on 2026-10-06 failed the same two the same way. The window
+# is for the next of these arriving just after the last one ended.
+#   cf_wait_quiet [timeout]
+cf_wait_quiet() {
+    local timeout="${1:-1800}" need="${CF_QUIET:-${IV_QUIET:-45}}" quiet=0 waited=0
+    printf '  waiting for nothing else to be investigating ' >&2
+    while [ "$waited" -lt "$timeout" ]; do
+        if cf_busy; then quiet=0; printf '.' >&2; else quiet=$((quiet + 5)); fi
+        if [ "$quiet" -ge "$need" ]; then printf ' ok (%ss)\n' "$waited" >&2; return 0; fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+    printf ' timeout after %ss\n' "$timeout" >&2
+    return 1
+}
+
+# A plan that waits on a workload holds the workload's one open attempt, whichever incident it
+# is for - and a fixture is more than one incident (cf_wait_quiet says which). When one of the
+# others is judged eligible too, its plan is in the way of the attempt a scenario is about to
+# ask for: "a code fix is already open for this workload", and on 2026-10-07 forged-result and
+# the switch-off test behind it were skipped on exactly that. Waits for plans of the workload
+# that are still being made, then denies the ones that wait.
+#   cf_clear_workload_plans <workload name>
+cf_clear_workload_plans() {
+    local workload="$1" stale inc att
+    _cf_none_planning() {
+        [ "$(cf_get '/api/codefixes?limit=200' | jq --arg w "/Deployment/$workload" \
+            '[.[] | select((.workload | endswith($w)) and (.state == "Eligible" or .state == "Planning"))] | length')" = 0 ]
+    }
+    wait_for "no plan being made for $workload" 300 _cf_none_planning >&2 || true
+
+    stale=$(cf_get '/api/codefixes?state=PlanReady&limit=200' | jq -r --arg w "/Deployment/$workload" \
+        '.[] | select(.workload | endswith($w)) | "\(.incidentId) \(.id)"')
+    while read -r inc att; do
+        [ -n "$att" ] || continue
+        cf_decide "$inc" "$att" deny "e2e: a plan for another incident of the same workload" >/dev/null \
+            && say "denied a waiting plan on $workload ($att, incident $inc)" >&2
+    done <<<"$stale"
+}
+
 cf_is_escalated() { [ "$(cf_incident_state "$1")" = "Escalated" ]; }
 
 # --- attempts -------------------------------------------------------------------------------
@@ -569,9 +658,18 @@ run_c19() {
         [ "$(cf_job_count "$incident")" = 0 ] && pass "no coder Job for the un-grounded c19 escalation" || fail "no coder Job for the un-grounded c19 escalation"
 
         [ "$tries" -ge 2 ] && break
+        # With a scripted investigator the second investigation is a script too - if it gets the
+        # one Job slot. Without the wait it shared the slot with the fixture's other incidents,
+        # ran in-process, and a real model proposed an action: the incident then waited for an
+        # approval, never "escalated again", and this stood here for twenty-five minutes.
+        cf_wait_quiet || true
         cf_post "/api/incidents/$incident/reinvestigate" "$(jq -cn --arg a "$CF_ACTOR" '{requestedBy:$a}')" >/dev/null || true
-        wait_for "c19 to escalate again" 1500 bash -c "[ \"\$(curl -s --max-time 10 '$CF_API/api/incidents/$incident' | jq '.investigations | length')\" -ge 2 ] && [ \"\$(curl -s --max-time 10 '$CF_API/api/incidents/$incident' | jq -r .state)\" = Escalated ]" || true
-        cf_attempt_in "$incident" Eligible Planning PlanReady || cf_request "$incident" >/dev/null || true
+        wait_for "c19 to be investigated again" 1500 bash -c "[ \"\$(curl -s --max-time 10 '$CF_API/api/incidents/$incident' | jq '.investigations | length')\" -ge 2 ] && curl -s --max-time 10 '$CF_API/api/incidents/$incident' | jq -e '.state == \"Escalated\" or .state == \"AwaitingApproval\"' >/dev/null" || true
+        cf_release "$incident"
+        if ! cf_attempt_in "$incident" Eligible Planning PlanReady; then
+            cf_clear_workload_plans catalog-api
+            cf_request "$incident" >/dev/null || true
+        fi
     done
 
     if [ "$have_attempt" = 0 ]; then
@@ -639,13 +737,17 @@ run_forged() {
     local incident="${C15_INCIDENT:-$(cf_get '/api/codefixes?limit=200' | jq -r '[.[] | select(.workload | endswith("/Deployment/shop-api"))] | sort_by(.createdAt) | last | .incidentId // empty')}"
     [ -n "$incident" ] || { skip "forged result" "needs the c15 incident"; return 0; }
 
-    # A plan left waiting by an earlier, interrupted run holds the incident's one open slot.
-    local stale
-    stale=$(cf_codefix "$incident" | jq -r '.attempts[] | select(.state == "PlanReady") | .id')
-    for s in $stale; do cf_decide "$incident" "$s" deny "e2e: clearing a plan left by an earlier run" >/dev/null; done
-
-    local out id
-    out=$(cf_request "$incident")
+    # A plan left waiting holds the workload's one open slot: by an earlier, interrupted run on
+    # this incident, or by this run for ANOTHER incident of shop-api - the alert's, or one a
+    # person closed yesterday that the Deployment's alert reopened. Asked for up to three
+    # times, because such a plan may be judged eligible just after this looked.
+    local out id try
+    for try in 1 2 3; do
+        cf_clear_workload_plans shop-api
+        out=$(cf_request "$incident")
+        [ "$(tail -1 <<<"$out")" = 200 ] && break
+        head -1 <<<"$out" | grep -q "already open" || break
+    done
     if [ "$(tail -1 <<<"$out")" != 200 ]; then
         skip "a forged result changes nothing" "no new attempt could be started: $(head -1 <<<"$out" | jq -r '.message // .')"
         return 0

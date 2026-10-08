@@ -316,6 +316,7 @@ forward (`$H:8110`), no token:
 | `PATCH .../issues/{n}` `{body?, title?, state?}` | an edit; `state` closes and reopens |
 | `POST .../issues/{n}/comments` `{body, login, id?}` | a comment as that account |
 | `PUT .../pulls/{n}` `{merged?, state?}` | what became of a pull request; one nobody registered is an open draft |
+| `DELETE .../pulls/{n}` | forget it: an open draft again. The `gh` shim numbers pull requests from 1 in every Job |
 | `POST /github/control/fail/{500\|rate-limit\|off}?count=N` | the next N API calls fail |
 | `GET /github/control/requests` | every API call the agent made: `seq`, method, path, query, status |
 | `GET /github/control/comments` | every comment, with its issue, its author and how often it was edited |
@@ -335,12 +336,21 @@ green. Since stage 2.3 (#246) a work item's attempt is a row of `GET /api/codefi
 plan is a comment on the issue - G01, G07 and G08 are green. `issues_plan_ready`, the road ten
 scenarios start on, ends where the issue has been told: `PlanReady` is written by the loop that
 collects a Job, the comment by the poller's next pass, and the attempt names it (`planCommentId`)
-once it is there. What is still ASSUMED is the answer on the issue, the pull request's body and
-`Done` - stage 2.4 (#247).
+once it is there. Since stage 2.4 (#247) nothing is ASSUMED: a plan is answered on the issue, the
+pull request's body is `prBody` on the attempt (`issues_pr_body` reads it there - the Job's pod is
+gone when a scenario looks), a merged pull request is `Done`, and G03 to G06 and G10 to G12 are
+green. `KNOWN_RED` lists nothing, so a plain run and `--strict` are the same.
 
-What the bot writes on an issue is two comments and never more: one status comment per work
-item, edited in place as the work moves, and one comment per attempt with its plan. `curl -s
-http://$H:8110/github/control/comments | jq -r '.[] | "\(.edits) \(.body)"'` shows both.
+What the bot writes on an issue is one status comment per work item, edited in place as the work
+moves, and one comment per attempt with its plan - and, only when somebody answered a plan and
+was not heard, one answer per attempt to people who are not approvers and one per cause an
+approver was refused for. Never more than six for one work item (`ISSUES_COMMENT_CAP`, which a
+unit test holds to `IssueComments.MaxPerWorkItem`). `curl -s
+http://$H:8110/github/control/comments | jq -r '.[] | "\(.edits) \(.body)"'` shows them.
+
+A scenario answers a plan the way a person does: `gh_comment_as <repo> <n> maintainer 1001
+"/approve"`. The command is the comment's first non-blank line; the number is what makes it
+count.
 
 All scenarios work in one repository, and each is an attempt on it. `values-dev-coder.yaml` allows
 20 a day, which two runs of this suite beside the incident suites would use up - reported as "no

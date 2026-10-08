@@ -23,7 +23,13 @@ scenario() {
     want "the reason is kept with it, as it was written" \
         "$(jq --arg r "$reason" 'tostring | contains($r)' <<<"$attempt")" = true
     want "no Job implemented anything" "$(issues_job_count "$attempt_id" implement)" -eq 0
-    want "the issue says the plan was refused" "$(gh_bot_said "$ISSUES_REPO" "$n" 'reject|denied|refused')" -ge 1
+    # In the status comment, with who and why - not "reject" anywhere, which the plan comment
+    # already says of itself ("replies /reject <reason>"). Waited for: the comment follows the
+    # database by up to a poll.
+    _g05_told() { [ "$(gh_bot_comments "$ISSUES_REPO" "$n" | jq --arg r "$ISSUES_RUN" '[.[] | select((.body | contains("plan was rejected")) and (.body | contains($r)))] | length')" -ge 1 ]; }
+    wait_for "the issue to say the plan was rejected" "$ISSUES_SEEN_WAIT" _g05_told \
+        && pass "the issue says the plan was rejected, and why" \
+        || fail "the issue says the plan was rejected, and why" "no comment of the bot's says so with the reason"
 
     mark=$(gh_mark)
     gh_comment_as "$ISSUES_REPO" "$n" "$ISSUES_APPROVER" "$ISSUES_APPROVER_ID" "/approve" >/dev/null

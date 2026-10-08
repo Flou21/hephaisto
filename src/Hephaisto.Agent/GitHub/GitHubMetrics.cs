@@ -13,6 +13,8 @@ public sealed class GitHubMetrics
     public const string ReasonClosed = "issue_closed";
     public const string ReasonUnassigned = "unassigned";
     public const string ReasonGone = "issue_gone";
+    public const string ReasonMerged = "merged";
+    public const string ReasonPullRequestClosed = "pull_request_closed";
 
     private readonly Counter<long> polls;
     private readonly Counter<long> taken;

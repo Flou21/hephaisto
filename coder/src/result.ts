@@ -20,6 +20,56 @@ export function frame(json: string): string {
   return `${BEGIN} sha256=${sha} bytes=${bytes.length}---\n${json}\n${END}\n`;
 }
 
+// The pull request's description, as the publish role sent it to GitHub (v0.14.0). NOT part of
+// the result contract and not in its schema: a block of its own, printed before the result and
+// framed the same way, whose one payload line is the text as a JSON string - so no line of the
+// text is a line of the log, and nothing in it can open or close a block. Hephaisto keeps it with
+// the attempt for a person to read, and never believes or refuses a pull request because of it.
+export const PR_BODY_BEGIN = '---HEPHAISTO-PR-BODY-BEGIN';
+export const PR_BODY_END = '---HEPHAISTO-PR-BODY-END---';
+
+/** GitHub's own limit for a description; a longer one is cut here rather than refused there. */
+export const PR_BODY_MAX_CHARS = 65_536;
+
+export function framePrBody(body: string): string {
+  const cps = Array.from(body);
+  const json = JSON.stringify(cps.length > PR_BODY_MAX_CHARS ? cps.slice(0, PR_BODY_MAX_CHARS).join('') : body);
+  const bytes = Buffer.from(json, 'utf8');
+  const sha = createHash('sha256').update(bytes).digest('hex');
+  return `${PR_BODY_BEGIN} sha256=${sha} bytes=${bytes.length}---\n${json}\n${PR_BODY_END}\n`;
+}
+
+/** What Hephaisto's parser does with the block, in miniature: last pair wins, bytes and sha must both match. */
+export function parseLastPrBody(text: string): string | null {
+  const re = /^---HEPHAISTO-PR-BODY-BEGIN sha256=([0-9a-f]{64}) bytes=(\d+)---\n(.*)\n---HEPHAISTO-PR-BODY-END---$/gm;
+  let last: RegExpExecArray | null = null;
+  for (let m = re.exec(text); m; m = re.exec(text)) last = m;
+  if (!last) return null;
+  const [, sha, n, json] = last as unknown as [string, string, string, string];
+  const buf = Buffer.from(json, 'utf8');
+  if (buf.length !== Number(n) || createHash('sha256').update(buf).digest('hex') !== sha) return null;
+  try {
+    const body: unknown = JSON.parse(json);
+    return typeof body === 'string' ? body : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Prints the block. Synchronously, like the result, and before it: the result stays the last
+ * thing on stdout, which is where Hephaisto looks for it.
+ */
+export function emitPrBody(body: string, opts: { write?: ((s: string) => void) | undefined } = {}): void {
+  if (emitted) {
+    log.warn('the result was already emitted; not printing a pull request body after it');
+    return;
+  }
+  const framed = framePrBody(body);
+  if (opts.write) opts.write(framed);
+  else writeSync(1, framed);
+}
+
 export interface ParsedFrame {
   json: string;
   sha256: string;

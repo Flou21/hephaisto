@@ -124,6 +124,7 @@ public sealed partial class IssuesSuiteTests
     [InlineData("/issues/{{number:int}}/{verb}", "\"/repos/$1/issues/$2/assign\"")]
     [InlineData("\"/repos/{owner}/{repo}/issues/{number:int}/comments\"", "\"/repos/$1/issues/$2/comments\"")]
     [InlineData("\"/repos/{owner}/{repo}/pulls/{number:int}\"", "\"/repos/$1/pulls/$2\"")]
+    [InlineData("control.MapDelete(\"/repos/{owner}/{repo}/pulls/{number:int}\"", "DELETE \"/repos/$1/pulls/$2\"")]
     [InlineData("\"/fail/{mode}\"", "\"/fail/$1?count=")]
     [InlineData("\"/requests\"", "GET /requests")]
     [InlineData("\"/comments\"", "GET /comments")]
@@ -133,6 +134,34 @@ public sealed partial class IssuesSuiteTests
             .Should().Contain(served);
         File.ReadAllText(Path.Combine(RepoRoot(), "scripts", "e2e", "lib", "issues.sh"))
             .Should().Contain(called);
+    }
+
+    /// <summary>
+    /// How many comments the agent may write for one work item is a constant of the agent's, and
+    /// G10 asserts against the suite's copy of it. Two numbers that have to be one.
+    /// </summary>
+    [Fact]
+    public void The_suites_comment_cap_is_the_agents_ceiling()
+    {
+        var lib = File.ReadAllText(Path.Combine(RepoRoot(), "scripts", "e2e", "lib", "issues.sh"));
+        var cap = Regex.Match(lib, @"^ISSUES_COMMENT_CAP=""\$\{ISSUES_COMMENT_CAP:-(\d+)\}""$", RegexOptions.Multiline);
+
+        cap.Success.Should().BeTrue("lib/issues.sh sets ISSUES_COMMENT_CAP with a default");
+        int.Parse(cap.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)
+            .Should().Be(Hephaisto.Agent.WorkItems.IssueComments.MaxPerWorkItem);
+    }
+
+    /// <summary>
+    /// The twelve scenarios the milestone was written down as are green, and stay off the list:
+    /// an entry from now on is a scenario that landed red after them.
+    /// </summary>
+    [Fact]
+    public void Nothing_of_the_milestones_twelve_is_known_red_any_more()
+    {
+        var twelve = Enumerable.Range(1, 12).Select(n => $"G{n:00}").ToHashSet(StringComparer.Ordinal);
+
+        KnownRed().Select(e => e.Id).Where(twelve.Contains).Should().BeEmpty(
+            "stage 2.4 (#247) turned the last seven green; a new entry is a new scenario, not one of the twelve");
     }
 
     private static Version Floor()

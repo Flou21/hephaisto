@@ -1405,7 +1405,7 @@
             "type": "integer",
             "minimum": 1
           },
-          "description": "Who may answer a plan on the issue, by GitHub account number - never a login."
+          "description": "Who may answer a plan on the issue with /approve or /reject, by GitHub account number - never a login. Empty: nobody can answer by comment."
         },
         "useEgressProxy": {
           "type": "boolean",

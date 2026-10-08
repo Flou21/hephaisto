@@ -6,6 +6,7 @@ import { APP_ROOT, parseEnv, roleEnv, roleViolation } from '../src/config.js';
 import { CoderHandoffZ, HandoffError, PrepareHandoffZ, copyUntrusted, readCoderHandoff, readPrepareHandoff, readUntrusted } from '../src/handoff.js';
 import { prints, publishDeadline } from '../src/main.js';
 import { publishGitEnv } from '../src/publish.js';
+import { parseLastPrBody } from '../src/result.js';
 import { validate } from '../src/schemas.js';
 import { feedRefusal } from '../src/verify.js';
 import {
@@ -108,6 +109,11 @@ describe('three roles, three environments', () => {
     const body = readFileSync(join(w.ghState, 'prs', '1.body.md'), 'utf8');
     expect(body).toMatch(/\| test \| `sh test.sh` \| 0 \|/);
     expect(body).toContain('`main` moved 1 commit since the analysed commit.'); // a note prepare sealed
+    // and the same description beside the result: one block before it, on the stream Hephaisto reads
+    expect(parseLastPrBody(publish.stdout)).toBe(body);
+    expect(publish.stdout.indexOf('---HEPHAISTO-PR-BODY-BEGIN')).toBeLessThan(publish.stdout.indexOf('---HEPHAISTO-RESULT-BEGIN'));
+    expect(publish.stdout.trimEnd().endsWith('---HEPHAISTO-RESULT-END---')).toBe(true);
+    expect(publish.stdout.split('\n').filter((l) => l.length > 0)).toHaveLength(6); // two blocks of three lines, and nothing else
   });
 
   it('writes no token to the shared volume, the sealed volume, a log line or the result', async () => {
@@ -195,6 +201,7 @@ describe('three roles, three environments', () => {
     expect(publish.doc!.log_tail).toMatch(/FAIL: greet returned hullo/);
     expect(remoteBranches(w)).not.toContain(BRANCH);
     expect(ghLog(w)).not.toMatch(/pr create/);
+    expect(publish.stdout).not.toContain('HEPHAISTO-PR-BODY'); // no pull request, no description of one
   });
 });
 

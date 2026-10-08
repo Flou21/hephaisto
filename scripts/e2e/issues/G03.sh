@@ -40,8 +40,16 @@ scenario() {
         && pass "the pull request's body says Closes $ISSUES_REPO#$n" \
         || fail "the pull request's body says Closes $ISSUES_REPO#$n" "not found in what $impl published"
 
-    want "the issue is told where the pull request is" \
-        "$(gh_bot_comments "$ISSUES_REPO" "$n" | jq --arg u "$url" '[.[] | select($u != "" and (.body | contains($u)))] | length')" -ge 1
+    # PrOpened is the database's word, written by the loop that collects a Job; the issue is told
+    # by the poller's next pass, up to a poll interval later - as with the plan (lib/issues.sh,
+    # issues_plan_ready). Read at once, this was a coin toss the scenario lost on its second run,
+    # and closing the issue below then replaced the sentence it was looking for.
+    _g03_told() {
+        [ "$(gh_bot_comments "$ISSUES_REPO" "$n" | jq --arg u "$url" '[.[] | select($u != "" and (.body | contains("pull request is open")) and (.body | contains($u)))] | length')" -ge 1 ]
+    }
+    wait_for "the issue to be told where the pull request is" "$ISSUES_SEEN_WAIT" _g03_told \
+        && pass "the issue is told where the pull request is" \
+        || fail "the issue is told where the pull request is" "no comment of the bot's says that a pull request is open at $url"
 
     issues_done "$ISSUES_REPO" "$n"
 }

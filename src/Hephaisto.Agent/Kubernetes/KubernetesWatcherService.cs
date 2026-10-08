@@ -409,9 +409,18 @@ public sealed class KubernetesWatcherService : BackgroundService
             await owners.WarmAsync(meta, ns, ct).ConfigureAwait(false);
         }
 
-        if (SignalMapper.FromEvent(kubeEvent, options.ClusterName, owners.Lookup, notBefore) is { } signal)
+        // The fetch above is what knows whether the object is still there. A warning about one
+        // that is gone - replayed after a restart, or arriving after its pod was deleted - opens
+        // nothing (see FromEvent).
+        if (SignalMapper.FromEvent(kubeEvent, options.ClusterName, owners.Lookup, notBefore, owners.IsGone) is { } signal)
         {
             Enqueue(signal);
+        }
+        else if (involved?.Kind is { Length: > 0 } goneKind && involved.Name is { Length: > 0 } goneName && owners.IsGone(goneKind, ns, goneName))
+        {
+            logger.LogDebug(
+                "Dropped a {Reason} warning about {Kind} {Namespace}/{Name}: the object no longer exists.",
+                kubeEvent.Reason, goneKind, ns, goneName);
         }
     }
 

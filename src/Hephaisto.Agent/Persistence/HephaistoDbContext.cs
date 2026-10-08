@@ -327,6 +327,9 @@ public sealed class HephaistoDbContext(DbContextOptions<HephaistoDbContext> opti
             e.Property(a => a.RepositoryUrl).IsRequired();
             e.Property(a => a.Branch).IsRequired();
 
+            // A handful of short keys (v0.14.0): the one-time answers written on an issue.
+            e.Property(a => a.CommandAnswers).HasMaxLength(512);
+
             e.HasIndex(a => a.IncidentId, "ix_code_fix_attempts_incident_id");
             e.HasIndex(a => new { a.State, a.CreatedAt });
 

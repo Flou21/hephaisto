@@ -91,6 +91,11 @@ export interface PublishDeps {
   /** The latest moment a push or a PR may still be running. */
   deadline: number;
   abort: AbortController;
+  /**
+   * Told the description of a pull request that was opened, as it was sent. The caller prints it
+   * beside the result (result.ts, emitPrBody); nothing here depends on whether anybody listens.
+   */
+  onPrBody?: ((body: string) => void) | undefined;
 }
 
 /** A refusal with a sentence for the result. Nothing was pushed when one is thrown before the push. */
@@ -297,6 +302,8 @@ export async function runPublish(req: CodeFixRequest, deps: PublishDeps, sealed:
       ghEnv(env, join(scratch, 'home')),
       cwd,
     );
+    // only now: a description of a pull request that was not opened describes nothing
+    deps.onPrBody?.(body);
     return { ...result, outcome: 'pr_opened', pr_url: pr.url, pr_number: pr.number, deviations: [...result.deviations, ...pr.deviations], error: null };
   } catch (e) {
     if (e instanceof Refusal) return refuse(e.message);

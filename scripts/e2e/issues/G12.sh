@@ -12,7 +12,7 @@ G12_FOUND=""
 
 scenario() {
     issues_ready || return
-    local n attempt_id mode effective
+    local n attempt_id mode effective told
 
     G12_FOUND=$(issues_switch_get)
     [ -n "$G12_FOUND" ] || { fail "the code-fix switch can be read" "no codeFixMode in $ISSUES_SWITCHES_CM"; return; }
@@ -35,7 +35,11 @@ scenario() {
         gh_comment_as "$ISSUES_REPO" "$n" "$ISSUES_APPROVER" "$ISSUES_APPROVER_ID" "/approve" >/dev/null
 
         # "the code-fix mode is plan", "mode: off" - the word and the value in one sentence.
-        _g12_told() { [ "$(gh_bot_said "$ISSUES_REPO" "$n" "\\bmode\\b[^.\\n]{0,40}\\b${mode}\\b")" -ge 1 ]; }
+        # In a variable first: bash 3.2 brace-expands {0,40} when it stands inside a quoted
+        # string inside a command substitution inside a quoted string, and the check was then
+        # `[ 0 0 -ge 1 ]` for ever - whatever the agent had written.
+        told="\\bmode\\b[^.\\n]{0,40}\\b${mode}\\b"
+        _g12_told() { [ "$(gh_bot_said "$ISSUES_REPO" "$n" "$told")" -ge 1 ]; }
         wait_for "the refusal" "$ISSUES_SEEN_WAIT" _g12_told \
             && pass "at $mode the approver is told that the mode is $mode" \
             || fail "at $mode the approver is told that the mode is $mode" "no comment of the bot's says so"

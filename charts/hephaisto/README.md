@@ -194,10 +194,13 @@ finding and passed to a code fix, never counted as evidence.
 With `github.enabled`, an issue **assigned to Hephaisto's account**, in a repository listed in
 `github.issues.repositories`, is taken as work. The agent asks GitHub - one poll per repository
 every `github.pollInterval`, answered with a free 304 while nothing changed - so nothing has to
-reach in and there is no webhook to expose. In this release a taken issue is recorded and nothing
-more: `GET /api/workitems`, and `github` among the connections of `GET /api/status` and the MCP
-tool `get_status`. Unassigning the account, or closing the issue, takes it back. Planning and
-answering on the issue come with the releases after it.
+reach in and there is no webhook to expose. A taken issue is planned by a coder Job under
+`codeFix.mode` and every `codeFix` cap; the plan is posted on the issue; an approver answers it
+there; and the pull request the implementing Job opens - a draft, whose description says
+`Closes owner/repo#n` - is followed until it is merged (the work item is done) or closed.
+`GET /api/workitems` shows them, and `github` is among the connections of `GET /api/status` and
+the MCP tool `get_status`. Unassigning the account, or closing the issue, takes it back at any
+point and stops a running Job.
 
 It ships **off, and unrendered**. The account is an ordinary GitHub account (a machine user) and
 not a GitHub App, because an App cannot be an assignee; make it a collaborator on every listed
@@ -218,7 +221,18 @@ helm upgrade hephaisto oci://ghcr.io/flou21/charts/hephaisto -n hephaisto --reus
 ```
 
 `github.approvers` is who may answer a plan on the issue, by account **number** - a login can be
-renamed and taken by somebody else. It is recorded and checked now and read from the next release.
+renamed and taken by somebody else. An approver replies with a comment whose first line is
+`/approve`, or `/reject` and a reason; what is approved is the plan as Hephaisto stored it, never
+the comment's text. Anybody else's `/approve` changes nothing and is answered once. With
+`codeFix.mode` at `plan` or `off` an approval is refused and the issue is told which. Hephaisto
+writes at most six comments for one issue it was handed: where the work stands (edited in place),
+the plan, and a few one-time answers. With the list empty nobody can answer by comment and the
+plan is approved in the console. **Whoever is listed can make Hephaisto push a branch** to the
+listed repositories: list maintainers.
+
+An issue whose pull request was merged or closed is not started over while it simply stays
+assigned: unassign the account and assign it again (or close and reopen the issue) to hand it
+back.
 
 **Egress.** With `codeFix.egressProxy` rendered, the agent's GitHub calls go through that proxy
 (`github.useEgressProxy`, on by default): `api.github.com` is already on its allowlist, its log

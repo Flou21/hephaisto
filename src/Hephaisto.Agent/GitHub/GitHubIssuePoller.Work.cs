@@ -9,9 +9,10 @@ using Hephaisto.Core.Domain;
 namespace Hephaisto.Agent.GitHub;
 
 /// <summary>
-/// What comes after taking an issue (v0.14.0): its plan, and what the issue is told. The second
-/// half of every pass, in the same shape as the first - three statements that should be true of
-/// a repository, each made true where it is not, with nothing remembered about last time.
+/// What comes after taking an issue (v0.14.0): its plan, the answer to it, and what the issue is
+/// told. The second half of every pass, in the same shape as the first - four statements that
+/// should be true of a repository, each made true where it is not, with nothing remembered about
+/// last time.
 /// </summary>
 /// <remarks>
 /// <list type="number">
@@ -25,6 +26,9 @@ namespace Hephaisto.Agent.GitHub;
 /// <item><b>The issue says where its work stands.</b> One status comment per work item, edited
 /// in place when its text would be a different one; and for an attempt whose plan is waiting,
 /// one comment with the plan.</item>
+/// <item><b>A plan that waits has been asked whether somebody answered it</b>
+/// (<c>GitHubIssuePoller.Answers.cs</c>). The fourth statement, and made true before the third:
+/// what an answer led to is then on the issue in the pass that read it.</item>
 /// </list>
 /// <para>
 /// A write that GitHub refuses fails nothing but itself: the attempt stays where it is, the
@@ -133,6 +137,18 @@ public sealed partial class GitHubIssuePoller
                     }
                 }
             }
+        }
+
+        // Before the comments are put right, so that an answer and what it led to are on the
+        // issue in the pass that read it (GitHubIssuePoller.Answers.cs).
+        try
+        {
+            problem ??= await AnswersAsync(client, repository, bot, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            problem ??= $"the answers on the issues of {repository} could not be read: {ex.GetType().Name}";
+            logger.LogError(ex, "Could not read the answers on the issues of {Repository}; retrying next interval.", repository);
         }
 
         try
@@ -410,7 +426,7 @@ public sealed partial class GitHubIssuePoller
         // contract still has its denormalised columns.
         var view = CodeFixQueries.Plan(attempt);
 
-        return (IssueComments.Plan(attempt, view, mode), null);
+        return (IssueComments.Plan(attempt, view, mode, answerable: options.Value.ApproverIds().Count > 0), null);
     }
 
     /// <summary>
@@ -426,7 +442,7 @@ public sealed partial class GitHubIssuePoller
     private static async Task<(long? Id, string? Problem)> EnsureCommentAsync(
         IGitHubClient client, string repository, int number, string bot, string marker, string body, DateTimeOffset since, bool edit, CancellationToken ct)
     {
-        var existing = await client.ListCommentsAsync(repository, number, since, ct).ConfigureAwait(false);
+        var existing = await client.ListCommentsAsync(repository, number, since, etag: null, ct).ConfigureAwait(false);
 
         if (existing is not { Ok: true, Value: { } comments })
         {

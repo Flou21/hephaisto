@@ -34,12 +34,46 @@ release is about handing it a GitHub issue ([#243](https://github.com/Flou21/hep
   travels to the model as it was when the issue was taken, as data in one element of its own; an
   edit afterwards is not picked up. Unassigning or closing the issue cancels the attempt and
   deletes a running Job. An issue is planned once: to have it planned again, hand it over again.
-  **Answering on the issue comes with the next stage.** Until then a plan is approved or denied
-  through the API, by whoever the console's approver policy admits:
-  `POST /api/workitems/{id}/codefix/{attemptId}/approve` and `.../deny`, with the body and the
-  refusals of the incident routes. An approval in mode `pr` starts the implementing Job; its
-  draft pull request says `Closes owner/repo#n`, its title is `fix:`, `feat:` or `chore:` by the
-  issue's type, and its commits carry `Hephaisto-Issue: owner/repo#n`.
+- **A plan is answered on the issue** ([#247](https://github.com/Flou21/hephaisto/issues/247)).
+  An approver replies with a comment whose first line is `/approve`, or `/reject` with a reason
+  after it (without one it is recorded as "no reason given"). Nothing else is a command: not
+  `/approve please`, not `LGTM /approve`, not a quotation or a code block of either, not
+  `/Approve`. Who may answer is `github.approvers` - account **numbers**, because a login can be
+  given up and registered by somebody else; the login is what is recorded
+  (`approvedBy: github:<login>`, source `GitHub`). The first such comment after the plan
+  decides, exactly once, also across an agent restart. What is approved is the plan as Hephaisto
+  stored it, never the text of a comment, and a comment that was read once is not read again
+  whatever it is edited into. An approval in mode `pr` starts the implementing Job; its draft
+  pull request says `Closes owner/repo#n`, its title is `fix:`, `feat:` or `chore:` by the
+  issue's type, and its commits carry `Hephaisto-Issue: owner/repo#n`. The issue's status comment
+  then links the pull request.
+  - **Everybody else is answered once.** A command from an account that is not an approver
+    changes nothing and gets one short comment per plan, however many follow; it names the first
+    of them in a code span, mentions nobody and does not say who the approvers are.
+  - **A refusal says why, once per cause.** With `codeFix.mode` at `plan` or `off`, with the
+    emergency stop engaged, or for a plan that needs a change in a second repository, `/approve`
+    is refused in one sentence that names the cause. A refusal does not use the plan up: once an
+    operator has set the mode to `pr`, a **new** `/approve` is taken. (At `off` every open
+    attempt is cancelled, as before.)
+  - **Never more than six comments** of Hephaisto's for one work item, whatever anybody writes
+    there: the status, the plan, and at most four answers. Beyond that it only edits its status
+    comment.
+  - With `github.approvers` empty nobody can answer by comment, no comment is read, and the
+    plan says that it is answered in the console. The API routes
+    `POST /api/workitems/{id}/codefix/{attemptId}/approve` and `.../deny` are as they were, for
+    whoever the console's approver policy admits.
+- **The pull request is followed to its end.** While it is open Hephaisto asks GitHub about it
+  on every poll (a free 304 while nothing changed). Merged, and the work item is `Done`; closed
+  without merging, and it is `Cancelled` with `pull request closed without merging`; the status
+  comment says which. A merge that closes the issue is `Done`, not "the issue was closed": the
+  pull request is read before the list of assigned issues.
+- **A finished issue is not started over.** An issue that is still open and assigned when its
+  work item ends - merged into another branch than the default one, or closed unmerged - is
+  not taken again by the next poll. It is taken again when it is handed over again: Hephaisto
+  unassigned and assigned once more, or the issue closed and reopened. `stillAssigned` on a
+  work item says that it is held this way.
+- **Unassigning stops an implementation too.** The implementing Job is deleted, nothing is
+  pushed afterwards, and an `/approve` that arrives with or after the unassignment does nothing.
 - **Where an issue's code is.** The first `codeFix.repositories` entry whose `url` names the
   repository (it ends in `/owner/repo` or `/owner/repo.git`) gives the clone URL, the branch and
   the path; with no such entry it is `https://github.com/owner/repo` on the default branch
@@ -49,6 +83,10 @@ release is about handing it a GitHub issue ([#243](https://github.com/Flou21/hep
   `planCommentId`; `incidentId` is null on a row that is for an issue. `GET /api/workitems/{id}`
   carries `attempts`, and a work item says why no plan was started (`declineReason`) while a cap
   or a switch is in the way - it is asked again by itself.
+- **The pull request's description is kept with the attempt**: `prBody` on a row of
+  `GET /api/codefixes` and in `attempts` of a work item, for an incident's attempt as for an
+  issue's - what the runner sent GitHub, so that "does it close the issue" can be read without
+  opening GitHub. Null without a pull request.
 - **GitHub among the dependencies.** `github` is a row in the connections of `GET /api/status`,
   the status page and the MCP tool `get_status`: healthy while every listed repository answers,
   degraded with one line of why - a refused token, a rate limit and until when, a 5xx, no
@@ -58,10 +96,14 @@ release is about handing it a GitHub issue ([#243](https://github.com/Flou21/hep
   which the agent still cannot read, and the chart refuses the same name for both. With
   `codeFix.egressProxy` rendered, the agent's GitHub calls go through that proxy
   (`github.useEgressProxy`), and the chart adds the two NetworkPolicy rules that takes.
-- `github.approvers` lists who may answer a plan on the issue, by account number. Recorded and
-  checked now; read from the stage that reads comments.
+- `github.approvers` lists who may answer a plan on the issue, by account number
+  (`gh api users/<login> --jq .id`). A login there is refused at render and at start.
 - Three metrics: `hephaisto.github.polls` by outcome, `hephaisto.workitems.taken` and
-  `hephaisto.workitems.closed`.
+  `hephaisto.workitems.closed` - by state (`Done`, `Cancelled`) and reason (`merged`,
+  `pull_request_closed`, `issue_closed`, `unassigned`, `issue_gone`).
+- Audit rows for a work item: `workitem.taken`, `workitem.cancelled`, `workitem.done`, and
+  `workitem.command` - one per comment that decided a plan or was answered, with the account's
+  number and the comment's id.
 
 ### Fixed
 - **A credential named the way an environment names it is redacted.** `GITHUB_TOKEN=...`,
@@ -69,6 +111,24 @@ release is about handing it a GitHub issue ([#243](https://github.com/Flou21/hep
   and to MCP readers as they were unless the value itself had a known prefix: `_` is a word
   character, so the pattern for `token=` did not match inside a longer name. GitHub's `ghu_` and
   `ghr_` tokens are now known by sight as well.
+- **A workload that is deleted and created again is found again.** The watcher remembers which
+  object owns which, and it remembered "there is no such object" for as long as a hit: an hour.
+  A Deployment deleted and created again under its name within that hour - a re-install, a
+  `kubectl delete -f` and `apply -f` - keeps its ReplicaSet's name too, so a lookup made in
+  between left the new pods' incident filed under `namespace/ReplicaSet/name-hash` instead of
+  the Deployment: its own workload key, with its own cooldown, mapping and code-fix repository,
+  none of which matched. A request the API server failed had the same effect. "Not there" and
+  "could not be read" are now held for 30 seconds; an object that was found is still held for
+  the hour.
+- **A warning about a pod that no longer exists opens no incident.** Kubernetes keeps an event
+  for about an hour, longer than the pod it is about may live. An agent that restarted within
+  `incidents.healedAfter` of a crash-looping pod being deleted - by a rollout that fixed it, by
+  a `helm uninstall` - was handed that pod's `BackOff` warnings again, could no longer ask whose
+  pod it had been, and opened "CrashLoopBackOff on `<pod name>`" with the pod as its own
+  workload: investigated, escalated and announced, never seen to heal, and matching no cooldown
+  or mapping. Such a warning is now dropped, for a pod and for every other kind the agent can
+  look up. Only when the API server says the object is gone: one that could not be read is
+  handled as before.
 
 ### Changed
 - **`incidentId` on a code-fix attempt can be null** - in `GET /api/codefixes`, and in the
@@ -84,12 +144,21 @@ release is about handing it a GitHub issue ([#243](https://github.com/Flou21/hep
   version-2 request, and says so in its result.
 - A work item's coder spend counts in the day's and the hour's LLM budget like any other, and
   in `codeFix.budgets`; it has no incident whose own ceiling could hold it.
+- **The implementing Job prints one more block.** Before its result, the publish role prints
+  the description of the pull request it opened (`---HEPHAISTO-PR-BODY-BEGIN ...`, three lines).
+  It is not part of the result contract, whose schemas are unchanged, and nothing is decided by
+  it: a coder image from before this prints none, and `prBody` is then null.
+- `approvalSource` has a seventh value, `GitHub`. The others keep their names and numbers.
 
 ### Upgrading
-- Two migrations, `WorkItems` and `WorkItemCodeFix`. The first is a new table. The second makes
-  `code_fix_attempts.incident_id` and `llm_usage.incident_id` nullable, adds
-  `code_fix_attempts.work_item_id` with a check that exactly one of the two is set, and three
-  columns to `work_items`; existing rows are valid as they are. Both run when the agent starts.
+- Three migrations, `WorkItems`, `WorkItemCodeFix` and `ApprovalOnIssue`. The first is a new
+  table. The second makes `code_fix_attempts.incident_id` and `llm_usage.incident_id` nullable,
+  adds `code_fix_attempts.work_item_id` with a check that exactly one of the two is set, and
+  three columns to `work_items`. The third adds `command_comment_id`, `command_answers` and
+  `pr_body` to `code_fix_attempts` and `still_assigned` to `work_items`. Existing rows are valid
+  as they are, and all three run when the agent starts.
+- To let anybody answer a plan on its issue, list their account numbers in `github.approvers`.
+  Until then a plan for an issue is approved in the console or through the API.
 - Nothing is on by default. Without `github.enabled` the agent holds no GitHub credential and
   asks GitHub nothing; `/api/workitems` answers an empty list.
 

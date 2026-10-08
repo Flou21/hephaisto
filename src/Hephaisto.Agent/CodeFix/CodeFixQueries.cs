@@ -52,6 +52,12 @@ public sealed record CodeFixAttemptView
     public long? PlanCommentId { get; init; }
     public string? PrUrl { get; init; }
     public int? PrNumber { get; init; }
+
+    /// <summary>
+    /// The pull request's description as the runner sent it to GitHub - text a model had a hand
+    /// in, to be shown as text. Null without a pull request, and for one whose runner reported none.
+    /// </summary>
+    public string? PrBody { get; init; }
     public bool? BuildPassed { get; init; }
     public bool? TestsPassed { get; init; }
     public IReadOnlyList<string> Deviations { get; init; } = [];
@@ -254,6 +260,7 @@ public sealed class CodeFixQueries(
             PlanCommentId = a.PlanCommentId,
             PrUrl = a.PrUrl,
             PrNumber = a.PrNumber,
+            PrBody = a.PrBody,
             BuildPassed = impl?.BuildPassed,
             TestsPassed = impl?.TestsPassed,
             Deviations = impl?.Deviations ?? [],

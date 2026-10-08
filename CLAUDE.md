@@ -346,6 +346,27 @@ Locally: `"investigator": true` (needs `"coder": true`) with `"investigator-sdk"
 be accessed", pre-pull its base image with a stub `docker-credential-osxkeychain` on PATH and
 `tilt trigger` it; never `kubectl apply` a Tilt-built manifest by hand - it replaces the image.
 
+Four things that made that suite red in October 2026, none of them in what it tests:
+
+- **Do not delete the chaos fixtures between two runs.** The suite reuses the open incidents of
+  `shop-api` and `catalog-api`. A fixture that is deleted and brought up again is a new incident
+  each time, and the fourth within the hour is flapping (`Ingest:FlapThreshold` 3, quarantined
+  for `FlapCooldown`, four hours): suppressed, not investigated.
+- **One fixture is up to three incidents.** The watcher's, under the Deployment; the alert's that
+  names the pod (`KubePodCrashLooping`), under that pod, by design; and - when an incident of the
+  workload was closed by a person in the last 24 hours - that closed one, reopened by the
+  Deployment-level alert although one is already open (alerts reopen by fingerprint before they
+  correlate; watcher signals never reopen). Each is investigated, and there is one Job slot:
+  `iv_wait_quiet` is why a scenario that needs the slot gets it.
+- **I1 runs a real model**, and it may propose an action. The incident then waits for an approval
+  and cannot be investigated again; `iv_reinvestigate` denies what is pending first.
+- **A new agent pod first runs the build its image was made with**, for the seconds until Tilt
+  has synced the tree and `dotnet watch` has rebuilt. A suite that restarts the agent (I10, G08)
+  runs that old code against everything it replays. Before a gate run, rebuild the image under
+  the tag the Deployment names, inside the VM:
+  `rdctl shell sh -c 'cd ~/hephaisto && docker build -q -t <the Deployment's image> -f Dockerfile.dev .'`,
+  then delete the pod.
+
 ## How an incident ends by itself, as of v0.13.0
 
 - **An alert's incident** closes when Alertmanager resolves its last firing alert.
@@ -373,10 +394,11 @@ why it is a value and not a default: this stack's collector writes `k8s_namespac
 
 `github.enabled`: an issue assigned to the agent's account, in a listed repository, is a
 `WorkItem` (`src/Hephaisto.Agent/GitHub/`, `src/Hephaisto.Agent/WorkItems/`, table `work_items`).
-Built so far: the client, the poller, the work item, `github` in `/api/status` (#245); and a
-code fix without an incident (#246) - a taken work item gets ONE attempt, the plan Job runs for
-it, and the plan is a comment on the issue. Not yet (#247): reading an answer on the issue,
-following the pull request, `Done`. Five things to know about the poller:
+Built: the client, the poller, the work item, `github` in `/api/status` (#245); a code fix
+without an incident (#246) - a taken work item gets ONE attempt, the plan Job runs for it, and
+the plan is a comment on the issue; and the answer on the issue, the pull request followed to
+its end, `Done` (#247). Not yet (#248): the console, MCP and notifications for a work item.
+Five things to know about the poller:
 
 - **The poller is level-triggered: no queue, no retry state.** A pass states what should be true
   and makes it so; the next pass is the retry. Do not add "remember what failed". What comes
@@ -416,21 +438,49 @@ And five about an attempt that is for a work item (`GitHubIssuePoller.Work.cs`,
   version 1 is byte for byte what it was, and a test holds it). The body is `WorkItem.Body`, the
   snapshot - never a second read of the issue.
 
-What the stage that reads an answer on the issue (#247) starts from:
+And five about an answer on the issue and the pull request (`GitHubIssuePoller.Answers.cs`,
+`GitHubIssuePoller.PullRequests.cs`, `WorkItems/IssueCommands.cs`):
 
-- **Where it hooks in:** a fourth statement in `GitHubIssuePoller.WorkAsync` - for a taken work
-  item whose attempt is `PlanReady` and has a `PlanCommentId`, read the issue's comments since
-  that comment, and call `CodeFixCoordinator.DecideForWorkItemAsync` (the door
-  `POST /api/workitems/{id}/codefix/{attemptId}/approve|deny` already calls; it needs an
-  `ApprovalSource` of its own, and `authenticated: true` is the approver list's to earn).
-- **A closed issue cancels its work item - also one whose pull request was just merged.** GitHub
-  closes the issue on merge, the poller finds it closed, and today that is `Cancelled`. The pull
-  request has to be read before that is decided (G11), and an attempt in `PrOpened` is not open,
-  so nothing cancels it either way.
-- **A work item that is Done while its issue is still open and assigned is taken again** by the
-  next full comparison, and now also planned again.
-- **The pull request's body is nowhere a suite can read it.** `publish` logs no body and the `gh`
-  shim's copy is gone with the pod; `issues_pr_body` in `lib/issues.sh` is still ASSUMED.
+- **A command is a comment's first non-blank line**: exactly `/approve`, or `/reject` alone or
+  followed by white space and a reason. Lower case, nothing before it, not indented into a code
+  block. `IssueCommands.Parse` is pure and its test is a table - add the row before the rule.
+  Strict in one direction on purpose: a comment wrongly read as a command pushes a branch.
+- **The number decides, the login is shown.** `GitHub:Approvers` holds account ids; the actor is
+  `github:<login>`, the source `ApprovalSource.GitHub`. With the list empty no comment is read
+  at all and the plan comment says so. The poller's own audit row (`workitem.command`) is where
+  the account's number and the comment's id are.
+- **Once, without a queue.** The decision is the attempt's own state (not `PlanReady`: not asked
+  about); `CodeFixAttempt.CommandCommentId` is the newest comment looked at, and a comment is
+  never looked at twice - so a command counts by its text when first seen;
+  `CommandAnswers` holds the keys of the one-time answers, each of which also carries a marker
+  (`<!-- hephaisto:answer:<attempt>:<key> -->`) that a process which died after writing finds.
+  The tags and `since` of the comment reads are memory only. Do not move any of it into memory.
+- **It answers rarely, and never past `IssueComments.MaxPerWorkItem`.** One answer per attempt
+  to non-approvers, one per attempt and cause for a refusal of the door's
+  (`CodeFixRefusal` on the decision result - the console's message names arms and ConfigMaps
+  and is never put on an issue). A new cause is a new member there, a key in
+  `IssueComments.AnswerKey` and a sentence in `IssueComments.Refused`.
+- **The pull request is read BEFORE the list of assigned issues**, and once more, without a
+  tag, for a work item the list says is gone: a merge closes the issue it names, and read the
+  other way round that is a cancellation. A work item that ends by its pull request is marked
+  `StillAssigned`, and its issue is not taken again until one complete list did not hold it -
+  remove that and a merged issue GitHub did not close is planned again on every pass, for ever.
+
+What the stage after it (#248: console, MCP, notifications for a work item) starts from:
+
+- **Nothing announces a work item's attempt** but its issue: no outbox row, no Teams card, no
+  MCP row (`list_code_fixes` and `get_code_fix` still refuse one). `CodeFixNotifier.Enlist` is
+  only called for an incident (`CodeFixCoordinator.Notify`).
+- **The API has what a page needs**: `GET /api/workitems[/{id}]` with `state`, `stateReason`,
+  `stillAssigned`, `declineReason` and `attempts`; a `CodeFixAttemptView` carries `prBody`,
+  `planCommentId`, `approvedBy` (`github:<login>`) - but not `ApprovalSource`, `CommandAnswers`
+  or `CommandCommentId`, which are columns only. `prBody` and a rejection's reason are text a
+  model or a stranger had a hand in: render them as text.
+- **`hephaisto.workitems.closed`** carries `state` and `reason`; there is no metric for a
+  command yet. `workitem.command`, `workitem.done` are audit types with no incident id, like
+  the others of a work item.
+- **The stand-in's pull requests are numbered by the `gh` shim, from 1 in every Job.** A
+  scenario that merges one has to `gh_pr_forget` it (G11), or the next one is found merged.
 - **A commit message is the one text nobody neutralises.** A closing keyword there closes an
   issue on merge; the implement prompt forbids it and nothing checks.
 
@@ -438,9 +488,11 @@ The agent's token is `secrets.github`, a Secret of the agent's namespace - never
 `hephaisto-codefix`, which it still cannot read. Locally: `"github": "stand-in"` layers
 `charts/hephaisto/values-dev-github.yaml`; `curl "http://$H:8100/api/workitems?state=any"` and
 `curl http://$H:8110/github/control/state` show both sides, and `scripts/e2e/issues-local.sh`
-is how a change here is accepted (`scripts/e2e/README.md`; `issues/KNOWN_RED` lists what the
-later stages turn green). The `github` row follows the poller by up to a minute: it is served
-from `ConnectionHealthCache`. Until comments are read (#247), a plan for an issue is decided with
+is how a change here is accepted (`scripts/e2e/README.md`; `issues/KNOWN_RED` lists
+nothing since #247, and a new scenario may land there). The `github` row follows the poller by
+up to a minute: it is served from `ConnectionHealthCache`. A plan is answered by hand with
+`curl -X POST "http://$H:8110/github/control/repos/<owner>/<repo>/issues/<n>/comments" -H 'content-type: application/json' -d '{"body":"/approve","login":"maintainer","id":1001}'`
+(1001 is the approver `values-dev-github.yaml` names), or through the API as before:
 `curl -X POST "http://$H:8100/api/workitems/<id>/codefix/<attemptId>/approve" -H 'content-type: application/json' -d '{"decidedBy":"you"}'`.
 
 ## The Teams bot, as of v0.9.0-rc4

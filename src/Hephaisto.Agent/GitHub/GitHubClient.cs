@@ -103,7 +103,11 @@ public sealed record GitHubPullRequest(
     bool Merged,
     DateTimeOffset? MergedAt,
     string Url,
-    string? HeadRef);
+    string? HeadRef)
+{
+    /// <summary>Closed is GitHub's word for merged AND for closed without merging; <see cref="Merged"/> tells them apart.</summary>
+    public bool IsOpen => !Merged && string.Equals(State, "open", StringComparison.OrdinalIgnoreCase);
+}
 
 /// <param name="DefaultBranch">The branch a pull request targets unless told otherwise. Null when GitHub did not say.</param>
 public sealed record GitHubRepository(string FullName, string? DefaultBranch);
@@ -125,16 +129,25 @@ public interface IGitHubClient
     Task<GitHubResult<GitHubIssue>> GetIssueAsync(string repository, int number, CancellationToken ct);
 
     /// <summary>
-    /// An issue's comments, oldest first. <paramref name="since"/> is inclusive and GitHub's
-    /// times are whole seconds, so the comment a caller last saw comes back: know it by its id.
+    /// An issue's comments, oldest first, one page of <see cref="GitHubClient.PageSize"/>.
+    /// <paramref name="since"/> is by when a comment was last CHANGED, is inclusive, and GitHub's
+    /// times are whole seconds - so the comment a caller last saw comes back, and so does an old
+    /// one somebody edited: know a comment by its id. With <paramref name="etag"/>, the tag of an
+    /// earlier answer to the same question, an unchanged list is
+    /// <see cref="GitHubOutcome.NotModified"/>.
     /// </summary>
-    Task<GitHubResult<IReadOnlyList<GitHubComment>>> ListCommentsAsync(string repository, int number, DateTimeOffset? since, CancellationToken ct);
+    Task<GitHubResult<IReadOnlyList<GitHubComment>>> ListCommentsAsync(string repository, int number, DateTimeOffset? since, string? etag, CancellationToken ct);
 
     Task<GitHubResult<GitHubComment>> CreateCommentAsync(string repository, int number, string body, CancellationToken ct);
 
     Task<GitHubResult<GitHubComment>> UpdateCommentAsync(string repository, long commentId, string body, CancellationToken ct);
 
-    Task<GitHubResult<GitHubPullRequest>> GetPullRequestAsync(string repository, int number, CancellationToken ct);
+    /// <summary>
+    /// One pull request: open, closed, merged. With <paramref name="etag"/>, an unchanged one is
+    /// <see cref="GitHubOutcome.NotModified"/> - which is what following a pull request for the
+    /// weeks a review can take costs: nothing against the rate limit.
+    /// </summary>
+    Task<GitHubResult<GitHubPullRequest>> GetPullRequestAsync(string repository, int number, string? etag, CancellationToken ct);
 
     /// <summary>
     /// A repository's own facts - asked for its default branch, which is where the plan for an
@@ -218,7 +231,7 @@ public sealed class GitHubClient(
     public Task<GitHubResult<GitHubIssue>> GetIssueAsync(string repository, int number, CancellationToken ct) =>
         SendAsync(HttpMethod.Get, $"repos/{repository}/issues/{Number(number)}", null, null, (json, _) => Issue(json), ct);
 
-    public Task<GitHubResult<IReadOnlyList<GitHubComment>>> ListCommentsAsync(string repository, int number, DateTimeOffset? since, CancellationToken ct)
+    public Task<GitHubResult<IReadOnlyList<GitHubComment>>> ListCommentsAsync(string repository, int number, DateTimeOffset? since, string? etag, CancellationToken ct)
     {
         var path = $"repos/{repository}/issues/{Number(number)}/comments?per_page={PageSize}";
 
@@ -228,7 +241,7 @@ public sealed class GitHubClient(
         }
 
         return SendAsync<IReadOnlyList<GitHubComment>>(
-            HttpMethod.Get, path, null, null, (json, _) => [.. json.EnumerateArray().Select(Comment)], ct);
+            HttpMethod.Get, path, null, etag, (json, _) => [.. json.EnumerateArray().Select(Comment)], ct);
     }
 
     public Task<GitHubResult<GitHubComment>> CreateCommentAsync(string repository, int number, string body, CancellationToken ct) =>
@@ -243,8 +256,8 @@ public sealed class GitHubClient(
             (json, _) => Comment(json),
             ct);
 
-    public Task<GitHubResult<GitHubPullRequest>> GetPullRequestAsync(string repository, int number, CancellationToken ct) =>
-        SendAsync(HttpMethod.Get, $"repos/{repository}/pulls/{Number(number)}", null, null, (json, _) => PullRequest(json), ct);
+    public Task<GitHubResult<GitHubPullRequest>> GetPullRequestAsync(string repository, int number, string? etag, CancellationToken ct) =>
+        SendAsync(HttpMethod.Get, $"repos/{repository}/pulls/{Number(number)}", null, etag, (json, _) => PullRequest(json), ct);
 
     public Task<GitHubResult<GitHubRepository>> GetRepositoryAsync(string repository, CancellationToken ct) =>
         SendAsync(
