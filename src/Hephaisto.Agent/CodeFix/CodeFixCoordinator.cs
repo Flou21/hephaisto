@@ -1156,10 +1156,10 @@ public sealed class CodeFixCoordinator(
             clock.UtcNow - (attempt.ImplementStartedAt ?? attempt.CreatedAt), result.CostUsd);
 
         audit.Enlist(Audit(subject, attempt.InvestigationId, attempt.Id, AuditPrOpened, IncidentStateMachine.SystemActor,
-            $"draft PR opened: {result.PrUrl}",
+            $"pull request opened: {result.PrUrl}",
             new { pr = result.PrUrl, branch = result.Branch, files = result.Files, result.BuildPassed, result.TestsPassed }));
 
-        Notify(NotificationEvent.CodeFixPrOpened, attempt, subject, $"Draft PR {result.PrUrl}");
+        Notify(NotificationEvent.CodeFixPrOpened, attempt, subject, $"Pull request {result.PrUrl}");
 
         // An annotation is on a workload's dashboards; an issue has no workload to put one on.
         if (subject.Incident is { } incident)

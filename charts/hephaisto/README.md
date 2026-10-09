@@ -118,8 +118,9 @@ When an investigation's grounded primary finding is a bug in application code, n
 cluster can fix it. With `codeFix.enabled`, Hephaisto hands that finding to a **coder** — Claude
 Code in a Kubernetes Job of its own — which clones the repository the workload is mapped to and
 writes a fix **plan**, read-only and automatically. After a human approves the plan, a second Job
-implements it on a `hephaisto/codefix-*` branch, runs the build and tests, and opens a **Draft
-PR**. A human reviews, merges and deploys; nothing here does.
+implements it on a `hephaisto/codefix-*` branch, runs the build and tests, and opens a pull
+request - a **draft**, unless the context repository's `repos.yaml` says
+`defaults.pr.draft: unless-ready`. A human reviews, merges and deploys; nothing here does.
 
 It ships **off, and unrendered**: `codeFix.enabled: false` renders no coder object at all, and
 `codeFix.mode` (`off | plan | pr`) is its own axis, independent of the agent's `mode`. An

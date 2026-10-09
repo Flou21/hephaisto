@@ -227,7 +227,7 @@ public sealed class TeamsNotificationChannel(
             actions.Add(new JsonObject
             {
                 ["type"] = "Action.OpenUrl",
-                ["title"] = "Open the Draft PR",
+                ["title"] = "Open the pull request",
                 ["url"] = s.ExternalUrl,
             });
         }
@@ -300,7 +300,7 @@ public sealed class TeamsNotificationChannel(
         NotificationEvent.ModeChanged => "Autonomy re-armed",
         NotificationEvent.PolicyChanged => "Policy configuration changed",
         NotificationEvent.CodeFixPlanReady => "Code fix planned - a plan is waiting for a developer",
-        NotificationEvent.CodeFixPrOpened => "Draft PR opened - a code fix is ready for review",
+        NotificationEvent.CodeFixPrOpened => "Pull request opened - a code fix is ready for review",
         NotificationEvent.CodeFixFailed => "Code fix ended without a PR",
         _ => "Hephaisto",
     };

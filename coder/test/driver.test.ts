@@ -208,7 +208,9 @@ describe('implement phase', () => {
     expect(body).toMatch(/\| test \| `sh test.sh` \| 0 \|/);
     expect(body).not.toContain('Verification weak');
     expect(body).toContain('A note from the plan.');
-    expect(body).toContain('Draft PR opened by hephaisto-coder; a human reviews, merges and deploys.');
+    expect(body).toContain('Opened by hephaisto-coder; a human reviews, merges and deploys.');
+    // and why it is a draft: here, because repos.yaml says every one is
+    expect(body).toContain('**Opened as a draft:** `repos.yaml` opens every pull request as one (`defaults.pr.draft: true`).');
     expect(body).toContain(ATTEMPT);
     const pr = JSON.parse(readFileSync(join(w.ghState, 'prs', '1.json'), 'utf8'));
     expect(pr).toMatchObject({ isDraft: true, baseRefName: 'main', headRefName: BRANCH, labels: ['hephaisto'], assignees: ['Flou21'] });
@@ -436,6 +438,84 @@ describe('implement phase', () => {
     const { doc } = await runRequest(w, implementRequest(w));
     expect(doc.outcome).toBe('pr_opened');
     expect(readFileSync(join(w.ghState, 'prs', '1.body.md'), 'utf8')).not.toContain('without the label');
+  });
+
+  // #297. Until v0.14.0 every pull request was a draft, whatever the runner had seen: the first
+  // one for an issue in production was what the approved plan said, its check had passed, and
+  // a person had to mark it ready by hand before merging it.
+  describe('a draft, or ready for review (defaults.pr.draft: unless-ready)', () => {
+    const opened = (w: World) => ({
+      create: ghLog(w).split('\n').find((l) => l.startsWith('gh pr create')) ?? '',
+      pr: JSON.parse(readFileSync(join(w.ghState, 'prs', '1.json'), 'utf8')) as { isDraft: boolean },
+      body: readFileSync(join(w.ghState, 'prs', '1.body.md'), 'utf8'),
+    });
+
+    it('is opened ready for review when the checks passed and nothing deviates from the plan', async () => {
+      const w = makeWorld({ draft: 'unless-ready' });
+      const { doc } = await runRequest(w, implementRequest(w), { CODEFIX_FAKE_SCRIPT_DIR: DEFAULT_SCRIPTS });
+      expect(doc.outcome).toBe('pr_opened');
+      const { create, pr, body } = opened(w);
+      expect(create).not.toContain('--draft');
+      expect(create).toMatch(/--base main --head hephaisto\/codefix-0192a6f00000 .*--assignee Flou21 --label hephaisto/);
+      expect(pr.isDraft).toBe(false);
+      expect(body).toContain("**Opened ready for review:** the runner's own checks passed (level `tests`) and no deviation from the approved plan was reported.");
+      expect(body).not.toContain('Opened as a draft');
+    });
+
+    it('is ready for review at a level below tests too, beside the section that says what that leaves open', async () => {
+      // a repository without unit tests can never do better than its type check
+      const w = makeWorld({ draft: 'unless-ready', commands: { build: 'sh -n src/app.sh', typecheck: 'sh -n src/app.sh' }, repoEntry: { verification: { hasUnitTests: false } } });
+      script(w, 'svc.implement.json', okImplement());
+      const { doc } = await runRequest(w, implementRequest(w));
+      expect(doc.outcome).toBe('pr_opened');
+      const { create, pr, body } = opened(w);
+      expect(create).not.toContain('--draft');
+      expect(pr.isDraft).toBe(false);
+      expect(body).toContain('(level `typecheck-only`)');
+      expect(body).toContain('### Verification weak');
+    });
+
+    it('stays a draft when a deviation was reported, and says so', async () => {
+      const w = makeWorld({ draft: 'unless-ready' });
+      // the agent leaves its change uncommitted: the driver commits it and reports that
+      script(w, 'svc.implement.json', {
+        steps: [
+          { append: { path: 'src/app.sh', text: '# tidy\n' } },
+          { result: { cost_usd: 0.3, structured_output: { files: ['src/app.sh'], deviations: [] } } },
+        ],
+      });
+      const { doc } = await runRequest(w, implementRequest(w));
+      expect(doc.outcome).toBe('pr_opened');
+      const { create, pr, body } = opened(w);
+      expect(create).toContain('--draft');
+      expect(pr.isDraft).toBe(true);
+      expect(body).toContain('**Opened as a draft:** a deviation from the approved plan was reported (listed above).');
+      expect(body).not.toContain('Opened ready for review');
+    });
+
+    it('stays a draft when the repository has no check the runner could run', async () => {
+      const w = makeWorld({ draft: 'unless-ready', commands: {}, repoEntry: { verification: { hasUnitTests: false } } });
+      script(w, 'svc.implement.json', okImplement());
+      const { doc } = await runRequest(w, implementRequest(w));
+      expect(doc.outcome).toBe('pr_opened');
+      const { create, pr, body } = opened(w);
+      expect(create).toContain('--draft');
+      expect(pr.isDraft).toBe(true);
+      expect(body).toContain('**Opened as a draft:** the runner had no check to run for this repository');
+    });
+
+    it('a label that could not be set is no reason for a draft: it says nothing about the change', async () => {
+      const w = makeWorld({ draft: 'unless-ready' });
+      script(w, 'svc.implement.json', okImplement());
+      const { doc } = await runRequest(w, implementRequest(w), { GH_SHIM_KNOWN_LABELS: '' });
+      expect(doc.outcome).toBe('pr_opened');
+      const { pr, body } = opened(w);
+      expect(ghLog(w).split('\n').filter((l) => l.startsWith('gh pr create')).every((l) => !l.includes('--draft'))).toBe(true);
+      expect(pr.isDraft).toBe(false);
+      // the description that was posted is the second one: it names the label and is still "ready"
+      expect(body).toMatch(/- The PR was opened without the label\(s\) hephaisto/);
+      expect(body).toContain('**Opened ready for review:**');
+    });
   });
 
   it('commits what the agent left uncommitted, with the trailers', async () => {

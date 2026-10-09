@@ -4,7 +4,7 @@ namespace Hephaisto.Core.Domain;
 
 /// <summary>
 /// One try at a change in code: a read-only plan Job, a human decision, and - if approved - an
-/// implement Job that opens a Draft PR. For an incident's cause, or for a piece of work somebody
+/// implement Job that opens a pull request. For an incident's cause, or for a piece of work somebody
 /// handed over (v0.14.0).
 /// </summary>
 /// <remarks>

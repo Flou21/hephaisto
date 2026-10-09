@@ -81,7 +81,7 @@ public sealed record NotificationSnapshot
     public string? Reason { get; init; }
 
     /// <summary>
-    /// A link outside Hephaisto that IS the subject of the event - the Draft PR of a code fix.
+    /// A link outside Hephaisto that IS the subject of the event - the pull request of a code fix.
     /// Unlike the incident link it is a fact, not derived from configuration, so it is frozen here.
     /// </summary>
     public string? ExternalUrl { get; init; }

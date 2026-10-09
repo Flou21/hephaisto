@@ -244,7 +244,7 @@ public static partial class IssueComments
                 "a Job is running for this issue right now, so there is nothing to plan again yet. "
                 + "When it has ended the comment above says so, and a new `/replan` is read then.",
             CodeFixRefusal.PullRequestOpen =>
-                "a draft pull request is already open for this issue, and what it still needs is said in its review. "
+                "a pull request is already open for this issue, and what it still needs is said in its review. "
                 + "To start over instead, close the pull request; then " + UnassignAndWait,
             CodeFixRefusal.TooManyAttempts =>
                 $"this issue has been planned {MaxAttemptsPerWorkItem.ToString(CultureInfo.InvariantCulture)} times, which is the most for one hand-over. "
@@ -307,7 +307,7 @@ public static partial class IssueComments
         {
             return $"**Hephaisto has let go of this issue:** {Clause(s.StateReason, 300)}."
                 + (a is { State: CodeFixState.PrOpened, PrUrl: { Length: > 0 } left }
-                    ? $" The draft pull request stays as it is: {Link(left)}"
+                    ? $" The pull request stays as it is: {Link(left)}"
                     : " Anything that was running for it was stopped.")
                 + " Assign it again to hand it back.";
         }
@@ -371,10 +371,10 @@ public static partial class IssueComments
 
             CodeFixState.Implementing =>
                 $"**Implementing.** {Clause(a.ApprovedBy, 100)} approved the plan. A Job is making the change on branch "
-                + $"{Code(a.Branch)} and will open a draft pull request.",
+                + $"{Code(a.Branch)} and will open a pull request.",
 
             CodeFixState.PrOpened =>
-                $"**A draft pull request is open:** {Link(a.PrUrl)}\n\nA person reviews and merges it; Hephaisto does neither.",
+                $"**A pull request is open:** {Link(a.PrUrl)}\n\nA person reviews and merges it; Hephaisto does neither.",
 
             CodeFixState.Denied =>
                 $"**The plan was rejected** by {Clause(a.ApprovedBy, 100)}: {Clause(a.FailureReason, 500)}. Nothing was changed." + again,
@@ -611,7 +611,7 @@ public static partial class IssueComments
 
         text.Append("What is approved is this plan as Hephaisto stored it - not the text of this comment, and not the issue as it may read by then. ")
             .Append("An approval starts a Job that works on branch ").Append(Code(attempt.Branch))
-            .Append(" and opens a draft pull request; a person reviews and merges it.\n\n");
+            .Append(" and opens a pull request; a person reviews and merges it.\n\n");
 
         text.Append("<sub>Attempt ").Append(Code(attempt.Id.ToString()));
 

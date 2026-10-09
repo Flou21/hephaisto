@@ -109,6 +109,20 @@ on - the account, the two tokens, the values - is one page:
   `planCommentId`; `incidentId` is null on a row that is for an issue. `GET /api/workitems/{id}`
   carries `attempts`, and a work item says why no plan was started (`declineReason`) while a cap
   or a switch is in the way - it is asked again by itself.
+- **A pull request can be opened ready for review** ([#297](https://github.com/TrueRelevance/hephaisto/issues/297)).
+  Every one was a draft, whatever the runner had seen, so the word said nothing about the pull
+  request it stood on. `defaults.pr.draft` in the context repository's `repos.yaml` now takes a
+  second value. `true` is what it was and what an install gets that changes nothing: always a
+  draft. With `unless-ready` a pull request is a draft only when the runner had no check to run
+  for the repository (level `none`) or when a deviation from the approved plan was reported, by
+  the runner or by the model; otherwise it is opened ready for review. The last lines of the
+  description say which, and why. A label that could not be set is no reason for a draft, and a
+  level below `tests` is none either: a repository without unit tests can never do better, and
+  the description's "Verification weak" section says what that leaves open. Nobody but a person
+  merges, and a change whose build or tests fail is still never pushed. The decision rests on
+  what the coder container reports, as the verification table always has. **Set the new value
+  only when every image that reads the context repository is this release or newer**: an
+  older one refuses a `repos.yaml` whose `draft` is anything but `true`, and every Job reads it.
 - **The pull request's description is kept with the attempt**: `prBody` on a row of
   `GET /api/codefixes` and in `attempts` of a work item, for an incident's attempt as for an
   issue's - what the runner sent GitHub, so that "does it close the issue" can be read without
@@ -347,6 +361,15 @@ on - the account, the two tokens, the values - is one page:
   handled as before.
 
 ### Changed
+- **Hephaisto says "pull request" where it said "draft pull request"** - the comment on the
+  issue (`**A pull request is open:**`), the Teams cards and their button (`Pull request
+  opened`, `Open the pull request`), the Grafana annotation, the audit entry and the console.
+  It cannot know which of the two it is, since [#297](https://github.com/TrueRelevance/hephaisto/issues/297);
+  the pull request's own description says. Anything that matched on the old words has to
+  match on the new ones. The description's last line is now `Opened by hephaisto-coder; a
+  human reviews, merges and deploys.`, below the sentence that says in which state it was
+  opened; a context repository with its own `prompts/pr-body.md` gets that sentence where it
+  writes `{{opened_as}}`, and nowhere if it does not.
 - **A work item can have several attempts, one of them open.** It was one attempt, ever: a
   failed, rejected or expired plan ended the issue until it was handed over again. The next
   attempt is never started by itself - an approver's `/replan` or a fresh assignment asks for

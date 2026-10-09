@@ -162,7 +162,7 @@
                 @if (a.State == CodeFixState.PrOpened)
                 {
                     <div class="hp-cf-phase hp-cf-pr-row">
-                        <span class="hp-muted">draft pull request</span>
+                        <span class="hp-muted">pull request</span>
                         <CodeFixPrLink Attempt="a" />
                     </div>
                     @if (a.Deviations.Count > 0)
@@ -216,7 +216,7 @@
                                    @bind="_denyReason" @bind:event="oninput" />
                             <button type="button" class="hp-submit" data-testid="codefix-approve"
                                     disabled="@(blocked is not null || _busy || string.IsNullOrWhiteSpace(_viewer.Actor(_actor)))"
-                                    title="@(blocked ?? "Starts the implement Job: a coder with write access to one branch, ending in a Draft PR")"
+                                    title="@(blocked ?? "Starts the implement Job: a coder with write access to one branch, ending in a pull request")"
                                     @onclick="() => DecideAsync(a.Id, true)">
                                 @(_deciding == a.Id && _approving ? "…" : "approve")
                             </button>

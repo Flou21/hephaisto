@@ -384,7 +384,7 @@ public sealed partial class WorkItemStageTests
         await poller.PassAsync(Ct);
 
         Answers(world).Should().HaveCount(3);
-        Answers(world)[2].Body.Should().Contain("a draft pull request is already open for this issue");
+        Answers(world)[2].Body.Should().Contain("a pull request is already open for this issue");
         IssueComments.AnswerKeysIn(attemptId, Answers(world)[2].Body).Should().Equal("pull-request");
 
         var attempt = await AttemptAsync();

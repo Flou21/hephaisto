@@ -5,7 +5,7 @@ import type { CodeFixRequest, IncidentRequest, WorkItemRequest } from './schemas
 // handed over - a GitHub issue assigned to Hephaisto's account (version 2, v0.14.0).
 //
 // Everything after "what is this for" is the same for both: the clone, the guard, the agent, the
-// verification, the bundle, the push, the draft pull request. What differs is here, so that no
+// verification, the bundle, the push, the pull request. What differs is here, so that no
 // other file asks `req.incident` of a request that has none: which templates are rendered, which
 // trailer a commit carries, whether there is a running image to analyse, and which words of the
 // request were written by a stranger.

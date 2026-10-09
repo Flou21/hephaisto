@@ -20,7 +20,10 @@
             "assignee": { "type": "string" },
             "labels": { "type": "array", "items": { "type": "string" } },
             "branchPrefix": { "const": "hephaisto/" },
-            "draft": { "const": true }
+            "draft": {
+              "enum": [true, "unless-ready"],
+              "description": "true: every pull request is opened as a draft. unless-ready: a draft only when the runner had no check to run for the repository or a deviation from the approved plan was reported; otherwise ready for review. Nobody but a person merges either way."
+            }
           }
         },
         "clone": {

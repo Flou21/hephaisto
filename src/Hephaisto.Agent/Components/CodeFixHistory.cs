@@ -66,7 +66,7 @@ public static class CodeFixHistory
         {
             entries.Add(new(finished, Display.CodeFixWord(a.State), a.State switch
             {
-                CodeFixState.PrOpened => a.PrNumber is { } n ? $"draft pull request #{n}" : "a draft pull request",
+                CodeFixState.PrOpened => a.PrNumber is { } n ? $"pull request #{n}" : "a pull request",
                 CodeFixState.Expired => "nobody answered the plan in time",
                 CodeFixState.Cancelled => "stopped before it finished",
                 CodeFixState.Denied => "a person said no",

@@ -250,7 +250,7 @@ describe('the issue templates', () => {
     for (const v of body) expect(ISSUE_PR_BODY_VARS as readonly string[], `pr-body-issue.md uses {{${v}}}`).toContain(v);
     expect(loadTemplate('pr-body-issue', null).text).toMatch(/^Closes \{\{issue_ref\}\}$/m);
     expect(loadTemplate('pr-body-issue', null).text).toContain('## Verification — what the runner actually ran');
-    expect(loadTemplate('pr-body-issue', null).text).toContain('Draft PR opened by hephaisto-coder; a human reviews, merges and deploys.');
+    expect(loadTemplate('pr-body-issue', null).text).toContain('Opened by hephaisto-coder; a human reviews, merges and deploys.');
   });
 
   it('tell the model that the issue is data, outside the element', () => {
@@ -500,7 +500,8 @@ describe('implement for an issue, end to end', () => {
     expect(body).toMatch(/\| test \| `sh test.sh` \| 0 \|/);
     expect(body).not.toContain('Verification weak');
     expect(body).toContain('A note from the plan.');
-    expect(body).toContain('Draft PR opened by hephaisto-coder; a human reviews, merges and deploys.');
+    expect(body).toContain('Opened by hephaisto-coder; a human reviews, merges and deploys.');
+    expect(body).toContain('**Opened as a draft:** `repos.yaml` opens every pull request as one');
     expect(body).toContain(ATTEMPT);
     // the issue's words: its title once, inside a fence; its body and its comments not at all
     expect(count(body, TITLE_MARK)).toBe(1);

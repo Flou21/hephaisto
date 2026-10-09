@@ -2,7 +2,7 @@ import { closeSync, constants, createWriteStream, existsSync, fstatSync, lstatSy
 import { join } from 'node:path';
 import { z } from 'zod';
 import { BUNDLE_MAX_BYTES, HANDOFF_MAX_BYTES } from './config.js';
-import { VerificationLevelZ } from './schemas.js';
+import { DraftModeZ, VerificationLevelZ } from './schemas.js';
 
 // What one role leaves for the next (backlog #116). Three files, and who may believe which:
 //
@@ -53,7 +53,10 @@ export const PrepareHandoffZ = z
     main_moved: z.string().max(4000).nullable(),
     /** implement, for publish: the publishing policy and the PR's shape, read from dev-context before the agent could touch it. */
     protected_globs: z.array(z.string().max(512)).max(500),
-    pr: z.object({ assignee: z.string().max(255), labels: z.array(z.string().max(255)).max(50), template: z.string().max(200_000) }).strict().nullable(),
+    pr: z
+      .object({ assignee: z.string().max(255), labels: z.array(z.string().max(255)).max(50), draft: DraftModeZ, template: z.string().max(200_000) })
+      .strict()
+      .nullable(),
     /** investigate: how the read-only source clone went. */
     source: z.object({ cloned: z.boolean(), analysed_ref: z.string().max(64).nullable(), error: z.string().max(1000).nullable() }).strict().nullable(),
   })

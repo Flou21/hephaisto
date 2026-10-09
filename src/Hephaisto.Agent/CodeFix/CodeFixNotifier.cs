@@ -96,7 +96,7 @@ public sealed class CodeFixNotifier(
                 : $"A plan for {issue} is waiting for an answer. It is answered in the console: this install reads no comments, "
                     + "because GitHub:Approvers is empty.",
             NotificationEvent.CodeFixPrOpened =>
-                $"A draft pull request for {issue} is open{(attempt.PrUrl is { Length: > 0 } url ? $": {url}" : string.Empty)}. "
+                $"A pull request for {issue} is open{(attempt.PrUrl is { Length: > 0 } url ? $": {url}" : string.Empty)}. "
                 + "A person reviews and merges it; merging closes the issue.",
             _ => $"The code fix for {issue} ended without a pull request"
                 + (string.IsNullOrWhiteSpace(reason) ? "." : $": {reason}"),

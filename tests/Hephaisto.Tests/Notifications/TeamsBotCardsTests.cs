@@ -476,9 +476,9 @@ public sealed class TeamsBotCardsTests
 
         var first = Actions(TeamsBotCards.Alert(incident, Links))[0];
 
-        first.GetProperty("title").GetString().Should().Be("Open the Draft PR");
+        first.GetProperty("title").GetString().Should().Be("Open the pull request");
         first.GetProperty("url").GetString().Should().Be("https://github.com/o/r/pull/7");
-        TeamsBotCards.Headline(incident).Should().Contain("Draft PR opened");
+        TeamsBotCards.Headline(incident).Should().Contain("Pull request opened");
     }
 
     [Fact]

@@ -11,7 +11,7 @@
     {
         <a class="hp-pr-link" href="@url" target="_blank" rel="noopener" data-testid="codefix-pr-link"
            title="@url">
-            <span class="glyph">+</span> @(Attempt.PrNumber is { } n ? $"#{n}" : "draft PR")
+            <span class="glyph">+</span> @(Attempt.PrNumber is { } n ? $"#{n}" : "pull request")
         </a>
     }
     else

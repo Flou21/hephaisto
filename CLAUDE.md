@@ -288,7 +288,10 @@ Two traps worth knowing before you test acting:
 A second, separately gated stage: an escalation whose grounded primary finding points at code,
 on a workload mapped in `codeFix.repositories`, starts a **coder** Job in `hephaisto-coder`
 (`coder/`, Claude Code through the Agent SDK). Plan automatically, implement only after a human
-approves, Draft PR only. Five things to know before touching it:
+approves, and only a person merges. The pull request is a draft - always, or with
+`defaults.pr.draft: unless-ready` in dev-context's `repos.yaml` only when the runner had no check
+to run or a deviation from the approved plan was reported (#297). Five things to know before
+touching it:
 
 - **Its own mode, and silence is Off.** `CodeFixMode {Off, Plan, Pr}` - env `CodeFix__Mode` plus
   the `codeFixMode` key of `hephaisto-switches`, most restrictive wins, and the agent's kill
@@ -300,7 +303,7 @@ approves, Draft PR only. Five things to know before touching it:
   fail on a hand edit.
 - **Three containers, and the model's holds no git token** (v0.13.0, #116). One image, started
   as `prepare` (init: clones and restore, the GitHub and NuGet tokens), `coder` (the agent, build
-  and tests, the model credential only) and - to implement - `publish` (push and Draft PR, the
+  and tests, the model credential only) and - to implement - `publish` (push and pull request, the
   GitHub token), with `coder` as an init container there so it has ended before `publish`
   starts. Never set `shareProcessNamespace`, never hand `coder` another Secret key, and never
   make `publish` run git in `/work`: it pushes from a bundle it imported into its own `/tmp`

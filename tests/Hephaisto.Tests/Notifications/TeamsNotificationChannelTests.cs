@@ -59,7 +59,7 @@ public sealed class TeamsNotificationChannelTests
     [InlineData(NotificationEvent.ModeChanged, "Autonomy re-armed")]
     [InlineData(NotificationEvent.PolicyChanged, "Policy configuration changed")]
     [InlineData(NotificationEvent.CodeFixPlanReady, "Code fix planned")]
-    [InlineData(NotificationEvent.CodeFixPrOpened, "Draft PR opened")]
+    [InlineData(NotificationEvent.CodeFixPrOpened, "Pull request opened")]
     [InlineData(NotificationEvent.CodeFixFailed, "Code fix ended without a PR")]
     public void Every_event_has_its_own_headline(NotificationEvent kind, string expected)
     {
@@ -108,7 +108,7 @@ public sealed class TeamsNotificationChannelTests
         var card = Card(message);
         var actions = card.GetProperty("actions");
 
-        actions[0].GetProperty("title").GetString().Should().Be("Open the Draft PR");
+        actions[0].GetProperty("title").GetString().Should().Be("Open the pull request");
         actions[0].GetProperty("url").GetString().Should().Be("https://github.com/o/r/pull/7");
         card.ToString().Should().Contain("https://github.com/o/r").And.NotContain("Action.Submit");
     }

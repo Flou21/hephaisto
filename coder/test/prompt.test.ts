@@ -85,7 +85,7 @@ describe('templates', () => {
     const t = loadTemplate('pr-body', null).text;
     expect(t).toContain('## Verification — what the runner actually ran');
     expect(t).toContain('{{verification_weak}}');
-    expect(t).toContain('Draft PR opened by hephaisto-coder; a human reviews, merges and deploys.');
+    expect(t).toContain('Opened by hephaisto-coder; a human reviews, merges and deploys.');
   });
 });
 

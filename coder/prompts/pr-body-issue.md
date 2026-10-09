@@ -41,4 +41,6 @@ Closes {{issue_ref}}
 
 ---
 
-Draft PR opened by hephaisto-coder; a human reviews, merges and deploys.
+{{opened_as}}
+
+Opened by hephaisto-coder; a human reviews, merges and deploys.

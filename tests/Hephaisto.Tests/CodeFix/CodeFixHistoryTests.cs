@@ -56,7 +56,7 @@ public sealed class CodeFixHistoryTests
         history[0].Detail.Should().Be("requested by hephaisto/system");
         history[2].Detail.Should().Contain("posted on the issue");
         history[3].Detail.Should().Be("by github:maintainer, through a comment on the issue");
-        history[5].Detail.Should().Be("draft pull request #14");
+        history[5].Detail.Should().Be("pull request #14");
         history[6].Detail.Should().Be("merged");
     }
 

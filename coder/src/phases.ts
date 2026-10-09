@@ -25,7 +25,7 @@ import { type Target, checkoutAnalysedRef, cloneTarget, ensureNugetConfig, makeD
 //   coder*     the agent, and whatever executes what the agent wrote. No git or NuGet token is
 //              in this role's environment, so none of the git it runs can authenticate - and
 //              none needs to: everything it reads was fetched by prepare.
-//   publish    (publish.ts) the push and the Draft PR, from a copy this role does not share.
+//   publish    (publish.ts) the push and the pull request, from a copy this role does not share.
 
 export interface PrepareDeps {
   env: RunnerEnv;
@@ -460,7 +460,8 @@ export async function prepareImplement(req: CodeFixRequest, deps: PrepareDeps): 
     h.deviations = deviations;
     h.main_moved = mainMoved;
     h.protected_globs = protectedGlobs(ctx.repos, repo);
-    h.pr = { assignee: ctx.repos.defaults.pr.assignee, labels: ctx.repos.defaults.pr.labels, template: loadTemplate(subjectOf(req).templates.prBody, paths.context).text };
+    const pr = ctx.repos.defaults.pr;
+    h.pr = { assignee: pr.assignee, labels: pr.labels, draft: pr.draft, template: loadTemplate(subjectOf(req).templates.prBody, paths.context).text };
     return h;
   } catch (e) {
     log.error(`implement could not be prepared: ${(e as Error).stack ?? String(e)}`);

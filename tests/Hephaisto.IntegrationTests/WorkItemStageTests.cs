@@ -812,7 +812,7 @@ public sealed partial class WorkItemStageTests(PostgresFixture pg)
         }
 
         world.GitHub.Comments.Should().HaveCount(2);
-        world.GitHub.Comments.Should().ContainSingle(c => c.Body.Contains($"**A draft pull request is open:** {CloneUrl}/pull/7"));
+        world.GitHub.Comments.Should().ContainSingle(c => c.Body.Contains($"**A pull request is open:** {CloneUrl}/pull/7"));
     }
 
     [Fact]

@@ -42,13 +42,13 @@ export const ISSUE_PROMPT_VARS = [
 export const PR_BODY_VARS = [
   'incident_link', 'summary', 'root_cause', 'evidence_md', 'files', 'deviations', 'verification_table',
   'verification_weak', 'notes', 'cost', 'versions', 'attempt_id', 'incident_id', 'workload', 'image', 'analysed_ref',
-  'branch', 'repo_url', 'change_summary', 'approved_by',
+  'branch', 'repo_url', 'change_summary', 'approved_by', 'opened_as',
 ] as const;
 
 /** pr-body-issue.md. `issue_md` is the issue's title in a fence; nothing else of the issue is here. */
 export const ISSUE_PR_BODY_VARS = [
   'issue_ref', 'issue_url', 'issue_md', 'summary', 'root_cause', 'files', 'deviations', 'verification_table', 'verification_weak',
-  'notes', 'cost', 'versions', 'attempt_id', 'default_branch', 'analysed_ref', 'branch', 'repo_url', 'change_summary',
+  'notes', 'cost', 'versions', 'attempt_id', 'default_branch', 'analysed_ref', 'branch', 'repo_url', 'change_summary', 'opened_as',
 ] as const;
 
 export function loadTemplate(name: TemplateName, contextDir: string | null): { text: string; source: string } {

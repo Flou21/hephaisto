@@ -283,12 +283,20 @@ export const RepoEntryZ = z
   })
   .strict();
 
+/**
+ * `defaults.pr.draft` (#297). `true`: every pull request is opened as a draft - the only value
+ * until v0.14.0, and what an install gets that changes nothing. `unless-ready`: a draft only
+ * when something speaks against a review (pr.ts, draftReasons).
+ */
+export const DraftModeZ = z.literal([true, 'unless-ready']);
+export type DraftMode = z.infer<typeof DraftModeZ>;
+
 export const ReposZ = z
   .object({
     defaults: z
       .object({
         pr: z
-          .object({ assignee: z.string(), labels: z.array(z.string()), branchPrefix: z.literal('hephaisto/'), draft: z.literal(true) })
+          .object({ assignee: z.string(), labels: z.array(z.string()), branchPrefix: z.literal('hephaisto/'), draft: DraftModeZ })
           .strict(),
         clone: z.object({ filter: z.enum(['blob:none', 'none']) }).strict(),
         imageTagIsCommitSha: z.boolean(),

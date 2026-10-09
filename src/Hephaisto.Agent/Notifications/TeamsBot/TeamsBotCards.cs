@@ -651,7 +651,7 @@ public static class TeamsBotCards
         var headline = s.Event switch
         {
             NotificationEvent.CodeFixPlanReady => "Code fix planned",
-            NotificationEvent.CodeFixPrOpened => "Draft PR opened",
+            NotificationEvent.CodeFixPrOpened => "Pull request opened",
             NotificationEvent.CodeFixFailed => "Code fix ended without a PR",
             _ => "Hephaisto",
         };
@@ -695,7 +695,7 @@ public static class TeamsBotCards
 
         if (s.Event is NotificationEvent.CodeFixPrOpened && !string.IsNullOrWhiteSpace(s.ExternalUrl))
         {
-            actions.Add(OpenUrl("Open the Draft PR", s.ExternalUrl));
+            actions.Add(OpenUrl("Open the pull request", s.ExternalUrl));
         }
 
         if (!string.IsNullOrWhiteSpace(message.CodeFixUrl))
@@ -768,7 +768,7 @@ public static class TeamsBotCards
         IncidentState.Escalated when incident.CodeFix is CodeFixState.PlanReady =>
             "Code fix planned - a plan is waiting for a developer",
         IncidentState.Escalated when incident.CodeFix is CodeFixState.PrOpened =>
-            "Draft PR opened - a code fix is ready for review",
+            "Pull request opened - a code fix is ready for review",
         IncidentState.Escalated when incident.EscalationReason is EscalationReason.NotInvestigated =>
             "Opened - this rule is not investigated; it is yours",
         IncidentState.Escalated when incident.EscalationReason is EscalationReason.Flapping =>
@@ -1125,7 +1125,7 @@ public static class TeamsBotCards
         // deploys it; nothing in a card approves or merges anything.
         if (incident.CodeFix is CodeFixState.PrOpened && !string.IsNullOrWhiteSpace(incident.PullRequestUrl))
         {
-            actions.Add(OpenUrl("Open the Draft PR", incident.PullRequestUrl));
+            actions.Add(OpenUrl("Open the pull request", incident.PullRequestUrl));
         }
 
         if (NotificationLinks.Incident(links.BaseUrl, incident.Id) is { } url)
@@ -1180,7 +1180,7 @@ public static class TeamsBotCards
         CodeFixState.Eligible or CodeFixState.Planning => "Code fix: a plan is being written",
         CodeFixState.PlanReady => "Code fix: a plan is waiting for review",
         CodeFixState.Implementing => "Code fix: the approved plan is being implemented",
-        CodeFixState.PrOpened => "Code fix: a Draft PR is open",
+        CodeFixState.PrOpened => "Code fix: a pull request is open",
         CodeFixState.Failed => "Code fix: ended without a PR",
         CodeFixState.Denied => "Code fix: the plan was denied",
         CodeFixState.Expired => "Code fix: the plan expired unanswered",

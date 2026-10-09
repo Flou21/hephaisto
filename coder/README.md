@@ -3,8 +3,9 @@
 The runner a Kubernetes Job starts when Hephaisto decides an incident is a code bug. It clones
 one repository, lets the Claude Agent SDK analyse the bug and write a plan (the **plan** phase,
 read-only, automatic), and - after a human approved that plan, in a fresh pod - implements it
-on an assigned branch, re-runs the repository's build and tests itself, and opens a **Draft PR**
-(the **implement** phase). It never touches a cluster, never merges, never deploys.
+on an assigned branch, re-runs the repository's build and tests itself, and opens a pull request
+(the **implement** phase) - a draft, or ready for review where `repos.yaml` allows it and
+nothing speaks against it (`draftReasons` in `src/pr.ts`). It never touches a cluster, never merges, never deploys.
 
 Since v0.12.0 the same image also **investigates** an incident (the **investigate** phase):
 Hephaisto hands it a rendered prompt and an investigator MCP endpoint, and the runner lets Claude
@@ -24,7 +25,7 @@ share no process namespace, nothing the model runs can read one out of another's
 |---|---|---|---|
 | `prepare` | init container, always | `GITHUB_TOKEN`, `NUGET_GITHUB_TOKEN` | everything that needs a token before the model exists: the clones, the open-PR and remote-branch checks, the assigned branch, the pre-restore |
 | `coder` | the regular container of a plan or an investigation; the second init container of an implementation | `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` | the agent, and everything that executes what the agent wrote: build, tests |
-| `publish` | implementation only, the regular container | `GITHUB_TOKEN` | push and Draft PR, from a copy of its own; prints the result |
+| `publish` | implementation only, the regular container | `GITHUB_TOKEN` | push and pull request, from a copy of its own; prints the result |
 
 Exactly one container prints the framed result, and it is the pod's regular one: `coder` for a
 plan or an investigation, `publish` for an implementation. A role that does not print hands its

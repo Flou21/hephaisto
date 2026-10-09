@@ -43,7 +43,7 @@ public sealed partial class WorkItemStageTests
         return (world, issue, await SingleWorkItemIdAsync(), attemptId);
     }
 
-    /// <summary>The same, approved on the issue and implemented: a draft pull request is open.</summary>
+    /// <summary>The same, approved on the issue and implemented: a pull request is open.</summary>
     private async Task<(World World, int Issue, Guid WorkItemId, Guid AttemptId)> PullRequestOpenAsync(int pr = 7, string? prBody = null)
     {
         var (world, issue, workItemId, attemptId) = await PlanOnTheIssueAsync();
@@ -702,7 +702,7 @@ public sealed partial class WorkItemStageTests
         JsonSerializer.Serialize(CodeFixQueries.View(attempt), new JsonSerializerOptions(JsonSerializerDefaults.Web)).Should().Contain("\"prBody\":\"Endpoints.Map");
 
         // The issue is told where the pull request is, in the comment that is edited.
-        world.GitHub.Comments.Should().ContainSingle(c => c.Body.Contains($"**A draft pull request is open:** {CloneUrl}/pull/7"));
+        world.GitHub.Comments.Should().ContainSingle(c => c.Body.Contains($"**A pull request is open:** {CloneUrl}/pull/7"));
     }
 
     [Fact]
@@ -846,7 +846,7 @@ public sealed partial class WorkItemStageTests
         var item = (await WorkItemsAsync()).Single();
         item.State.Should().Be(WorkItemState.Cancelled);
         item.StateReason.Should().Be("the issue was closed");
-        world.GitHub.Comments.Should().ContainSingle(c => c.Body.Contains($"The draft pull request stays as it is: {CloneUrl}/pull/7"));
+        world.GitHub.Comments.Should().ContainSingle(c => c.Body.Contains($"The pull request stays as it is: {CloneUrl}/pull/7"));
     }
 
     [Fact]

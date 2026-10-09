@@ -69,7 +69,7 @@ public enum NotificationEvent
     /// </summary>
     CodeFixPlanReady = 7,
 
-    /// <summary>A Draft PR exists. Carries its URL; a human reviews, merges and deploys.</summary>
+    /// <summary>A pull request exists. Carries its URL; a human reviews, merges and deploys.</summary>
     CodeFixPrOpened = 8,
 
     /// <summary>

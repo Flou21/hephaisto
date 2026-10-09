@@ -33,7 +33,7 @@ namespace Hephaisto.Agent.CodeFix;
 /// the tests. Holds the model credential and nothing else. For a plan it is the pod's one regular
 /// container and prints the result; to implement it is the SECOND init container, so that it too
 /// has ended - every process of it - before the next one starts.</item>
-/// <item><c>publish</c>, implement only, the one regular container: the push and the Draft PR, and
+/// <item><c>publish</c>, implement only, the one regular container: the push and the pull request, and
 /// the result. Holds <c>GITHUB_TOKEN</c> alone, has a <c>/tmp</c> of its own, and reads what
 /// <c>prepare</c> decided from a volume <c>coder</c> never mounted.</item>
 /// </list>

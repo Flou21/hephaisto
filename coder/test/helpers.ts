@@ -70,6 +70,8 @@ export interface WorldOptions {
   extraRepos?: Record<string, unknown>[];
   commands?: Record<string, string>;
   protectedPaths?: string[];
+  /** repos.yaml defaults.pr.draft; `true` when not given, as in an install that changed nothing. */
+  draft?: true | 'unless-ready';
 }
 
 export function makeWorld(opts: WorldOptions = {}): World {
@@ -118,7 +120,7 @@ export function makeWorld(opts: WorldOptions = {}): World {
         };
   const repos = {
     defaults: {
-      pr: { assignee: 'Flou21', labels: ['hephaisto'], branchPrefix: 'hephaisto/', draft: true },
+      pr: { assignee: 'Flou21', labels: ['hephaisto'], branchPrefix: 'hephaisto/', draft: opts.draft ?? true },
       clone: { filter: 'blob:none' },
       imageTagIsCommitSha: true,
       protectedPaths: ['.github/**', '.claude/**', 'nuget.config', 'Dockerfile*', '**/appsettings.Production*.json'],

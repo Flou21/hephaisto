@@ -7,7 +7,7 @@ namespace Hephaisto.Core.CodeFix;
 /// <remarks>
 /// <para>
 /// <see cref="Domain.AgentMode"/> answers "may the agent mutate the cluster". This answers "may
-/// the agent spend money on a coder and, after a human approves, open a Draft PR". Tying the two
+/// the agent spend money on a coder and, after a human approves, open a pull request". Tying the two
 /// together would lock production - which runs in Observe - out of the feature entirely, or force
 /// an operator to widen cluster autonomy to get a git feature. Neither is a trade anyone should be
 /// made to take, so the axes are independent, and the kill switch still overrides both.
@@ -26,7 +26,7 @@ public enum CodeFixMode
     /// <summary>A read-only coder analyses the repository and writes a plan. Nothing is pushed.</summary>
     Plan = 1,
 
-    /// <summary>As Plan, and a human may approve the plan into a Draft PR on an assigned branch.</summary>
+    /// <summary>As Plan, and a human may approve the plan into a pull request on an assigned branch.</summary>
     Pr = 2,
 }
 
@@ -49,7 +49,7 @@ public enum CodeFixState
     /// <summary>Approved; the implement Job is running.</summary>
     Implementing = 3,
 
-    /// <summary>A Draft PR exists. Terminal for Hephaisto: a human reviews, merges and deploys.</summary>
+    /// <summary>A pull request exists. Terminal for Hephaisto: a human reviews, merges and deploys.</summary>
     PrOpened = 4,
 
     Failed = 5,

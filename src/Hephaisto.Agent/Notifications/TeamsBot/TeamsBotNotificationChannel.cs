@@ -282,7 +282,7 @@ public sealed class TeamsBotNotificationChannel(
             NotificationEvent.IncidentResolved => "Resolved",
             NotificationEvent.VerificationFailed => "Verification failed",
             NotificationEvent.CodeFixPlanReady => "Code fix planned",
-            NotificationEvent.CodeFixPrOpened => "Draft PR opened",
+            NotificationEvent.CodeFixPrOpened => "Pull request opened",
             NotificationEvent.CodeFixFailed => "Code fix ended without a PR",
             _ => "Hephaisto",
         };

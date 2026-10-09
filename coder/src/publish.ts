@@ -7,12 +7,12 @@ import { Git, gitEnv, withNetworkRetry } from './git.js';
 import { BUNDLE_FILE, type CoderHandoff, HandoffError, type PrepareHandoff, copyUntrusted, readCoderHandoff } from './handoff.js';
 import { log, redact, secretIn } from './log.js';
 import { changedFiles, policyCheck } from './policy.js';
-import { BRANCH_RE, REMOTE_URL_RE, createDraftPr, ghEnv, inspectRemoteBranch, prTitle, pushBranch, renderPrBody } from './pr.js';
+import { BRANCH_RE, REMOTE_URL_RE, createPr, draftReasons, ghEnv, inspectRemoteBranch, openedAs, prTitle, pushBranch, renderPrBody } from './pr.js';
 import { minimalFailed, normalizeResult } from './result.js';
 import type { CodeFixRequest, ImplementResult } from './schemas.js';
 import { versionLine } from './version.js';
 
-// The publish role (backlog #116): the push and the Draft PR, in a container that holds
+// The publish role (backlog #116): the push and the pull request, in a container that holds
 // GITHUB_TOKEN and starts only after the coder container - the model, its shell, the tests it
 // wrote - has ended.
 //
@@ -70,7 +70,10 @@ import { versionLine } from './version.js';
 //     log tail, the summary, the deviations and the cost come from coder.json, and code that
 //     defeated the guard in that container could have written all of them, together with a
 //     bundle to match. What it cannot do is push anywhere but the assigned branch, push a diff
-//     that breaks the policy, or reach the token. The PR is a draft, and its CI runs on GitHub.
+//     that breaks the policy, or reach the token. The PR's CI runs on GitHub, and a person
+//     merges it. Whether it is opened as a draft rests on the same word since #297: with
+//     `defaults.pr.draft: unless-ready`, a coder container that lies about its verification
+//     also gets a pull request that asks for a review instead of a draft. That is all it gets.
 //   - git parses the bundle. A memory-safety bug in git's pack reader would run beside the
 //     token - the exposure of any `git fetch` from a server one does not trust. fetch.fsckObjects
 //     is asked for, but git applies it to a bundle only in releases newer than the image's;
@@ -269,6 +272,10 @@ export async function runPublish(req: CodeFixRequest, deps: PublishDeps, sealed:
     // --- the PR body is rendered here, and may not carry what this container holds
     const report = h.report;
     const template = sealed.pr.template;
+    // a draft or not, decided here and once: from what the coder role reported, before a label
+    // that cannot be set adds a deviation that says nothing about the change
+    const whyDraft = draftReasons(sealed.pr.draft, report, result.deviations);
+    const state = openedAs(whyDraft, report);
     const bodyWith = (deviations: string[]): string =>
       renderPrBody({
         req,
@@ -280,6 +287,7 @@ export async function runPublish(req: CodeFixRequest, deps: PublishDeps, sealed:
         report,
         costUsd: result.cost_usd,
         versions: versionLine(sealed.context_sha),
+        openedAs: state,
         template,
       });
     let body = bodyWith(result.deviations);
@@ -295,13 +303,15 @@ export async function runPublish(req: CodeFixRequest, deps: PublishDeps, sealed:
 
     // gh runs in an empty directory: with --repo and --head it needs no repository, and it would
     // run `git status` in one if it had it.
-    const pr = await createDraftPr(
+    log.info(whyDraft.length > 0 ? `opening the pull request as a draft: ${whyDraft.join('; ')}` : 'opening the pull request ready for review');
+    const pr = await createPr(
       {
         repoUrl: req.repository.url,
         base: def,
         head: branch,
         title,
         bodyFile,
+        draft: whyDraft.length > 0,
         assignee: sealed.pr.assignee,
         labels: sealed.pr.labels,
         // Opened without its label, the description says so too. What gh said goes through the

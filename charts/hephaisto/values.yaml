@@ -650,8 +650,10 @@ notifications:
 # stage hands that finding to a coder - Claude Code, in a Kubernetes Job of its own - which
 # clones the repository the workload is mapped to and writes a fix PLAN (automatically,
 # read-only). After a human approves the plan, a second Job implements it on a branch, runs the
-# build and tests, and opens a DRAFT pull request. A human reviews, merges and deploys. Nothing
-# here merges, deploys or touches the workload.
+# build and tests, and opens a pull request - a DRAFT, unless the context repository's
+# repos.yaml says `defaults.pr.draft: unless-ready`; then it is a draft only when the runner had
+# no check to run or a deviation from the approved plan was reported. A human reviews, merges
+# and deploys. Nothing here merges, deploys or touches the workload.
 #
 # WHAT THE CODER CAN REACH, which is the security argument in full:
 #
@@ -664,7 +666,7 @@ notifications:
 #   - Egress ONLY through the allowlist proxy below (when networkPolicy and egressProxy are on,
 #     which is the default): DNS, and the proxy's port. Every request it makes is on the proxy's
 #     stdout - that log is the per-attempt outbound audit.
-#   - Its write target is a git BRANCH and a DRAFT PR, with a token scoped to the mapped
+#   - Its write target is a git BRANCH and a pull request, with a token scoped to the mapped
 #     repositories. Branch protection on each default branch is YOUR prerequisite - the chart
 #     cannot check it, NOTES.txt reminds you.
 #
@@ -792,8 +794,9 @@ codeFix:
     cpuLimit: "4"
     memoryLimit: 6Gi
 
-  # A PR is opened only when the runner's OWN build and tests were green. Off means a red PR can
-  # be opened (still a draft, with the failure in its body).
+  # A PR is accepted only when the runner's OWN build and tests were green. The runner pushes
+  # nothing red either way; off stops the agent from refusing a result that reports no green
+  # build - a repository with no build or test command at all.
   requireGreenBuild: true
 
   # THROWAWAY E2E CLUSTERS ONLY. Lets mode: pr run with auth.enabled false, so the approval that

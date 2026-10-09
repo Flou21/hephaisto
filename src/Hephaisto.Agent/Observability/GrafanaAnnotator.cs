@@ -36,7 +36,7 @@ public interface IGrafanaAnnotator
     Task IncidentClosedAsync(Incident incident, string? summary, CancellationToken ct);
 
     /// <summary>
-    /// A point annotation when a code fix opens its Draft PR, so the dashboard that showed the
+    /// A point annotation when a code fix opens its pull request, so the dashboard that showed the
     /// incident also shows where its fix is waiting. Default no-op for annotators that predate it.
     /// </summary>
     Task CodeFixPrOpenedAsync(Incident incident, CodeFixAttempt attempt, CancellationToken ct) => Task.CompletedTask;
@@ -122,7 +122,7 @@ public sealed class GrafanaAnnotator(
             {
                 Time = (attempt.FinishedAt ?? DateTimeOffset.UtcNow).ToUnixTimeMilliseconds(),
                 Tags = TagsFor(incident, "codefix-pr"),
-                Text = $"<b>Draft PR opened</b> — {System.Net.WebUtility.HtmlEncode(attempt.PrUrl)} for {Describe(incident)}",
+                Text = $"<b>Pull request opened</b> — {System.Net.WebUtility.HtmlEncode(attempt.PrUrl)} for {Describe(incident)}",
             },
             incident,
             ct);

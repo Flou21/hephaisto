@@ -201,7 +201,9 @@ after the outcome rather than a new action: when an investigation escalates beca
 said a human must fix the code (`NoPlanProduced`) and its grounded primary finding says
 `application`, a **coder** — Claude Code via the Agent SDK, in a Kubernetes Job — clones the
 repository the workload is mapped to and writes a fix plan. After a human approves, a second Job
-implements it and opens a Draft PR. It is not an `ActionType`, on purpose: every action is gated
+implements it and opens a pull request - a draft, unless the context repository's `repos.yaml`
+says `defaults.pr.draft: unless-ready` and nothing speaks against a review ([#297](https://github.com/TrueRelevance/hephaisto/issues/297)).
+It is not an `ActionType`, on purpose: every action is gated
 by the agent mode and denied in `Observe` before approval routing, would take the workload's lock
 and cooldown for something that never touches the workload, and would change the planner's prompt
 — and therefore every recorded cassette.
@@ -254,7 +256,7 @@ shared process namespace:
 |---|---|---|---|
 | `prepare` | init | `GITHUB_TOKEN`, `NUGET_GITHUB_TOKEN` | clones, the open-PR and branch checks, the package restore |
 | `coder` | the regular container of a plan; the second init container of an implementation | the model credential | the agent, and the build and tests of what it wrote |
-| `publish` | implementation only, the regular container | `GITHUB_TOKEN` | push, Draft PR, the result |
+| `publish` | implementation only, the regular container | `GITHUB_TOKEN` | push, pull request, the result |
 
 An init container has ended before the next container starts, so nothing of `coder` is running
 when `publish` holds the token. `publish` does not trust the volume the model worked on either:
@@ -292,7 +294,7 @@ is a `WorkItem`, and the code-fix stage runs for it without an incident.
   own (`DecideForWorkItemAsync`), the same one the console and the API open, and what is
   approved is the plan in Postgres.
 - **Two tokens.** The agent's reads issues and writes comments and cannot push; the coder's
-  pushes one branch and opens a draft pull request, and the agent cannot read it.
+  pushes one branch and opens a pull request, and the agent cannot read it.
 - **Text a stranger or a model wrote is made inert** wherever GitHub would act on it
   (`IssueComments.Neutralise` for comments, the runner's `inert()` for a pull request - an
   incident's too), is enveloped for an MCP reader, and is rendered as text in the console.

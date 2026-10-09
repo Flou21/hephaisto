@@ -13,7 +13,7 @@ export const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
  *             the open-PR and remote-branch checks, the pre-restore. Holds no model credential.
  *   coder     the agent, and everything that executes what the agent wrote (build, tests). Holds
  *             the model credential and nothing else - and refuses to start beside a git token.
- *   publish   implement only, started after `coder` has ended: push and Draft PR. Holds
+ *   publish   implement only, started after `coder` has ended: push and pull request. Holds
  *             GITHUB_TOKEN and trusts nothing on the shared volume.
  *
  * `all` (the default, when the variable is unset) runs the three in ONE process, one after the

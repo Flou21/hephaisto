@@ -42,7 +42,7 @@ public sealed class WorkItemNotificationTests
     [Fact]
     public void A_pull_request_and_an_end_without_one_name_the_issue_too()
     {
-        CodeFixNotifier.WorkItemText(NotificationEvent.CodeFixPrOpened, "octo/shop#12", Attempt, "Draft PR x", true)
+        CodeFixNotifier.WorkItemText(NotificationEvent.CodeFixPrOpened, "octo/shop#12", Attempt, "Pull request x", true)
             .Should().Contain("octo/shop#12").And.Contain("https://github.com/octo/shop/pull/14");
 
         CodeFixNotifier.WorkItemText(NotificationEvent.CodeFixFailed, "octo/shop#12", Attempt, "cancelled: the issue was closed", true)
@@ -128,7 +128,7 @@ public sealed class WorkItemNotificationTests
         var actions = card["actions"]!.AsArray().Select(a => (a!["type"]!.GetValue<string>(), a["title"]!.GetValue<string>(), a["url"]!.GetValue<string>())).ToList();
 
         actions.Should().Equal(
-            ("Action.OpenUrl", "Open the Draft PR", "https://github.com/octo/shop/pull/14"),
+            ("Action.OpenUrl", "Open the pull request", "https://github.com/octo/shop/pull/14"),
             ("Action.OpenUrl", "Open in Hephaisto", "https://hephaisto.example/codefixes/0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c"),
             ("Action.OpenUrl", "Open the issue", "https://github.com/octo/shop/issues/12"));
 

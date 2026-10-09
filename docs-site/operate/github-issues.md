@@ -52,7 +52,7 @@ name for both tokens, for that reason.
 
 These permissions were measured against github.com, not read from its documentation: the agent's
 token is also enough to ask whose token it is and what a repository's default branch is; the
-coder's clones, pushes the one branch, opens the draft pull request and assigns it.
+coder's clones, pushes the one branch, opens the pull request and assigns it.
 
 ::: warning A repository a user owns
 A fine-grained token only reaches repositories owned by its own account or by an organisation it
@@ -238,11 +238,11 @@ overrides it.
 |---|---|---|
 | `off` | No Job starts. The status comment says so, and the issue is asked about again by itself once the mode changes | refused, in one sentence |
 | `plan` | A read-only Job writes a plan; it is posted on the issue | refused, in one sentence. The plan is not used up: after the mode is `pr`, a **new** `/approve` is taken |
-| `pr` | As `plan` | starts the implementing Job: one branch, one draft pull request |
+| `pr` | As `plan` | starts the implementing Job: one branch, one pull request |
 
 Setting the mode to `off` cancels every open attempt, as it does for incidents.
 
-## Two things the context repository has to say
+## Three things the context repository has to say
 
 Code fixes read a context repository (`codeFix.contextRepository`, the one with `repos.yaml`).
 For an issue's repository:
@@ -254,6 +254,11 @@ For an issue's repository:
   repos.yaml`.
 - **The label named in `defaults.pr.labels` must exist in the repository.** `gh` refuses a label
   that does not; the pull request is then opened without it and the attempt's deviations say so.
+- **`defaults.pr.draft` says when a pull request is a draft.** `true`: always. `unless-ready`:
+  only when the runner had no check to run for the repository, or when a deviation from the
+  approved plan was reported - by the runner or by the model. Otherwise it is opened ready for
+  review. The last lines of its description say which, and why. Either way only a person
+  merges, and a change whose build or tests fail is never pushed.
 
 ## Who else is told
 

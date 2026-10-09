@@ -4,7 +4,7 @@ import { type ExecResult, run } from './exec.js';
 import type { Git } from './git.js';
 import { log } from './log.js';
 import { evidenceMarkdown, fence, inert, render } from './prompts.js';
-import type { CodeFixRequest, PlanResult } from './schemas.js';
+import type { CodeFixRequest, DraftMode, PlanResult } from './schemas.js';
 import { isWorkItem, prType, subjectOf } from './subject.js';
 import { type VerificationReport, verificationTable } from './verify.js';
 
@@ -104,13 +104,52 @@ export interface CreatedPr {
   deviations: string[];
 }
 
-export async function createDraftPr(
+/**
+ * Why a pull request is opened as a draft; empty when it is opened ready for review (#297).
+ *
+ * Until v0.14.0 every one was a draft, whatever the runner had seen, so the word said nothing
+ * about the pull request it stood on: the first one for an issue in production (2026-10-08) was
+ * what the approved plan said, its check had passed, and a person had to mark it ready by hand
+ * before merging it. With `defaults.pr.draft: unless-ready` in repos.yaml a draft is one that
+ * has a reason, and the description names it:
+ *
+ *   - the runner had no check to run for the repository (level `none`): nothing but the
+ *     model's word says the change works;
+ *   - a deviation was reported - by the runner (a rebuilt branch, uncommitted changes it had to
+ *     commit, files in the diff the model did not report) or by the model: what a person
+ *     approved is then not quite what was built.
+ *
+ * A red build is not in the list because it is never pushed (phases.ts). The level is not in it
+ * beyond `none`: a repository without unit tests can never do better than its type check, and
+ * the description's "Verification weak" section already tells a reviewer what that leaves open.
+ *
+ * `deviations` is what the coder role reported. A label the pull request could not be given is
+ * not one of them: it is found while the pull request is being opened, and says nothing about
+ * the change.
+ */
+export function draftReasons(mode: DraftMode, report: VerificationReport, deviations: string[]): string[] {
+  if (mode === true) return ['`repos.yaml` opens every pull request as one (`defaults.pr.draft: true`)'];
+  const why: string[] = [];
+  if (report.level === 'none') why.push('the runner had no check to run for this repository, so nothing but the description says the change works');
+  if (deviations.length > 0) why.push(`${deviations.length === 1 ? 'a deviation' : `${deviations.length} deviations`} from the approved plan ${deviations.length === 1 ? 'was' : 'were'} reported (listed above)`);
+  return why;
+}
+
+/** The sentence of a description that says in which state the pull request was opened, and why. The runner's own words. */
+export function openedAs(reasons: string[], report: VerificationReport): string {
+  if (reasons.length > 0) return `**Opened as a draft:** ${reasons.join('; ')}.`;
+  return `**Opened ready for review:** the runner's own checks passed (level \`${report.level}\`) and no deviation from the approved plan was reported.`;
+}
+
+export async function createPr(
   opts: {
     repoUrl: string;
     base: string;
     head: string;
     title: string;
     bodyFile: string;
+    /** A draft, or ready for review: the caller's decision (draftReasons), made before anything is opened. */
+    draft: boolean;
     assignee: string;
     labels: string[];
     /**
@@ -124,7 +163,7 @@ export async function createDraftPr(
   cwd: string,
 ): Promise<CreatedPr> {
   const args = (bodyFile: string): string[] => {
-    const a = ['pr', 'create', '--repo', ghRepoArg(opts.repoUrl), '--draft', '--base', opts.base, '--head', opts.head, '--title', opts.title, '--body-file', bodyFile];
+    const a = ['pr', 'create', '--repo', ghRepoArg(opts.repoUrl), ...(opts.draft ? ['--draft'] : []), '--base', opts.base, '--head', opts.head, '--title', opts.title, '--body-file', bodyFile];
     if (opts.assignee) a.push('--assignee', opts.assignee);
     return a;
   };
@@ -156,6 +195,8 @@ export interface PrBodyInput {
   report: VerificationReport;
   costUsd: number;
   versions: string;
+  /** The state the pull request is opened in, as a sentence (openedAs). Decided once: a body rendered again for a lost label says the same. */
+  openedAs: string;
   /** The pr-body template's text. The caller loads it; publish gets it sealed by prepare and never reads dev-context. */
   template: string;
 }
@@ -185,6 +226,7 @@ export function renderPrBody(i: PrBodyInput): string {
     analysed_ref: plan.analysed_ref ?? '(unknown)',
     branch: req.repository.branch,
     repo_url: req.repository.url,
+    opened_as: i.openedAs,
   };
   // What a model wrote is made inert (prompts.ts) for BOTH kinds of request. GitHub reads a
   // pull request's body for closing keywords, references and mentions whoever it was opened

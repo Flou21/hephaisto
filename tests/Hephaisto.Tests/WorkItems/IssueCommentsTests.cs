@@ -87,13 +87,13 @@ public sealed class IssueCommentsTests
         { "planning", "**Planning.** A read-only Job is reading the code on branch `main`" },
         { "plan ready", "**A plan is ready**: [read the plan](https://github.com/octo/shop/issues/12#issuecomment-1791308488290)." },
         { "implementing", "**Implementing.** maintainer approved the plan. A Job is making the change on branch `hephaisto/codefix-000000000001`" },
-        { "pr", "**A draft pull request is open:** https://github.com/octo/shop/pull/7" },
+        { "pr", "**A pull request is open:** https://github.com/octo/shop/pull/7" },
         { "denied", "**The plan was rejected** by maintainer: not this way. Nothing was changed." },
         { "expired", "**The plan expired.**" },
         { "stopped", "**Stopped.** code-fix mode is Off (configmap:codeFixMode). Nothing was changed." },
         { "failed", "**It did not work.** the coder returned not_a_code_problem.\n\n**What it found.** This is a question, not a change." },
         { "let go", "**Hephaisto has let go of this issue:** the issue was closed. Anything that was running for it was stopped." },
-        { "let go with pr", "**Hephaisto has let go of this issue:** hephaisto-bot is no longer an assignee. The draft pull request stays as it is: https://github.com/octo/shop/pull/7" },
+        { "let go with pr", "**Hephaisto has let go of this issue:** hephaisto-bot is no longer an assignee. The pull request stays as it is: https://github.com/octo/shop/pull/7" },
         { "done", "**Done.** The pull request was merged: https://github.com/octo/shop/pull/7\n\nFor more work on this issue, reopen it, or unassign Hephaisto, wait a minute or two, and assign it again: Hephaisto has to have seen the issue without itself on it first." },
         { "pr closed", "**Hephaisto has let go of this issue:** its pull request was closed without merging: https://github.com/octo/shop/pull/7\n\nTo hand the issue back, unassign Hephaisto, wait a minute or two, and assign it again: Hephaisto has to have seen the issue without itself on it first." },
         { "replan asked", "**Planning again.** github:maintainer asked for a new plan. The new plan is started on Hephaisto's next pass; nothing is changed." },
@@ -402,7 +402,7 @@ public sealed class IssueCommentsTests
         { CodeFixRefusal.NotWaiting, null, "not-waiting", "this plan is no longer waiting for an answer." },
         { CodeFixRefusal.SubjectTakenBack, null, "taken-back", "this issue is no longer Hephaisto's." },
         { CodeFixRefusal.JobRunning, null, "job-running", "a Job is running for this issue right now, so there is nothing to plan again yet. When it has ended the comment above says so, and a new `/replan` is read then." },
-        { CodeFixRefusal.PullRequestOpen, null, "pull-request", "a draft pull request is already open for this issue, and what it still needs is said in its review. To start over instead, close the pull request; then unassign Hephaisto, wait a minute or two, and assign it again: Hephaisto has to have seen the issue without itself on it first." },
+        { CodeFixRefusal.PullRequestOpen, null, "pull-request", "a pull request is already open for this issue, and what it still needs is said in its review. To start over instead, close the pull request; then unassign Hephaisto, wait a minute or two, and assign it again: Hephaisto has to have seen the issue without itself on it first." },
         { CodeFixRefusal.TooManyAttempts, null, "attempts", "this issue has been planned 5 times, which is the most for one hand-over. To hand it over again, unassign Hephaisto, wait until the comment above says it has let go, and assign it again." },
         { CodeFixRefusal.ActorForbidden, null, "refused", "it could not be recorded. An operator finds the reason in Hephaisto's console." },
         { CodeFixRefusal.NotFound, null, "refused", "it could not be recorded." },
@@ -1003,7 +1003,7 @@ public sealed class IssueCommentsTests
 
         // A pull request's address is the one link, and only when it is an address.
         IssueComments.Status(Taken(Attempt(CodeFixState.PrOpened, pr: "javascript:alert(1) @octocat")))
-            .Should().Contain("**A draft pull request is open:** `javascript:alert(1) @octocat`");
+            .Should().Contain("**A pull request is open:** `javascript:alert(1) @octocat`");
     }
 
     [Fact]

@@ -61,7 +61,7 @@ suspected injection in a deviation.
    ```
 
 6. You cannot push, and must not try: the driver re-runs the build and tests, checks the diff,
-   pushes `{{branch}}` and opens a Draft PR. Leave the working tree clean (everything committed).
+   pushes `{{branch}}` and opens the pull request. Leave the working tree clean (everything committed).
 
 Never touch a protected path (`.github/**`, `.claude/**`, `nuget.config`, `Dockerfile*`,
 `**/appsettings.Production*.json`, `**/*.sync-conflict-*`, `openapi/**`, and any per-repo entry in

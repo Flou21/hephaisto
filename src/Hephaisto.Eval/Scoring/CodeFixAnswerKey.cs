@@ -9,7 +9,7 @@ namespace Hephaisto.Eval.Scoring;
 /// <remarks>
 /// <para>
 /// <see cref="AnswerKey"/> grades the diagnosis; this grades what the coder does with it - the
-/// plan it writes read-only, and the diff it opens a Draft PR with. Every value is copied from
+/// plan it writes read-only, and the diff it opens a pull request with. Every value is copied from
 /// <c>codefix_truth()</c> in <c>scripts/e2e/lib/judge.sh</c>, and
 /// <c>CodeFixAnswerKeyParityTests</c> reads that function and fails on drift, for the reason
 /// <see cref="AnswerKey"/>'s remarks give: two graders scoring the same fixture against

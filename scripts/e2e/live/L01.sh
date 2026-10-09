@@ -1,4 +1,4 @@
-# live: L01 | an issue assigned to the bot is planned, approved in a comment and becomes a draft pull request that closes it - on github.com
+# live: L01 | an issue assigned to the bot is planned, approved in a comment and becomes a pull request that closes it - on github.com
 #
 # The whole road of v0.14.0 (#243), with nothing standing in for GitHub: the issue is opened and
 # assigned with `gh`, the agent finds it by polling api.github.com through the egress proxy, the
@@ -74,7 +74,14 @@ scenario() {
     view=$(_live_gh pr view "$pr" --json number,url,state,isDraft,author,body,headRefName,headRefOid,baseRefName,closingIssuesReferences,title,labels,assignees) \
         || { fail "gh can read the pull request" "gh pr view $pr failed"; issues_done "$LIVE_REPO" "$n"; return; }
     want "GitHub has it at the address the agent recorded" "$(jq -r .url <<<"$view")" = "$url"
-    want "it is a draft" "$(jq -r .isDraft <<<"$view")" = true
+    # A draft or ready for review is the context repository's to say (defaults.pr.draft, #297),
+    # and this run reads the real one. What must hold either way: GitHub's state is the one the
+    # description names.
+    case "$(jq -r .body <<<"$view")" in
+        *'**Opened as a draft:**'*)         want "it is a draft, as its description says" "$(jq -r .isDraft <<<"$view")" = true ;;
+        *'**Opened ready for review:**'*)   want "it is ready for review, as its description says" "$(jq -r .isDraft <<<"$view")" = false ;;
+        *)                                  fail "its description says in which state it was opened" "neither sentence is in the body" ;;
+    esac
     want "it is open" "$(jq -r .state <<<"$view")" = OPEN
     want "it was opened by the bot account" "$(jq -r .author.login <<<"$view")" = "$LIVE_BOT"
     want "from the attempt's branch" "$(jq -r .headRefName <<<"$view")" = "$branch"
