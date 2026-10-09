@@ -750,8 +750,8 @@ issue of every lower one - so a bare `#N` below 77 in a commit or a pull request
 `telemetry`, `persistence`, `web`, `e2e`, `notify`, `design`, `website`, `prompts`, `docs`.
 
 **A change lands as commits on `main`, pushed - no branch and no pull request.** The owner's
-decision of 2026-10-09, for this repository: he merged every pull request unread and asked for
-the step to go. Three things follow from there being no gate after you:
+decision of 2026-10-09, for this repository only. Three things follow from there being no gate
+after you:
 
 - **What a pull request's checks would have run, you run first**: `./scripts/test.sh`, and the
   integration tests, the coder's tests, the chart's and the visual ones where the change reaches
