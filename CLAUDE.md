@@ -558,6 +558,9 @@ The agent's token is `secrets.github`, a Secret of the agent's namespace - never
 `curl http://$H:8110/github/control/state` show both sides, and `scripts/e2e/issues-local.sh`
 is how a change here is accepted (`scripts/e2e/README.md`; `issues/KNOWN_RED` lists
 nothing - G13 to G17 landed there and left with #286 - and a new scenario may land there).
+A plan is also answered by a reaction on its comment (#298, `GitHubIssuePoller.Reactions.cs`,
+G18/G19): an approver's 🚀 approves, 👎 rejects, each reaction is read once
+(`CommandReactionId`), and Hephaisto sets both on its plan comment itself.
 A plan Job with the scripted coder is ready ten seconds after its attempt exists: a scenario
 that needs "while a Job runs" uses the implementing Job (G15). After changing
 `infra/e2e/notification-receiver` the stand-in's pod forgets every issue; and a hot reload

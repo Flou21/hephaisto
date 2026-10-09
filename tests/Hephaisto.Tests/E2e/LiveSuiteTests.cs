@@ -22,8 +22,8 @@ public sealed partial class LiveSuiteTests
         var scenarios = Scenarios();
 
         scenarios.Select(f => Path.GetFileNameWithoutExtension(f)).Should().BeEquivalentTo(
-            ["L01", "L02", "L03", "L04", "L05"],
-            "the four the tier was written down as (#249), and the conversation on an issue (#286); a sixth is added here too");
+            ["L01", "L02", "L03", "L04", "L05", "L06"],
+            "the four the tier was written down as (#249), the conversation on an issue (#286) and a plan answered by a reaction (#298); a seventh is added here too");
 
         foreach (var file in scenarios)
         {

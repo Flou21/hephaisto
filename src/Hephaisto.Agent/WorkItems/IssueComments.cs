@@ -218,9 +218,15 @@ public static partial class IssueComments
     /// can read is told this instead.
     /// </summary>
     /// <param name="mode">For <see cref="CodeFixRefusal.ModeBelowPr"/>: the mode the install declares.</param>
-    public static string Refused(Guid attemptId, string login, IssueCommandKind command, CodeFixRefusal refusal, CodeFixMode? mode)
+    /// <param name="byReaction">
+    /// The answer was a reaction on the plan comment (#298), not a command. A reaction that was
+    /// read is not read again, so "again" is taking it off and setting it once more.
+    /// </param>
+    public static string Refused(Guid attemptId, string login, IssueCommandKind command, CodeFixRefusal refusal, CodeFixMode? mode, bool byReaction = false)
     {
-        const string again = " The plan still stands: reply `/approve` again once that has changed.";
+        var again = byReaction
+            ? " The plan still stands: once that has changed, take the 🚀 off and set it again, or reply `/approve`."
+            : " The plan still stands: reply `/approve` again once that has changed.";
         const string withdrawn = " No Job is started, and with nothing allowed to run this plan is withdrawn.";
 
         var why = refusal switch
@@ -253,10 +259,15 @@ public static partial class IssueComments
                 "it could not be recorded. An operator finds the reason in Hephaisto's console.",
         };
 
-        return $"**Not done.** {Code(login)}'s `{IssueCommands.Word(command)}` was read and refused: {why}"
+        var said = byReaction ? IssueCommands.Emoji(command) : $"`{IssueCommands.Word(command)}`";
+
+        return $"**Not done.** {Code(login)}'s {said} was read and refused: {why}"
             + "\n\n<sub>Hephaisto says this once per plan and cause.</sub>\n"
             + AnswerMarker(attemptId, AnswerKey(refusal, mode));
     }
+
+    /// <summary>A command in a fenced block of its own: shown as typed, and GitHub puts a copy button on it.</summary>
+    private static string CommandBlock(string command) => $"```\n{command}\n```\n\n";
 
     /// <summary>What is compared to decide whether the comment has to be edited.</summary>
     public static string Digest(string body) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(body)));
@@ -586,20 +597,29 @@ public static partial class IssueComments
         else if (attempt.NeedsCait)
         {
             text.Append("**This plan cannot be approved here.** It needs a change in a shared library first; a person makes that "
-                + "change, and an approver then replies `/replan` to have this issue planned again. Reply `/reject <reason>` to close the plan instead.\n\n");
+                + "change, and an approver then replies `/replan` to have this issue planned again. "
+                + "To close the plan instead, an approver sets 👎 on this comment or replies `/reject <reason>`.\n\n");
         }
         else
         {
             var asks = CodeFixContract.Questions(plan?.Questions).Count > 0;
 
-            // Three things an approver can say, each true of this install as it stands.
+            // Three things an approver can say, each true of this install as it stands. Two of
+            // them also by a reaction on THIS comment (#298) - Hephaisto sets both itself, so
+            // that GitHub shows them below as something to click - and each command in a block
+            // of its own, which GitHub gives a copy button: its editor suggests none of them,
+            // and a mistyped one is passed over in silence.
             text.Append(asks
-                    ? "**To go ahead,** an approver replies `/approve`: that takes the plan as it is, with the assumptions above. "
-                        + "**To have it planned again with your answers,** write them in a comment, then reply `/replan`. "
-                    : "**To go ahead,** an approver replies `/approve`. "
-                        + "**To have it planned again,** say in a comment what should be different, then reply `/replan`. ")
-                .Append("**To refuse it,** an approver replies `/reject <reason>`. "
-                    + "A command is the first line of its comment, and only an approver of this install is heard.\n\n");
+                    ? "**To go ahead,** an approver clicks 🚀 below this comment, or replies with the line that follows. That takes the plan as it is, with the assumptions above.\n\n"
+                    : "**To go ahead,** an approver clicks 🚀 below this comment, or replies:\n\n")
+                .Append(CommandBlock(IssueCommands.Approve))
+                .Append(asks
+                    ? "**To have it planned again with your answers,** write them in a comment, then reply:\n\n"
+                    : "**To have it planned again,** say in a comment what should be different, then reply:\n\n")
+                .Append(CommandBlock(IssueCommands.Replan))
+                .Append("**To refuse it,** an approver clicks 👎 below this comment, or replies with a reason:\n\n")
+                .Append(CommandBlock(IssueCommands.Reject + " <reason>"))
+                .Append("A command is the first line of its comment, a reaction counts on this comment only, and only an approver of this install is heard.\n\n");
 
             if (mode != CodeFixMode.Pr)
             {

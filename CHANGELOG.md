@@ -109,6 +109,21 @@ on - the account, the two tokens, the values - is one page:
   `planCommentId`; `incidentId` is null on a row that is for an issue. `GET /api/workitems/{id}`
   carries `attempts`, and a work item says why no plan was started (`declineReason`) while a cap
   or a switch is in the way - it is asked again by itself.
+- **A plan is answered with a click** ([#298](https://github.com/TrueRelevance/hephaisto/issues/298)).
+  GitHub's comment editor suggests none of Hephaisto's three commands, and a mistyped one is
+  passed over in silence. Now an approver's 🚀 on the plan comment approves that plan and an
+  approver's 👎 rejects it - through the door `/approve` and `/reject` knock on, with its
+  refusals, and heard from the same accounts by number. Hephaisto sets both on its own plan
+  comment, so that GitHub shows them below it; its own are never an answer, and no other
+  reaction is one. A reaction counts on the one plan comment it is on, is read once, and one
+  that was refused does not decide later by itself: taking it off and setting it again is a new
+  one. Somebody who is not an approver is told so once per plan, whether they wrote or clicked.
+  A rejection by 👎 is recorded as given without a reason; `/replan` stays a comment. The plan
+  comment also shows each command in a block of its own, which GitHub gives a copy button.
+  **What it costs:** one click by an approver starts a Job that pushes a branch; unassigning
+  stops it. With `github.approvers` empty nothing is set and nothing is read. One more request
+  to GitHub per waiting plan and poll, a 304 while nothing changed. The agent's token needs
+  nothing new: reading and setting a reaction is within Issues read and write.
 - **A pull request can be opened ready for review** ([#297](https://github.com/TrueRelevance/hephaisto/issues/297)).
   Every one was a draft, whatever the runner had seen, so the word said nothing about the pull
   request it stood on. `defaults.pr.draft` in the context repository's `repos.yaml` now takes a
@@ -431,8 +446,9 @@ on - the account, the two tokens, the values - is one page:
   `image.repository` or `codeFix.image.repository` needs nothing else. Everything up to and
   including `v0.14.0-rc1` stays where it was published, under `ghcr.io/flou21/`, and is not
   published again. Links to the old repository redirect.
-- **Migrations run when the agent starts**: five, `WorkItems`, `WorkItemCodeFix`,
-  `ApprovalOnIssue`, `ReplanOnIssue` and `AssignedAgain`. The first is a new table. The second
+- **Migrations run when the agent starts**: six, `WorkItems`, `WorkItemCodeFix`,
+  `ApprovalOnIssue`, `ReplanOnIssue`, `AssignedAgain` and `AnswerByReaction` - the last adds one
+  nullable column, `code_fix_attempts.command_reaction_id`. The first is a new table. The second
   makes `code_fix_attempts.incident_id` and `llm_usage.incident_id` nullable, adds
   `code_fix_attempts.work_item_id` with a check that exactly one of the two is set, and three
   columns to `work_items`. The third adds `command_comment_id`, `command_answers` and `pr_body`

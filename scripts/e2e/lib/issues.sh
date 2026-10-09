@@ -194,6 +194,20 @@ gh_comment_as() {
         | jq -er '.id'
 }
 
+# A reaction on a comment as a named account (#298): an approver's rocket on a plan, a
+# stranger's thumbs-up. Prints the reaction's id; one that is there already prints its own.
+#   gh_react_as <owner/repo> <comment-id> <login> <id> <content>      content: GitHub's word,
+#                                                                     rocket, -1, +1, heart, ...
+gh_react_as() {
+    _gh_control POST "/repos/$1/issues/comments/$2/reactions" \
+        "$(jq -cn --arg l "$3" --argjson i "$4" --arg c "$5" '{login:$l, id:$i, content:$c}')" \
+        | jq -er '.id'
+}
+
+# Somebody takes a reaction off again.
+#   gh_unreact <owner/repo> <comment-id> <reaction-id>
+gh_unreact() { _gh_control DELETE "/repos/$1/issues/comments/$2/reactions/$3" >/dev/null; }
+
 # What became of a pull request. The `gh` that opens one in a coder Job is a script with no
 # network, so the stand-in has never heard of it and answers "an open draft" until told.
 #   gh_pr_merge <owner/repo> <number>       gh_pr_close <owner/repo> <number>
@@ -228,6 +242,12 @@ gh_bot_comments() { gh_comments "$1" "$2" | jq -c --arg b "$ISSUES_BOT" '[.[] | 
 #   gh_bot_said <owner/repo> <number> <regex>
 gh_bot_said() { gh_bot_comments "$1" "$2" | jq --arg re "$3" '[.[] | select(.body | test($re; "i"))] | length'; }
 
+# The reactions on one comment of an issue, oldest first: [{id, content, user:{login,id}}]
+#   gh_reactions <owner/repo> <number> <comment-id>
+gh_reactions() {
+    gh_comments "$1" "$2" | jq -c --argjson c "$3" '[.[] | select(.id == $c)][0].reactions // []'
+}
+
 # Every API request the stand-in has kept, oldest first:
 # [{seq, method, path, query, conditional, status, at}] - path without the /github/api prefix.
 gh_requests() { _gh_control GET /requests; }
@@ -253,6 +273,14 @@ gh_comment_reads_since() {
         '[.[] | select(.method == "GET" and .path == $p and (.status == 200 or .status == 304))] | length'
 }
 
+# How often it has read the reactions on a comment since a mark - which it does only for the
+# comment of a plan that is waiting.
+#   gh_reaction_reads_since <mark> <owner/repo> <comment-id>
+gh_reaction_reads_since() {
+    gh_requests_since "$1" | jq --arg p "/repos/$2/issues/comments/$3/reactions" \
+        '[.[] | select(.method == "GET" and .path == $p and (.status == 200 or .status == 304))] | length'
+}
+
 # How often it has read an issue's timeline since a mark - which it does only for a work item
 # whose latest attempt has ended.
 #   gh_timeline_reads_since <mark> <owner/repo> <number>
@@ -267,6 +295,11 @@ gh_timeline_reads_since() {
 #   issues_status_comment <owner/repo> <number> <work-item-id>
 issues_plan_comment() {
     gh_bot_comments "$1" "$2" | jq -r --arg m "hephaisto:plan:$(printf '%s' "$3" | tr -d '-') " '[.[] | select(.body | contains($m))][0].body // empty'
+}
+# The id of the comment that carries an attempt's plan: where a reaction is an answer.
+#   issues_plan_comment_id <owner/repo> <number> <attempt-id>
+issues_plan_comment_id() {
+    gh_bot_comments "$1" "$2" | jq -r --arg m "hephaisto:plan:$(printf '%s' "$3" | tr -d '-') " '[.[] | select(.body | contains($m))][0].id // empty'
 }
 issues_status_comment() {
     gh_bot_comments "$1" "$2" | jq -r --arg m "hephaisto:status:$(printf '%s' "$3" | tr -d '-') " '[.[] | select(.body | contains($m))][0].body // empty'
@@ -286,6 +319,13 @@ gh_wait_comment_reads() {
     local mark="$1" count="$2" repo="$3" number="$4" timeout="${5:-$ISSUES_SEEN_WAIT}"
     _gh_read() { [ "$(gh_comment_reads_since "$mark" "$repo" "$number")" -ge "$count" ]; }
     wait_for "$count more read(s) of the comments on $repo#$number" "$timeout" _gh_read
+}
+
+#   gh_wait_reaction_reads <mark> <count> <owner/repo> <comment-id> [timeout]
+gh_wait_reaction_reads() {
+    local mark="$1" count="$2" repo="$3" comment="$4" timeout="${5:-$ISSUES_SEEN_WAIT}"
+    _gh_reacted() { [ "$(gh_reaction_reads_since "$mark" "$repo" "$comment")" -ge "$count" ]; }
+    wait_for "$count more read(s) of the reactions on comment $comment of $repo" "$timeout" _gh_reacted
 }
 
 # ---------------------------------------------------------------------------------------

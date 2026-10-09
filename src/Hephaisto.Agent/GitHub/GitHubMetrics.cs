@@ -43,7 +43,8 @@ public sealed class GitHubMetrics
     public const string CommandNotApprover = "not_approver";
 
     /// <summary>
-    /// One command on an issue was dealt with. <paramref name="outcome"/> is
+    /// One answer on an issue was dealt with: a command in a comment, or a reaction on a plan
+    /// comment, which counts as the command it stands for (#298). <paramref name="outcome"/> is
     /// <see cref="CommandAccepted"/>, <see cref="CommandNotApprover"/> or
     /// <see cref="CommandRefused"/> of the door's cause - each a closed set.
     /// </summary>

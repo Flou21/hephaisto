@@ -293,6 +293,10 @@ is a `WorkItem`, and the code-fix stage runs for it without an incident.
   comment whose first line is `/approve` or `/reject <reason>`; the door is the coordinator's
   own (`DecideForWorkItemAsync`), the same one the console and the API open, and what is
   approved is the plan in Postgres.
+- **Or by a reaction on the plan's comment** ([#298](https://github.com/TrueRelevance/hephaisto/issues/298)):
+  an approver's 🚀 approves and 👎 rejects, through the same door, each reaction read once
+  (`CodeFixAttempt.CommandReactionId`) and bound to the one plan its comment carries. Hephaisto
+  sets both on its plan comment itself, and its own are never an answer.
 - **Two tokens.** The agent's reads issues and writes comments and cannot push; the coder's
   pushes one branch and opens a pull request, and the agent cannot read it.
 - **Text a stranger or a model wrote is made inert** wherever GitHub would act on it

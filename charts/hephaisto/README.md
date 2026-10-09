@@ -249,7 +249,8 @@ board of incidents.
 read in its documentation:
 
 - The agent's token above is enough: with Issues and Pull requests it can also ask whose token
-  it is and what the repository's default branch is. It cannot push, and should not be able to.
+  it is and what the repository's default branch is, and set and list the reactions on its
+  plan comment. It cannot push, and should not be able to.
 - The coder's token (`secrets.codeFix`, key `GITHUB_TOKEN`): Contents read and write, Pull
   requests read and write. That clones, pushes the one branch, opens the **draft** pull request
   and assigns it. A plan without draft pull requests in private repositories refuses the

@@ -31,7 +31,8 @@ scenario() {
     want "GitHub renders every question as an item of a list" "$shown" -eq "$(jq 'length' <<<"$questions")"
     want "and the planner's notes as a fold" "$(grep -c '<details>' <<<"$html")" -eq 1
     want "whose summary is Hephaisto's own" "$(grep -c '<summary>The planner' <<<"$html")" -eq 1
-    want "the plan names /replan" "$(grep -c '<code[^>]*>/replan</code>' <<<"$html")" -ge 1
+    # In a block of its own since #298, which GitHub renders as <pre><code>: the command, then a line end.
+    want "the plan names /replan, in a block GitHub renders as code" "$(grep -c '<code[^>]*>/replan$' <<<"$html")" -ge 1
 
     # An answer, and the command - with a second answer in the command's own comment.
     gh_comment_as "$LIVE_REPO" "$n" "$ISSUES_APPROVER" "$ISSUES_APPROVER_ID" \

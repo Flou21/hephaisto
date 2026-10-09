@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 namespace Hephaisto.Tests.GitHub;
 
 /// <summary>
-/// The nine calls to GitHub's REST API, against a handler that records what was sent and
+/// The eleven calls to GitHub's REST API, against a handler that records what was sent and
 /// answers with GitHub's own shapes: its field names, its headers, its error bodies.
 /// </summary>
 /// <remarks>
@@ -368,6 +368,78 @@ public sealed class GitHubClientTests
         edited.Ok.Should().BeTrue();
     }
 
+    // --- reactions on a comment (#298) -----------------------------------------------------------
+
+    [Fact]
+    public async Task The_reactions_of_a_comment_are_asked_for_by_the_comments_id_and_say_which_and_whose()
+    {
+        var (client, handler, _) = Build(_ => Json(HttpStatusCode.OK, ReactionList, etag: "W/\"reactions-1\""));
+
+        var listed = await client.ListCommentReactionsAsync(Repo, 1759743015123L, null, Ct);
+
+        var sent = handler.Requests.Single();
+        sent.Method.Should().Be(HttpMethod.Get);
+        sent.Uri.Should().Be("https://github.example/api/v3/repos/octo/shop/issues/comments/1759743015123/reactions?per_page=100");
+        sent.Headers.Should().NotContainKey("If-None-Match");
+
+        listed.Ok.Should().BeTrue();
+        listed.ETag.Should().Be("W/\"reactions-1\"");
+        listed.Value.Should().BeEquivalentTo(
+        [
+            new GitHubReaction(318204771, "rocket", new GitHubAccount("hephaisto-bot", 9001), DateTimeOffset.Parse("2026-10-09T09:30:15Z")),
+            new GitHubReaction(318204772, "-1", new GitHubAccount("hephaisto-bot", 9001), DateTimeOffset.Parse("2026-10-09T09:30:15Z")),
+
+            // an id beyond 32 bits, and the account that set it by number as well as by name
+            new GitHubReaction(5318204773, "rocket", new GitHubAccount("maintainer", 1001), DateTimeOffset.Parse("2026-10-09T09:41:02Z")),
+
+            // a deleted account's reaction stays, with "user": null
+            new GitHubReaction(5318204774, "+1", new GitHubAccount("ghost", 0), DateTimeOffset.Parse("2026-10-09T09:42:00Z")),
+        ], o => o.WithStrictOrdering());
+    }
+
+    [Fact]
+    public async Task Unchanged_reactions_are_a_304_with_the_tag_that_was_sent()
+    {
+        var (client, handler, _) = Build(_ => new HttpResponseMessage(HttpStatusCode.NotModified));
+
+        var listed = await client.ListCommentReactionsAsync(Repo, 1759743015123L, "W/\"reactions-1\"", Ct);
+
+        handler.Requests.Single().Headers["If-None-Match"].Should().Be("W/\"reactions-1\"");
+        listed.Outcome.Should().Be(GitHubOutcome.NotModified);
+        listed.Value.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Created)]
+
+    // one that is already there: GitHub answers 200 with the one that exists
+    [InlineData(HttpStatusCode.OK)]
+    public async Task A_reaction_is_set_on_a_comment_by_its_content_and_one_that_is_there_is_not_an_error(HttpStatusCode status)
+    {
+        var (client, handler, _) = Build(_ => Json(status, Reaction));
+
+        var set = await client.AddCommentReactionAsync(Repo, 1759743015123L, "rocket", Ct);
+
+        var sent = handler.Requests.Single();
+        sent.Method.Should().Be(HttpMethod.Post);
+        sent.Uri.Should().Be("https://github.example/api/v3/repos/octo/shop/issues/comments/1759743015123/reactions");
+        sent.Body.Should().Be("""{"content":"rocket"}""");
+
+        set.Ok.Should().BeTrue();
+        set.Value.Should().Be(new GitHubReaction(318204771, "rocket", new GitHubAccount("hephaisto-bot", 9001), DateTimeOffset.Parse("2026-10-09T09:30:15Z")));
+    }
+
+    [Fact]
+    public async Task A_token_that_may_not_react_is_unauthorized_and_not_thrown()
+    {
+        var (client, _, _) = Build(_ => Json(HttpStatusCode.Forbidden, """{"message":"Resource not accessible by personal access token"}"""));
+
+        var set = await client.AddCommentReactionAsync(Repo, 1759743015123L, "rocket", Ct);
+
+        set.Outcome.Should().Be(GitHubOutcome.Unauthorized);
+        set.Describe().Should().Contain("Resource not accessible by personal access token").And.NotContain(Token);
+    }
+
     [Fact]
     public async Task A_comment_github_will_not_take_is_rejected()
     {
@@ -619,6 +691,25 @@ public sealed class GitHubClientTests
           "updated_at": "2026-10-06T09:30:15Z",
           "html_url": "https://github.com/octo/shop/issues/42#issuecomment-1759743015123"
         }
+        """;
+
+    private const string Reaction = """
+        {
+          "id": 318204771,
+          "node_id": "REA_lALOQz1Cf87Slnbtzg",
+          "user": {"login": "hephaisto-bot", "id": 9001, "type": "User"},
+          "content": "rocket",
+          "created_at": "2026-10-09T09:30:15Z"
+        }
+        """;
+
+    private const string ReactionList = $$"""
+        [
+          {{Reaction}},
+          {"id": 318204772, "user": {"login": "hephaisto-bot", "id": 9001}, "content": "-1", "created_at": "2026-10-09T09:30:15Z"},
+          {"id": 5318204773, "user": {"login": "maintainer", "id": 1001}, "content": "rocket", "created_at": "2026-10-09T09:41:02Z"},
+          {"id": 5318204774, "user": null, "content": "+1", "created_at": "2026-10-09T09:42:00Z"}
+        ]
         """;
 
     private const string CommentList = $$"""

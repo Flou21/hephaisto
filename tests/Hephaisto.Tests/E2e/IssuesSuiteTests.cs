@@ -52,13 +52,25 @@ public sealed partial class IssuesSuiteTests
     /// <summary>
     /// The issue as a conversation (#286, with #252 and #285): the planner's questions on the
     /// issue, an answer and <c>/replan</c>, a refusal of it, a failed attempt planned again, and
-    /// a fresh assignment known by its time. Seventeen in all, and no file beside them.
+    /// a fresh assignment known by its time. Seventeen with the twelve.
     /// </summary>
     [Fact]
-    public void The_five_scenarios_of_the_conversation_are_there_and_nothing_else_is()
+    public void The_five_scenarios_of_the_conversation_are_there()
+    {
+        Scenarios().Select(f => Path.GetFileNameWithoutExtension(f)).Should().Contain(
+            Enumerable.Range(13, 5).Select(n => $"G{n:00}"));
+    }
+
+    /// <summary>
+    /// A plan answered by a reaction (#298): an approver's rocket approves and the reactions to
+    /// click are Hephaisto's own (G18); nobody else's and no other reaction does anything, and
+    /// an approver's thumbs-down rejects (G19). Nineteen in all, and no file beside them.
+    /// </summary>
+    [Fact]
+    public void The_two_scenarios_of_the_reaction_are_there_and_nothing_else_is()
     {
         Scenarios().Select(f => Path.GetFileNameWithoutExtension(f)).Should().BeEquivalentTo(
-            Enumerable.Range(1, 17).Select(n => $"G{n:00}"));
+            Enumerable.Range(1, 19).Select(n => $"G{n:00}"));
     }
 
     /// <summary>

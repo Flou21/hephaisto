@@ -466,7 +466,7 @@ public sealed partial class GitHubIssuePoller
         // approve it would be untrue before anybody read it.
         if (item.State == WorkItemState.Taken && mode != CodeFixMode.Off && attempt is { State: CodeFixState.PlanReady, PlanCommentId: null })
         {
-            var (body, why) = await PlanBodyAsync(attempt.Id, mode, newest!.Count, ct).ConfigureAwait(false);
+            var (body, why, approvable) = await PlanBodyAsync(attempt.Id, mode, newest!.Count, ct).ConfigureAwait(false);
 
             if (body is null)
             {
@@ -489,6 +489,18 @@ public sealed partial class GitHubIssuePoller
             {
                 planCommentId = written.Id;
                 attempt = attempt with { PlanCommentId = planCommentId };
+
+                // The two reactions an approver clicks (#298), with the plan: below it when it
+                // is first read, and not a poll later. Not this statement's problem when GitHub
+                // refuses - the pass that reads the plan's reactions sets what is missing, and
+                // says so when it cannot.
+                if (options.Value.ApproverIds().Count > 0
+                    && await OfferReactionsAsync(client, repository, written.Id.Value, approvable, [], ct).ConfigureAwait(false) is { } refused)
+                {
+                    logger.LogInformation(
+                        "{Repository}#{Number}: a reaction to click could not be set on the plan just written ({Refused}); the next pass tries again.",
+                        repository, item.Number, refused);
+                }
             }
         }
 
@@ -569,7 +581,8 @@ public sealed partial class GitHubIssuePoller
     }
 
     /// <summary>The plan comment's text, from the attempt as it is now - or nothing, when no plan is waiting any more.</summary>
-    private async Task<(string? Body, string? Problem)> PlanBodyAsync(Guid attemptId, CodeFixMode mode, int ordinal, CancellationToken ct)
+    /// <returns>The plan comment's text, or why there is none; and whether the plan can be approved on the issue at all.</returns>
+    private async Task<(string? Body, string? Problem, bool Approvable)> PlanBodyAsync(Guid attemptId, CodeFixMode mode, int ordinal, CancellationToken ct)
     {
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<HephaistoDbContext>();
@@ -578,14 +591,14 @@ public sealed partial class GitHubIssuePoller
 
         if (attempt is not { State: CodeFixState.PlanReady, PlanCommentId: null })
         {
-            return (null, null);
+            return (null, null, false);
         }
 
         // What the console shows of the plan, read the same way: a plan stored by an older
         // contract still has its denormalised columns.
         var view = CodeFixQueries.Plan(attempt);
 
-        return (IssueComments.Plan(attempt, view, mode, answerable: options.Value.ApproverIds().Count > 0, ordinal), null);
+        return (IssueComments.Plan(attempt, view, mode, answerable: options.Value.ApproverIds().Count > 0, ordinal), null, !attempt.NeedsCait);
     }
 
     /// <summary>

@@ -42,9 +42,11 @@ scenario() {
     want "a note about injected text is counted and not quoted" \
         "$(jq -rn --arg p "$plan" --argjson a "$ATTEMPT" '[$a.notes[]? | select(test("injection"; "i")) | select(. as $q | $p | contains($q))] | length')" -eq 0
 
-    want "it says how to take the plan as it is" "$(grep -c '`/approve`' <<<"$plan")" -ge 1
-    want "how to have it planned again with answers" "$(grep -c '`/replan`' <<<"$plan")" -ge 1
-    want "and how to refuse it" "$(grep -c '`/reject <reason>`' <<<"$plan")" -ge 1
+    # Each command is a line of its own, in a block GitHub puts a copy button on (#298).
+    want "it says how to take the plan as it is" "$(grep -cxF '/approve' <<<"$plan")" -eq 1
+    want "and that this takes it with its assumptions" "$(grep -cF 'That takes the plan as it is, with the assumptions above.' <<<"$plan")" -eq 1
+    want "how to have it planned again with answers" "$(grep -cxF '/replan' <<<"$plan")" -eq 1
+    want "and how to refuse it" "$(grep -cxF '/reject <reason>' <<<"$plan")" -eq 1
 
     # Still two comments: where the work stands, and the plan. The questions are not a third.
     status=$(issues_status_comment "$ISSUES_REPO" "$n" "$WI")

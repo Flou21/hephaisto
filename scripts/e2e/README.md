@@ -318,11 +318,12 @@ forward (`$H:8110`), no token:
 | `POST .../issues/{n}/reassign` | off and on again in ONE request: what a person does within seconds, and no poll can fall between |
 | `PATCH .../issues/{n}` `{body?, title?, state?}` | an edit; `state` closes and reopens |
 | `POST .../issues/{n}/comments` `{body, login, id?}` | a comment as that account |
+| `POST .../issues/comments/{id}/reactions` `{content, login, id?}` | that account sets a reaction on a comment - `rocket`, `-1`, `+1`, ...; `DELETE .../reactions/{reaction}` takes it off |
 | `PUT .../pulls/{n}` `{merged?, state?}` | what became of a pull request; one nobody registered is an open draft |
 | `DELETE .../pulls/{n}` | forget it: an open draft again. The `gh` shim numbers pull requests from 1 in every Job |
 | `POST /github/control/fail/{500\|rate-limit\|off}?count=N` | the next N API calls fail |
 | `GET /github/control/requests` | every API call the agent made: `seq`, method, path, query, status |
-| `GET /github/control/comments` | every comment, with its issue, its author and how often it was edited |
+| `GET /github/control/comments` | every comment, with its issue, its author, how often it was edited and the reactions on it |
 | `GET /github/control/state`, `DELETE /github/control` | everything it holds; forget it |
 
 An account is a login **and** a number, and a scenario comments as an approver by number
@@ -363,6 +364,16 @@ cheap: the fixture's plan asks two questions, a request with `previous` plays
 makes the first plan end as `insufficient_context` (`coder/README.md`). `issues_next_plan_ready`
 is the road of a second plan, `issues_plan_comment` and `issues_status_comment` find a comment by
 its marker, and `gh_reassign` is the stand-in's `reassign`.
+
+**G18 and G19 are the plan answered by a reaction** (#298): G18, Hephaisto sets a rocket and a
+thumbs-down on its own plan comment, which answer nothing, and an approver's rocket on that
+comment ends in a pull request from exactly one implementing Job - also after the agent has
+looked at the reaction that stayed three more times; G19, a stranger's rocket is answered once
+and changes nothing, the approver's login on another account is a stranger, an approver's
+thumbs-up, heart and eyes say nothing, and the approver's thumbs-down rejects the plan.
+`gh_react_as` and `gh_unreact` are a person's click, `gh_reactions` what is on a comment,
+`issues_plan_comment_id` the comment a reaction counts on, and `gh_wait_reaction_reads` the
+wait before "nothing happened".
 
 What the bot writes on an issue is one status comment per work item, edited in place as the work
 moves, and one comment per attempt with its plan - and, only when somebody answered a plan and
@@ -433,6 +444,7 @@ scripts/e2e/github-live.sh --sweep         # close whatever a killed run left in
 | L03 | The bot unassigned while the plan waits: `Cancelled`, "`<bot>` is no longer an assignee", the issue is told; an `/approve` afterwards changes nothing, starts nothing and is not answered |
 | L04 | What was only assumed. An unchanged list is answered **304** (the agent's own counter), through the egress proxy (its log has the agent's tunnels to `api.github.com`); GitHub also answers 304 for the two other things the agent asks with a tag - an issue's comments since a time, and a pull request; `github` is `Healthy`. And **what Hephaisto repeats does nothing**: the plan repeats a line of the issue with a mention, `#n`, `GH-n` and an issue's address, the status comment the same from a `/reject` - GitHub's HTML of both has no mention and no link, and the other issue's timeline has no reference by the bot. With a control: the approver's own comment with the same words does produce a mention, a link and a timeline entry |
 | L05 | The issue as a conversation. GitHub's **HTML** of the plan comment has every question of the plan as an item of a list and the notes as a `<details>` fold; an answer and `/replan` written with `gh` end the waiting plan as `Denied`, "replanned by github:\<login\>", and the second Job's request holds the two comments GitHub was given, in order, and the earlier plan's questions; the second plan comment repeats the answer and says it replaces the first. Then the second plan is rejected and the bot is taken off the issue and put back **a second apart**: when no poll fell between the two requests, the **timeline** GitHub answers is what starts a third attempt for the same work item - and when one did, the scenario says so and skips that line |
+| L06 | A plan answered by a reaction (#298). GitHub lists a `rocket` and a `-1` **by the bot account** on the plan comment and counts them in the comment's own `reactions` - set with the agent's token, which has Issues read and write and nothing for reactions by name; they answer nothing; the person's `-1`, set with `gh api`, ends the plan as `Denied` by `github:<login>` with "no reason given: rejected with a thumbs-down on the plan", said on the issue; no Job, no branch |
 
 **What it needs**, all made by hand, and checked before anything is written:
 

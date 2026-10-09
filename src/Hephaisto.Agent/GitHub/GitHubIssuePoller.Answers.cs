@@ -15,7 +15,8 @@ namespace Hephaisto.Agent.GitHub;
 /// for a command - <c>/approve</c>, <c>/reject</c> or <c>/replan</c> (<see cref="IssueCommands"/>) -
 /// and the first one from an approver that decides something does so, through the doors the
 /// console knocks on (<see cref="CodeFixCoordinator.DecideForWorkItemAsync"/>,
-/// <see cref="CodeFixCoordinator.ReplanWorkItemAsync"/>).
+/// <see cref="CodeFixCoordinator.ReplanWorkItemAsync"/>). A plan that is still waiting after
+/// that is asked for the reactions on its comment (<see cref="ReactionsAsync"/>, #298).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -134,6 +135,7 @@ public sealed partial class GitHubIssuePoller
         foreach (var gone in commandReads.Where(r => r.Value.Repository == repository && waiting.TrueForAll(w => w.AttemptId != r.Key)).Select(r => r.Key).ToList())
         {
             commandReads.Remove(gone);
+            reactionReads.Remove(gone);
         }
 
         string? problem = null;
@@ -143,10 +145,15 @@ public sealed partial class GitHubIssuePoller
             try
             {
                 problem ??= await AnswerAsync(client, repository, bot, attempt, approvers, ct).ConfigureAwait(false);
+
+                // Then the other way to answer (#298): a reaction on the plan's comment, for a
+                // plan no comment of this pass has decided.
+                problem ??= await ReactionsAsync(client, repository, bot, attempt, approvers, ct).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
                 commandReads.Remove(attempt.AttemptId);
+                reactionReads.Remove(attempt.AttemptId);
                 problem ??= $"{repository}#{attempt.Number}: a command on the issue could not be acted on: {ex.GetType().Name}";
                 logger.LogError(ex, "Could not act on the commands on {Repository}#{Number}; retrying next interval.", repository, attempt.Number);
             }

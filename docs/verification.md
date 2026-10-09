@@ -963,13 +963,13 @@ with a grounded finding.
 
 Two suites, and they answer different questions.
 
-`scripts/e2e/issues-local.sh --strict` (G01-G12, about 16 minutes, `"github": "stand-in"`) is the
+`scripts/e2e/issues-local.sh --strict` (G01-G19, about 29 minutes, `"github": "stand-in"`) is the
 acceptance test of the feature: everything the agent does with an issue, including what GitHub
 cannot be made to do on demand - fail, limit, merge without a branch moving, be answered by a
 stranger. Its GitHub is a pod that answers what this project's authors believed GitHub answers
 (`scripts/e2e/README.md`, "The issues suite").
 
-`scripts/e2e/github-live.sh` (L01-L04, about 12 minutes, `"github": "live"`) asks GitHub
+`scripts/e2e/github-live.sh` (L01-L06, about 16 minutes, `"github": "live"`) asks GitHub
 whether they believed right. The dev agent talks to `https://api.github.com` through the egress
 proxy with the bot account's token; the coder Job clones from, pushes to and opens a pull request
 on github.com with the real `gh` and the coder's token; a person's `gh` opens the issues and
@@ -992,6 +992,21 @@ live tier". What a green run has shown, per scenario:
 | L02 | `/reject <reason>` is `Denied` with the reason, on the attempt and on the issue; GitHub has no branch and no pull request; closing the issue ends the work item |
 | L03 | Unassigning the bot cancels a waiting plan; a later `/approve` does nothing and is not answered |
 | L04 | An unchanged list is a 304, counted by the agent, through the proxy; comments-since and a pull request are 304 to their tags too; `github` is `Healthy`. Text Hephaisto repeats - a mention, `#n`, `GH-n`, an issue's address - is no mention, no link and no timeline entry in GitHub's own HTML and timeline, in the plan comment and in the status comment; the same words in a person's comment are all three (the control) |
+
+### Measured on 2026-10-09: a plan answered by a reaction (#298)
+
+| | |
+|---|---|
+| The stand-in suite | 19 of 19. One full run of 29 minutes had 18 green and G13 red: its own check still read the plan comment's earlier wording. Corrected, G13 passed alone |
+| The live tier | 6 of 6, sandbox clean. One full run of 16 minutes had 5 green and L05 red for the same reason, in GitHub's HTML; corrected, L05 passed alone |
+| What GitHub answered that had only been assumed (L06) | The agent's token - Issues read and write, nothing that names reactions - set a `rocket` and a `-1` on its plan comment and listed them. The list names each account by number. The comment's own `reactions` counted `rocket: 1`, `-1: 1` |
+| A person's `-1`, set with `gh api`, to a `Denied` attempt | 21 s: one poll |
+| The bot's two reactions, after its plan comment was on the issue | within a second: set by the pass that wrote the plan |
+| An approver's rocket, to an open pull request (G18, stand-in) | 132 s, most of it the scripted Job's own wait |
+| L01, with the coder image of this tree | the pull request's description says "Opened as a draft", and GitHub says it is one (#297) |
+
+What neither suite ran: the rocket's road to a pull request on github.com. It is L01's road
+behind the same door, and L06 held that GitHub takes and lists the rocket itself.
 
 ### Measured on 2026-10-07, the first afternoon it ran
 

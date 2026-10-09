@@ -51,7 +51,8 @@ process that does that should hold nothing that writes to a branch. The chart re
 name for both tokens, for that reason.
 
 These permissions were measured against github.com, not read from its documentation: the agent's
-token is also enough to ask whose token it is and what a repository's default branch is; the
+token is also enough to ask whose token it is and what a repository's default branch is, and to
+set and list the reactions on a plan comment; the
 coder's clones, pushes the one branch, opens the pull request and assigns it.
 
 ::: warning A repository a user owns
@@ -116,7 +117,18 @@ With the list empty, no comment is read at all; the plan says that it is answere
 
 ## Answering a plan
 
-On the issue, an approver writes a comment whose **first line** is exactly
+**With a click.** Below its plan comment Hephaisto sets two reactions itself, 🚀 and 👎, so that
+GitHub shows them there. An approver who clicks 🚀 approves that plan; one who clicks 👎 rejects
+it. A reaction counts on the plan comment only, so it answers that plan and no other - a 🚀 on an
+earlier plan's comment approves nothing once a new plan was written. No other reaction is an
+answer, the thumbs-up least of all: it is what people set on a comment they have merely read.
+Hephaisto's own two are never an answer. A reaction carries no text, so a rejection by 👎 is
+recorded without a reason, and there is no reaction for `/replan`.
+
+A reaction is read once. One that was refused - the mode is `plan`, say - does not approve by
+itself when the cause is gone: take it off and set it again, or write the command.
+
+**Or with a command.** On the issue, an approver writes a comment whose **first line** is exactly
 
 ```text
 /approve
@@ -138,6 +150,13 @@ Nothing else is a command — not `/approve please`, not `LGTM /approve`, not a 
 code block of either, not `/Approve`, not `/replan with the second option`. Strict on purpose: a
 comment wrongly read as an approval pushes a branch. The first such comment after the plan
 decides, once; a comment that was read is never read again, whatever it is edited into.
+
+GitHub's comment editor suggests none of the three - its `/` menu is GitHub's own - and a
+mistyped one is passed over in silence. So the plan comment shows each in a block of its own,
+which GitHub gives a copy button. A [saved reply](https://github.com/settings/replies) per
+command, set up once by each approver, puts them into that menu after all.
+
+One click starts a Job that pushes a branch. Unassigning Hephaisto stops it.
 
 The same plan can be answered in the **console**: *work items* lists what was taken, and each
 attempt has a page — `/codefixes/<attempt id>` — with the plan in full, its history, and approve
@@ -208,10 +227,12 @@ is not read at all, and **assigning again does not answer a waiting plan** — i
 - **One comment with the plan per attempt** — summary, what will change, files, steps,
   verification, the planner's questions, its notes folded — and how to answer it. Never edited,
   also not when a new plan replaces it.
+- **Two reactions on its own plan comment**, 🚀 and 👎, for an approver to click - only 👎 on a
+  plan that cannot be approved on the issue, and none on an install that names no approver.
 - **At most one answer** to people who are not approvers, per plan, however many of them write
-  a command: it names the first in a code span, mentions nobody and does not say who the
-  approvers are.
-- **At most one answer per cause** when an approver's command is refused — the mode is `plan`
+  a command or click a reaction: it names the first in a code span, mentions nobody and does
+  not say who the approvers are.
+- **At most one answer per cause** when an approver's command or reaction is refused — the mode is `plan`
   or `off`, the emergency stop is engaged, the plan needs a change in a second repository, a Job
   is running, a pull request is open.
 

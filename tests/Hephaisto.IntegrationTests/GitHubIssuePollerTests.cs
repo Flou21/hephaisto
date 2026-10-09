@@ -730,6 +730,12 @@ public sealed class GitHubIssuePollerTests(PostgresFixture pg)
         public Task<GitHubResult<GitHubComment>> UpdateCommentAsync(string repository, long commentId, string body, CancellationToken ct) =>
             throw new NotSupportedException("the poller does not write comments");
 
+        public Task<GitHubResult<IReadOnlyList<GitHubReaction>>> ListCommentReactionsAsync(string repository, long commentId, string? etag, CancellationToken ct) =>
+            throw new NotSupportedException("a poller with no plan on an issue reads no reactions");
+
+        public Task<GitHubResult<GitHubReaction>> AddCommentReactionAsync(string repository, long commentId, string content, CancellationToken ct) =>
+            throw new NotSupportedException("a poller with no plan on an issue sets no reaction");
+
         public Task<GitHubResult<GitHubPullRequest>> GetPullRequestAsync(string repository, int number, string? etag, CancellationToken ct) =>
             throw new NotSupportedException("the poller does not read pull requests");
 

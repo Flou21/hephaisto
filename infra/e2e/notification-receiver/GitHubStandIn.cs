@@ -53,6 +53,8 @@ namespace NotificationReceiver;
 //   GET   /github/api/repos/{owner}/{repo}/issues/{number}/comments?since=&per_page=
 //   POST  /github/api/repos/{owner}/{repo}/issues/{number}/comments       {body}
 //   PATCH /github/api/repos/{owner}/{repo}/issues/comments/{id}           {body}
+//   GET   /github/api/repos/{owner}/{repo}/issues/comments/{id}/reactions?per_page=
+//   POST  /github/api/repos/{owner}/{repo}/issues/comments/{id}/reactions {content}   201, or 200 when it was there
 //   GET   /github/api/repos/{owner}/{repo}/pulls/{number}
 //   GET   /github/api/repos/{owner}/{repo}/issues/{number}/timeline?per_page=&page=
 //   GET   /github/api/repos/{owner}/{repo}                                   full_name, default_branch
@@ -66,12 +68,14 @@ namespace NotificationReceiver;
 //   POST   /github/control/repos/{owner}/{repo}/issues/{number}/unassign
 //   POST   /github/control/repos/{owner}/{repo}/issues/{number}/reassign  off and on again, in one step; {login?, id?} is who
 //   POST   /github/control/repos/{owner}/{repo}/issues/{number}/comments  {body, login, id?}
+//   POST   /github/control/repos/{owner}/{repo}/issues/comments/{id}/reactions           {content, login, id?}  somebody reacts
+//   DELETE /github/control/repos/{owner}/{repo}/issues/comments/{id}/reactions/{reaction}   and takes it off again
 //   PUT    /github/control/repos/{owner}/{repo}/pulls/{number}            {merged?, state?, draft?, head?, body?}
 //   DELETE /github/control/repos/{owner}/{repo}/pulls/{number}            forget it: an open draft again
 //   POST   /github/control/fail/{500|rate-limit|off}?count=N              the next N API calls fail
 //   GET    /github/control/requests       every API call: seq, method, path, query, status, when
 //   DELETE /github/control/requests
-//   GET    /github/control/comments       every comment, with its issue, its author and its edits
+//   GET    /github/control/comments       every comment, with its issue, its author, its edits and its reactions
 //   GET    /github/control/state          the bot, the failure mode, every issue and pull request
 //   DELETE /github/control                forget everything but the counters
 public static class GitHubStandIn
@@ -110,6 +114,12 @@ public static class GitHubStandIn
         public DateTimeOffset UpdatedAt { get; set; }
     }
 
+    /// <summary>A reaction on a comment: one of GitHub's eight, and whose. One per account, comment and content.</summary>
+    private sealed record Reaction(long Id, string Repo, long CommentId, string Content, Account Author, DateTimeOffset At);
+
+    /// <summary>GitHub's eight, by the words its API uses for them.</summary>
+    private static readonly string[] Reactions = ["+1", "-1", "laugh", "confused", "heart", "hooray", "rocket", "eyes"];
+
     /// <summary>An <c>assigned</c> or <c>unassigned</c> event of an issue's timeline.</summary>
     private sealed record Event(long Id, string Repo, int Number, string Kind, Account Actor, Account Assignee, DateTimeOffset At);
 
@@ -139,6 +149,7 @@ public static class GitHubStandIn
         var comments = new List<Comment>();
         var pulls = new Dictionary<(string Repo, int Number), Pull>();
         var events = new List<Event>();
+        var reactions = new List<Reaction>();
         var requests = new Queue<JsonObject>();
         var failMode = "off";
         var failLeft = 0;
@@ -149,6 +160,7 @@ public static class GitHubStandIn
         var nextNumber = (int)(DateTimeOffset.UtcNow - new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)).TotalSeconds;
         var nextComment = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var nextEvent = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var nextReaction = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
         // Everything under the API prefix, served or not: the record, the failure mode and the
         // token. A middleware rather than a filter on the routes, because a call to a path this
@@ -334,6 +346,41 @@ public static class GitHubStandIn
                 Touch(comment.Repo, comment.Number);
 
                 return Results.Text(CommentJson(comment).ToJsonString(), "application/json");
+            }
+        });
+
+        // The reactions on one comment, oldest first. What an approver's click on a plan is read
+        // from; the tag makes an unchanged comment a 304.
+        api.MapGet("/repos/{owner}/{repo}/issues/comments/{id:long}/reactions", (string owner, string repo, long id, HttpContext ctx) =>
+        {
+            lock (gate)
+            {
+                if (!comments.Exists(c => c.Id == id && c.Repo == $"{owner}/{repo}"))
+                {
+                    return Problem(404, "Not Found");
+                }
+
+                var found = reactions.Where(r => r.CommentId == id).OrderBy(r => r.Id);
+
+                return Etagged(ctx, new JsonArray([.. Page(ctx, found).Select(ReactionJson)]));
+            }
+        });
+
+        // As the token's account. One that is there already is answered with a 200 and itself.
+        api.MapPost("/repos/{owner}/{repo}/issues/comments/{id:long}/reactions", async (string owner, string repo, long id, HttpContext ctx) =>
+        {
+            var content = Field(await ReadAsync(ctx), "content");
+
+            if (content is null || !Reactions.Contains(content, StringComparer.Ordinal))
+            {
+                return Problem(422, "Validation Failed");
+            }
+
+            lock (gate)
+            {
+                return comments.Exists(c => c.Id == id && c.Repo == $"{owner}/{repo}")
+                    ? React($"{owner}/{repo}", id, bot, content)
+                    : Problem(404, "Not Found");
             }
         });
 
@@ -528,6 +575,43 @@ public static class GitHubStandIn
             }
         });
 
+        // Somebody clicks a reaction on a comment - an approver's rocket on a plan, a stranger's
+        // thumbs-up. It changes nothing about the issue: GitHub does not touch an issue's
+        // updated_at for a reaction, so the list of assigned issues stays a 304.
+        control.MapPost("/repos/{owner}/{repo}/issues/comments/{id:long}/reactions", async (string owner, string repo, long id, HttpContext ctx) =>
+        {
+            var body = await ReadAsync(ctx);
+
+            if (Field(body, "content") is not { } content || !Reactions.Contains(content, StringComparer.Ordinal) || Who(body) is not { } author)
+            {
+                return Results.BadRequest(new { error = $"a reaction needs a content ({string.Join(", ", Reactions)}) and the login of whoever sets it" });
+            }
+
+            lock (gate)
+            {
+                if (!comments.Exists(c => c.Id == id && c.Repo == $"{owner}/{repo}"))
+                {
+                    return Results.NotFound(new { error = $"no comment {id} in {owner}/{repo}" });
+                }
+
+                Console.WriteLine($"GITHUB {author.Login} ({author.Id}) set {content} on comment {id} of {owner}/{repo}");
+
+                return React($"{owner}/{repo}", id, author, content);
+            }
+        });
+
+        control.MapDelete("/repos/{owner}/{repo}/issues/comments/{id:long}/reactions/{reaction:long}", (string owner, string repo, long id, long reaction) =>
+        {
+            lock (gate)
+            {
+                var gone = reactions.RemoveAll(r => r.Id == reaction && r.CommentId == id && r.Repo == $"{owner}/{repo}");
+
+                Console.WriteLine($"GITHUB reaction {reaction} on comment {id} of {owner}/{repo} was taken off ({gone})");
+
+                return gone > 0 ? Results.NoContent() : Results.NotFound(new { error = $"no reaction {reaction} on comment {id}" });
+            }
+        });
+
         // {merged: true} merges, {state: "closed"} closes without merging; draft, head and body
         // are what the pull request is said to be. Merging ends the draft, as it does on GitHub.
         control.MapPut("/repos/{owner}/{repo}/pulls/{number:int}", async (string owner, string repo, int number, HttpContext ctx) =>
@@ -623,6 +707,7 @@ public static class GitHubStandIn
                         json["repository"] = c.Repo;
                         json["number"] = c.Number;
                         json["edits"] = c.Edits;
+                        json["reactions"] = new JsonArray([.. reactions.Where(r => r.CommentId == c.Id).OrderBy(r => r.Id).Select(ReactionJson)]);
                         return json;
                     })]).ToJsonString(),
                     "application/json");
@@ -663,6 +748,7 @@ public static class GitHubStandIn
                 comments.Clear();
                 pulls.Clear();
                 events.Clear();
+                reactions.Clear();
                 requests.Clear();
                 failMode = "off";
                 failLeft = 0;
@@ -671,6 +757,20 @@ public static class GitHubStandIn
             Console.WriteLine("GITHUB forgot everything");
             return Results.NoContent();
         });
+
+        // Under the lock. GitHub keeps one reaction per account, comment and content.
+        IResult React(string repository, long commentId, Account author, string content)
+        {
+            if (reactions.Find(r => r.CommentId == commentId && r.Content == content && r.Author.Id == author.Id) is { } there)
+            {
+                return Results.Text(ReactionJson(there).ToJsonString(), "application/json", statusCode: 200);
+            }
+
+            var reaction = new Reaction(nextReaction++, repository, commentId, content, author, Now());
+            reactions.Add(reaction);
+
+            return Results.Text(ReactionJson(reaction).ToJsonString(), "application/json", statusCode: 201);
+        }
 
         Comment Say(Issue issue, Account author, string text)
         {
@@ -733,6 +833,14 @@ public static class GitHubStandIn
         ["created_at"] = Stamp(c.CreatedAt),
         ["updated_at"] = Stamp(c.UpdatedAt),
         ["html_url"] = $"https://github.com/{c.Repo}/issues/{c.Number}#issuecomment-{c.Id}",
+    };
+
+    private static JsonObject ReactionJson(Reaction r) => new()
+    {
+        ["id"] = r.Id,
+        ["user"] = AccountJson(r.Author),
+        ["content"] = r.Content,
+        ["created_at"] = Stamp(r.At),
     };
 
     /// <summary>An assignment event, with the members GitHub's timeline gives one (recorded from the sandbox, 2026-10-08).</summary>

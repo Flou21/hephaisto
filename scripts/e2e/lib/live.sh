@@ -142,6 +142,15 @@ gh_comment_as() {
     echo "${url##*issuecomment-}"
 }
 
+# A reaction on a comment as the person running the suite (#298) - one human account, as for a
+# comment. Prints the reaction's id.
+#   gh_react_as <owner/repo> <comment-id> <login> <id> <content>     content: rocket, -1, +1, ...
+gh_react_as() {
+    _live_repo_is "$1" || return 1
+    [ "$3" = "$ISSUES_APPROVER" ] || { printf 'the live tier can only react as %s, not as %s\n' "$ISSUES_APPROVER" "$3" >&2; return 1; }
+    _live_api POST "issues/comments/$2/reactions" -f "content=$5" --jq '.id'
+}
+
 # Closed, and never merged: a merge would move main, and the scripted fix applies to main as
 # it is. "Merged is Done" stays the stand-in's to show (issues G11).
 #
@@ -187,6 +196,14 @@ gh_comments() {
     else
         _live_api GET "issues/$2/comments?per_page=100"
     fi
+}
+
+# The reactions on one comment, oldest first, in GitHub's own shape: [{id, content, user:{login,id}}].
+# The issue's number is not needed to ask GitHub; it is the stand-in's signature.
+#   gh_reactions <owner/repo> <number> <comment-id>
+gh_reactions() {
+    _live_repo_is "$1" || return 1
+    _live_api GET "issues/comments/$3/reactions?per_page=100"
 }
 
 # One comment, with body_html.

@@ -209,7 +209,10 @@ public sealed partial class WorkItemStageTests(PostgresFixture pg)
             planCommentId = plan.Id;
 
             attempt.PlanCommentId.Should().Be(plan.Id);
-            plan.Body.Should().Contain("src/Startup/Endpoints.cs").And.Contain("`/approve`").And.Contain("`/reject <reason>`");
+            // each command in a block of its own, which GitHub gives a copy button (#298)
+            plan.Body.Should().Contain("src/Startup/Endpoints.cs").And.Contain("```\n/approve\n```").And.Contain("```\n/reject <reason>\n```");
+            world.GitHub.Reactions.Where(r => r.CommentId == plan.Id).Select(r => r.Content)
+                .Should().BeEquivalentTo([IssueCommands.ApproveReaction, IssueCommands.RejectReaction], "the two to click are set with the plan");
             plan.Body.Should().Contain("Implementing is switched off", "this install is in Plan mode");
             plan.Edits.Should().Be(0);
 
@@ -1433,6 +1436,9 @@ public sealed partial class WorkItemStageTests(PostgresFixture pg)
         }
     }
 
+    /// <summary>A reaction on a comment: which of GitHub's eight, and whose.</summary>
+    private sealed record StoredReaction(long Id, long CommentId, string Content, string Author, long AuthorId);
+
     private sealed record StoredComment(long Id, string Repository, int Number, string Author)
     {
         /// <summary>The account's number: what an approver list names. The bot's is 9001; anybody else's is 2002 unless said.</summary>
@@ -1728,6 +1734,80 @@ public sealed partial class WorkItemStageTests(PostgresFixture pg)
             Change(repository, comment.Number, _ => { });
 
             return Task.FromResult(new GitHubResult<GitHubComment>(GitHubOutcome.Ok, Wire(comment)));
+        }
+
+        // --- reactions on a comment (#298) ------------------------------------------------------
+
+        private long nextReaction = 318204771;
+
+        /// <summary>Every reaction that is on a comment now, whoever set it.</summary>
+        public List<StoredReaction> Reactions { get; } = [];
+
+        /// <summary>Every read of a comment's reactions: the tag that was sent, and what was answered.</summary>
+        public List<(long CommentId, string? ETagSent, GitHubOutcome Answered)> ReactionReads { get; } = [];
+
+        /// <summary>Every reaction the agent asked GitHub to set, also one that was there already.</summary>
+        public List<(long CommentId, string Content)> ReactionWrites { get; } = [];
+
+        public GitHubOutcome? FailReactionReads { get; set; }
+
+        public GitHubOutcome? FailReactionWrites { get; set; }
+
+        /// <summary>Somebody sets a reaction on a comment. Ids only grow, as GitHub's do.</summary>
+        public long React(long commentId, string author, long authorId, string content)
+        {
+            var reaction = new StoredReaction(nextReaction++, commentId, content, author, authorId);
+            Reactions.Add(reaction);
+            return reaction.Id;
+        }
+
+        /// <summary>Somebody takes a reaction off again.</summary>
+        public void Unreact(long reactionId) => Reactions.RemoveAll(r => r.Id == reactionId);
+
+        public Task<GitHubResult<IReadOnlyList<GitHubReaction>>> ListCommentReactionsAsync(string repository, long commentId, string? etag, CancellationToken ct)
+        {
+            if ((FailReactionReads ?? FailWrites) is { } failing)
+            {
+                ReactionReads.Add((commentId, etag, failing));
+                return Task.FromResult(new GitHubResult<IReadOnlyList<GitHubReaction>>(failing, null, "HTTP 500: Server Error"));
+            }
+
+            var stored = Reactions.Where(r => r.CommentId == commentId).OrderBy(r => r.Id).ToList();
+            var tag = $"W/\"reactions:{commentId}:{string.Join(",", stored.Select(r => r.Id))}\"";
+
+            if (etag == tag)
+            {
+                ReactionReads.Add((commentId, etag, GitHubOutcome.NotModified));
+                return Task.FromResult(new GitHubResult<IReadOnlyList<GitHubReaction>>(GitHubOutcome.NotModified, null, ETag: tag));
+            }
+
+            ReactionReads.Add((commentId, etag, GitHubOutcome.Ok));
+
+            IReadOnlyList<GitHubReaction> found = [.. stored.Select(r => new GitHubReaction(r.Id, r.Content, new GitHubAccount(r.Author, r.AuthorId), Now))];
+
+            return Task.FromResult(new GitHubResult<IReadOnlyList<GitHubReaction>>(GitHubOutcome.Ok, found, ETag: tag));
+        }
+
+        public Task<GitHubResult<GitHubReaction>> AddCommentReactionAsync(string repository, long commentId, string content, CancellationToken ct)
+        {
+            ReactionWrites.Add((commentId, content));
+
+            if ((FailReactionWrites ?? FailWrites) is { } failing)
+            {
+                return Task.FromResult(new GitHubResult<GitHubReaction>(failing, null, "HTTP 403: Resource not accessible by personal access token"));
+            }
+
+            // One account, one comment, one content: GitHub answers with the one that is there.
+            var own = Reactions.FirstOrDefault(r => r.CommentId == commentId && r.Content == content && r.Author == Bot);
+
+            if (own is null)
+            {
+                var id = React(commentId, Bot, 9001, content);
+                own = Reactions.Single(r => r.Id == id);
+            }
+
+            return Task.FromResult(new GitHubResult<GitHubReaction>(
+                GitHubOutcome.Ok, new GitHubReaction(own.Id, own.Content, new GitHubAccount(own.Author, own.AuthorId), Now)));
         }
 
         private static GitHubComment Wire(StoredComment c) => new(

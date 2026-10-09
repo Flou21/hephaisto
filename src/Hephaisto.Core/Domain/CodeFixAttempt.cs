@@ -112,6 +112,15 @@ public sealed class CodeFixAttempt
     public long? CommandCommentId { get; set; }
 
     /// <summary>
+    /// The newest reaction on this attempt's plan comment that was looked at for an answer
+    /// (#298). The same promise as <see cref="CommandCommentId"/>, for the other way an approver
+    /// can answer: GitHub's reaction ids only grow, each is read once, and one that was refused
+    /// does not decide later by itself - taking it off and setting it again makes a new one.
+    /// Not carried to the attempt that follows: reactions are on one comment, and so on one plan.
+    /// </summary>
+    public long? CommandReactionId { get; set; }
+
+    /// <summary>
     /// The one-time answers Hephaisto has written on the issue for this attempt, as keys joined
     /// by commas: <c>not-approver</c>, and one per cause an approval was refused for
     /// (<c>mode-plan</c>, <c>emergency-stop</c>, ...). A key that is here is not written a

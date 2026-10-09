@@ -69,6 +69,34 @@ public static class IssueCommands
     /// <summary>What a rejection without a reason is recorded as.</summary>
     public const string NoReason = "no reason given";
 
+    /// <summary>
+    /// The reaction that approves the plan it is set on (#298): GitHub's word for it. Not the
+    /// thumbs-up, which people set on a comment to say they have read it or like it - and an
+    /// approval starts a Job that pushes a branch.
+    /// </summary>
+    public const string ApproveReaction = "rocket";
+
+    /// <summary>The reaction that rejects the plan it is set on.</summary>
+    public const string RejectReaction = "-1";
+
+    /// <summary>What a rejection by reaction is recorded as: a reaction carries no reason.</summary>
+    public const string NoReasonByReaction = "no reason given: rejected with a thumbs-down on the plan";
+
+    /// <summary>
+    /// The answer a reaction on a plan comment is, or null: two of GitHub's eight, and no
+    /// reaction asks for a new plan - what that needs is the answers, and a reaction has none.
+    /// Whose reaction it is, and on which comment, is the caller's question.
+    /// </summary>
+    public static IssueCommand? ReadReaction(string? content) => content switch
+    {
+        ApproveReaction => new IssueCommand(IssueCommandKind.Approve, null),
+        RejectReaction => new IssueCommand(IssueCommandKind.Reject, NoReasonByReaction),
+        _ => null,
+    };
+
+    /// <summary>A reaction as a person sees it on the page, for a sentence about it.</summary>
+    public static string Emoji(IssueCommandKind kind) => kind == IssueCommandKind.Approve ? "🚀" : "👎";
+
     /// <summary>A reason is a sentence or a paragraph, kept with the attempt and shown on the issue.</summary>
     public const int MaxReason = 1000;
 

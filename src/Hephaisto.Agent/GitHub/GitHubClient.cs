@@ -96,6 +96,14 @@ public sealed record GitHubComment(
     DateTimeOffset UpdatedAt,
     string Url);
 
+/// <summary>
+/// One reaction on a comment (#298): which of GitHub's eight, and whose. <see cref="Content"/>
+/// is GitHub's word for it - <c>+1</c>, <c>-1</c>, <c>laugh</c>, <c>confused</c>, <c>heart</c>,
+/// <c>hooray</c>, <c>rocket</c>, <c>eyes</c>.
+/// </summary>
+/// <param name="Id">Grows with every reaction anybody sets anywhere; one that is taken off and set again is a new one.</param>
+public sealed record GitHubReaction(long Id, string Content, GitHubAccount Author, DateTimeOffset CreatedAt);
+
 public sealed record GitHubPullRequest(
     int Number,
     string State,
@@ -118,7 +126,7 @@ public sealed record GitHubRepository(string FullName, string? DefaultBranch);
 /// </summary>
 public sealed record GitHubAssignment(GitHubAccount Assignee, string? Actor, DateTimeOffset At);
 
-/// <summary>What the agent asks of GitHub. Nine calls, and nothing that deletes or closes.</summary>
+/// <summary>What the agent asks of GitHub. Eleven calls, and nothing that deletes or closes.</summary>
 public interface IGitHubClient
 {
     /// <summary>Whose token this is.</summary>
@@ -147,6 +155,19 @@ public interface IGitHubClient
     Task<GitHubResult<GitHubComment>> CreateCommentAsync(string repository, int number, string body, CancellationToken ct);
 
     Task<GitHubResult<GitHubComment>> UpdateCommentAsync(string repository, long commentId, string body, CancellationToken ct);
+
+    /// <summary>
+    /// The reactions on one issue comment, oldest first, one page of
+    /// <see cref="GitHubClient.PageSize"/>. With <paramref name="etag"/>, an unchanged list is
+    /// <see cref="GitHubOutcome.NotModified"/>.
+    /// </summary>
+    Task<GitHubResult<IReadOnlyList<GitHubReaction>>> ListCommentReactionsAsync(string repository, long commentId, string? etag, CancellationToken ct);
+
+    /// <summary>
+    /// Sets one reaction on an issue comment as the token's account. Setting one that is already
+    /// there is not an error: GitHub answers with the one that exists.
+    /// </summary>
+    Task<GitHubResult<GitHubReaction>> AddCommentReactionAsync(string repository, long commentId, string content, CancellationToken ct);
 
     /// <summary>
     /// One pull request: open, closed, merged. With <paramref name="etag"/>, an unchanged one is
@@ -275,6 +296,24 @@ public sealed partial class GitHubClient(
             new { body },
             null,
             (json, _) => Comment(json),
+            ct);
+
+    public Task<GitHubResult<IReadOnlyList<GitHubReaction>>> ListCommentReactionsAsync(string repository, long commentId, string? etag, CancellationToken ct) =>
+        SendAsync<IReadOnlyList<GitHubReaction>>(
+            HttpMethod.Get,
+            $"repos/{repository}/issues/comments/{commentId.ToString(CultureInfo.InvariantCulture)}/reactions?per_page={PageSize}",
+            null,
+            etag,
+            (json, _) => [.. json.EnumerateArray().Select(Reaction)],
+            ct);
+
+    public Task<GitHubResult<GitHubReaction>> AddCommentReactionAsync(string repository, long commentId, string content, CancellationToken ct) =>
+        SendAsync(
+            HttpMethod.Post,
+            $"repos/{repository}/issues/comments/{commentId.ToString(CultureInfo.InvariantCulture)}/reactions",
+            new { content },
+            null,
+            (json, _) => Reaction(json),
             ct);
 
     public Task<GitHubResult<GitHubPullRequest>> GetPullRequestAsync(string repository, int number, string? etag, CancellationToken ct) =>
@@ -573,6 +612,12 @@ public sealed partial class GitHubClient(
         json.GetProperty("created_at").GetDateTimeOffset(),
         json.GetProperty("updated_at").GetDateTimeOffset(),
         Text(json, "html_url") ?? string.Empty);
+
+    private static GitHubReaction Reaction(JsonElement json) => new(
+        json.GetProperty("id").GetInt64(),
+        Text(json, "content") ?? string.Empty,
+        AccountOrGhost(json, "user"),
+        json.GetProperty("created_at").GetDateTimeOffset());
 
     private static GitHubPullRequest PullRequest(JsonElement json) => new(
         json.GetProperty("number").GetInt32(),

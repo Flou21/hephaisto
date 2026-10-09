@@ -291,9 +291,13 @@ public sealed class IssueCommentsTests
         body.Should().Contain("**Verification.** The change will be covered by tests");
         body.Should().Contain("What only a person looking at the running application can confirm:\n- whether the 2 % of carts that are empty still see a total\n");
         body.Should().Contain("**Cost of planning.** $1.25 · the plan's own confidence is 0.90");
+        // Each command in a block of its own, which GitHub gives a copy button, and the two
+        // that can be given by a reaction on this comment say so (#298).
         body.Should().Contain(
-            "**To go ahead,** an approver replies `/approve`. **To have it planned again,** say in a comment what should be different, then reply `/replan`. "
-            + "**To refuse it,** an approver replies `/reject <reason>`. A command is the first line of its comment, and only an approver of this install is heard.");
+            "**To go ahead,** an approver clicks 🚀 below this comment, or replies:\n\n```\n/approve\n```\n\n"
+            + "**To have it planned again,** say in a comment what should be different, then reply:\n\n```\n/replan\n```\n\n"
+            + "**To refuse it,** an approver clicks 👎 below this comment, or replies with a reason:\n\n```\n/reject <reason>\n```\n\n"
+            + "A command is the first line of its comment, a reaction counts on this comment only, and only an approver of this install is heard.\n\n");
         body.Should().Contain("What is approved is this plan as Hephaisto stored it");
         body.Should().Contain("branch `hephaisto/codefix-000000000001`");
         body.Should().Contain("analysed at `583b1e5b75ad`");
@@ -307,13 +311,13 @@ public sealed class IssueCommentsTests
         var body = PlanText(PlanResult(questions: ["Should it move too? The plan leaves it."]));
 
         body.Should().Contain(
-            "**To go ahead,** an approver replies `/approve`: that takes the plan as it is, with the assumptions above. "
-            + "**To have it planned again with your answers,** write them in a comment, then reply `/replan`. "
-            + "**To refuse it,** an approver replies `/reject <reason>`.");
+            "**To go ahead,** an approver clicks 🚀 below this comment, or replies with the line that follows. That takes the plan as it is, with the assumptions above.\n\n```\n/approve\n```\n\n"
+            + "**To have it planned again with your answers,** write them in a comment, then reply:\n\n```\n/replan\n```\n\n"
+            + "**To refuse it,** an approver clicks 👎 below this comment, or replies with a reason:\n\n```\n/reject <reason>\n```\n\n");
 
         // Below Pr the sentence about the mode still follows, and /replan is as possible as it was.
         PlanText(PlanResult(questions: ["a?"]), CodeFixMode.Plan).Should()
-            .Contain("then reply `/replan`").And.Contain("Implementing is switched off on this install");
+            .Contain("then reply:\n\n```\n/replan\n```").And.Contain("Implementing is switched off on this install");
     }
 
     [Fact]
@@ -339,7 +343,7 @@ public sealed class IssueCommentsTests
 
         body.Should().Contain($"Implementing is switched off on this install: when this was written its code-fix mode was {mode}");
         body.Should().Contain("An approval is refused until an operator sets the mode to Pr.");
-        body.Should().Contain("`/approve`", "how to answer is still said: the plan stands");
+        body.Should().Contain("```\n/approve\n```", "how to answer is still said: the plan stands");
     }
 
     [Fact]
@@ -348,8 +352,9 @@ public sealed class IssueCommentsTests
         var body = PlanText(PlanResult(needsCait: true));
 
         body.Should().Contain("**This plan cannot be approved here.**");
-        body.Should().NotContain("an approver replies `/approve`");
-        body.Should().Contain("an approver then replies `/replan` to have this issue planned again").And.Contain("`/reject <reason>`");
+        body.Should().NotContain("/approve").And.NotContain("🚀", "neither way of approving is offered");
+        body.Should().Contain("an approver then replies `/replan` to have this issue planned again")
+            .And.Contain("an approver sets 👎 on this comment or replies `/reject <reason>`");
     }
 
     [Fact]
@@ -761,7 +766,8 @@ public sealed class IssueCommentsTests
         body.Split('\n').Count(line => line == "</details>").Should().Be(1, "the fold is closed once, by Hephaisto");
         System.Text.RegularExpressions.Regex.Matches(body, "</details>").Count.Should().Be(2, "the other one is inside a code span, where it is characters");
         body.Should().Contain("\n2. " + new string('q', 600) + "\n", "a question is held to the contract's length, which the runner held it to already");
-        body.Split('\n').Should().NotContain("/approve", "a command is a first line of a comment, and nothing of the model's starts a line");
+        body.Split('\n').Count(line => line == "/approve").Should().Be(1, "the one such line is Hephaisto's own, in its block below the fold - nothing of the model's is a line of its own");
+        body.IndexOf("\n/approve\n", StringComparison.Ordinal).Should().BeGreaterThan(body.LastIndexOf("</details>", StringComparison.Ordinal), "and it stands after everything the model wrote");
     }
 
     [Fact]
@@ -1025,5 +1031,34 @@ public sealed class IssueCommentsTests
         IssueComments.PlanMarker(AttemptId).Should().StartWith("<!-- hephaisto:plan:").And.EndWith(" -->");
         IssueComments.PlanMarker(AttemptId).Should().NotBe(IssueComments.PlanMarker(Guid.CreateVersion7()));
         IssueComments.CommentUrl(IssueUrl, 1791308488290).Should().Be("https://github.com/octo/shop/issues/12#issuecomment-1791308488290");
+    }
+
+    // --- an answer that was a reaction (#298) -----------------------------------------------------
+
+    [Fact]
+    public void ARefusedReaction_IsNamedAsWhatWasClicked_AndSaysHowToAnswerAgain()
+    {
+        var approve = IssueComments.Refused(AttemptId, "maintainer", IssueCommandKind.Approve, CodeFixRefusal.ModeBelowPr, CodeFixMode.Plan, byReaction: true);
+
+        approve.Should().StartWith("**Not done.** `maintainer`'s 🚀 was read and refused: the code-fix mode of this install is Plan");
+
+        // A reaction that was read is not read again: "again" is off and on, or the command.
+        approve.Should().Contain("The plan still stands: once that has changed, take the 🚀 off and set it again, or reply `/approve`.")
+            .And.NotContain("reply `/approve` again");
+
+        // The same cause is the same answer, whichever way it was asked: said once per plan.
+        IssueComments.AnswerKeysIn(AttemptId, approve)
+            .Should().Equal(IssueComments.AnswerKeysIn(AttemptId, IssueComments.Refused(AttemptId, "maintainer", IssueCommandKind.Approve, CodeFixRefusal.ModeBelowPr, CodeFixMode.Plan)));
+
+        IssueComments.Refused(AttemptId, "maintainer", IssueCommandKind.Reject, CodeFixRefusal.NotWaiting, null, byReaction: true)
+            .Should().StartWith("**Not done.** `maintainer`'s 👎 was read and refused: this plan is no longer waiting for an answer.");
+    }
+
+    [Fact]
+    public void ARefusedCommand_ReadsAsItDid()
+    {
+        IssueComments.Refused(AttemptId, "maintainer", IssueCommandKind.Approve, CodeFixRefusal.ModeBelowPr, CodeFixMode.Plan)
+            .Should().StartWith("**Not done.** `maintainer`'s `/approve` was read and refused:")
+            .And.Contain("The plan still stands: reply `/approve` again once that has changed.");
     }
 }

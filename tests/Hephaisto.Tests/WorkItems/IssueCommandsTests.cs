@@ -53,7 +53,9 @@ public sealed class IssueCommandsTests
         { "an HTML comment before it", "<!-- -->\n/approve" },
         { "a zero-width space before it", "​/approve" },
         { "a mention before it", "@hephaisto-bot /approve" },
-        { "the plan's own words", "**To go ahead,** an approver replies `/approve`. **To refuse it,** an approver replies `/reject <reason>`." },
+        { "the plan's own words", "**To go ahead,** an approver clicks 🚀 below this comment, or replies:" },
+        { "the plan's own block, copied with its fence", "```\n/approve\n```" },
+        { "the plan's block for a rejection, with its fence", "```\n/reject <reason>\n```" },
         { "the plan's words about replanning", "**To have it planned again with your answers,** write them in a comment, then reply `/replan`." },
         { "a word after /replan", "/replan please" },
         { "an answer on the command's own line", "/replan yes to both" },
@@ -159,4 +161,38 @@ public sealed class IssueCommandsTests
         IssueCommands.Replan.Should().Be("/replan");
         IssueCommands.NoReason.Should().Be("no reason given");
     }
+
+    // --- the two reactions (#298) -----------------------------------------------------------------
+
+    [Fact]
+    public void ARocket_Approves_AndAThumbsDown_Rejects_WithTheReasonAReactionHas()
+    {
+        IssueCommands.ReadReaction("rocket").Should().Be(new IssueCommand(IssueCommandKind.Approve, null));
+        IssueCommands.ReadReaction("-1").Should().Be(new IssueCommand(IssueCommandKind.Reject, IssueCommands.NoReasonByReaction));
+
+        // what a person sees on the page, for a sentence about it
+        IssueCommands.Emoji(IssueCommandKind.Approve).Should().Be("🚀");
+        IssueCommands.Emoji(IssueCommandKind.Reject).Should().Be("👎");
+    }
+
+    [Theory]
+
+    // The thumbs-up above all: people set it on a comment they have read, and an approval
+    // starts a Job that pushes a branch.
+    [InlineData("+1")]
+    [InlineData("heart")]
+    [InlineData("hooray")]
+    [InlineData("laugh")]
+    [InlineData("confused")]
+    [InlineData("eyes")]
+
+    // GitHub's words, exactly: nothing that only looks like one
+    [InlineData("Rocket")]
+    [InlineData("rocket ")]
+    [InlineData("🚀")]
+    [InlineData("thumbs_down")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void EveryOtherReaction_IsNotAnAnswer_AndNoReactionAsksForANewPlan(string? content) =>
+        IssueCommands.ReadReaction(content).Should().BeNull();
 }
