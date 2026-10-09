@@ -749,6 +749,21 @@ is an entry there, its issue has the same number from 77 up, and the file's last
 issue of every lower one - so a bare `#N` below 77 in a commit or a pull request is a pull request. Scopes in use: `pipeline`, `policy`, `safety`, `chart`,
 `telemetry`, `persistence`, `web`, `e2e`, `notify`, `design`, `website`, `prompts`, `docs`.
 
+**A change lands as commits on `main`, pushed - no branch and no pull request.** The owner's
+decision of 2026-10-09, for this repository: he merged every pull request unread and asked for
+the step to go. Three things follow from there being no gate after you:
+
+- **What a pull request's checks would have run, you run first**: `./scripts/test.sh`, and the
+  integration tests, the coder's tests, the chart's and the visual ones where the change reaches
+  them. A push to `main` starts `ci.yml` and `deploy.yml`, and `deploy.yml` publishes the three
+  public sites; a red `main` is yours to fix before anything else.
+- **The commit message is the whole record**: why, what was verified, what was not - what a
+  pull request's description used to carry. One commit per piece of work, as before.
+- **`git pull --ff-only` before, never a force-push after.** A mistake on `main` is fixed by a
+  commit that says what was wrong. A release is still its own step, on the owner's word.
+
+`CONTRIBUTING.md` is for everybody else and still asks for a pull request.
+
 ## The cluster is a single shared resource
 
 There is one k3s node, shared with the whole stack in the `~/dev` workspace. Parallel agents
